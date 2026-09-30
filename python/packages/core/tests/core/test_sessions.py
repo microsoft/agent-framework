@@ -43,6 +43,7 @@ from agent_framework._sessions import (
     _run_identity_scope,
     _RunPersistenceGate,
     _suspend_run_persistence_gate,
+    filter_new_messages,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -52,6 +53,51 @@ from .test_filesystem import COLLIDING_IDENTIFIERS
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+
+def test_filter_new_messages_preserves_repeated_user_turn() -> None:
+    existing = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+    incoming = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+
+    assert filter_new_messages(existing, incoming) == incoming
+
+
+def test_filter_new_messages_preserves_repeated_user_after_unanswered_input() -> None:
+    previous_input = Message(role="user", contents=["yes"])
+    repeated_input = Message(role="user", contents=["yes"])
+    reply = Message(role="assistant", contents=["second reply"])
+
+    assert filter_new_messages([previous_input], [repeated_input]) == [repeated_input]
+    assert filter_new_messages([previous_input], [repeated_input, reply]) == [repeated_input, reply]
+
+    identified_input = Message(role="user", contents=["yes"], message_id="turn-1")
+    assert filter_new_messages([identified_input], [identified_input]) == []
+
+
+def test_filter_new_messages_aligns_partial_replay_with_repeated_content() -> None:
+    existing = [
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["first reply"]),
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["second reply"]),
+    ]
+    new_messages = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["third reply"])]
+    incoming = [*existing[-2:], *new_messages]
+
+    assert filter_new_messages(existing, incoming) == new_messages
+
+
+def test_filter_new_messages_keeps_tool_call_result_pairs_on_replay() -> None:
+    call = Message(
+        role="assistant", contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments="{}")]
+    )
+    result = Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="found")])
+    existing = [Message(role="user", contents=["lookup"]), call, result]
+    new_messages = [Message(role="user", contents=["lookup"]), Message(role="assistant", contents=["again"])]
+
+    assert filter_new_messages(existing, [*existing, *new_messages]) == new_messages
+    assert filter_new_messages(existing, [result, *new_messages]) == new_messages
+
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -426,19 +472,35 @@ def test_filter_approval_controls_deduplicates_pending_request_replay() -> None:
     assert requests == [request]
 
 
-def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> None:
+def test_filter_approval_controls_keeps_response_without_terminal_result() -> None:
+    """Pending state is represented by typed controls, not a textual tool result."""
     function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
     request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
     response = request.to_function_approval_response(approved=True)
-    placeholder = Content.from_function_result(
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    filtered = _filter_approval_control_messages(messages)
+
+    assert [content for message in filtered for content in message.contents] == [function_call, response]
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_consumes_terminal_result_regardless_of_text(result: str) -> None:
+    function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+    terminal_result = Content.from_function_result(
         call_id="call_pending",
-        result="[APPROVAL_PENDING] waiting for execution",
+        result=result,
     )
 
     filtered = _filter_approval_control_messages([
         Message(role="assistant", contents=[function_call, request]),
         Message(role="user", contents=[response]),
-        Message(role="tool", contents=[placeholder]),
+        Message(role="tool", contents=[terminal_result]),
     ])
 
     controls = [
@@ -447,8 +509,33 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
         for content in message.contents
         if content.type in {"function_approval_request", "function_approval_response"}
     ]
-    assert controls == [response]
-    assert any(placeholder in message.contents for message in filtered)
+    assert controls == []
+    assert any(terminal_result in message.contents for message in filtered)
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_discards_response_after_terminal_result(result: str) -> None:
+    """A late response belongs to the closed occurrence, not a reused-call-id sibling."""
+    first_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    first_request = Content.from_function_approval_request(id="approval_1", function_call=first_call)
+    stale_response = first_request.to_function_approval_response(approved=True)
+    second_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    second_request = Content.from_function_approval_request(id="approval_2", function_call=second_call)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [second_request]
 
 
 def _replacement_approval_round(
@@ -1583,6 +1670,23 @@ class TestInMemoryHistoryProvider:
         assert state["messages"][0].text == "yes"
         assert state["messages"][1].text == "yes"
 
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])],
+            state=state,
+        )
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])],
+            state=state,
+        )
+
+        assert [message.text for message in state["messages"]] == ["yes", "first reply", "yes", "second reply"]
+
     async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
         provider = InMemoryHistoryProvider()
         state: dict[str, Any] = {}
@@ -1601,6 +1705,26 @@ class TestInMemoryHistoryProvider:
         assert len(state["messages"]) == 4
         texts = [m.text for m in state["messages"]]
         assert texts == ["B", "C", "B", "D"]
+
+
+def _damage_last_history_record(
+    provider: FileHistoryProvider, session_file: Path, serialization_format: Literal["json", "msgpack"]
+) -> bytes:
+    """Replace the last stored record with bytes that cannot be deserialized.
+
+    Returns the damaged file contents so the caller can assert it is left alone.
+    """
+    if serialization_format == "json":
+        lines = session_file.read_text(encoding="utf-8").splitlines()
+        damaged = "\n".join([*lines[:-1], "{not json"]) + "\n"
+        encoded = damaged.encode("utf-8")
+    else:
+        raw = session_file.read_bytes()
+        header_bytes = provider._MSGPACK_RECORD_HEADER_BYTES
+        first_length = int.from_bytes(raw[:header_bytes], "big")
+        encoded = raw[: header_bytes + first_length] + (4).to_bytes(header_bytes, "big") + b"\x00\x01\x02\x03"
+    session_file.write_bytes(encoded)
+    return encoded
 
 
 class TestFileHistoryProvider:
@@ -1657,6 +1781,34 @@ class TestFileHistoryProvider:
 
         loaded = await provider.get_messages("replayed-transcript")
         assert [message.text for message in loaded] == ["hello", "hi there", "follow-up", "reply"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_reports_an_unreadable_history_record(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        first_turn = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+        full_transcript = [
+            *first_turn,
+            Message(role="user", contents=["follow-up"]),
+            Message(role="assistant", contents=["reply"]),
+        ]
+        await provider.save_messages("damaged-history", first_turn)
+        session_file = provider._session_file_path("damaged-history")
+        damaged_contents = _damage_last_history_record(provider, session_file, serialization_format)
+
+        # The record is unreadable, so reading the history reports it ...
+        with pytest.raises(ValueError):
+            await provider.get_messages("damaged-history")
+        # ... and appending must not treat the unreadable message as absent:
+        # that replays it into the file and reports success.
+        with pytest.raises(ValueError):
+            await provider.save_messages("damaged-history", full_transcript)
+
+        assert session_file.read_bytes() == damaged_contents
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_round_trips_marked_refusal_text(
@@ -2021,6 +2173,22 @@ class TestFileHistoryProvider:
         assert len(loaded) == 2
         assert loaded[0].text == "yes"
         assert loaded[1].text == "yes"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        )
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        loaded = await provider.get_messages("s1")
+        assert [message.text for message in loaded] == ["yes", "first reply", "yes", "second reply"]
 
 
 # ---------------------------------------------------------------------------

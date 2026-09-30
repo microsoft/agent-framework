@@ -1776,6 +1776,7 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 # Pause checkpoint resolution (AG-UI interrupt metadata)
 # ---------------------------------------------------------------------------
 
+
 class _ApprovalExecutor(Executor):
     def __init__(self) -> None:
         super().__init__(id="approval_executor")

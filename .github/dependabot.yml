@@ -61,7 +61,9 @@ updates:
   # TODO: Remove these Python Dependabot entries after we have confidence in the
   # Python dependency-maintenance workflow.
   - package-ecosystem: "pip"
-    directory: "python/"
+    directories:
+      - "python/"
+      - "python/packages/lab/"
     schedule:
       interval: "weekly"
       day: "thursday"

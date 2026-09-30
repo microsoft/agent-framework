@@ -188,7 +188,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             copilotSession = await this._copilotClient.ResumeSessionAsync(
                 typedSession.SessionId,
-                this.CreateResumeConfig(),
+                ToResumeSessionConfig(this._sessionConfig),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -306,11 +306,6 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private ResumeSessionConfig CreateResumeConfig()
-    {
-        return CopyResumeSessionConfig(this._sessionConfig);
-    }
-
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
     /// preserving <see cref="SessionConfigBase.Streaming"/> from the source (defaulting to <c>true</c> if unset).
@@ -323,34 +318,96 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
+    /// Converts a source <see cref="SessionConfig"/> into a new
     /// <see cref="ResumeSessionConfig"/>, preserving <see cref="SessionConfigBase.Streaming"/>
     /// from the source (defaulting to <c>true</c> if unset).
     /// </summary>
-    internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
+    internal static ResumeSessionConfig ToResumeSessionConfig(SessionConfig? source)
     {
+        // ResumeSessionConfig is a separate SDK type, so resumed sessions need every shared setting projected explicitly.
         return new ResumeSessionConfig
         {
-            Model = source?.Model,
-            ReasoningEffort = source?.ReasoningEffort,
-            ReasoningSummary = source?.ReasoningSummary,
-            ContextTier = source?.ContextTier,
-            Tools = source?.Tools,
-            SystemMessage = source?.SystemMessage,
+            AdditionalDirectories = source?.AdditionalDirectories,
+            Agent = source?.Agent,
+            AskUserVariant = source?.AskUserVariant,
+            AuthClientIdMetadataUrl = source?.AuthClientIdMetadataUrl,
             AvailableTools = source?.AvailableTools,
+            CanvasHandler = source?.CanvasHandler,
+            CanvasProvider = source?.CanvasProvider,
+            Canvases = source?.Canvases,
+            Capi = source?.Capi,
+            ClientName = source?.ClientName,
+            CoauthorEnabled = source?.CoauthorEnabled,
+            Commands = source?.Commands,
+            ConfigDirectory = source?.ConfigDirectory,
+            ContextTier = source?.ContextTier,
+            CreateSessionFsProvider = source?.CreateSessionFsProvider,
+            CustomAgents = source?.CustomAgents,
+            CustomAgentsLocalOnly = source?.CustomAgentsLocalOnly,
+            DefaultAgent = source?.DefaultAgent,
+            DisabledMcpServers = source?.DisabledMcpServers,
+            DisabledSkills = source?.DisabledSkills,
+            EmbeddingCacheStorage = source?.EmbeddingCacheStorage,
+            EnableCitations = source?.EnableCitations,
+            EnableConfigDiscovery = source?.EnableConfigDiscovery,
+            EnableExperimentalMode = source?.EnableExperimentalMode,
+            EnableFileChangeTracking = source?.EnableFileChangeTracking,
+            EnableFileHooks = source?.EnableFileHooks,
+            EnableHostGitOperations = source?.EnableHostGitOperations,
+            EnableManagedSettings = source?.EnableManagedSettings,
+            EnableMcpApps = source?.EnableMcpApps ?? default,
+            EnableOnDemandInstructionDiscovery = source?.EnableOnDemandInstructionDiscovery,
+            EnableSessionStore = source?.EnableSessionStore,
+            EnableSessionTelemetry = source?.EnableSessionTelemetry,
+            EnableSkills = source?.EnableSkills,
+            ExcludedBuiltInAgents = source?.ExcludedBuiltInAgents,
             ExcludedTools = source?.ExcludedTools,
-            Provider = source?.Provider,
+            ExpAssignments = source?.ExpAssignments,
+            ExtensionInfo = source?.ExtensionInfo,
+            ExtensionSdkPath = source?.ExtensionSdkPath,
+            FeatureFlags = source?.FeatureFlags,
+            GitHubMcpToolConfig = source?.GitHubMcpToolConfig,
+            GitHubToken = source?.GitHubToken,
+            GitHubTokenProvider = source?.GitHubTokenProvider,
+            Hooks = source?.Hooks,
+            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? default,
+            IncludedBuiltinSkills = source?.IncludedBuiltinSkills,
+            InfiniteSessions = source?.InfiniteSessions,
+            InstructionDirectories = source?.InstructionDirectories,
+            LargeOutput = source?.LargeOutput,
+            ManagedSettings = source?.ManagedSettings,
+            ManageScheduleEnabled = source?.ManageScheduleEnabled,
+            McpOAuthTokenStorage = source?.McpOAuthTokenStorage,
+            McpServers = source?.McpServers,
+            Memory = source?.Memory,
+            Model = source?.Model,
+            ModelCapabilities = source?.ModelCapabilities,
+            Models = source?.Models,
+            OnAutoModeSwitchRequest = source?.OnAutoModeSwitchRequest,
+            OnElicitationRequest = source?.OnElicitationRequest,
+            OnEvent = source?.OnEvent,
+            OnExitPlanModeRequest = source?.OnExitPlanModeRequest,
+            OnMcpAuthRequest = source?.OnMcpAuthRequest,
             OnPermissionRequest = source?.OnPermissionRequest,
             OnUserInputRequest = source?.OnUserInputRequest,
-            Hooks = source?.Hooks,
-            WorkingDirectory = source?.WorkingDirectory,
-            ConfigDirectory = source?.ConfigDirectory,
-            McpServers = source?.McpServers,
-            CustomAgents = source?.CustomAgents,
+            OrganizationCustomInstructions = source?.OrganizationCustomInstructions,
+            PluginDirectories = source?.PluginDirectories,
+            Provider = source?.Provider,
+            Providers = source?.Providers,
+            ReasoningEffort = source?.ReasoningEffort,
+            ReasoningSummary = source?.ReasoningSummary,
+            RemoteSession = source?.RemoteSession,
+            RequestCanvasRenderer = source?.RequestCanvasRenderer,
+            RequestExtensions = source?.RequestExtensions,
+            SessionLimits = source?.SessionLimits,
             SkillDirectories = source?.SkillDirectories,
-            DisabledSkills = source?.DisabledSkills,
-            InfiniteSessions = source?.InfiniteSessions,
-            Streaming = source?.Streaming ?? true
+            SkipCustomInstructions = source?.SkipCustomInstructions,
+            SkipEmbeddingRetrieval = source?.SkipEmbeddingRetrieval,
+            Streaming = source?.Streaming ?? true,
+            SystemMessage = source?.SystemMessage,
+            ToolSearch = source?.ToolSearch,
+            Tools = source?.Tools,
+            WorkingDirectory = source?.WorkingDirectory,
         };
     }
 

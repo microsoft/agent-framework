@@ -49,6 +49,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Generic, Literal, TypeVar, overload
 
+from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
 from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
@@ -1407,7 +1408,7 @@ def workflow(
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
-class FunctionalWorkflowAgent:
+class FunctionalWorkflowAgent(BaseAgent):
     """Agent adapter for a :class:`FunctionalWorkflow`.
 
     Provides a ``run()`` method with the same overloaded signature as
@@ -1452,10 +1453,13 @@ class FunctionalWorkflowAgent:
         # but not otherwise consumed.
         del kwargs
         self._workflow = workflow
-        self.name = name or workflow.name
-        self.id = f"FunctionalWorkflowAgent_{self.name}"
-        self.description: str | None = description if description is not None else workflow.description
-        self.context_providers: Sequence[Any] | None = context_providers
+        resolved_name = name or workflow.name
+        super().__init__(
+            id=f"FunctionalWorkflowAgent_{resolved_name}",
+            name=resolved_name,
+            description=description if description is not None else workflow.description,
+            context_providers=context_providers,
+        )
         self._pending_requests: dict[str, WorkflowEvent[Any]] = {}
 
     @property

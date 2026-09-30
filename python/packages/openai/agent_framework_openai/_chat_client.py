@@ -9,6 +9,7 @@ import logging
 import mimetypes
 import shlex
 import sys
+from collections import deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -61,6 +62,7 @@ from agent_framework._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     ContinuationToken,
     FinishReason,
@@ -993,6 +995,7 @@ class RawOpenAIChatClient(
         self._enrich_streamed_azure_ai_search_citations(updates)
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
+        self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
         logprobs = [
             logprob
             for update in updates
@@ -1200,6 +1203,16 @@ class RawOpenAIChatClient(
         return None
 
     # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_computer_tool() -> dict[str, Literal["computer"]]:
+        """Create a computer tool configuration for the Responses API.
+
+        The application executes the returned actions and sends a
+        ``Content.from_computer_tool_result`` with a screenshot. Safety checks
+        must be reviewed and acknowledged explicitly before execution.
+        """
+        return {"type": "computer"}
 
     @staticmethod
     def get_code_interpreter_tool(
@@ -1471,6 +1484,7 @@ class RawOpenAIChatClient(
                 or provide a dict with "always_require_approval" and/or "never_require_approval"
                 keys mapping to lists of tool names.
             allowed_tools: List of tool names that are allowed to be used from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
 
         Returns:
@@ -1520,7 +1534,7 @@ class RawOpenAIChatClient(
         if headers:
             mcp["headers"] = headers
 
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
 
         if approval_mode:
@@ -1730,8 +1744,11 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
-            self._validate_reasoning_groups_for_stateless_replay(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
+            self._validate_reasoning_groups_for_stateless_replay(
+                chat_messages,
+                replayable_reasoning_ids=set(reasoning_items),
+            )
         serialized_reasoning_ids: set[str] = set()
 
         list_of_list = [
@@ -1749,7 +1766,12 @@ class RawOpenAIChatClient(
         # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
         return self._coalesce_pending_mcp_results(flat)
 
-    def _validate_reasoning_groups_for_stateless_replay(self, chat_messages: Sequence[Message]) -> None:
+    def _validate_reasoning_groups_for_stateless_replay(
+        self,
+        chat_messages: Sequence[Message],
+        *,
+        replayable_reasoning_ids: set[str],
+    ) -> None:
         """Reject reasoning-bound tool groups that cannot be reconstructed."""
         group_reasoning_contents: dict[str, list[Content]] = {}
         group_call_ids: dict[str, list[str]] = {}
@@ -1770,6 +1792,8 @@ class RawOpenAIChatClient(
                 in {
                     "function_call",
                     "function_result",
+                    "computer_tool_call",
+                    "computer_tool_result",
                     "mcp_server_tool_call",
                     "mcp_server_tool_result",
                 }
@@ -1801,21 +1825,27 @@ class RawOpenAIChatClient(
             group_call_ids.setdefault(group_id, []).extend(call_ids)
 
         invalid_groups: list[str] = []
+        reasoning_id_groups: dict[str, set[str]] = {}
+        for group_id, reasoning_contents in group_reasoning_contents.items():
+            for content in reasoning_contents:
+                if content.id:
+                    reasoning_id_groups.setdefault(content.id, set()).add(group_id)
+        reasoning_ids_reused_across_groups = {
+            reasoning_id for reasoning_id, group_ids in reasoning_id_groups.items() if len(group_ids) > 1
+        }
+
         for group_id in groups_with_reasoning:
             call_ids = list(dict.fromkeys(group_call_ids.get(group_id, [])))
             if not call_ids:
                 continue
             reasoning_contents = group_reasoning_contents.get(group_id, [])
-            replayable_reasoning_ids = {
-                content.id
-                for content in reasoning_contents
-                if content.id and (content.protected_data or content.additional_properties.get("encrypted_content"))
-            }
             missing_reasoning_ids = list(
                 dict.fromkeys(
                     content.id or "<missing provider reasoning id>"
                     for content in reasoning_contents
-                    if not content.id or content.id not in replayable_reasoning_ids
+                    if not content.id
+                    or content.id not in replayable_reasoning_ids
+                    or content.id in reasoning_ids_reused_across_groups
                 )
             )
             if not reasoning_contents:
@@ -1827,9 +1857,9 @@ class RawOpenAIChatClient(
 
         if invalid_groups:
             raise ChatClientInvalidRequestException(
-                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because encrypted reasoning "
-                "content is missing. Use service-side continuation or explicitly configured atomic compaction to "
-                "exclude each complete reasoning/tool-call group."
+                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because required reasoning replay "
+                "data is missing or invalid. Use service-side continuation or explicitly configured atomic "
+                "compaction to exclude each complete reasoning/tool-call group."
             )
 
     def _prepare_message_for_openai(
@@ -1898,6 +1928,21 @@ class RawOpenAIChatClient(
                         all_messages.append(function_call)
                 case "shell_tool_call" | "shell_tool_result":
                     if request_uses_service_side_storage:
+                        continue
+                    if "content" in args or "tool_calls" in args:
+                        all_messages.append(args)
+                        args = {"type": "message", "role": message.role}
+                    all_messages.append(
+                        self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                    )
+                case "computer_tool_call" | "computer_tool_result":
+                    if content.type == "computer_tool_call" and request_uses_service_side_storage:
+                        # Skip only outbound replay: the call remains in response/history for audit.
+                        # It is still actionable, so informational_only would be misleading here.
                         continue
                     if "content" in args or "tool_calls" in args:
                         all_messages.append(args)
@@ -1988,6 +2033,8 @@ class RawOpenAIChatClient(
                 None,
             )
             if not encrypted_content:
+                if provider_item := self._prepare_provider_reasoning_item_for_openai(reasoning_id, contents):
+                    reasoning_items[reasoning_id] = provider_item
                 continue
 
             item: dict[str, Any] = {
@@ -2011,6 +2058,14 @@ class RawOpenAIChatClient(
                 item["content"] = reasoning_texts
             reasoning_items[reasoning_id] = item
         return reasoning_items
+
+    def _prepare_provider_reasoning_item_for_openai(
+        self,
+        reasoning_id: str,
+        contents: Sequence[Content],
+    ) -> dict[str, Any] | None:
+        """Return a provider-native reasoning item for stateless replay, when supported."""
+        return None
 
     def _prepare_content_for_openai(
         self,
@@ -2153,6 +2208,54 @@ class RawOpenAIChatClient(
                 return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
             case "shell_tool_result":
                 return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call_output")
+            case "computer_tool_call":
+                if not content.id or not content.call_id or not content.actions:
+                    raise ChatClientInvalidRequestException("Computer calls require an id, call_id, and actions.")
+                computer_call_item: dict[str, Any] = {
+                    "type": "computer_call",
+                    "id": content.id,
+                    "call_id": content.call_id,
+                }
+                if content.additional_properties.get("computer_action_format") == "single":
+                    if len(content.actions) != 1:
+                        raise ChatClientInvalidRequestException("A preview computer call must contain one action.")
+                    computer_call_item["action"] = content.actions[0]
+                else:
+                    computer_call_item["actions"] = content.actions
+                if content.status is not None:
+                    computer_call_item["status"] = content.status
+                if content.pending_safety_checks is not None:
+                    computer_call_item["pending_safety_checks"] = content.pending_safety_checks
+                return computer_call_item
+            case "computer_tool_result":
+                screenshot = content.screenshot
+                if not content.call_id or screenshot is None:
+                    raise ChatClientInvalidRequestException("Computer results require a call_id and screenshot.")
+                screenshot_output: dict[str, Any] = {"type": "computer_screenshot"}
+                if screenshot.type in ("data", "uri") and screenshot.uri:
+                    screenshot_output["image_url"] = screenshot.uri
+                    if file_id := screenshot.additional_properties.get("file_id"):
+                        screenshot_output["file_id"] = file_id
+                elif screenshot.type == "hosted_file" and screenshot.file_id:
+                    screenshot_output["file_id"] = screenshot.file_id
+                    if image_url := screenshot.additional_properties.get("image_url"):
+                        screenshot_output["image_url"] = image_url
+                else:
+                    raise ChatClientInvalidRequestException("A computer screenshot must have an image URL or file ID.")
+                if detail := screenshot.additional_properties.get("detail"):
+                    screenshot_output["detail"] = detail
+                computer_output_item: dict[str, Any] = {
+                    "type": "computer_call_output",
+                    "call_id": content.call_id,
+                    "output": screenshot_output,
+                }
+                if content.id is not None:
+                    computer_output_item["id"] = content.id
+                if content.status is not None:
+                    computer_output_item["status"] = content.status
+                if content.acknowledged_safety_checks is not None:
+                    computer_output_item["acknowledged_safety_checks"] = content.acknowledged_safety_checks
+                return computer_output_item
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
@@ -2700,6 +2803,113 @@ class RawOpenAIChatClient(
             return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
 
+    def _parse_computer_safety_checks(self, value: Any) -> list[ComputerSafetyCheck] | None:
+        if value is None:
+            return None
+        serialized = self._serialize_provider_payload(value)
+        if not isinstance(serialized, list):
+            raise ChatClientInvalidRequestException("Computer safety checks must be a list.")
+        checks: list[ComputerSafetyCheck] = []
+        for check in cast("list[object]", serialized):
+            if not isinstance(check, Mapping):
+                raise ChatClientInvalidRequestException("Computer safety checks require an id.")
+            check_fields = cast("Mapping[str, object]", check)
+            check_id = check_fields.get("id")
+            if not isinstance(check_id, str) or not check_id:
+                raise ChatClientInvalidRequestException("Computer safety checks require an id.")
+            parsed: ComputerSafetyCheck = {"id": check_id}
+            code = check_fields.get("code")
+            if code is not None:
+                if not isinstance(code, str):
+                    raise ChatClientInvalidRequestException("Computer safety check code must be a string.")
+                parsed["code"] = code
+            message = check_fields.get("message")
+            if message is not None:
+                if not isinstance(message, str):
+                    raise ChatClientInvalidRequestException("Computer safety check message must be a string.")
+                parsed["message"] = message
+            checks.append(parsed)
+        return checks
+
+    def _parse_computer_tool_call_content(self, item: Any) -> Content:
+        actions = getattr(item, "actions", None)
+        singular_action = getattr(item, "action", None)
+        is_preview = actions is None and singular_action is not None
+        serialized = self._serialize_provider_payload([singular_action] if is_preview else actions)
+        if not isinstance(serialized, list) or not serialized:
+            raise ChatClientInvalidRequestException("Computer call is missing its ordered actions.")
+        parsed_actions: list[dict[str, Any]] = []
+        for action in cast("list[object]", serialized):
+            if not isinstance(action, Mapping):
+                raise ChatClientInvalidRequestException("Computer call actions must be objects.")
+            parsed_actions.append(dict(cast("Mapping[str, Any]", action)))
+        item_id = getattr(item, "id", None)
+        call_id = getattr(item, "call_id", None)
+        if not isinstance(item_id, str) or not isinstance(call_id, str):
+            raise ChatClientInvalidRequestException("Computer call is missing its item id or call_id.")
+        additional_properties = {"computer_action_format": "single"} if is_preview else None
+        return Content.from_computer_tool_call(
+            id=item_id,
+            call_id=call_id,
+            actions=parsed_actions,
+            status=getattr(item, "status", None),
+            pending_safety_checks=self._parse_computer_safety_checks(getattr(item, "pending_safety_checks", None)),
+            additional_properties=additional_properties,
+            raw_representation=item,
+        )
+
+    def _parse_computer_tool_result_content(self, item: Any) -> Content:
+        raw_output = self._serialize_provider_payload(getattr(item, "output", None))
+        if not isinstance(raw_output, Mapping):
+            raise ChatClientInvalidRequestException("Computer call output must contain a computer screenshot.")
+        output = cast("Mapping[str, object]", raw_output)
+        if output.get("type") != "computer_screenshot":
+            raise ChatClientInvalidRequestException("Computer call output must contain a computer screenshot.")
+        image_url = output.get("image_url")
+        file_id = output.get("file_id")
+        detail = output.get("detail")
+        screenshot_properties: dict[str, Any] = {}
+        if detail is not None:
+            screenshot_properties["detail"] = detail
+        if isinstance(image_url, str) and image_url:
+            if file_id is not None:
+                screenshot_properties["file_id"] = file_id
+            screenshot = Content.from_uri(image_url, additional_properties=screenshot_properties)
+        elif isinstance(file_id, str) and file_id:
+            screenshot = Content.from_hosted_file(file_id=file_id, additional_properties=screenshot_properties)
+        else:
+            raise ChatClientInvalidRequestException("Computer screenshot is missing its image URL or file ID.")
+        call_id = getattr(item, "call_id", None)
+        if not isinstance(call_id, str) or not call_id:
+            raise ChatClientInvalidRequestException("Computer call output is missing its call_id.")
+        return Content.from_computer_tool_result(
+            id=getattr(item, "id", None),
+            call_id=call_id,
+            screenshot=screenshot,
+            status=getattr(item, "status", None),
+            acknowledged_safety_checks=self._parse_computer_safety_checks(
+                getattr(item, "acknowledged_safety_checks", None)
+            ),
+            raw_representation=item,
+        )
+
+    @staticmethod
+    def _mark_completed_computer_calls(contents: Sequence[Content]) -> None:
+        """Pair completed outputs with preceding calls without hiding either transcript item."""
+        open_calls: dict[str, deque[Content]] = {}
+        for content in contents:
+            if content.type == "computer_tool_call" and content.user_input_request and content.call_id:
+                open_calls.setdefault(content.call_id, deque()).append(content)
+            elif (
+                content.type == "computer_tool_result"
+                and content.call_id
+                and content.status in (None, "completed")
+                and (calls := open_calls.get(content.call_id))
+            ):
+                call = calls.popleft()
+                call.user_input_request = False
+                call.informational_only = True
+
     @staticmethod
     def _parse_azure_ai_search_output_payload(output: Any) -> Mapping[str, Any] | None:
         """Parse an Azure AI Search tool output payload from a streamed Responses event."""
@@ -2982,7 +3192,10 @@ class RawOpenAIChatClient(
             return FinishReason("length")
         if getattr(response, "status", None) != "completed":
             return None
-        if any(getattr(item, "type", None) == "function_call" for item in getattr(response, "output", ())):
+        if any(
+            getattr(item, "type", None) in ("function_call", "computer_call")
+            for item in getattr(response, "output", ())
+        ):
             return FinishReason("tool_calls")
         return FinishReason("stop")
 
@@ -3200,6 +3413,11 @@ class RawOpenAIChatClient(
                             raw_representation=item,
                         )
                     )
+                case "computer_call":
+                    contents.append(self._parse_computer_tool_call_content(item))
+                case _ if getattr(item, "type", None) == "computer_call_output":
+                    # The 2.25 SDK omits this model from the response output union.
+                    contents.append(self._parse_computer_tool_result_content(item))
                 case _ if getattr(item, "type", None) == "function_call_output":
                     # The 2.25 SDK exposes this model but omits it from the response output union.
                     output_item = cast(ResponseFunctionToolCallOutputItem, item)
@@ -3258,6 +3476,7 @@ class RawOpenAIChatClient(
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
+        self._mark_completed_computer_calls(contents)
         response_message = Message(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
@@ -3620,11 +3839,15 @@ class RawOpenAIChatClient(
                                 raw_representation=event_item,
                             )
                         )
-                    case "shell_call" | "local_shell_call" | "shell_call_output":
-                        # Shell items carry their command/output only on the
-                        # `response.output_item.done` event; the `.added` snapshot is an
-                        # in-progress skeleton with an empty action. Parsed in the
-                        # `response.output_item.done` handler instead.
+                    case (
+                        "shell_call"
+                        | "local_shell_call"
+                        | "shell_call_output"
+                        | "computer_call"
+                        | "computer_call_output"
+                    ):
+                        # These items carry their full actions or output only on the
+                        # `response.output_item.done` event.
                         pass
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
@@ -3858,6 +4081,10 @@ class RawOpenAIChatClient(
                     # Shell items are parsed here (not on `response.output_item.added`) because the
                     # command/output is only populated on the completed item.
                     contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
+                elif getattr(done_item, "type", None) == "computer_call":
+                    contents.append(self._parse_computer_tool_call_content(done_item))
+                elif getattr(done_item, "type", None) == "computer_call_output":
+                    contents.append(self._parse_computer_tool_result_content(done_item))
                 elif getattr(done_item, "type", None) == "image_generation_call":
                     # The final image is only delivered on the completed item; with the default
                     # `partial_images=0` there are no `partial_image` events at all.

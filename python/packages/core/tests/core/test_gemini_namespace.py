@@ -13,12 +13,16 @@ def test_gemini_namespace_dir_lists_lazy_exports() -> None:
     for expected in (
         "GeminiChatClient",
         "GeminiChatOptions",
-        "GeminiSettings",
+        "GeminiEmbeddingClient",
+        "GeminiEmbeddingOptions",
         "GoogleGeminiSettings",
         "RawGeminiChatClient",
+        "RawGeminiEmbeddingClient",
         "ThinkingConfig",
     ):
         assert expected in names
+    assert "GeminiSettings" not in names
+    assert "GeminiEmbeddingSettings" not in names
 
 
 def test_gemini_namespace_lazy_loads_known_attribute(monkeypatch: pytest.MonkeyPatch) -> None:

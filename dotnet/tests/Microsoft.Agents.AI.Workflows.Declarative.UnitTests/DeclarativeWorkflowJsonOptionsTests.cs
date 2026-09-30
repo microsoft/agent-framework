@@ -67,11 +67,12 @@ public sealed partial class DeclarativeWorkflowJsonOptionsTests(ITestOutputHelpe
     [Fact]
     public void ExternalInputResponse_RoundTrip()
     {
-        ExternalInputResponse copy = RoundTrip(new ExternalInputResponse(new ChatMessage(ChatRole.User, "ok")));
+        ExternalInputResponse copy = RoundTrip(new ExternalInputResponse([new ChatMessage(ChatRole.User, "ok")], "request-1"));
 
         ChatMessage messageCopy = Assert.Single(copy.Messages);
         Assert.Equal(ChatRole.User, messageCopy.Role);
         Assert.Equal("ok", messageCopy.Text);
+        Assert.Equal("request-1", copy.RequestId);
     }
 
     [Fact]
