@@ -1889,6 +1889,40 @@ def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     assert response.agent_id == "source-agent"
 
 
+def test_chat_response_from_updates_preserves_continuation_token_while_in_progress() -> None:
+    # A token stamped on an earlier update must survive later updates that do not
+    # repeat it: presence on the aggregate means the operation is still in progress.
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(
+            contents=[Content.from_text(text="working")],
+            response_id="resp_1",
+            model="gpt-5",
+            continuation_token={"response_id": "resp_1"},
+        ),
+        ChatResponseUpdate(contents=[Content.from_text(text="...still working")]),
+    ])
+
+    assert response.response_id == "resp_1"
+    assert response.model == "gpt-5"
+    assert response.continuation_token == {"response_id": "resp_1"}
+
+
+def test_chat_response_from_updates_clears_continuation_token_on_terminal_update() -> None:
+    # The update that carries a finish_reason is terminal, so it withdraws the token
+    # from the aggregate: "None means the operation is complete".
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(
+            contents=[Content.from_text(text="working")],
+            response_id="resp_1",
+            continuation_token={"response_id": "resp_1"},
+        ),
+        ChatResponseUpdate(contents=[Content.from_text(text="done")], finish_reason="stop"),
+    ])
+
+    assert response.finish_reason == "stop"
+    assert response.continuation_token is None
+
+
 def test_agent_run_response_str_method(chat_message: Message) -> None:
     response = AgentResponse(messages=chat_message)
     assert str(response) == "Hello"

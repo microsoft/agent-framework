@@ -2236,7 +2236,12 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         and update.finish_reason is not None
     ):
         response.finish_reason = update.finish_reason
-    response.continuation_token = update.continuation_token
+    if update.continuation_token is not None:
+        response.continuation_token = update.continuation_token
+    elif update.finish_reason is not None:
+        # A terminal update withdraws the token: its presence on the aggregate
+        # means the operation is still in progress.
+        response.continuation_token = None
 
 
 def _merge_function_call_content(message: Message, content: Content) -> None:
