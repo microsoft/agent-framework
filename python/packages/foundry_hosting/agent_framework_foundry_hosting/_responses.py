@@ -22,6 +22,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
+from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
@@ -126,6 +127,9 @@ _HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
 _HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
 _HOSTED_SERVICE_CHILD_KEY = "_foundry_service_child"
 _HOSTED_CONVERSATION_CLAIM_KEY = "_foundry_conversation_claim"
+_HOSTED_CONVERSATION_COMMITTED_KEY = "_foundry_conversation_committed"
+_HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
+_HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 
@@ -1172,7 +1176,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         hosted_request: HostedResponseRequest,
-    ) -> AsyncGenerator[ResponseStreamEvent]:
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle a regular (non-workflow) agent.
 
         The response stream, tracker, and opening lifecycle events are produced
@@ -1187,6 +1191,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         stored = request.get("store") is not False
 
         request_messages_task: asyncio.Task[list[Message]] | None = None
+        conversation_already_committed = False
         try:
             if isinstance(agent, RawAgent):
                 validate_default_transport_options(
@@ -1285,12 +1290,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
+            provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if context.conversation_id is not None:
                 if context.is_recovery and provider_background:
                     if session_storage is None:
                         raise RuntimeError("Provider background recovery requires agent session storage.")
                     head = await session_storage.get(context.conversation_id)
-                    if head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id:
+                    conversation_already_committed = (
+                        head is not None
+                        and head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is None
+                        and head.state.get(_HOSTED_CONVERSATION_COMMITTED_KEY) == context.response_id
+                        and isinstance(provider_state, Mapping)
+                        and cast(Mapping[str, Any], provider_state).get("completed") is True
+                    )
+                    if not conversation_already_committed and (
+                        head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id
+                    ):
                         raise RuntimeError(
                             "Cannot recover provider background: the service-backed conversation claim "
                             "is no longer held by this response."
@@ -1302,7 +1317,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "store=false cannot continue agent-managed downstream service history; "
                     "start a new one-shot request or use store=true."
                 )
-            provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if (
                 not context.is_recovery
                 and provider_state is not None
@@ -1396,8 +1410,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             if not context.is_recovery:
                 session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                session.state.pop(_HOSTED_CONVERSATION_COMMITTED_KEY, None)
 
-            if stored and context.conversation_id is not None and not configuration.agent_server_history:
+            if (
+                stored
+                and context.conversation_id is not None
+                and not configuration.agent_server_history
+                and not conversation_already_committed
+            ):
                 if session_storage is None:
                     raise RuntimeError("Service history requires agent session storage.")
                 # The scoped store's conditional write must succeed before the provider can
@@ -1409,10 +1429,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
+            updates: _SignalledIterator[AgentResponseUpdate] | None = None
             if provider_background:
                 if session_storage is None or not isinstance(agent, RawAgent):
                     raise RuntimeError("Provider background requires a stored MAF agent session.")
-                updates = self._provider_background_updates(
+                output_count = response_event_stream.internal_metadata.get(_HOSTED_PROVIDER_OUTPUT_COUNT_KEY, 0)
+                if type(output_count) is not int or output_count < 0:
+                    raise RuntimeError("The persisted provider output cursor is invalid.")
+                responses = self._provider_background_responses(
                     agent=cast(RawAgent[ChatOptions[Any]], agent),
                     messages=messages,
                     session=session,
@@ -1420,20 +1444,36 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     options=chat_options,
                     context=context,
                     cancellation_signal=cancellation_signal,
+                    emitted_output_count=output_count,
                 )
+                async with aclosing(responses):
+                    async for response, output_count in responses:
+                        for update in _agent_response_updates(response, context.response_id):
+                            if context.shutdown.is_set() or cancellation_signal.is_set():
+                                break
+                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                                yield event
+                        if context.shutdown.is_set() or cancellation_signal.is_set():
+                            continue
+                        for event in tracker.close():
+                            yield event
+                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
+                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
+                        if self._resilient_background:
+                            yield response_event_stream.checkpoint()
             else:
                 inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
                 updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
-            async with aclosing(updates):
-                async for update in updates:
-                    if not stored and any(
-                        content.type in ("function_approval_request", "oauth_consent_request")
-                        or content.user_input_request
-                        for content in update.contents
-                    ):
-                        raise ValueError("Approval and user-input continuation requires store=true.")
-                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
-                        yield event
+                async with aclosing(updates):
+                    async for update in updates:
+                        if not stored and any(
+                            content.type in ("function_approval_request", "oauth_consent_request")
+                            or content.user_input_request
+                            for content in update.contents
+                        ):
+                            raise ValueError("Approval and user-input continuation requires store=true.")
+                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            yield event
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
                 final = await inner_stream.get_final_response()
                 if final.continuation_token is not None and final.finish_reason is None:
@@ -1504,6 +1544,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await session_storage.set(context.response_id, session)
                     if (
                         context.conversation_id is not None
+                        and not conversation_already_committed
                         and not superseded_by_steering
                         and not request_interrupted
                         and request_failure is None
@@ -1514,6 +1555,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     ):
                         if provider_background:
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                        session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
                         await session_storage.set(context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
@@ -1535,7 +1577,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif save_failure is not None:
             raise save_failure
 
-    async def _provider_background_updates(
+    async def _provider_background_responses(
         self,
         *,
         agent: RawAgent[ChatOptions[Any]],
@@ -1545,8 +1587,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         options: ChatOptions[Any],
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncGenerator[AgentResponseUpdate]:
-        """Keep the inner provider token private while the outer response ID is polled."""
+        emitted_output_count: int,
+    ) -> AsyncGenerator[tuple[AgentResponse[Any], int]]:
+        """Persist polling output with its private token and replay uncheckpointed output on recovery."""
+        outputs: list[dict[str, Any]] = []
 
         async def proceed(*, has_token: bool) -> bool:
             if cancellation_signal.is_set() and context.client_cancelled:
@@ -1586,6 +1630,46 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 return
             raise RuntimeError("Could not save private provider background state; inspect the host logs.")
 
+        def record_output(response: AgentResponse[Any]) -> None:
+            messages = response.messages
+            if response.continuation_token is not None:
+                # A tool loop prefixes completed calls/results to the unfinished model
+                # response. Retain that prefix, not partial output that polling will repeat.
+                for index in range(len(messages) - 1, -1, -1):
+                    message = messages[index]
+                    last_result = next(
+                        (
+                            offset
+                            for offset in range(len(message.contents) - 1, -1, -1)
+                            if message.contents[offset].type == "function_result"
+                        ),
+                        None,
+                    )
+                    if last_result is not None:
+                        completed_message = copy(message)
+                        completed_message.contents = message.contents[: last_result + 1]
+                        messages = [*messages[:index], completed_message]
+                        break
+                else:
+                    return
+            outputs.append(
+                AgentResponse(
+                    messages=messages,
+                    usage_details=response.usage_details,
+                    finish_reason=FinishReason(response.finish_reason) if response.finish_reason is not None else None,
+                ).to_dict()
+            )
+
+        async def pending_outputs() -> AsyncGenerator[tuple[AgentResponse[Any], int]]:
+            nonlocal emitted_output_count
+            while emitted_output_count < len(outputs):
+                if not await proceed(has_token=True):
+                    return
+                yield AgentResponse.from_dict(outputs[emitted_output_count]), emitted_output_count + 1
+                if not await proceed(has_token=True):
+                    return
+                emitted_output_count += 1
+
         if context.is_recovery:
             saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if not isinstance(saved, Mapping):
@@ -1597,6 +1681,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if not isinstance(token, Mapping):
                 raise RuntimeError("The stored provider continuation token is invalid.")
             continuation_token: Mapping[str, Any] = cast(Mapping[str, Any], token)
+            saved_outputs = saved_payload.get("outputs", [])
+            if not isinstance(saved_outputs, list) or any(
+                not isinstance(output, dict) for output in cast(list[object], saved_outputs)
+            ):
+                raise RuntimeError("The stored provider output is invalid.")
+            outputs = cast(list[dict[str, Any]], saved_outputs)
+            if emitted_output_count > len(outputs):
+                raise RuntimeError("The persisted provider output cursor exceeds its private snapshot.")
+            async for output in pending_outputs():
+                yield output
+            if saved_payload.get("completed") is True and outputs:
+                await proceed(has_token=True)
+                return
         else:
             if not await proceed(has_token=False):
                 return
@@ -1618,17 +1715,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if first.continuation_token is None:
                 if not await proceed(has_token=False):
                     return
-                for update in _agent_response_updates(first, context.response_id):
-                    yield update
+                yield first, 1
                 return
             if not isinstance(first.continuation_token, Mapping):
                 raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
             continuation_token = cast(Mapping[str, Any], first.continuation_token)
+            if any(message.contents for message in first.messages) or first.usage_details:
+                record_output(first)
             session.state[_HOSTED_PROVIDER_STATE_KEY] = {
                 "outer_response_id": context.response_id,
                 "continuation_token": dict(continuation_token),
+                "outputs": outputs,
             }
             await save_private_state()
+            async for output in pending_outputs():
+                yield output
 
         while True:
             if not await proceed(has_token=True):
@@ -1659,27 +1760,34 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if current is None:
                 raise RuntimeError("The provider did not return a background response.")
             if current.continuation_token is None:
-                # Until AgentServer commits the outer terminal event, recovery may need to re-poll this ID.
+                # Save the completed output with its token before publishing it; recovery
+                # replays the uncheckpointed output without invoking the agent again.
+                record_output(current)
                 session.state[_HOSTED_PROVIDER_STATE_KEY] = {
                     "outer_response_id": context.response_id,
                     "continuation_token": dict(continuation_token),
                     "completed": True,
+                    "outputs": outputs,
                 }
                 await save_private_state()
-                for update in _agent_response_updates(current, context.response_id):
-                    if not await proceed(has_token=True):
-                        return
-                    yield update
-                await proceed(has_token=True)
+                async for output in pending_outputs():
+                    yield output
                 return
             if not isinstance(current.continuation_token, Mapping):
                 raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
+            if current.continuation_token == continuation_token:
+                continue
+            if any(message.contents for message in current.messages) or current.usage_details:
+                record_output(current)
             continuation_token = cast(Mapping[str, Any], current.continuation_token)
             session.state[_HOSTED_PROVIDER_STATE_KEY] = {
                 "outer_response_id": context.response_id,
                 "continuation_token": dict(continuation_token),
+                "outputs": outputs,
             }
             await save_private_state()
+            async for output in pending_outputs():
+                yield output
 
     async def _handle_inner_workflow(
         self,
@@ -1957,6 +2065,14 @@ class _OutputItemTracker:
         self._stream = stream
         self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
+        persisted_usage = stream.internal_metadata.get(_HOSTED_PROVIDER_USAGE_KEY)
+        if persisted_usage is not None:
+            if not isinstance(persisted_usage, Mapping) or any(
+                not isinstance(key, str) or (value is not None and type(value) is not int)
+                for key, value in cast(Mapping[object, object], persisted_usage).items()
+            ):
+                raise RuntimeError("The persisted provider usage is invalid.")
+            self._usage_details = cast(UsageDetails, dict(cast(Mapping[str, int | None], persisted_usage)))
         self._active_type: str | None = None
         self._active_id: str | None = None
         # message_id of the update that opened the active text item, used to detect a new
@@ -2004,6 +2120,11 @@ class _OutputItemTracker:
             server_label = persisted_item.get("server_label")
             if isinstance(consent_link, str) and isinstance(server_label, str):
                 self._oauth_consent_requests.add((consent_link, server_label))
+
+    @property
+    def usage_details(self) -> UsageDetails | None:
+        """Return usage retained with the provider output checkpoint."""
+        return self._usage_details
 
     @property
     def usage(self) -> ResponseUsage | None:

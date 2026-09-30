@@ -96,10 +96,13 @@ background automatically. `background_source="agent_server"` (default) uses only
 `background_source="provider"` is a separate opt-in for `history_source="service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
 Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
-the token is saved cannot safely restart the inner job. A final provider poll retains that token in the private
-response-ID snapshot so recovery can re-poll it if the outer response was not yet committed; a later turn drops
-it from its working session. Shutdown during initial submission fails rather than replaying a job whose
-acceptance is unknown. Cancelling an in-flight submission does not prove the remote provider stopped it.
+the token is saved cannot safely restart the inner job. Completed polling output, including local function calls,
+results, and usage, is saved together with the next token in the private response-ID snapshot before emission.
+Outer output checkpoints record which saved batches have been emitted, so recovery restores their usage and
+replays only uncheckpointed output. Once the final output is saved, recovery can finish from that snapshot without
+calling the provider again; a later turn drops it from its working session. Shutdown during initial submission
+fails rather than replaying a job whose acceptance is unknown. Cancelling an in-flight submission does not prove
+the remote provider stopped it.
 Each poll retains the caller's generation options and `background=True`, so a tool-loop follow-up requests
 another background response and saves its next token. A crash after a local tool side effect but before that
 next token is saved can still repeat the tool on recovery; use idempotent tools or avoid provider background
@@ -242,6 +245,9 @@ Another request that read the old head loses the CAS; one that reads the claim f
 The claim is cleared when the winning turn successfully commits the new head. If a dispatched turn fails or is
 cancelled, the claim remains: the provider may already have changed its thread, so start a new conversation
 instead of retrying this one blindly. A recovered provider-background turn must still own the same claim.
+The committed head also records its completing outer response ID. If a crash occurs after the head write but before
+outer completion, that response can recover its saved final output without reclaiming or rewriting the head.
+A different in-flight claim or completing response is not accepted as ownership.
 When continuing by `previous_response_id`, the prior response is claimed with a conditional write **after**
 the input is validated, so an invalid approval response does not consume a usable parent. A second branch
 cannot reuse the same downstream service thread; attempting to fork a named service conversation is also rejected.

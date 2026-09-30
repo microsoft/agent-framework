@@ -70,12 +70,19 @@ from azure.ai.agentserver.responses import (
 )
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseIncompleteReason
+from azure.ai.agentserver.responses.models import (
+    CreateResponse,
+    Item,
+    OutputItem,
+    ResponseIncompleteReason,
+    ResponseObject,
+)
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
+from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
 from typing_extensions import Any
 
@@ -2102,7 +2109,127 @@ class TestAgentSessionPersistence:
             assert head.service_session_id == "private-service-thread"
         assert "private-provider-token" not in str(events)
 
-    async def test_provider_background_polls_keep_options_and_new_token_after_tool(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("ownership", ["same-response", "other-claim", "other-completion", "claim-during-recovery"])
+    async def test_provider_recovery_after_conversation_head_commit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ownership: str
+    ) -> None:
+        response_id = f"outer-{uuid.uuid4().hex}"
+        conversation_id = f"conversation-{uuid.uuid4().hex}"
+        token = OpenAIContinuationToken(response_id="private-provider-token")
+        run = AsyncMock()
+
+        async def provider_run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            await run(options)
+            if "continuation_token" not in options:
+                return AgentResponse(messages=[], continuation_token=token)
+            session.service_session_id = "private-service-thread"
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])])
+
+        def make_host() -> ResponsesHostServer:
+            agent = Agent(client=_ServiceStorageRecordingClient())
+            monkeypatch.setattr(agent, "run", MagicMock(side_effect=provider_run))
+            return _make_server(
+                agent,
+                history_source="service",
+                background_source="provider",
+                options=ResponsesServerOptions(resilient_background=True),
+                response_store=FileResponseStore(storage_dir=tmp_path),
+            )
+
+        original_set = FoundryAgentSessionStore.set
+
+        async def crash_after_head_write(store: FoundryAgentSessionStore, key: str, session: AgentSession) -> None:
+            await original_set(store, key, session)
+            if key == conversation_id and session.state.get("_foundry_conversation_committed") == response_id:
+                raise ResponseExitForRecovery
+
+        server = make_host()
+        context = ResponseContext(response_id=response_id, conversation_id=conversation_id, mode_flags=MagicMock())
+        request = CreateResponse(input="hello", store=True, background=True)
+        snapshots: list[dict[str, Any]] = []
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(FoundryAgentSessionStore, "set", new=crash_after_head_write),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(ResponseExitForRecovery),
+        ):
+            async for event in server._handle_response(request, context, asyncio.Event()):
+                if isinstance(event, ResponseCheckpointEvent):
+                    snapshots.append(copy.deepcopy(dict(event.response)))
+
+        store = AgentSessionStoreProvider().get_store(config=server.config, platform_context=get_request_context())
+        head = await store.get(conversation_id)
+        saved = await store.get(response_id)
+        assert head is not None and "_foundry_conversation_claim" not in head.state
+        assert head.state["_foundry_conversation_committed"] == response_id
+        assert saved is not None and saved.state["_foundry_provider_background"]["completed"] is True
+        assert snapshots and snapshots[-1]["status"] == "in_progress"
+        assert run.await_count == 2
+        if ownership == "other-claim":
+            head.state["_foundry_conversation_claim"] = "newer-response"
+            await store.set(conversation_id, head)
+        elif ownership == "other-completion":
+            head.state["_foundry_conversation_committed"] = "newer-response"
+            await store.set(conversation_id, head)
+
+        original_get = FoundryAgentSessionStore.get
+        raced = False
+
+        async def claim_after_recovery_read(reader: FoundryAgentSessionStore, key: str) -> AgentSession | None:
+            nonlocal raced
+            loaded = await original_get(reader, key)
+            if key == conversation_id and ownership == "claim-during-recovery" and not raced:
+                raced = True
+                newer = await original_get(cast(FoundryAgentSessionStore, store), key)
+                assert newer is not None
+                newer.state["_foundry_conversation_claim"] = "newer-response"
+                await store.set(key, newer)
+            return loaded
+
+        recovered = ResponseContext(response_id=response_id, conversation_id=conversation_id, mode_flags=MagicMock())
+        recovered.is_recovery = True
+        recovered.persisted_response = cast(ResponseObject, snapshots[-1])
+        recovered_host = make_host()
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(FoundryAgentSessionStore, "get", new=claim_after_recovery_read),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in recovered_host._handle_response(request, recovered, asyncio.Event())]
+
+        if ownership in ("other-claim", "other-completion"):
+            assert "claim is no longer held" in _failure_message(events)
+        else:
+            terminal = events[-1]
+            assert isinstance(terminal, Mapping) and terminal["type"] == "response.completed"
+            assert [item["type"] for item in terminal["response"]["output"]] == ["message"]
+            message = terminal["response"]["output"][0]
+            assert message["type"] == "message"
+            content = message["content"][0]
+            assert content["type"] == "output_text"
+            assert content["text"] == "done"
+        assert run.await_count == 2, "Recovery must not re-poll or submit provider work after this head commit."
+        final_head = await store.get(conversation_id)
+        assert final_head is not None
+        if ownership in ("other-claim", "claim-during-recovery"):
+            assert final_head.state["_foundry_conversation_claim"] == "newer-response"
+        elif ownership == "other-completion":
+            assert final_head.state["_foundry_conversation_committed"] == "newer-response"
+        else:
+            assert final_head.state["_foundry_conversation_committed"] == response_id
+        assert "private-provider-token" not in str(events)
+
+    @pytest.mark.parametrize("recovery_stage", [None, "before-output", "during-output", "after-checkpoint"])
+    async def test_provider_background_polls_keep_options_and_new_token_after_tool(
+        self, tmp_path: Path, recovery_stage: str | None
+    ) -> None:
         executions: list[str] = []
 
         @tool(approval_mode="never_require")
@@ -2110,14 +2237,19 @@ class TestAgentSessionPersistence:
             executions.append(to)
             return "sent"
 
-        def openai_response(response_id: str, status: str, output: Any | None = None) -> MagicMock:
+        def openai_response(
+            response_id: str,
+            status: str,
+            output: Any | None = None,
+            usage: OpenAIResponseUsage | None = None,
+        ) -> MagicMock:
             response = MagicMock()
             response.id = response_id
             response.status = status
             response.conversation = None
             response.model = "test-model"
             response.created_at = 1_700_000_000
-            response.usage = None
+            response.usage = usage
             response.metadata = {}
             response.incomplete_details = None
             response.output = [] if output is None else [output]
@@ -2137,22 +2269,61 @@ class TestAgentSessionPersistence:
             type="message",
             content=[MagicMock(type="output_text", text="Email sent.", annotations=[], logprobs=None)],
         )
+        partial_message = MagicMock(
+            type="message",
+            content=[MagicMock(type="output_text", text="Email", annotations=[], logprobs=None)],
+        )
         create = AsyncMock(
             side_effect=[
-                openai_response("private-first-token", "in_progress"),
-                openai_response("private-second-token", "in_progress"),
+                openai_response("private-first-token", "in_progress", partial_message),
+                openai_response("private-second-token", "in_progress", partial_message),
             ]
         )
         retrieve = AsyncMock(
             side_effect=[
-                openai_response("private-first-token", "completed", call),
-                openai_response("private-second-token", "completed", message),
+                openai_response("private-first-token", "in_progress"),
+                openai_response(
+                    "private-first-token",
+                    "completed",
+                    call,
+                    OpenAIResponseUsage.model_validate({
+                        "input_tokens": 5,
+                        "output_tokens": 2,
+                        "total_tokens": 7,
+                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                    }),
+                ),
+                openai_response(
+                    "private-second-token",
+                    "completed",
+                    message,
+                    OpenAIResponseUsage.model_validate({
+                        "input_tokens": 3,
+                        "output_tokens": 4,
+                        "total_tokens": 7,
+                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                        "output_tokens_details": {"reasoning_tokens": 0},
+                    }),
+                ),
             ]
         )
         client = OpenAIChatClient(model="test-model", api_key="test-key")
         client.function_invocation_configuration["max_iterations"] = 4
         agent = Agent(client=client, tools=[send_email])
-        store = SessionStore()
+
+        class CrashBeforeOutputStore(SessionStore):
+            crashed = False
+
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                # Exercise the same serialization boundary as durable storage.
+                await super().set(session_id, AgentSession.from_dict(session.to_dict()))
+                state = session.state.get("_foundry_provider_background", {})
+                if recovery_stage == "before-output" and state.get("outputs") and not self.crashed:
+                    self.crashed = True
+                    raise ResponseExitForRecovery
+
+        store = CrashBeforeOutputStore()
         server = _make_server(
             agent,
             session_store=store,
@@ -2163,6 +2334,7 @@ class TestAgentSessionPersistence:
         )
         context = ResponseContext(response_id="outer-tool-response", mode_flags=MagicMock())
         request = CreateResponse(input="email bob", store=True, background=True, temperature=0.42)
+        snapshots: list[dict[str, Any]] = []
 
         with (
             patch.object(
@@ -2174,7 +2346,34 @@ class TestAgentSessionPersistence:
             patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
             patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
         ):
-            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, asyncio.Event()),
+            )
+            events: list[Any] = []
+            try:
+                async for event in handler:
+                    if isinstance(event, ResponseCheckpointEvent):
+                        snapshots.append(copy.deepcopy(dict(event.response)))
+                        if recovery_stage == "after-checkpoint":
+                            raise ResponseExitForRecovery
+                    elif (
+                        recovery_stage == "during-output"
+                        and isinstance(event, Mapping)
+                        and event.get("type") == "response.function_call_arguments.delta"
+                    ):
+                        raise ResponseExitForRecovery
+                    events.append(event)
+            except ResponseExitForRecovery:
+                assert recovery_stage is not None
+            finally:
+                await handler.aclose()
+            if recovery_stage is not None:
+                recovered = ResponseContext(response_id=context.response_id, mode_flags=MagicMock())
+                recovered.is_recovery = True
+                if snapshots:
+                    recovered.persisted_response = cast(ResponseObject, snapshots[-1])
+                events = [event async for event in server._handle_response(request, recovered, asyncio.Event())]
 
         terminal = events[-1]
         assert isinstance(terminal, Mapping)
@@ -2182,10 +2381,27 @@ class TestAgentSessionPersistence:
             pytest.fail(_failure_message(events))
         assert terminal["type"] == "response.completed"
         assert executions == ["bob"]
-        assert create.await_count == retrieve.await_count == 2
+        output = terminal["response"]["output"]
+        assert [item["type"] for item in output] == ["function_call", "function_call_output", "message"]
+        assert output[0]["call_id"] == output[1]["call_id"] == "call_1"
+        assert output[0]["name"] == "send_email"
+        assert json.loads(output[0]["arguments"]) == {"to": "bob"}
+        assert output[1]["output"] == "sent"
+        assert output[2]["content"][0]["text"] == "Email sent."
+        assert terminal["response"]["usage"]["input_tokens"] == 8
+        assert terminal["response"]["usage"]["output_tokens"] == 6
+        assert terminal["response"]["usage"]["total_tokens"] == 14
+        assert create.await_count == 2
+        assert retrieve.await_count == 3
         assert [entry.kwargs["background"] for entry in create.await_args_list] == [True, True]
         assert [entry.kwargs["temperature"] for entry in create.await_args_list] == [0.42, 0.42]
+        follow_up = create.await_args_list[1].kwargs
+        assert follow_up["previous_response_id"] == "private-first-token"
+        assert [
+            (item["call_id"], item["output"]) for item in follow_up["input"] if item["type"] == "function_call_output"
+        ] == [("call_1", "sent")]
         assert [entry.args[0] for entry in retrieve.await_args_list] == [
+            "private-first-token",
             "private-first-token",
             "private-second-token",
         ]
@@ -2382,11 +2598,11 @@ class TestAgentSessionPersistence:
 
         saved = await store.get("outer-recovered")
         assert saved is not None
-        assert saved.state["_foundry_provider_background"] == {
-            "outer_response_id": "outer-recovered",
-            "continuation_token": token,
-            "completed": True,
-        }
+        state = saved.state["_foundry_provider_background"]
+        assert state["outer_response_id"] == "outer-recovered"
+        assert state["continuation_token"] == token
+        assert state["completed"] is True
+        assert len(state["outputs"]) == 1
 
         recovered = ResponseContext(response_id="outer-recovered", mode_flags=MagicMock())
         recovered.is_recovery = True
@@ -2398,7 +2614,7 @@ class TestAgentSessionPersistence:
 
         assert [event.get("type") for event in events if isinstance(event, Mapping)][-1] == "response.completed"
         assert "private-provider-token" not in str(events)
-        assert [option.get("background") for option in calls] == [True, True, True]
+        assert [option.get("background") for option in calls] == [True, True]
         assert all(option["continuation_token"] == token for option in calls[1:])
 
     @pytest.mark.parametrize("phase", ["submit", "poll", "save"])

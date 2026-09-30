@@ -50,8 +50,11 @@ continuation, a process crash can leave such a response unfinished. The optional
 [provider_background.py](provider_background.py) opts a storing Responses client into its *separate* background
 mode: only this mode persists the provider's private token and polls it until completion/recovery. It is incompatible
 with steering. Polls keep the original model options and `background=True`, including when a tool loop submits
-its next leg. A crash between a local tool side effect and saving the next private token can still replay
-that tool; use idempotent tools or avoid this mode for side-effecting local tools. The deployed identity
+its next leg. Each new private token is saved with the completed tool transcript and usage; recovery replays only
+output that was not checkpointed. Saved final output can finish an interrupted outer response without another
+provider call, even if that response already committed the conversation head. A crash between a local tool side
+effect and saving the next private token can still replay that tool; use idempotent tools or avoid this mode for
+side-effecting local tools. The deployed identity
 needs Foundry User permission on the project for private provider polling.
 
 [client.py](client.py) shows stored conversation turns, an unstored request, and background polling. It also needs
