@@ -1395,6 +1395,102 @@ class TestStepReplayIdentity:
 
         assert initial.get_outputs() == ["input:A"]
 
+    async def test_changed_step_definition_rejects_versioned_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        async def old_marker(value: str) -> str:
+            _factory_step_calls.append("old")
+            return f"old:{value}"
+
+        async def new_marker(value: str) -> str:
+            _factory_step_calls.append("new")
+            return f"new:{value}"
+
+        marker = step(name="marker")(old_marker)
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await marker(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        marker = step(name="marker")(new_marker)
+        gc.collect()
+
+        with pytest.raises(ValueError, match="different step definition"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["old:input"]
+        assert _factory_step_calls == ["old"]
+
+    async def test_rebound_default_change_rejects_versioned_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        async def old_marker(value: str, *, suffix: bytes = b"A") -> str:
+            return f"{value}:{suffix.decode()}"
+
+        async def new_marker(value: str, *, suffix: bytes = b"B") -> str:
+            return f"{value}:{suffix.decode()}"
+
+        marker = step(name="marker")(old_marker)
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await marker(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        marker = step(name="marker")(new_marker)
+        gc.collect()
+
+        with pytest.raises(ValueError, match="different step definition"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["input:A"]
+
+    async def test_mutable_step_result_isolated_across_response_replay(self):
+        _factory_step_calls.clear()
+
+        @step
+        async def create_items() -> list[str]:
+            _factory_step_calls.append("create")
+            return []
+
+        @built_workflow
+        async def wf(_: str, ctx: RunContext) -> list[str]:
+            items = await create_items()
+            items.append("after")
+            await ctx.request_info("continue", response_type=str, request_id="continue")
+            return items
+
+        interrupted = await wf.run("input")
+        assert interrupted.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        resumed = await wf.run(responses={"continue": "yes"})
+
+        assert resumed.get_outputs() == [["after"]]
+        assert _factory_step_calls == ["create"]
+
+    async def test_completed_event_isolated_from_mutable_result(self):
+        @step
+        async def create_items() -> list[str]:
+            return []
+
+        @built_workflow
+        async def wf(_: str) -> list[str]:
+            items = await create_items()
+            items.append("after")
+            return items
+
+        result = await wf.run("input")
+        completed = [event for event in result if event.type == "executor_completed"]
+
+        assert result.get_outputs() == [["after"]]
+        assert len(completed) == 1
+        assert completed[0].data == []
+
     async def test_legacy_checkpoint_replays_sequential_step(self):
         from agent_framework import WorkflowCheckpoint
 
@@ -1996,7 +2092,11 @@ class TestCheckpointValidation:
         second_closure = make("second")
 
         assert _get_step_wrapper_identity(first_default)[0] != _get_step_wrapper_identity(second_default)[0]
-        assert _get_step_wrapper_identity(first_closure)[0] != _get_step_wrapper_identity(second_closure)[0]
+        first_closure_identity, first_closure_is_durable = _get_step_wrapper_identity(first_closure)
+        second_closure_identity, second_closure_is_durable = _get_step_wrapper_identity(second_closure)
+        assert first_closure_is_durable is True
+        assert second_closure_is_durable is True
+        assert first_closure_identity != second_closure_identity
 
     def test_wrapper_identity_marks_mutable_closure_state_non_durable(self):
         state = ["A"]

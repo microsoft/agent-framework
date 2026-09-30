@@ -288,14 +288,25 @@ def _is_immutable_wrapper_state(value: Any) -> bool:
     return False
 
 
-def _get_step_wrapper_identity(func: Callable[..., Awaitable[Any]]) -> tuple[str, bool]:
-    code = getattr(func, "__code__", None)
+def _get_step_wrapper_defaults_state(func: Callable[..., Awaitable[Any]]) -> tuple[dict[str, Any], bool]:
     defaults, defaults_are_durable = _canonicalize_wrapper_state(func.__defaults__ or ())
     raw_kwdefaults = func.__kwdefaults__ or {}
     kwdefaults, _ = _canonicalize_wrapper_state(raw_kwdefaults)
     kwdefaults_are_durable = all(_is_immutable_wrapper_state(value) for value in raw_kwdefaults.values())
+    return (
+        {
+            "defaults": defaults,
+            "kwdefaults": kwdefaults,
+        },
+        defaults_are_durable and kwdefaults_are_durable,
+    )
+
+
+def _get_step_wrapper_identity(func: Callable[..., Awaitable[Any]]) -> tuple[str, bool]:
+    code = getattr(func, "__code__", None)
+    defaults_state, defaults_are_durable = _get_step_wrapper_defaults_state(func)
     closure_items: list[Any] = []
-    closure_is_durable = func.__closure__ is None
+    closure_is_durable = True
     if code is not None and func.__closure__ is not None:
         for name, cell in zip(code.co_freevars, func.__closure__):
             try:
@@ -304,22 +315,22 @@ def _get_step_wrapper_identity(func: Callable[..., Awaitable[Any]]) -> tuple[str
                 closure_items.append([name, ["empty"]])
                 closure_is_durable = False
                 continue
-            canonical, _ = _canonicalize_wrapper_state(value)
+            canonical, is_durable = _canonicalize_wrapper_state(value)
             closure_items.append([name, canonical])
+            closure_is_durable = closure_is_durable and is_durable
 
     payload = {
         "module": func.__module__,
         "qualname": func.__qualname__,
         "firstlineno": code.co_firstlineno if code is not None else None,
         "code": _get_code_identity_payload(code) if code is not None else None,
-        "defaults": defaults,
-        "kwdefaults": kwdefaults,
+        **defaults_state,
         "closure": closure_items,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return (
         hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
-        defaults_are_durable and kwdefaults_are_durable and closure_is_durable,
+        defaults_are_durable and closure_is_durable,
     )
 
 
@@ -338,34 +349,52 @@ def _encode_step_cache_key(
     return f"{_STEP_CACHE_KEY_V2_PREFIX}{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}"
 
 
+def _decode_versioned_step_cache_key(
+    key: str,
+) -> tuple[Literal["auto", "explicit"], str, str, str, int | None] | None:
+    if not key.startswith(_STEP_CACHE_KEY_V2_PREFIX):
+        return None
+    try:
+        raw_payload: object = json.loads(key.removeprefix(_STEP_CACHE_KEY_V2_PREFIX))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw_payload, list) or not raw_payload:
+        return None
+    payload = typing.cast(list[Any], raw_payload)
+    kind = payload[0]
+    if (
+        kind == "auto"
+        and len(payload) == 5
+        and all(isinstance(item, str) for item in payload[1:4])
+        and isinstance(payload[4], int)
+        and payload[4] >= 0
+    ):
+        return ("auto", payload[1], payload[2], payload[3], payload[4])
+    if kind == "explicit" and len(payload) == 4 and all(isinstance(item, str) for item in payload[1:]):
+        return ("explicit", payload[1], payload[2], payload[3], None)
+    raise ValueError("Invalid versioned step cache key.")
+
+
 def _validate_step_cache_key(key: Any) -> str:
     if not isinstance(key, str):
         raise TypeError("Step cache keys must be strings.")
 
-    if key.startswith(_STEP_CACHE_KEY_V2_PREFIX):
-        try:
-            raw_payload: object = json.loads(key.removeprefix(_STEP_CACHE_KEY_V2_PREFIX))
-        except json.JSONDecodeError:
-            raw_payload = None
-        if isinstance(raw_payload, list) and raw_payload:
-            payload = typing.cast(list[Any], raw_payload)
-            kind = payload[0]
-            if (
-                kind == "auto"
-                and len(payload) == 5
-                and all(isinstance(item, str) for item in payload[1:4])
-                and isinstance(payload[4], int)
-                and payload[4] >= 0
-            ):
-                return key
-            if kind == "explicit" and len(payload) == 4 and all(isinstance(item, str) for item in payload[1:]):
-                return key
-            raise ValueError("Invalid versioned step cache key.")
+    if _decode_versioned_step_cache_key(key) is not None:
+        return key
 
     name, idx_str = key.rsplit("::", 1)
     if not name or int(idx_str) < 0:
         raise ValueError("Invalid legacy step cache key.")
     return key
+
+
+def _snapshot_step_cache_value(value: Any) -> Any:
+    try:
+        return deepcopy(value)
+    except Exception as exc:
+        raise ValueError(
+            "@step results must support deepcopy so cached replay cannot be changed by downstream mutation."
+        ) from exc
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
@@ -662,6 +691,27 @@ class RunContext:
             return True, self._step_cache[key]
         return False, None
 
+    def _has_incompatible_versioned_cache_entry(self, key: str) -> bool:
+        current = _decode_versioned_step_cache_key(key)
+        if current is None:
+            return False
+        current_kind, current_step, current_wrapper, _current_identity, current_occurrence = current
+        for cached_key in self._step_cache:
+            cached = _decode_versioned_step_cache_key(cached_key)
+            if cached is None:
+                continue
+            cached_kind, cached_step, cached_wrapper, _cached_identity, cached_occurrence = cached
+            if (
+                cached_kind == current_kind
+                and cached_step == current_step
+                and cached_occurrence == current_occurrence
+                and cached_wrapper != current_wrapper
+            ):
+                live_wrappers = _step_wrapper_identity_registry.get((cached_step, cached_wrapper))
+                if not live_wrappers:
+                    return True
+        return False
+
     def _set_cached_result(self, key: str, value: Any) -> None:
         self._step_cache[key] = value
 
@@ -806,14 +856,14 @@ class StepWrapper(Generic[R]):
         self.name: str = name or func.__name__
         self._signature = inspect.signature(func)
         self._wrapper_identity, self._wrapper_identity_is_durable = _get_step_wrapper_identity(func)
+        defaults_state, self._wrapper_defaults_are_durable = _get_step_wrapper_defaults_state(func)
+        defaults_encoded = json.dumps(defaults_state, sort_keys=True, separators=(",", ":"))
+        self._wrapper_defaults_identity = hashlib.sha256(defaults_encoded.encode("utf-8")).hexdigest()
         if _active_run_ctx.get() is not None:
             self._wrapper_identity_is_durable = False
-        self._wrapper_registry_key: tuple[str, str] | None = None
-        if self._wrapper_identity_is_durable:
-            registry_key = (self.name, self._wrapper_identity)
-            matching_wrappers = _step_wrapper_identity_registry.setdefault(registry_key, WeakSet())
-            matching_wrappers.add(self)
-            self._wrapper_registry_key = registry_key
+        self._wrapper_registry_key = (self.name, self._wrapper_identity)
+        matching_wrappers = _step_wrapper_identity_registry.setdefault(self._wrapper_registry_key, WeakSet())
+        matching_wrappers.add(self)
         self._replay_key = replay_key
         functools.update_wrapper(self, func)
 
@@ -845,11 +895,13 @@ class StepWrapper(Generic[R]):
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
     ) -> tuple[Literal["auto", "explicit"], str] | None:
-        if self._wrapper_identity_is_durable:
-            current_identity, current_is_durable = _get_step_wrapper_identity(self._func)
-            if not current_is_durable or current_identity != self._wrapper_identity:
+        if self._wrapper_defaults_are_durable:
+            current_defaults, current_defaults_are_durable = _get_step_wrapper_defaults_state(self._func)
+            current_encoded = json.dumps(current_defaults, sort_keys=True, separators=(",", ":"))
+            current_identity = hashlib.sha256(current_encoded.encode("utf-8")).hexdigest()
+            if not current_defaults_are_durable or current_identity != self._wrapper_defaults_identity:
                 raise ValueError(
-                    f"@step '{self.name}' defaults or captured state changed after decoration. "
+                    f"@step '{self.name}' defaults changed after decoration. "
                     "Create a new workflow definition or provide a versioned replay_key."
                 )
 
@@ -859,10 +911,7 @@ class StepWrapper(Generic[R]):
                 raise ValueError(f"@step '{self.name}' replay_key must return a non-empty string.")
             return ("explicit", hashlib.sha256(explicit_key.encode("utf-8")).hexdigest())
 
-        if self._wrapper_registry_key is not None:
-            matching_wrappers = _step_wrapper_identity_registry.get(self._wrapper_registry_key)
-        else:
-            matching_wrappers = None
+        matching_wrappers = _step_wrapper_identity_registry.get(self._wrapper_registry_key)
         if matching_wrappers is not None and len(matching_wrappers) > 1:
             raise ValueError(
                 f"@step '{self.name}' was generated from a function definition used by multiple wrappers. "
@@ -885,8 +934,9 @@ class StepWrapper(Generic[R]):
 
     async def _return_cached_result(self, ctx: RunContext, cache_key: str, cached: Any) -> R:
         ctx._advance_auto_request_info_index_for_cached_step(cache_key)
-        await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, cached))
-        return cached
+        replayed = _snapshot_step_cache_value(cached)
+        await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, _snapshot_step_cache_value(replayed)))
+        return replayed
 
     def _build_call_args_with_ctx(
         self,
@@ -942,6 +992,11 @@ class StepWrapper(Generic[R]):
             found, cached = ctx._get_cached_result(cache_key)
             if found:
                 return await self._return_cached_result(ctx, cache_key, cached)
+            if ctx._has_incompatible_versioned_cache_entry(cache_key):
+                raise ValueError(
+                    f"Checkpoint cache for @step '{self.name}' was created by a different step definition. "
+                    "Start a new run or restore a checkpoint created by the current workflow version."
+                )
 
         found, cached = ctx._get_cached_result(legacy_cache_key)
         if found:
@@ -986,8 +1041,8 @@ class StepWrapper(Generic[R]):
             cache_key,
             ctx._auto_request_info_index - auto_request_info_index_before,
         )
-        ctx._set_cached_result(cache_key, result)
-        await ctx.add_event(WorkflowEvent.executor_completed(self.name, result))
+        ctx._set_cached_result(cache_key, _snapshot_step_cache_value(result))
+        await ctx.add_event(WorkflowEvent.executor_completed(self.name, _snapshot_step_cache_value(result)))
         if ctx._on_step_completed is not None:
             await ctx._on_step_completed()
         return result
