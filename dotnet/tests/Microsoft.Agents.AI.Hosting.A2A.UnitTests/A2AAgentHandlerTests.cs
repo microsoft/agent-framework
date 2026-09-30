@@ -487,16 +487,31 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_OnContinuation_WhenOperationCancelled_DoesNotEmitFailedAsync()
     {
         // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
+
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new OperationCanceledException("Cancelled"));
-        A2AAgentHandler handler = CreateHandler(agentMock);
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
 
         // Act & Assert
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -509,11 +524,19 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 CancellationToken.None));
+        Assert.Equal("Cancelled", exception.Message);
         eventQueue.Complete(null);
         await readerTask;
 
         // Assert - should NOT have emitted any status (OperationCanceledException is re-thrown without marking Failed)
         Assert.Empty(events.StatusUpdates);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-1"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
     }
 
     /// <summary>
@@ -2159,6 +2182,54 @@ public sealed class A2AAgentHandlerTests
 
         // Assert
         Assert.False(callbackInvoked);
+    }
+
+    /// <summary>
+    /// Verifies that a session save failure still propagates when agent execution succeeds.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_NonStreaming_WhenRunSucceedsAndSaveFails_PropagatesSaveFailureAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
+
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    TaskId = "", ContextId = "ctx-save-fail", StreamingResponse = false,
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                CancellationToken.None));
+
+        // Assert
+        Assert.Equal("Session save failed", exception.Message);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-save-fail"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
     }
 
     /// <summary>
