@@ -642,6 +642,109 @@ class TestThreadItemConverter:
 
         assert await converter.end_of_turn_to_input(end_item) is None
 
+    @pytest.mark.parametrize("status", ["pending", "answered", "skipped"])
+    async def test_to_agent_input_with_structured_input(self, converter, status):
+        """Test structured input answers are preserved as model context."""
+        from chatkit.types import (
+            StructuredInputAnswer,
+            StructuredInputFreeform,
+            StructuredInputItem,
+            StructuredInputMultipleChoice,
+            StructuredInputMultipleChoiceOption,
+        )
+
+        input_item = StructuredInputItem(
+            id="structured_1",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="structured_input",
+            status=status,
+            inputs=[
+                StructuredInputMultipleChoice(
+                    id="priority",
+                    question="What priority should I use?",
+                    options=[
+                        StructuredInputMultipleChoiceOption(value="High"),
+                        StructuredInputMultipleChoiceOption(value="Urgent"),
+                    ],
+                    multiple=True,
+                    answer=StructuredInputAnswer(values=["High", "Urgent"]),
+                ),
+                StructuredInputFreeform(
+                    id="notes",
+                    question="Any extra context?",
+                    answer=StructuredInputAnswer(skipped=True),
+                ),
+                StructuredInputFreeform(
+                    id="owner",
+                    question="Who owns this?",
+                ),
+            ],
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].role == "user"
+        assert result[0].text == (
+            f"A structured input request was displayed to the user with the following status: {status}\n"
+            "<StructuredInput>\n"
+            "- What priority should I use?: High, Urgent\n"
+            "- Any extra context?: skipped\n"
+            "- Who owns this?: unanswered\n"
+            "</StructuredInput>"
+        )
+
+    @pytest.mark.parametrize(
+        ("converted", "expected_texts"),
+        [
+            (None, []),
+            ([], []),
+            (Message(role="user", contents=["redacted"]), ["redacted"]),
+            ([Message("user", ["first"]), Message("user", ["second"])], ["first", "second"]),
+        ],
+        ids=["skip", "empty", "single", "multiple"],
+    )
+    async def test_to_agent_input_uses_structured_input_override(
+        self, converted: Message | list[Message] | None, expected_texts: list[str]
+    ) -> None:
+        """Test async overrides can skip or expand an item without changing message order."""
+        from chatkit.types import HiddenContextItem, StructuredInputItem
+
+        calls: list[StructuredInputItem] = []
+
+        class CustomConverter(ThreadItemConverter):
+            async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+                calls.append(item)
+                return converted
+
+        input_item = StructuredInputItem(id="structured_1", thread_id="thread_1", created_at=datetime.now(), inputs=[])
+        before = HiddenContextItem(id="before", thread_id="thread_1", created_at=datetime.now(), content="before")
+        after = HiddenContextItem(id="after", thread_id="thread_1", created_at=datetime.now(), content="after")
+
+        result = await CustomConverter().to_agent_input([before, input_item, after])
+
+        assert calls == [input_item]
+        assert [message.text for message in result[1:-1]] == expected_texts
+        assert result[0].text == "<HIDDEN_CONTEXT>before</HIDDEN_CONTEXT>"
+        assert result[-1].text == "<HIDDEN_CONTEXT>after</HIDDEN_CONTEXT>"
+
+    @pytest.mark.parametrize("error", [ValueError("conversion failed"), asyncio.CancelledError()])
+    async def test_to_agent_input_propagates_structured_input_override_errors(self, error: BaseException) -> None:
+        """Test custom conversion failures and cancellation propagate to the caller."""
+        from chatkit.types import StructuredInputItem
+
+        class FailingConverter(ThreadItemConverter):
+            async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+                raise error
+
+        input_item = StructuredInputItem(id="structured_1", thread_id="thread_1", created_at=datetime.now(), inputs=[])
+
+        with pytest.raises(type(error)) as exception:
+            await FailingConverter().to_agent_input(input_item)
+
+        assert exception.value is error
+
     @pytest.mark.parametrize("url", ["https://example.com/image.png", "https://example.com/asset?signature=sample"])
     async def test_to_agent_input_with_generated_image(self, converter, url):
         """Test generated images are preserved as multimodal model context."""
@@ -856,6 +959,7 @@ class TestThreadItemConverter:
             "user",
             "system",
             "system",
+            "user",
         ]
         assert result[0].text == "Assistant"
         assert result[2].contents[0].result is not None
@@ -864,6 +968,11 @@ class TestThreadItemConverter:
         assert "Analysis: Completed" in result[5].text
         assert result[6].text == "<HIDDEN_CONTEXT>secret</HIDDEN_CONTEXT>"
         assert result[7].text == "<HIDDEN_CONTEXT>sdk secret</HIDDEN_CONTEXT>"
+        assert result[8].text == (
+            "A structured input request was displayed to the user with the following status: pending\n"
+            "<StructuredInput>\n"
+            "\n</StructuredInput>"
+        )
 
 
 class TestSimpleToAgentInput:

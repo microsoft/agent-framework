@@ -491,6 +491,39 @@ class ThreadItemConverter:
         # End-of-turn is only used for UI hints - skip it
         return None
 
+    async def structured_input_to_input(self, item: StructuredInputItem) -> Message | list[Message] | None:
+        """Convert structured-input status and answers to Agent Framework Message(s).
+
+        This method is called internally by `to_agent_input()`. Override this method
+        to customize formatting or redact answers, or return None to skip the item.
+
+        Args:
+            item: The ChatKit structured input item to convert.
+
+        Returns:
+            A Message with user role, a list of messages, or None to skip.
+
+        Note:
+            Use `to_agent_input()` to convert thread items with proper message ordering.
+        """
+        lines: list[str] = []
+        for structured_input in item.inputs:
+            answer = structured_input.answer
+            if answer is None:
+                answer_text = "unanswered"
+            elif answer.skipped:
+                answer_text = "skipped"
+            else:
+                answer_text = ", ".join(answer.values)
+
+            lines.append(f"- {structured_input.question}: {answer_text}")
+
+        text = (
+            "A structured input request was displayed to the user with the following "
+            f"status: {item.status}\n<StructuredInput>\n" + "\n".join(lines) + "\n</StructuredInput>"
+        )
+        return Message(role="user", contents=[text])
+
     async def generated_image_to_input(self, item: GeneratedImageItem) -> Message | list[Message] | None:
         """Convert a generated image to Agent Framework Message(s).
 
@@ -567,8 +600,8 @@ class ThreadItemConverter:
                 out = await self.generated_image_to_input(item) or []
                 return out if isinstance(out, list) else [out]
             case StructuredInputItem():
-                # TODO(evmattso): Implement structured input handling in a future PR
-                return []
+                out = await self.structured_input_to_input(item) or []
+                return out if isinstance(out, list) else [out]
             case _:
                 # Unknown ThreadItem variant (e.g. types added in newer chatkit versions).
                 # Skip rather than fail so we remain forward-compatible with chatkit upgrades.
