@@ -172,18 +172,21 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
         BackgroundAgentState state = this._sessionState.GetOrInitializeState(session);
         BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(session);
 
-        this.TryRefreshTaskState(state, runtimeState, session);
-
-        var incomplete = new List<BackgroundTaskInfo>();
-        foreach (BackgroundTaskInfo task in state.Tasks)
+        lock (runtimeState.SyncRoot)
         {
-            if (task.Status == BackgroundTaskStatus.Running)
-            {
-                incomplete.Add(task);
-            }
-        }
+            this.TryRefreshTaskState(state, runtimeState, session);
 
-        return incomplete;
+            var incomplete = new List<BackgroundTaskInfo>();
+            foreach (BackgroundTaskInfo task in state.Tasks)
+            {
+                if (task.Status == BackgroundTaskStatus.Running)
+                {
+                    incomplete.Add(task);
+                }
+            }
+
+            return incomplete;
+        }
     }
 
     /// <summary>
@@ -507,11 +510,10 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     changed = true;
                 }
             }
-        }
-
-        if (changed)
-        {
-            this._sessionState.SaveState(session, state);
+            if (changed)
+            {
+                this._sessionState.SaveState(session, state);
+            }
         }
     }
 
@@ -613,9 +615,12 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     [Description("The request to pass to the background agent.")] string input,
                     [Description("A description of the task used to identify the task later.")] string description) =>
                 {
-                    if (runtimeState.IsReleased)
+                    lock (runtimeState.SyncRoot)
                     {
-                        return ReleasedRuntimeStartError;
+                        if (runtimeState.IsReleased)
+                        {
+                            return ReleasedRuntimeStartError;
+                        }
                     }
 
                     if (!this._agents.TryGetValue(agentName, out AIAgent? agent))
@@ -623,29 +628,36 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                         return $"Error: No background agent found with name '{agentName}'. Available agents: {string.Join(", ", this._agents.Keys)}";
                     }
 
-                    int taskId = state.NextTaskId++;
-                    var taskInfo = new BackgroundTaskInfo
-                    {
-                        Id = taskId,
-                        AgentName = agentName,
-                        Description = description,
-                        Status = BackgroundTaskStatus.Running,
-                    };
-                    state.Tasks.Add(taskInfo);
-
-                    // Create a dedicated session for this background task so it can be continued later.
+                    // Create the dedicated session before publishing the task. A failed or pending
+                    // session creation must not leave a record without a tracked background run.
                     AgentSession subSession = await agent.CreateSessionAsync().ConfigureAwait(false);
 
-                    if (!StartTrackedRun(runtimeState, taskId, agent, input, subSession))
+                    lock (runtimeState.SyncRoot)
                     {
-                        // The session was released while the background session was being created.
-                        state.Tasks.Remove(taskInfo);
-                        this._sessionState.SaveState(session, state);
-                        return ReleasedRuntimeStartError;
-                    }
+                        if (runtimeState.IsReleased)
+                        {
+                            return ReleasedRuntimeStartError;
+                        }
 
-                    this._sessionState.SaveState(session, state);
-                    return $"Background task {taskId} started on agent '{agentName}'.";
+                        int taskId = state.NextTaskId++;
+                        var taskInfo = new BackgroundTaskInfo
+                        {
+                            Id = taskId,
+                            AgentName = agentName,
+                            Description = description,
+                            Status = BackgroundTaskStatus.Running,
+                        };
+                        state.Tasks.Add(taskInfo);
+
+                        if (!StartTrackedRun(runtimeState, taskId, agent, input, subSession))
+                        {
+                            state.Tasks.Remove(taskInfo);
+                            return ReleasedRuntimeStartError;
+                        }
+
+                        this._sessionState.SaveState(session, state);
+                        return $"Background task {taskId} started on agent '{agentName}'.";
+                    }
                 },
                 new AIFunctionFactoryOptions
                 {
@@ -678,18 +690,21 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
 
                     if (waitableTasks.Count == 0)
                     {
-                        // Refresh state to catch any that completed.
-                        this.TryRefreshTaskState(state, runtimeState, session);
-                        this._sessionState.SaveState(session, state);
-
-                        // Check if any of the requested IDs are already complete.
-                        BackgroundTaskInfo? alreadyComplete = state.Tasks.FirstOrDefault(t => taskIds.Contains(t.Id) && t.Status != BackgroundTaskStatus.Running);
-                        if (alreadyComplete is not null)
+                        lock (runtimeState.SyncRoot)
                         {
-                            return $"Task {alreadyComplete.Id} is not running; current status: {alreadyComplete.Status}.";
-                        }
+                            // Refresh state to catch any that completed.
+                            this.TryRefreshTaskState(state, runtimeState, session);
+                            this._sessionState.SaveState(session, state);
 
-                        return "Error: None of the specified task IDs correspond to running tasks.";
+                            // Check if any of the requested IDs are already complete.
+                            BackgroundTaskInfo? alreadyComplete = state.Tasks.FirstOrDefault(t => taskIds.Contains(t.Id) && t.Status != BackgroundTaskStatus.Running);
+                            if (alreadyComplete is not null)
+                            {
+                                return $"Task {alreadyComplete.Id} is not running; current status: {alreadyComplete.Status}.";
+                            }
+
+                            return "Error: None of the specified task IDs correspond to running tasks.";
+                        }
                     }
 
                     // Wait for the first task to complete, but return control without stopping the tasks if the timeout elapses.
@@ -712,21 +727,21 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     var completedEntry = waitableTasks.First(t => t.Task == completedTask);
 
                     // Finalize the completed task.
-                    BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == completedEntry.Id);
-                    if (taskInfo is not null)
+                    lock (runtimeState.SyncRoot)
                     {
-                        lock (runtimeState.SyncRoot)
+                        BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == completedEntry.Id);
+                        if (taskInfo is not null)
                         {
                             if (taskInfo.Status == BackgroundTaskStatus.Running)
                             {
                                 FinalizeTask(taskInfo, completedEntry.Task, runtimeState);
                             }
+
+                            this._sessionState.SaveState(session, state);
                         }
 
-                        this._sessionState.SaveState(session, state);
+                        return $"Task {completedEntry.Id} finished with status: {taskInfo?.Status.ToString() ?? "Unknown"}.";
                     }
-
-                    return $"Task {completedEntry.Id} finished with status: {taskInfo?.Status.ToString() ?? "Unknown"}.";
                 },
                 new AIFunctionFactoryOptions
                 {
@@ -738,22 +753,25 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             AIFunctionFactory.Create(
                 (int taskId) =>
                 {
-                    this.TryRefreshTaskState(state, runtimeState, session);
-
-                    BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
-                    if (taskInfo is null)
+                    lock (runtimeState.SyncRoot)
                     {
-                        return $"Error: No task found with ID {taskId}.";
+                        this.TryRefreshTaskState(state, runtimeState, session);
+
+                        BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
+                        if (taskInfo is null)
+                        {
+                            return $"Error: No task found with ID {taskId}.";
+                        }
+
+                        return taskInfo.Status switch
+                        {
+                            BackgroundTaskStatus.Completed => taskInfo.ResultText ?? "(no output)",
+                            BackgroundTaskStatus.Failed => $"Task failed: {taskInfo.ErrorText ?? "Unknown error"}",
+                            BackgroundTaskStatus.Lost => "Task state was lost (reference unavailable).",
+                            BackgroundTaskStatus.Running => $"Task {taskId} is still running.",
+                            _ => $"Task {taskId} has status: {taskInfo.Status}.",
+                        };
                     }
-
-                    return taskInfo.Status switch
-                    {
-                        BackgroundTaskStatus.Completed => taskInfo.ResultText ?? "(no output)",
-                        BackgroundTaskStatus.Failed => $"Task failed: {taskInfo.ErrorText ?? "Unknown error"}",
-                        BackgroundTaskStatus.Lost => "Task state was lost (reference unavailable).",
-                        BackgroundTaskStatus.Running => $"Task {taskId} is still running.",
-                        _ => $"Task {taskId} has status: {taskInfo.Status}.",
-                    };
                 },
                 new AIFunctionFactoryOptions
                 {
@@ -765,21 +783,24 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             AIFunctionFactory.Create(
                 () =>
                 {
-                    this.TryRefreshTaskState(state, runtimeState, session);
-
-                    if (state.Tasks.Count == 0)
+                    lock (runtimeState.SyncRoot)
                     {
-                        return "No tasks.";
-                    }
+                        this.TryRefreshTaskState(state, runtimeState, session);
 
-                    var sb = new StringBuilder();
-                    sb.AppendLine("Tasks:");
-                    foreach (BackgroundTaskInfo task in state.Tasks)
-                    {
-                        sb.Append("- Task ").Append(task.Id).Append(" [").Append(task.Status).Append("] (").Append(task.AgentName).Append("): ").AppendLine(task.Description);
-                    }
+                        if (state.Tasks.Count == 0)
+                        {
+                            return "No tasks.";
+                        }
 
-                    return sb.ToString();
+                        var sb = new StringBuilder();
+                        sb.AppendLine("Tasks:");
+                        foreach (BackgroundTaskInfo task in state.Tasks)
+                        {
+                            sb.Append("- Task ").Append(task.Id).Append(" [").Append(task.Status).Append("] (").Append(task.AgentName).Append("): ").AppendLine(task.Description);
+                        }
+
+                        return sb.ToString();
+                    }
                 },
                 new AIFunctionFactoryOptions
                 {
@@ -791,61 +812,59 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             AIFunctionFactory.Create(
                 (int taskId, string text) =>
                 {
-                    if (runtimeState.IsReleased)
-                    {
-                        return ReleasedRuntimeContinueError;
-                    }
-
-                    this.TryRefreshTaskState(state, runtimeState, session);
-
-                    BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
-                    if (taskInfo is null)
-                    {
-                        return $"Error: No task found with ID {taskId}.";
-                    }
-
-                    if (taskInfo.Status == BackgroundTaskStatus.Lost)
-                    {
-                        return $"Error: Task {taskId} cannot be continued because its session was lost (e.g., after a session restore). Start a new task instead.";
-                    }
-
-                    if (taskInfo.Status == BackgroundTaskStatus.Running)
-                    {
-                        return $"Error: Task {taskId} is still running. Wait for it to complete before continuing.";
-                    }
-
-                    if (!this._agents.TryGetValue(taskInfo.AgentName, out AIAgent? agent))
-                    {
-                        return $"Error: Agent '{taskInfo.AgentName}' is no longer available.";
-                    }
-
-                    AgentSession? subSession;
                     lock (runtimeState.SyncRoot)
                     {
-                        _ = runtimeState.BackgroundTaskSessions.TryGetValue(taskId, out subSession);
-                    }
+                        if (runtimeState.IsReleased)
+                        {
+                            return ReleasedRuntimeContinueError;
+                        }
 
-                    if (subSession is null)
-                    {
-                        return $"Error: Session for task {taskId} is no longer available.";
-                    }
+                        this.TryRefreshTaskState(state, runtimeState, session);
 
-                    // Reset task state and start a new run on the existing session.
-                    taskInfo.Status = BackgroundTaskStatus.Running;
-                    taskInfo.ResultText = null;
-                    taskInfo.ErrorText = null;
+                        BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
+                        if (taskInfo is null)
+                        {
+                            return $"Error: No task found with ID {taskId}.";
+                        }
 
-                    // Wrap in Task.Run to isolate the ExecutionContext (see StartBackgroundTask comment).
-                    if (!StartTrackedRun(runtimeState, taskId, agent, text, subSession))
-                    {
-                        taskInfo.Status = BackgroundTaskStatus.Failed;
-                        taskInfo.ErrorText = ReleasedTaskCanceledMessage;
+                        if (taskInfo.Status == BackgroundTaskStatus.Lost)
+                        {
+                            return $"Error: Task {taskId} cannot be continued because its session was lost (e.g., after a session restore). Start a new task instead.";
+                        }
+
+                        if (taskInfo.Status == BackgroundTaskStatus.Running)
+                        {
+                            return $"Error: Task {taskId} is still running. Wait for it to complete before continuing.";
+                        }
+
+                        if (!this._agents.TryGetValue(taskInfo.AgentName, out AIAgent? agent))
+                        {
+                            return $"Error: Agent '{taskInfo.AgentName}' is no longer available.";
+                        }
+
+                        _ = runtimeState.BackgroundTaskSessions.TryGetValue(taskId, out AgentSession? subSession);
+                        if (subSession is null)
+                        {
+                            return $"Error: Session for task {taskId} is no longer available.";
+                        }
+
+                        // Reset task state and start a new run on the existing session.
+                        taskInfo.Status = BackgroundTaskStatus.Running;
+                        taskInfo.ResultText = null;
+                        taskInfo.ErrorText = null;
+
+                        // Wrap in Task.Run to isolate the ExecutionContext (see StartBackgroundTask comment).
+                        if (!StartTrackedRun(runtimeState, taskId, agent, text, subSession))
+                        {
+                            taskInfo.Status = BackgroundTaskStatus.Failed;
+                            taskInfo.ErrorText = ReleasedTaskCanceledMessage;
+                            this._sessionState.SaveState(session, state);
+                            return ReleasedRuntimeContinueError;
+                        }
+
                         this._sessionState.SaveState(session, state);
-                        return ReleasedRuntimeContinueError;
+                        return $"Task {taskId} continued with new input.";
                     }
-
-                    this._sessionState.SaveState(session, state);
-                    return $"Task {taskId} continued with new input.";
                 },
                 new AIFunctionFactoryOptions
                 {
@@ -857,32 +876,32 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             AIFunctionFactory.Create(
                 (int taskId) =>
                 {
-                    this.TryRefreshTaskState(state, runtimeState, session);
-
-                    BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
-                    if (taskInfo is null)
-                    {
-                        return $"Error: No task found with ID {taskId}.";
-                    }
-
-                    if (taskInfo.Status == BackgroundTaskStatus.Running)
-                    {
-                        return $"Error: Task {taskId} is still running. Wait for it to complete before clearing.";
-                    }
-
-                    // Remove the task from state.
-                    state.Tasks.Remove(taskInfo);
-
-                    // Clean up runtime references.
                     lock (runtimeState.SyncRoot)
                     {
+                        this.TryRefreshTaskState(state, runtimeState, session);
+
+                        BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
+                        if (taskInfo is null)
+                        {
+                            return $"Error: No task found with ID {taskId}.";
+                        }
+
+                        if (taskInfo.Status == BackgroundTaskStatus.Running)
+                        {
+                            return $"Error: Task {taskId} is still running. Wait for it to complete before clearing.";
+                        }
+
+                        // Remove the task from state.
+                        state.Tasks.Remove(taskInfo);
+
+                        // Clean up runtime references.
                         runtimeState.InFlightTasks.Remove(taskId);
                         runtimeState.BackgroundTaskSessions.Remove(taskId);
                         DisposeTaskCancellation(runtimeState, taskId);
-                    }
 
-                    this._sessionState.SaveState(session, state);
-                    return $"Task {taskId} cleared.";
+                        this._sessionState.SaveState(session, state);
+                        return $"Task {taskId} cleared.";
+                    }
                 },
                 new AIFunctionFactoryOptions
                 {
