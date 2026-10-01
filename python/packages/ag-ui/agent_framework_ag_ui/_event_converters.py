@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
+    Annotation,
     ChatResponseUpdate,
     Content,
 )
@@ -261,9 +262,9 @@ class AGUIEventConverter:
     def _handle_custom_event(self, event: dict[str, Any], raw_event_type: str) -> ChatResponseUpdate:
         """Handle CUSTOM/CUSTOM_EVENT events.
 
-        Custom events are surfaced as metadata so callers can inspect protocol-specific payloads.
+        Custom events remain inspectable as metadata; annotation batches also restore text annotations.
         """
-        return ChatResponseUpdate(
+        update = ChatResponseUpdate(
             role="assistant",
             contents=[],
             additional_properties={
@@ -276,3 +277,19 @@ class AGUIEventConverter:
                 },
             },
         )
+        if event.get("name") == "annotations":
+            value = event.get("value")
+            message_id = value.get("messageId") if isinstance(value, dict) else None
+            annotations = value.get("annotations") if isinstance(value, dict) else None
+            if (
+                not isinstance(message_id, str)
+                or not message_id
+                or not isinstance(annotations, list)
+                or not all(isinstance(annotation, dict) for annotation in annotations)
+            ):
+                logger.warning("Invalid annotations custom event: expected messageId and an annotations array")
+            else:
+                update.message_id = message_id
+                if annotations:
+                    update.contents = [Content.from_text(text="", annotations=cast("list[Annotation]", annotations))]
+        return update

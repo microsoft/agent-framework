@@ -391,6 +391,62 @@ class TestAGUIEventConverter:
         assert updates[0].additional_properties["ag_ui_custom_event"]["raw_type"] == "CUSTOM_EVENT"
         assert updates[1].additional_properties["ag_ui_custom_event"]["raw_type"] == "custom_event"
 
+    @pytest.mark.parametrize("event_type", ["CUSTOM", "CUSTOM_EVENT", "custom_event"])
+    def test_annotations_custom_event_restores_content(self, event_type: str) -> None:
+        """Annotation custom events preserve their explicit message correlation and metadata."""
+        converter = AGUIEventConverter()
+        converter.current_message_id = "another-message"
+        annotations = [
+            {
+                "type": "citation",
+                "title": "Document",
+                "url": "https://example.sharepoint.com/document.pdf",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 6}],
+            }
+        ]
+        event = {
+            "type": event_type,
+            "name": "annotations",
+            "value": {"messageId": "msg_citations", "annotations": annotations},
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.message_id == "msg_citations"
+        assert len(update.contents) == 1
+        assert update.contents[0].type == "text"
+        assert update.contents[0].text == ""
+        assert update.contents[0].annotations == annotations
+        assert update.additional_properties is not None
+        assert update.additional_properties["ag_ui_custom_event"]["value"] == event["value"]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            {"annotations": []},
+            {"messageId": 123, "annotations": []},
+            {"messageId": "msg_citations", "annotations": "invalid"},
+            {"messageId": "msg_citations", "annotations": ["invalid"]},
+        ],
+    )
+    def test_malformed_annotations_custom_event_preserves_metadata(
+        self, value: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Malformed known custom events remain observable and log an explicit warning."""
+        converter = AGUIEventConverter()
+        event = {"type": "CUSTOM", "name": "annotations", "value": value}
+
+        with caplog.at_level(logging.WARNING):
+            update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.contents == []
+        assert update.additional_properties is not None
+        assert update.additional_properties["ag_ui_custom_event"]["value"] == value
+        assert "annotations" in caplog.text
+
     def test_full_conversation_flow(self) -> None:
         """Test complete conversation flow with multiple event types."""
         converter = AGUIEventConverter()
