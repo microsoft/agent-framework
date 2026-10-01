@@ -10520,14 +10520,15 @@ async def test_agent_with_history_replays_compaction_on_next_turn_when_store_fal
         ],
     )
     second = _compaction_mock_response("resp-2", [_compaction_text_item("Second answer")])
+    default_options: OpenAIChatOptions = {
+        "store": False,
+        "context_management": [{"type": "compaction", "compact_threshold": 1000}],
+    }
     agent = Agent(
         client=client,
         instructions="Be brief.",
         context_providers=[InMemoryHistoryProvider()],
-        default_options={
-            "store": False,
-            "context_management": [{"type": "compaction", "compact_threshold": 1000}],
-        },
+        default_options=default_options,
     )
     session = agent.create_session()
 
