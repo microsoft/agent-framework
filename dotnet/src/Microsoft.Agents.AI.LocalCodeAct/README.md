@@ -133,8 +133,8 @@ dedicated timeout (`ProcessExecutionLimits.ValidationTimeoutSeconds`).
 - **Blocked imports**: `subprocess`, `sys`, `socket`, `importlib`, network and
   threading modules, etc.
 - **Allowed builtins**: `print`, `len`, `str`, type constructors, etc.
-- **Blocked builtins**: `__builtins__`, `__loader__`, `eval`, `exec`, `compile`,
-  `__import__`, `open`, `getattr`, `setattr`, etc.
+- **Blocked builtins**: `__builtins__`, `__loader__`, `__spec__`, `eval`, `exec`,
+  `compile`, `__import__`, `open`, `getattr`, `setattr`, etc.
 
 OS-derived aliases retain the same restrictions. Filesystem-querying path
 helpers, environment mutation, unknown descendants, and reflective access are

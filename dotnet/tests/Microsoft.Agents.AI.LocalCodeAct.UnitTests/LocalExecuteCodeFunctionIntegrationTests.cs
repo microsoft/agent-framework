@@ -66,12 +66,14 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
 
     [Theory]
     [InlineData("__loader__")]
+    [InlineData("__spec__")]
     [InlineData("loader = __loader__")]
     [InlineData("loaders = [__loader__]\nprint(loaders[0])")]
     [InlineData("def get_loader(loader=__loader__):\n    return loader")]
     [InlineData("__loader__.load_module('builtins').eval('40 + 2')")]
     [InlineData("__loader__.load_module('builtins').exec('answer = 42')")]
     [InlineData("__loader__.load_module('builtins').open('example.txt', 'w')")]
+    [InlineData("__spec__.loader.load_module('builtins').eval('40 + 2')")]
     public async Task ExecuteCode_ValidationBlocksLoaderAccessBeforeRunnerStartsAsync(string code)
     {
         SkipIfNoPython();

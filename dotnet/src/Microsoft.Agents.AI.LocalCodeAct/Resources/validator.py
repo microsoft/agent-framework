@@ -212,6 +212,7 @@ ALLOWED_BUILTINS: set[str] = {
 BLOCKED_BUILTINS: set[str] = {
     "__builtins__",
     "__loader__",
+    "__spec__",
     "eval",
     "exec",
     "compile",
