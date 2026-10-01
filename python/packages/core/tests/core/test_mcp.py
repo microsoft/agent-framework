@@ -954,6 +954,7 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
         "content": [{"type": "text", "text": "Summary", "_meta": file_meta}],
         "structuredContent": {"image_url": "https://example.test/widget.png"},
         "isError": False,
+        "resultType": "complete",
     }
 
     assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}]

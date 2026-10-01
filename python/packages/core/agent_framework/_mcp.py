@@ -26,6 +26,7 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import deprecated  # pragma: no cover
 
+from mcp.client import IncomingMessage
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -67,7 +68,6 @@ if TYPE_CHECKING:
     from mcp import types
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
-    from mcp.shared.session import RequestResponder
 
     from ._clients import SupportsChatGetResponse
     from ._middleware import FunctionInvocationContext
@@ -2328,7 +2328,7 @@ class MCPTool:
 
     async def message_handler(
         self,
-        message: (RequestResponder[types.ServerRequest, types.ClientResult] | types.ServerNotification | Exception),
+        message: IncomingMessage,
     ) -> None:
         """Handle messages from the MCP server.
 
@@ -2344,19 +2344,17 @@ class MCPTool:
         Args:
             message: The message from the MCP server (request responder, notification, or exception).
         """
-        from mcp import types
-
         if isinstance(message, Exception):
             logger.error("Error from MCP server: %s", message, exc_info=message)
             return
-        if isinstance(message, types.ServerNotification):
-            match message.root.method:
-                case "notifications/tools/list_changed":
-                    self._schedule_reload(self.load_tools())
-                case "notifications/prompts/list_changed":
-                    self._schedule_reload(self.load_prompts())
-                case _:
-                    logger.debug("Unhandled notification: %s", message.root.method)
+
+        match message.method:
+            case "notifications/tools/list_changed":
+                self._schedule_reload(self.load_tools())
+            case "notifications/prompts/list_changed":
+                self._schedule_reload(self.load_prompts())
+            case _:
+                logger.debug("Unhandled notification: %s", message.method)
 
     def _schedule_reload(self, coro: Coroutine[Any, Any, None]) -> None:
         """Schedule a reload coroutine as a background task.
