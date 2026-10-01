@@ -80,3 +80,110 @@ breaking change.
 
 Follow the [parent deployment guide](../../README.md#deploying-the-agent-to-foundry)
 when deploying this example to Foundry.
+
+## Native workflow with typed tickets
+
+[`workflow.py`](workflow.py) is an alternative entrypoint, not a wrapper around
+the agent above. It hosts a native `Workflow` with
+`InvocationsHostServer(workflow=build_workflow, parse_request=parse_request)`;
+there is no `workflow.as_agent()`. Its deterministic ticket/review executors
+need no model deployment or Azure credentials locally.
+
+The application parser validates its own JSON and returns a
+`WorkflowTurn(input=Ticket(...), stream=...)` or
+`WorkflowTurn(responses={request_id: TicketDecision(...)}, stream=...)`.
+The parser checks reply types; the host separately checks that each reply
+belongs to the exact pending checkpoint in the trusted sandbox and user.
+It rejects unknown fields rather than forwarding caller-controlled
+instructions, tools, middleware, session IDs or tool context as run options.
+When adding agents or tools, keep their defaults and trusted context in the
+request-aware factory. `client_kwargs` and `function_invocation_kwargs` keep
+their existing workflow meanings; they are not arbitrary entry-state updates.
+
+Use the current workspace until the coordinated hosting beta containing the
+native workflow API is published. From `python/`, run:
+
+```bash
+uv run --no-sync python samples/04-hosting/foundry-hosted-agents/invocations/basic/workflow.py
+```
+
+After that release, the script's PEP 723 metadata also supports
+`uv run --script --prerelease=allow workflow.py`. Do not change a
+`pyproject.toml` to install sample-only imports. This entrypoint does not read
+a `.env` file.
+
+### Application JSON and SSE
+
+For an immediate typed result, opt out of review:
+
+```bash
+curl -i -X POST http://localhost:8088/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"ticket_id":"T-1","question":"Where is my order?","require_review":false}'
+```
+
+Non-streaming workflow responses are application JSON, with typed payloads in
+the `output` event list. A ticket produces a result containing its
+`ticket_id`, persisted `turn` number and `status`. Dataclasses, Pydantic models
+and framework `Message`, `Content` and `AgentResponse` values retain their
+supported structured encoding; they are not coerced to text. Unsupported
+objects fail visibly instead of being stringified or omitted.
+
+By default, tickets pause for a review. Send a new ticket with
+`"stream": true` to receive framed `request_info` SSE containing a `request_id`
+and the typed ticket review. Reuse that ID in the next request:
+
+```bash
+curl -i -N -X POST \
+  "http://localhost:8088/invocations?agent_session_id=<sandbox-id>" \
+  -H "Content-Type: application/json" \
+  -d '{"responses":{"<request-id>":{"approved":true}},"stream":true}'
+```
+
+The reply emits an `output` event with status `approved` (or `rejected` for
+`false`). A final `done` event contains the platform `session_id`, and is
+emitted only after the exact workflow cursor has been conditionally saved.
+Live output is provisional until `done`. Authority-bearing `request_info`
+frames and any following frames are buffered until the cursor is committed,
+so emitted request IDs refer to durable pending state.
+Failures produce `error`, not `done`. Non-streaming pauses expose the same
+`request_info` data in the JSON event list. Native workflows do not support
+`legacy_wire_format=True`; the old plain-text/raw-chunk opt-in applies only
+to the agent entrypoint.
+
+### Checkpoints, fresh factories and pending replies
+
+`build_workflow(request)` builds fresh executors on every request. The graph
+name `ticket-workflow` and executor ID `ticket_start` remain stable. Typed
+`TicketState` is saved in workflow state through `ctx.set_state`, and restored
+from the exact prior checkpoint even after replacing the host process. The
+checkpoint provider explicitly allowlists this example's application types
+for decoding; it does not load arbitrary caller-specified Python classes.
+An incompatible graph is rejected before dispatch. Do not configure a
+second checkpoint store on `WorkflowBuilder` or share a mutable workflow
+instance between requests.
+
+Finish pending reviews before submitting another ticket. Replies cannot
+invent a request ID, cross users or sandboxes, replay an already-consumed
+request, or reuse a stale checkpoint's authority. If a graph has multiple
+pending requests, answer the **complete batch** in one turn. Partial or
+invalid batches are rejected before any reply is consumed or handler runs;
+resubmit the complete valid batch. A failed or interrupted turn does not
+report successful completion. Its claimed lineage is blocked instead of
+replaying possibly completed effects; start a new Foundry sandbox.
+Conditional storage
+conflicts are visible; checkpoints do not provide exactly-once external tool
+side effects, so use idempotent application actions.
+
+Continue using the **platform** sandbox ID from `x-agent-session-id` in the
+`agent_session_id` query. It routes to the Foundry sandbox, whereas MAF
+checkpoints and pending request IDs identify state *inside* that sandbox.
+Body/header IDs cannot change platform routing. Hosted requests also require
+trusted user and call IDs; without `FOUNDRY_AGENT_SESSION_ID`, use an explicitly
+created hosted session and a matching routed query, as described above.
+Local requests retain the SDK's single-user session fallback.
+
+For hosted deployment, use the parent guide with `workflow.py` as the Python
+entrypoint (or the container command). The existing basic manifest and
+Dockerfile still launch `main.py`; change the entrypoint deliberately rather
+than expecting this alternative to replace the agent sample.
