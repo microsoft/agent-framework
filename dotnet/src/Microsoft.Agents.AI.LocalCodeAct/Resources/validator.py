@@ -208,9 +208,10 @@ ALLOWED_BUILTINS: set[str] = {
     "slice",
 }
 
-# Blocked builtin function names that expose dangerous capabilities.
+# Blocked builtin names that expose dangerous capabilities.
 BLOCKED_BUILTINS: set[str] = {
     "__builtins__",
+    "__loader__",
     "eval",
     "exec",
     "compile",

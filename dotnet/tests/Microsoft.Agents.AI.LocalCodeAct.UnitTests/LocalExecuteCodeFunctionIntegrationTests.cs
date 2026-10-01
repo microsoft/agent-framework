@@ -65,6 +65,42 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     }
 
     [Theory]
+    [InlineData("__loader__")]
+    [InlineData("loader = __loader__")]
+    [InlineData("loaders = [__loader__]\nprint(loaders[0])")]
+    [InlineData("def get_loader(loader=__loader__):\n    return loader")]
+    [InlineData("__loader__.load_module('builtins').eval('40 + 2')")]
+    [InlineData("__loader__.load_module('builtins').exec('answer = 42')")]
+    [InlineData("__loader__.load_module('builtins').open('example.txt', 'w')")]
+    public async Task ExecuteCode_ValidationBlocksLoaderAccessBeforeRunnerStartsAsync(string code)
+    {
+        SkipIfNoPython();
+
+        await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+    }
+
+    [Fact]
+    public async Task ExecuteCode_CustomBlockedBuiltinsCanAllowLoaderAccessAsync()
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var function = new LocalExecuteCodeFunction(
+            s_python!,
+            new LocalCodeActProviderOptions { BlockedBuiltins = Array.Empty<string>() });
+        var args = new AIFunctionArguments
+        {
+            ["code"] = "print(__loader__ is not None)",
+        };
+
+        // Act
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("True", GetResultText(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("import os\nos.system('id')")]
     [InlineData("import os as x\nx.system('id')")]
     [InlineData("import os\n_o = os\n_o.system('id')")]
@@ -122,6 +158,11 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     {
         SkipIfNoPython();
 
+        await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+    }
+
+    private static async Task AssertValidationBlocksBeforeRunnerStartsAsync(string code)
+    {
         // Arrange
         var tempDir = Directory.CreateTempSubdirectory("localcodeact-runner-marker-").FullName;
         try
