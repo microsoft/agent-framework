@@ -29,6 +29,6 @@ def test_native_workflow_exports_match_runtime_and_typing_namespace() -> None:
 
     import agent_framework_foundry_hosting as hosting
 
-    for name in ("WorkflowTurn", "WorkflowSource"):
+    for name in ("WorkflowTurn", "WorkflowSource", "response_input_messages"):
         assert name in hosting.__all__
         assert getattr(foundry, name) is getattr(hosting, name)

@@ -46,6 +46,7 @@ from agent_framework_foundry_hosting import (
     StoreProvider,
     WorkflowSource,
     WorkflowTurn,
+    response_input_messages,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -95,5 +96,6 @@ __all__ = [
     "WorkflowTurn",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "response_input_messages",
     "to_prompt_agent",
 ]

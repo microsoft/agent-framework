@@ -57,6 +57,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "WorkflowSource": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "WorkflowTurn": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "response_input_messages": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "evaluate_foundry_target": ("agent_framework_foundry", "agent-framework-foundry"),
     "evaluate_traces": ("agent_framework_foundry", "agent-framework-foundry"),
     "to_prompt_agent": ("agent_framework_foundry", "agent-framework-foundry"),

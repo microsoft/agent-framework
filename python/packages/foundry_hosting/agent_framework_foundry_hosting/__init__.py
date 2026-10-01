@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn
+    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn, response_input_messages
     from ._responses import ResponsesHostServer
     from ._scope import FoundryRequestScope
     from ._state_store import (
@@ -45,6 +45,7 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "StoreProvider": "._state_store",
     "WorkflowSource": "._workflow_source",
     "WorkflowTurn": "._request",
+    "response_input_messages": "._request",
 }
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "StoreProvider",
     "WorkflowSource",
     "WorkflowTurn",
+    "response_input_messages",
 ]
 
 

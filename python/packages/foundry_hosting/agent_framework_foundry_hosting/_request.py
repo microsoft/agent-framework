@@ -215,6 +215,18 @@ async def prepare_response_options(request: HostedResponseRequest, hook: Options
     request.set_options(result)
 
 
+async def response_input_messages(request: HostedResponseRequest) -> list[Message]:
+    """Convert only this Responses turn's input items to the legacy workflow message contract.
+
+    This explicit migration helper does not load outer history, restore checkpoints,
+    or decode pending native workflow replies. Native workflows should prefer typed
+    application inputs and use ``request.get_workflow_responses()`` for resumable pauses.
+    """
+    from ._responses import _items_to_messages  # pyright: ignore[reportPrivateUsage]
+
+    return await _items_to_messages(await request.get_input_items(), approval_storage=None)
+
+
 def validate_request_options(options: Mapping[str, Any]) -> None:
     """Keep hosting identity, storage decisions, and private continuation out of model options."""
     reserved = _HOST_CONTROLLED_FIELDS.intersection(options)

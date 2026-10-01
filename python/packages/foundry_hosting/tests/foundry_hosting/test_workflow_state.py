@@ -12,6 +12,7 @@ from agent_framework import (
     Agent,
     AgentExecutor,
     BaseChatClient,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -270,9 +271,17 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
 
     def create(request: object) -> Workflow:
         agent = (
-            RawAgent(client=RecordingClient(), name="model", default_options={"store": False, "temperature": 0.6})
+            RawAgent(
+                client=RecordingClient(),
+                name="model",
+                default_options=cast(ChatOptions[Any], {"store": False, "temperature": 0.6}),
+            )
             if raw
-            else Agent(client=RecordingClient(), name="model", default_options={"store": True, "temperature": 0.2})
+            else Agent(
+                client=RecordingClient(),
+                name="model",
+                default_options=cast(ChatOptions[Any], {"store": True, "temperature": 0.2}),
+            )
         )
         agents.append(agent)
         return _workflow(AgentExecutor(agent, id="model"))
@@ -305,7 +314,7 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
                         RawAgent(
                             client=RecordingClient(),
                             name="model",
-                            default_options={"store": False, "temperature": 0.2},
+                            default_options=cast(ChatOptions[Any], {"store": False, "temperature": 0.2}),
                         ),
                         id="model",
                     )
