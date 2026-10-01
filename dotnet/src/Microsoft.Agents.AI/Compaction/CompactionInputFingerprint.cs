@@ -13,7 +13,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// Captures input content independently of mutable message objects without retaining the original history.
+/// Captures input identity and content independently of mutable message objects without retaining the original history.
 /// </summary>
 internal static class CompactionInputFingerprint
 {
@@ -29,6 +29,7 @@ internal static class CompactionInputFingerprint
             {
                 ChatMessage message = messages[i];
                 writer.WriteStartArray();
+                writer.WriteStringValue(message.MessageId);
                 writer.WriteStringValue(message.Role.Value);
                 writer.WriteStringValue(message.AuthorName);
                 writer.WriteBooleanValue(CompactionMessageIndex.IsSummaryMessage(message));
@@ -45,7 +46,17 @@ internal static class CompactionInputFingerprint
                         continue;
                     }
 
-                    JsonElement serialized = JsonSerializer.SerializeToElement(content, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AIContent)));
+                    JsonElement serialized;
+                    try
+                    {
+                        serialized = JsonSerializer.SerializeToElement(content, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(AIContent)));
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+                    {
+                        // Undefined JSON values and non-finite numbers cannot validate the saved prefix.
+                        return null;
+                    }
+
                     string? nullPropertyToOmit = content is FunctionResultContent ? "result" : null;
                     WriteCanonical(writer, serialized, nullPropertyToOmit);
                 }

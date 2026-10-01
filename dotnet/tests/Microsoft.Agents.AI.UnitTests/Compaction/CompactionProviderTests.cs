@@ -460,6 +460,68 @@ public sealed class CompactionProviderTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task InvokingAsyncRebuildsReducedHistoryWhenMessageIdChangesAsync(bool serializeSession)
+    {
+        // Arrange
+        RecordingChatReducer reducer = new();
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        ChatMessage retained = new(ChatRole.User, "Keep");
+        List<ChatMessage> firstInput = [new(ChatRole.User, "Old") { MessageId = "old-id" }, retained];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = firstInput }));
+        if (serializeSession)
+        {
+            session = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        }
+
+        ChatMessage replacement = new(ChatRole.User, "Old") { MessageId = "new-id" };
+        List<ChatMessage> input = [replacement, retained, new(ChatRole.User, "New")];
+
+        // Act
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = input }));
+
+        // Assert — an identity change invalidates the saved reduction even when content is unchanged.
+        Assert.Equal(2, reducer.Inputs.Count);
+        Assert.Equal(["Old", "Keep", "New"], reducer.Inputs[1].Select(message => message.Text));
+        Assert.Same(replacement, reducer.Inputs[1][0]);
+        Assert.Equal("new-id", reducer.Inputs[1][0].MessageId);
+    }
+
+    [Fact]
+    public async Task InvokingAsyncPreservesReducedHistoryWithUnchangedMessageIdsAfterSerializationAsync()
+    {
+        // Arrange — unchanged IDs in newly materialized messages must preserve a serialized reduction.
+        RecordingChatReducer reducer = new();
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> firstInput =
+        [
+            new(ChatRole.User, "Old") { MessageId = "message-1" },
+            new(ChatRole.User, "Keep") { MessageId = "message-2" },
+        ];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = firstInput }));
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        List<ChatMessage> input =
+        [
+            new(ChatRole.User, "Old") { MessageId = "message-1" },
+            new(ChatRole.User, "Keep") { MessageId = "message-2" },
+            new(ChatRole.User, "New") { MessageId = "message-3" },
+        ];
+
+        // Act
+        await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = input }));
+
+        // Assert — the reducer receives the retained subset and new message, without the discarded history.
+        Assert.Equal(2, reducer.Inputs.Count);
+        Assert.Equal(["Keep", "New"], reducer.Inputs[1].Select(message => message.Text));
+        Assert.Equal(["message-2", "message-3"], reducer.Inputs[1].Select(message => message.MessageId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task InvokingAsyncRebuildsReducedHistoryWhenInputIsMutatedAsync(bool serializeSession)
     {
         // Arrange

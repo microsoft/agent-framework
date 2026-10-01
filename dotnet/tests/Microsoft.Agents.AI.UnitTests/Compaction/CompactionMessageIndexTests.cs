@@ -754,6 +754,77 @@ public class CompactionMessageIndexTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void UpdateRebuildsWhenMessageIdChanges(bool appendMessage)
+    {
+        // Arrange
+        ChatMessage original = new(ChatRole.User, "Same content") { MessageId = "old-id" };
+        CompactionMessageIndex index = CompactionMessageIndex.Create([original]);
+        index.Groups[0].IsExcluded = true;
+        ChatMessage replacement = new(ChatRole.User, "Same content") { MessageId = "new-id" };
+        List<ChatMessage> input = [replacement];
+        if (appendMessage)
+        {
+            input.Add(new(ChatRole.User, "Follow-up"));
+        }
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Equal(input.Count, index.Groups.Count);
+        Assert.Same(replacement, index.Groups[0].Messages[0]);
+        Assert.Equal("new-id", index.Groups[0].Messages[0].MessageId);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdateRebuildsWhenReducedInputMessageIdIsMutated(bool appendMessage)
+    {
+        // Arrange — the reducer discards the message whose identity is subsequently changed in place.
+        ChatMessage original = new(ChatRole.User, "Old") { MessageId = "old-id" };
+        List<ChatMessage> input = [original, new(ChatRole.User, "Keep")];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(input);
+        index.ReplaceWithReducedMessages([input[1]]);
+        original.MessageId = "new-id";
+        if (appendMessage)
+        {
+            input.Add(new(ChatRole.User, "Follow-up"));
+        }
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Equal(input.Count, index.Groups.Count);
+        Assert.Same(original, index.Groups[0].Messages[0]);
+        Assert.Equal("new-id", index.Groups[0].Messages[0].MessageId);
+    }
+
+    [Fact]
+    public void UpdatePreservesExclusionWhenMessageIdAndContentAreUnchanged()
+    {
+        // Arrange
+        ChatMessage original = new(ChatRole.User, "Same content") { MessageId = "message-1" };
+        CompactionMessageIndex index = CompactionMessageIndex.Create([original]);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup originalGroup = index.Groups[0];
+        ChatMessage replacement = new(ChatRole.User, "Same content") { MessageId = "message-1" };
+
+        // Act
+        index.Update([replacement, new(ChatRole.User, "Follow-up")]);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.Same(originalGroup, index.Groups[0]);
+        Assert.True(index.Groups[0].IsExcluded);
+        Assert.Same(original, index.Groups[0].Messages[0]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void UpdateRebuildsWhenReducedInputMessageIsMutated(bool appendMessage)
     {
         // Arrange — the caller retains and edits the same object that the reducer discarded.
@@ -811,6 +882,113 @@ public class CompactionMessageIndexTests
         // Assert — unsupported content keeps working, but its old compaction state is not reused.
         Assert.NotSame(previousGroup, index.Groups[0]);
         Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdateRebuildsForUndefinedJsonToolResult(bool nestedPayload)
+    {
+        // Arrange — an undefined JSON value has no valid serialization, including inside a nested payload.
+        object payload = nestedPayload ? new Dictionary<string, object?> { ["value"] = default(JsonElement) } : default(JsonElement);
+        List<ChatMessage> input = [new(ChatRole.Tool, [new FunctionResultContent("call-1", payload)])];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(input);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup originalGroup = index.Groups[0];
+        input.Add(new(ChatRole.User, "Follow-up"));
+
+        // Act
+        index.Update(input);
+
+        // Assert — creation and updating remain usable, without reusing unsupported input's compaction state.
+        Assert.Null(index.InputPrefixFingerprint);
+        Assert.Equal(2, index.Groups.Count);
+        Assert.NotSame(originalGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+        Assert.Same(input[0], index.Groups[0].Messages[0]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdateRebuildsWhenToolResultBecomesUndefinedJson(bool nestedPayload)
+    {
+        // Arrange — the saved prefix is fingerprintable until its tool result is changed in place.
+        FunctionResultContent result = new("call-1", "Valid");
+        List<ChatMessage> input = [new(ChatRole.Tool, [result])];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(input);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup originalGroup = index.Groups[0];
+        Assert.NotNull(index.InputPrefixFingerprint);
+        result.Result = nestedPayload ? new Dictionary<string, object?> { ["value"] = default(JsonElement) } : default(JsonElement);
+
+        // Act
+        index.Update(input);
+
+        // Assert — failure to fingerprint the changed prefix triggers the same safe rebuilding path.
+        Assert.Null(index.InputPrefixFingerprint);
+        Assert.NotSame(originalGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+        Assert.Same(input[0], index.Groups[0].Messages[0]);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void UpdateRebuildsForNonFiniteToolResult(object payload)
+    {
+        // Arrange — non-finite numbers are valid CLR values but cannot be written with the default JSON contract.
+        List<ChatMessage> input = [new(ChatRole.Tool, [new FunctionResultContent("call-1", payload)])];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(input);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup originalGroup = index.Groups[0];
+        input.Add(new(ChatRole.User, "Follow-up"));
+
+        // Act
+        index.Update(input);
+
+        // Assert — inability to fingerprint the payload must not prevent indexing or reuse stale exclusions.
+        Assert.Null(index.InputPrefixFingerprint);
+        Assert.Equal(2, index.Groups.Count);
+        Assert.NotSame(originalGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+        Assert.Same(input[0], index.Groups[0].Messages[0]);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void UpdateRebuildsWhenToolArgumentBecomesNonFinite(object payload)
+    {
+        // Arrange — mutate a previously fingerprintable argument inside the tool-call dictionary.
+        Dictionary<string, object?> arguments = new() { ["value"] = 1.25 };
+        List<ChatMessage> input =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("call-1", "calculate", arguments)]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", "Result")]),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(input);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup originalGroup = index.Groups[0];
+        Assert.NotNull(index.InputPrefixFingerprint);
+        arguments["value"] = payload;
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Null(index.InputPrefixFingerprint);
+        Assert.NotSame(originalGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+        Assert.Equal(input, index.Groups[0].Messages);
     }
 
     [Fact]
