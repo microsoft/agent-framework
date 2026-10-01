@@ -38,6 +38,7 @@ from agent_framework._sessions import (
     SessionContext,
     _filter_approval_control_messages,
 )
+from agent_framework._types import _CONTENT_ITEM_SNAPSHOT_KEY
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
@@ -7712,6 +7713,10 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].additional_properties["output_index"] == 0
     assert result.contents[0].additional_properties["sequence_number"] == 5
     assert result.contents[0].additional_properties["item_id"] == "ci_456"
+    # The done event repeats the full code rather than a further delta, so the merge
+    # layer needs it tagged as a snapshot to replace (not concatenate onto) accumulated
+    # `.delta` chunks for the same call.
+    assert result.contents[0].inputs[0].additional_properties[_CONTENT_ITEM_SNAPSHOT_KEY] is True
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:

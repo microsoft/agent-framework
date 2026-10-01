@@ -58,6 +58,7 @@ from agent_framework._tools import (
     tool,
 )
 from agent_framework._types import (
+    _CONTENT_ITEM_SNAPSHOT_KEY,  # pyright: ignore[reportPrivateUsage]
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -3728,7 +3729,11 @@ class RawOpenAIChatClient(
                             Content.from_text(
                                 text=event.code,
                                 raw_representation=event,
-                                additional_properties=ci_additional_properties,
+                                # The done event repeats the complete code generated so far
+                                # rather than a further delta, so it must replace (not be
+                                # concatenated onto) any `.delta` events already accumulated
+                                # for this call.
+                                additional_properties={**ci_additional_properties, _CONTENT_ITEM_SNAPSHOT_KEY: True},
                             )
                         ],
                         raw_representation=event,

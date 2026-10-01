@@ -40,6 +40,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _CONTENT_ITEM_SNAPSHOT_KEY,
     _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
@@ -2155,6 +2156,94 @@ def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call(
     assert fcs[0].arguments == "partial-a"
     assert fcs[1].call_id == "call_new"
     assert fcs[1].arguments == "{}"
+
+
+# region CodeInterpreter streaming merge
+
+
+def test_code_interpreter_deltas_concatenate_even_when_one_starts_with_the_other():
+    """Two genuine deltas must concatenate even if one happens to start with the other.
+
+    The merge previously guessed "is this a full resend?" by checking whether one
+    chunk's text starts with the other's. That guess is wrong whenever two ordinary,
+    unrelated deltas simply happen to line up that way - e.g. a delta of "(" followed
+    by a delta of "()" is two characters streamed in order, not the second one
+    re-sending everything. Before the fix this dropped the first delta entirely and
+    left only "()".
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="(")])]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="()")])]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].inputs is not None
+    assert "".join(item.text or "" for item in calls[0].inputs) == "(()"
+
+
+def test_code_interpreter_deltas_concatenate_in_reverse_prefix_order_too():
+    """Same as above with the longer delta arriving first."""
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="()")])]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="(")])]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].inputs is not None
+    assert "".join(item.text or "" for item in calls[0].inputs) == "()("
+
+
+def test_code_interpreter_snapshot_chunk_replaces_accumulated_deltas():
+    """A chunk explicitly tagged as a full resend replaces the accumulated deltas.
+
+    Mirrors the OpenAI Responses API, whose `code_interpreter_call_code.done` event
+    repeats the complete code generated so far after a run of `.delta` events for the
+    same call; the client tags that one chunk so the merge can tell it apart from an
+    ordinary delta instead of guessing from the text.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="import")])
+            ]
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text=" pandas")])
+            ]
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_1",
+                    inputs=[
+                        Content.from_text(
+                            text="import pandas as pd",
+                            additional_properties={_CONTENT_ITEM_SNAPSHOT_KEY: True},
+                        )
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].inputs is not None
+    assert "".join(item.text or "" for item in calls[0].inputs) == "import pandas as pd"
 
 
 # region Role & FinishReason basics

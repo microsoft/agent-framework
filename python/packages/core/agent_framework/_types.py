@@ -424,6 +424,15 @@ class ComputerSafetyCheck(TypedDict, total=False):
 ContentT = TypeVar("ContentT", bound="Content")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+# Marks a streamed nested content item (e.g. a code interpreter call's `inputs`/`outputs`
+# text) as a full resend of everything streamed so far, rather than an incremental delta
+# to append. Some providers follow up a run of true deltas with one event that repeats the
+# complete value (e.g. the OpenAI Responses API's `code_interpreter_call_code.done`, sent
+# after a series of `.delta` events for the same call). Text content alone can't reliably
+# tell that apart from a delta that merely happens to start with what came before - e.g. a
+# delta of "(" followed by a delta of "()" is two characters streamed in order, not a
+# two-character-value resend - so providers must set this explicitly on a full resend.
+_CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
 
 # endregion
 
@@ -2330,6 +2339,16 @@ def _content_items_text(items: Any) -> str | None:
     return "".join(text_parts)
 
 
+def _is_content_item_snapshot(items: Any) -> bool:
+    """Whether a nested content list is tagged as a full resend, see `_CONTENT_ITEM_SNAPSHOT_KEY`."""
+    if not isinstance(items, list):
+        return False
+    return any(
+        isinstance(item, Content) and item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
+        for item in cast("list[object]", items)
+    )
+
+
 def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     """Merge streamed nested content lists, replacing deltas with a later full value when present."""
     if incoming is None:
@@ -2337,14 +2356,12 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     if existing is None:
         return deepcopy(incoming)
 
+    if _is_content_item_snapshot(incoming):
+        return deepcopy(incoming)
+
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:
-        if incoming_text.startswith(existing_text):
-            return deepcopy(incoming)
-        if existing_text.startswith(incoming_text):
-            return existing
-
         existing_items = cast(list[Content], existing)
         merged = deepcopy(existing_items[0])
         merged.text = existing_text + incoming_text
