@@ -2280,39 +2280,99 @@ def _merge_function_call_content(message: Message, content: Content) -> None:
     message.contents.append(content)
 
 
+def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reasoning"]) -> Content:
+    """Fold a collected run of same-type contents in one pass.
+
+    The result matches folding the run with repeated ``+=``: the earliest chunk
+    wins per additional-property key, annotations concatenate in order, and raw
+    representations flatten into one list (left untouched when a single chunk
+    carries the only value). The run head's own raw representation is dropped,
+    matching the old path whose initial ``deepcopy`` discards it
+    (``_SHALLOW_COPY_FIELDS``).
+    """
+    merged_props: dict[str, Any] = {}
+    for content in reversed(run):
+        merged_props.update(content.additional_properties)
+    annotation_seqs = [c.annotations for c in run if c.annotations is not None]
+    annotations = [a for seq in annotation_seqs for a in seq] if annotation_seqs else None
+    non_null_raws = [c.raw_representation for c in run[1:] if c.raw_representation is not None]
+    raw_representation: Any
+    if not non_null_raws:
+        raw_representation = None
+    elif len(non_null_raws) == 1:
+        raw_representation = non_null_raws[0]
+    else:
+        raw_representation = []
+        for raw in non_null_raws:
+            raw_representation.extend(raw if isinstance(raw, list) else [raw])
+    if type_str == "text":
+        return Content(
+            "text",
+            text="".join(c.text or "" for c in run),
+            annotations=annotations,
+            additional_properties=merged_props,
+            raw_representation=raw_representation,
+        )
+    return Content(
+        "text_reasoning",
+        id=next((c.id for c in run if c.id), None),
+        text=None if all(c.text is None for c in run) else "".join(c.text or "" for c in run),
+        protected_data=next((c.protected_data for c in reversed(run) if c.protected_data is not None), None),
+        annotations=annotations,
+        additional_properties=merged_props,
+        raw_representation=raw_representation,
+    )
+
+
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
-    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
+    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item.
+
+    Mergeable runs are collected and folded in a single pass, so aggregating n
+    chunks costs O(n) instead of the O(n^2) of repeated ``+=``.
+    """
     if not contents:
         return
     coalesced_contents: list[Content] = []
-    first_new_content: Any | None = None
+    run: list[Content] = []
+    run_id: str | None = None
+    run_has_text = False
+    run_has_reasoning_text = False
+
+    def flush() -> None:
+        nonlocal run_id, run_has_text, run_has_reasoning_text
+        if run:
+            coalesced_contents.append(deepcopy(run[0]) if len(run) == 1 else _merge_content_run(run, type_str))
+            run.clear()
+        run_id = None
+        run_has_text = run_has_reasoning_text = False
+
     for content in contents:
-        if content.type == type_str:
-            if first_new_content is None:
-                first_new_content = deepcopy(content)
-            elif type_str == "text" and first_new_content.additional_properties.get(
-                _MODEL_OUTPUT_KIND_KEY
-            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
-                coalesced_contents.append(first_new_content)
-                first_new_content = deepcopy(content)
-            else:
-                try:
-                    first_new_content += content
-                except AdditionItemMismatch:
-                    # Different IDs means a new logical segment; flush the current one
-                    coalesced_contents.append(first_new_content)
-                    first_new_content = deepcopy(content)
-        else:
-            # skip this content, it is not of the right type
-            # so write the existing one to the list and start a new one,
-            # once the right type is found again
-            if first_new_content:
-                coalesced_contents.append(first_new_content)
-            first_new_content = None
-            # but keep the other content in the new list
+        if content.type != type_str:
+            flush()
             coalesced_contents.append(content)
-    if first_new_content:
-        coalesced_contents.append(first_new_content)
+            continue
+        if run:
+            if type_str == "text":
+                # A folded run keeps the first chunk's value for this key, so the
+                # run head alone decides whether the next chunk joins or splits.
+                if run[0].additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != content.additional_properties.get(
+                    _MODEL_OUTPUT_KIND_KEY
+                ):
+                    flush()
+            else:
+                other_id: str | None = getattr(content, "id", None)
+                if (run_id and other_id and run_id != other_id) or (
+                    run_has_text
+                    and getattr(content, "text", None)
+                    and (run_has_reasoning_text != ("reasoning_text" in content.additional_properties))
+                ):
+                    flush()
+        run.append(content)
+        if type_str == "text_reasoning":
+            run_id = run_id or getattr(content, "id", None)
+            run_has_text = run_has_text or bool(getattr(content, "text", None))
+            run_has_reasoning_text = run_has_reasoning_text or "reasoning_text" in content.additional_properties
+    flush()
     contents.clear()
     contents.extend(coalesced_contents)
 
