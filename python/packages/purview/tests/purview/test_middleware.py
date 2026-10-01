@@ -22,7 +22,6 @@ from agent_framework import (
     ResponseStream,
 )
 from azure.core.credentials import AccessToken
-from conftest import run_agent_middleware  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
 from agent_framework_purview._models import Activity
@@ -172,7 +171,7 @@ class TestPurviewPolicyMiddleware:
             assert mock_process.call_args_list[1][0][1] == Activity.DOWNLOAD_TEXT
 
     async def test_middleware_streaming_response_is_evaluated_and_blocked(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Streamed content is evaluated in full and replaced when policy blocks it."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -200,7 +199,7 @@ class TestPurviewPolicyMiddleware:
         assert "blocked" in released_text.lower()
 
     async def test_middleware_streaming_response_passes_when_allowed(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Allowed streamed content is released unchanged, reusing the prompt-phase identity."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -227,7 +226,7 @@ class TestPurviewPolicyMiddleware:
         assert "".join(update.text for update in released) == "all clear"
 
     async def test_middleware_streaming_releases_the_evaluated_content_not_the_buffered_updates(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """The released updates come from the response that was evaluated, not from the buffer.
 
@@ -260,7 +259,7 @@ class TestPurviewPolicyMiddleware:
         assert "confidential" not in released_text
 
     async def test_middleware_streaming_preserves_response_level_metadata(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Metadata carried by the response survives the buffered stream."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -297,7 +296,7 @@ class TestPurviewPolicyMiddleware:
         assert released[-1].additional_properties["custom"] == "value"
 
     async def test_middleware_streaming_closes_the_inner_stream_when_never_pulled(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Abandoning the gated stream before the first pull still releases the inner stream."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -328,7 +327,7 @@ class TestPurviewPolicyMiddleware:
         assert closed is True
 
     async def test_middleware_streaming_closes_the_inner_stream_when_the_drain_is_cancelled(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Cancelling part-way through the drain still releases the inner stream."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -773,7 +772,7 @@ class TestPurviewPolicyMiddlewareSharedStream:
         return agent
 
     async def test_both_middleware_change_the_same_streamed_run_when_allowed(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Neither middleware's work is lost when both act on one streamed run."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -800,7 +799,7 @@ class TestPurviewPolicyMiddlewareSharedStream:
         assert "".join(update.text for update in released) == "all clear [checked]"
 
     async def test_the_evaluated_response_is_the_one_the_caller_receives(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Attached last, the evaluation sees the response after other middleware rewrote it."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -828,7 +827,7 @@ class TestPurviewPolicyMiddlewareSharedStream:
         assert "".join(update.text for update in released) == evaluated_text
 
     async def test_purview_still_blocks_when_another_middleware_shares_the_stream(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """A second middleware on the same run cannot let blocked content reach the caller."""
         context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
@@ -855,7 +854,7 @@ class TestPurviewPolicyMiddlewareSharedStream:
         assert "blocked" in released_text.lower()
 
     async def test_policy_replacement_survives_a_middleware_that_substitutes_the_response(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """A middleware that discards the response it is given cannot reinstate blocked content.
 
@@ -887,7 +886,7 @@ class TestPurviewPolicyMiddlewareSharedStream:
         assert "blocked" in released_text.lower()
 
     async def test_a_middleware_attached_after_purview_can_replace_the_evaluated_response(
-        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
     ) -> None:
         """Pins the documented limitation: attaching Purview before a rewriting middleware.
 

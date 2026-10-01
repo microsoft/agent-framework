@@ -20,7 +20,6 @@ from agent_framework import (
     ResponseStream,
 )
 from azure.core.credentials import AccessToken
-from conftest import run_chat_middleware  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
 from agent_framework_purview._models import Activity
@@ -113,7 +112,9 @@ class TestPurviewChatPolicyMiddleware:
             assert first_msg.role in ("system", "system")
             assert "blocked" in first_msg.text.lower()
 
-    async def test_streaming_response_is_evaluated_and_blocked(self, middleware: PurviewChatPolicyMiddleware) -> None:
+    async def test_streaming_response_is_evaluated_and_blocked(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
         """Streamed content is evaluated in full and replaced when policy blocks it."""
         client = DummyChatClient()
         chat_options = MagicMock()
@@ -146,7 +147,9 @@ class TestPurviewChatPolicyMiddleware:
         assert "confidential" not in released_text
         assert "blocked" in released_text.lower()
 
-    async def test_streaming_response_passes_when_allowed(self, middleware: PurviewChatPolicyMiddleware) -> None:
+    async def test_streaming_response_passes_when_allowed(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
         """Allowed streamed content is released unchanged, reusing the prompt-phase identity."""
         client = DummyChatClient()
         chat_options = MagicMock()
@@ -179,7 +182,7 @@ class TestPurviewChatPolicyMiddleware:
         assert "".join(update.text for update in released) == "all clear"
 
     async def test_streaming_releases_the_evaluated_content_not_the_buffered_updates(
-        self, middleware: PurviewChatPolicyMiddleware
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
     ) -> None:
         """The released updates come from the response that was evaluated, not from the buffer."""
         client = DummyChatClient()
@@ -214,7 +217,9 @@ class TestPurviewChatPolicyMiddleware:
         assert released_text == "benign"
         assert "confidential" not in released_text
 
-    async def test_streaming_preserves_response_level_metadata(self, middleware: PurviewChatPolicyMiddleware) -> None:
+    async def test_streaming_preserves_response_level_metadata(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
         """Metadata carried by the response survives the buffered stream."""
         client = DummyChatClient()
         chat_options = MagicMock()
@@ -259,7 +264,7 @@ class TestPurviewChatPolicyMiddleware:
         assert released[-1].additional_properties["custom"] == "value"
 
     async def test_streaming_closes_the_inner_stream_when_never_pulled(
-        self, middleware: PurviewChatPolicyMiddleware
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
     ) -> None:
         """Abandoning the gated stream before the first pull still releases the inner stream."""
         client = DummyChatClient()

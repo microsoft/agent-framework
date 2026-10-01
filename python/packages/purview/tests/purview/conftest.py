@@ -147,11 +147,8 @@ def process_content_request_factory(content_to_process_factory):
     return _create_request
 
 
-async def run_agent_middleware(
-    middleware: Any,
-    context: Any,
-    set_result: Callable[[], Awaitable[None]],
-) -> Any:
+@pytest.fixture
+def run_agent_middleware() -> Callable[..., Awaitable[Any]]:
     """Run one agent middleware through the real pipeline and return the finished result.
 
     Middleware declares the stream processing it needs on the context; the pipeline is what
@@ -159,33 +156,46 @@ async def run_agent_middleware(
     directly would therefore leave a streamed result unguarded, so tests go through the
     pipeline to exercise the same wiring production uses.
     """
-    from agent_framework._middleware import AgentMiddlewarePipeline  # pyright: ignore[reportPrivateUsage]
 
-    items = tuple(middleware) if isinstance(middleware, (list, tuple)) else (middleware,)
+    async def _run(
+        middleware: Any,
+        context: Any,
+        set_result: Callable[[], Awaitable[None]],
+    ) -> Any:
+        from agent_framework._middleware import AgentMiddlewarePipeline  # pyright: ignore[reportPrivateUsage]
 
-    async def final_handler(ctx: Any) -> Any:
-        await set_result()
-        return ctx.result
+        items = tuple(middleware) if isinstance(middleware, (list, tuple)) else (middleware,)
 
-    return await AgentMiddlewarePipeline(*items).execute(context, final_handler)
+        async def final_handler(ctx: Any) -> Any:
+            await set_result()
+            return ctx.result
+
+        return await AgentMiddlewarePipeline(*items).execute(context, final_handler)
+
+    return _run
 
 
-async def run_chat_middleware(
-    middleware: Any,
-    context: Any,
-    set_result: Callable[[], Awaitable[None]],
-) -> Any:
+@pytest.fixture
+def run_chat_middleware() -> Callable[..., Awaitable[Any]]:
     """Run one chat middleware through the real pipeline and return the finished result.
 
     See :func:`run_agent_middleware` for why the pipeline is used instead of calling
     ``process`` directly.
     """
-    from agent_framework._middleware import ChatMiddlewarePipeline  # pyright: ignore[reportPrivateUsage]
 
-    items = tuple(middleware) if isinstance(middleware, (list, tuple)) else (middleware,)
+    async def _run(
+        middleware: Any,
+        context: Any,
+        set_result: Callable[[], Awaitable[None]],
+    ) -> Any:
+        from agent_framework._middleware import ChatMiddlewarePipeline  # pyright: ignore[reportPrivateUsage]
 
-    async def final_handler(ctx: Any) -> Any:
-        await set_result()
-        return ctx.result
+        items = tuple(middleware) if isinstance(middleware, (list, tuple)) else (middleware,)
 
-    return await ChatMiddlewarePipeline(*items).execute(context, final_handler)
+        async def final_handler(ctx: Any) -> Any:
+            await set_result()
+            return ctx.result
+
+        return await ChatMiddlewarePipeline(*items).execute(context, final_handler)
+
+    return _run
