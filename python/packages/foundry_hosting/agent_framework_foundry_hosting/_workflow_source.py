@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 import weakref
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import Any, Generic, TypeAlias, TypeVar, cast
 
@@ -31,6 +32,7 @@ from ._scope import FoundryRequestScope
 
 RequestT = TypeVar("RequestT")
 WorkflowSource: TypeAlias = Workflow | Callable[[RequestT], Workflow | Awaitable[Workflow]]
+_MAX_STRONG_RESOURCE_IDENTITIES = 1024
 _CLIENT_CONTROLS = frozenset({
     "additional_function_arguments",
     "agent",
@@ -320,6 +322,7 @@ class WorkflowResolver(Generic[RequestT]):
         validate_workflow_source(source)
         self.source = source
         self._owned: dict[int, weakref.ReferenceType[Any]] = {}
+        self._strong_owned: OrderedDict[int, object] = OrderedDict()
 
     @property
     def is_factory(self) -> bool:
@@ -366,16 +369,25 @@ class WorkflowResolver(Generic[RequestT]):
                 tools = agent.default_options.get("tools", ())
                 if isinstance(tools, Sequence):
                     resources.extend(tool for tool in cast(Sequence[object], tools) if not isinstance(tool, Mapping))
-        for resource in resources:
+        unique_resources = {id(resource): resource for resource in resources}
+        for identifier, resource in unique_resources.items():
             previous = self._owned.get(id(resource))
-            if previous is not None and previous() is resource:
+            if (previous is not None and previous() is resource) or self._strong_owned.get(identifier) is resource:
                 raise RuntimeError(
                     "Native workflow requests cannot share workflows, executors, agents, clients, or providers. "
                     "Use a request-aware factory that creates fresh instances."
                 )
-        for resource in resources:
-            identifier = id(resource)
-            self._owned[identifier] = weakref.ref(resource, lambda ref, key=identifier: self._forget(key, ref))
+        for identifier, resource in unique_resources.items():
+            try:
+                self._owned[identifier] = weakref.ref(resource, lambda ref, key=identifier: self._forget(key, ref))
+            except TypeError:
+                # Some valid slotted protocol implementations omit __weakref__.
+                # Keep a bounded exact-identity fallback rather than rejecting them
+                # or retaining unbounded request resources for the host lifetime.
+                self._strong_owned[identifier] = resource
+                self._strong_owned.move_to_end(identifier)
+                while len(self._strong_owned) > _MAX_STRONG_RESOURCE_IDENTITIES:
+                    self._strong_owned.popitem(last=False)
         return workflow
 
     def _forget(self, key: int, reference: weakref.ReferenceType[Any]) -> None:

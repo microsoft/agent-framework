@@ -39,6 +39,7 @@ from agent_framework_foundry_hosting._workflow_source import WorkflowResolver, p
 from agent_framework_foundry_hosting._workflow_state import (
     FoundryWorkflowBindingStore,
     HostedWorkflowRun,
+    WorkflowBlockedError,
     WorkflowConflictError,
     WorkflowHead,
 )
@@ -269,6 +270,34 @@ async def test_resolver_rejects_reused_registry_backed_agent_resources() -> None
         await resolver.resolve(object())
 
 
+async def test_resolver_tracks_non_weak_referenceable_resources_without_rejecting_fresh_ones() -> None:
+    class _UnusedClient(BaseChatClient):
+        async def _inner_get_response(self, **kwargs: Any) -> Any:
+            raise AssertionError("Ownership validation must not call the model.")
+
+    class SlottedProvider:
+        __slots__ = ()
+
+    shared = SlottedProvider()
+
+    def create(provider: object) -> Workflow:
+        agent = Agent(
+            client=_UnusedClient(),
+            name="registered",
+            context_providers=[cast(Any, provider)],
+        )
+        return _workflow(AgentExecutor(agent, id="registered"))
+
+    fresh_resolver = WorkflowResolver(lambda request: create(SlottedProvider()))
+    await fresh_resolver.resolve(object())
+    await fresh_resolver.resolve(object())
+
+    shared_resolver = WorkflowResolver(lambda request: create(shared))
+    await shared_resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="cannot share"):
+        await shared_resolver.resolve(object())
+
+
 @pytest.mark.parametrize("raw", [False, True])
 async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: bool) -> None:
     calls: list[dict[str, Any]] = []
@@ -379,7 +408,7 @@ async def test_checkpoint_and_reply_scope_isolation(scope: FoundryRequestScope) 
     await _finish(first, WorkflowTurn(input="review"))
     with pytest.raises(ValueError, match="trusted scope"):
         await _prepare("two", workflow=_workflow(_Review()), scope=scope, previous_response_id="one")
-    with pytest.raises(RuntimeError, match="No acknowledged"):
+    with pytest.raises(RuntimeError, match="unavailable"):
         await _prepare("one", workflow=_workflow(_Review()), scope=scope, recovery=True)
 
 
@@ -583,6 +612,44 @@ async def test_missing_pair_cannot_replay_original_input() -> None:
     run = await _prepare("one")
     run.validate_turn(WorkflowTurn(input=1))
     await run.claim()
-    with pytest.raises(RuntimeError, match="No acknowledged"):
+    with pytest.raises(WorkflowBlockedError, match="start a fresh workflow lineage"):
         await _prepare("one", recovery=True)
-    await run.abort()
+    record, _ = await run.store.get_response("one")
+    head, _ = await run.store.get_head("one", None)
+    assert record is not None and record.status == "blocked"
+    assert head is not None and head.blocked
+
+
+async def test_partial_claim_head_without_response_record_is_repaired_as_blocked() -> None:
+    run = await _prepare("one")
+    owner = "interrupted-owner"
+    await run.store.save_head(
+        WorkflowHead("one", None, response_id="one", owner=owner),
+        expected_etag=None,
+    )
+
+    with pytest.raises(WorkflowBlockedError, match="start a fresh workflow lineage"):
+        await _prepare("one", recovery=True)
+
+    record, _ = await run.store.get_response("one")
+    head, _ = await run.store.get_head("one", None)
+    assert record is not None and record.status == "blocked" and record.owner == owner
+    assert head is not None and head.blocked
+
+
+async def test_later_named_turn_repairs_partial_claim_head_without_waiting_forever() -> None:
+    conversation = "named-conversation"
+    run = await _prepare("one", conversation_id=conversation)
+    owner = "interrupted-owner"
+    await run.store.save_head(
+        WorkflowHead("one", conversation, response_id="one", owner=owner),
+        expected_etag=None,
+    )
+
+    with pytest.raises(WorkflowBlockedError, match="start a fresh workflow lineage"):
+        await _prepare("two", conversation_id=conversation)
+
+    record, _ = await run.store.get_response("one")
+    head, _ = await run.store.get_head("one", conversation)
+    assert record is not None and record.status == "blocked" and record.owner == owner
+    assert head is not None and head.blocked

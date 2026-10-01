@@ -323,6 +323,24 @@ async def test_typed_native_turns_use_fresh_graphs_and_exact_state() -> None:
     assert "_internal_metadata" not in (first.get("metadata") or {})
 
 
+async def test_default_checkpoint_provider_rejects_unallowlisted_typed_input_before_claim() -> None:
+    server = ResponsesHostServer(
+        workflow=lambda request: _build(),
+        parse_response=_parse,
+        response_store=InMemoryResponseProvider(),
+        configure_observability=None,
+    )
+
+    response = await _post(server, '{"text":"typed"}')
+
+    assert response["status"] == "failed"
+    assert "checkpoint-allowlisted" in response["error"]["message"]
+    record, _ = await FoundryWorkflowBindingStore(FoundryRequestScope("sandbox", "user", "call", False)).get_response(
+        response["id"]
+    )
+    assert record is None
+
+
 @pytest.mark.parametrize("different", [{"sandbox": "other"}, {"user": "other"}])
 async def test_native_continuation_rejects_cross_scope(different: dict[str, str]) -> None:
     server = _server()

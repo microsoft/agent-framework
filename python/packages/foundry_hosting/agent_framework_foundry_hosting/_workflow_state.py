@@ -388,13 +388,7 @@ class HostedWorkflowRun:
             return run
 
         own, own_etag = await run.store.get_response(response_id)
-        if recovery:
-            if own is None or own.binding.checkpoint_id is None or own.snapshot is None:
-                raise RuntimeError(
-                    "No acknowledged checkpoint/output pair can recover this response; start a fresh lineage."
-                )
-            if own.status == "blocked":
-                raise WorkflowBlockedError(_BLOCKED)
+        if recovery and own is not None:
             run._record, run._record_etag = own, own_etag
             run.binding = own.binding
             run._reply_approvals = own.approvals or {}
@@ -404,12 +398,13 @@ class HostedWorkflowRun:
             )
 
         previous: WorkflowBinding | None = None
-        if not recovery and previous_response_id is not None:
+        if previous_response_id is not None and (not recovery or own is None):
             record, _ = await run.store.get_response(previous_response_id)
             if record is None or record.status != "completed":
                 raise ValueError("The previous response has no completed workflow checkpoint in this trusted scope.")
             previous = record.binding
-            run._reply_approvals = record.approvals or {}
+            if not recovery:
+                run._reply_approvals = record.approvals or {}
             if previous.conversation_id is not None:
                 raise ValueError("A named workflow conversation cannot be forked through previous_response_id.")
             run.binding = replace(run.binding, lineage_id=previous.lineage_id)
@@ -419,7 +414,26 @@ class HostedWorkflowRun:
         if recovery:
             if head is None:
                 raise RuntimeError("The workflow recovery authority is unavailable; start a fresh lineage.")
-            if own is not None and own.status == "completed":
+            if own is None:
+                if head.response_id != response_id or head.owner is None or head.blocked:
+                    raise WorkflowConflictError(_CONFLICT)
+                run.binding = replace(run.binding, lineage_id=head.lineage_id)
+                blocked_record = WorkflowRecord(run.binding, head.owner, "blocked")
+                await run.store.save_response(blocked_record, expected_etag=None)
+                await run.store.save_head(replace(head, blocked=True), expected_etag=etag)
+                raise WorkflowBlockedError(_BLOCKED)
+            if own.status == "blocked":
+                if head.response_id == response_id and head.owner == own.owner and not head.blocked:
+                    await run.store.save_head(replace(head, blocked=True), expected_etag=etag)
+                raise WorkflowBlockedError(_BLOCKED)
+            if own.binding.checkpoint_id is None or own.snapshot is None:
+                if head.response_id != response_id or head.owner != own.owner or head.blocked:
+                    raise WorkflowConflictError(_CONFLICT)
+                blocked_record = replace(own, status="blocked")
+                await run.store.save_response(blocked_record, expected_etag=own_etag)
+                await run.store.save_head(replace(head, blocked=True), expected_etag=etag)
+                raise WorkflowBlockedError(_BLOCKED)
+            if own.status == "completed":
                 current = head.binding
                 visited: set[str] = set()
                 while current is not None and current != own.binding:
@@ -435,13 +449,31 @@ class HostedWorkflowRun:
                     raise WorkflowConflictError(_CONFLICT)
                 else:
                     run._finalized = True
-            elif own is None or head.response_id != response_id or head.owner != own.owner or head.blocked:
+            elif head.response_id != response_id or head.owner != own.owner or head.blocked:
                 raise WorkflowConflictError(_CONFLICT)
             previous = run.binding
         elif head is not None:
             if head.blocked:
                 raise WorkflowBlockedError(_BLOCKED)
             if head.response_id is not None:
+                active_record, _ = await run.store.get_response(head.response_id)
+                if active_record is None and head.owner is not None:
+                    interrupted_binding = WorkflowBinding(
+                        response_id=head.response_id,
+                        checkpoint_id=None,
+                        lineage_id=head.lineage_id,
+                        workflow_name=workflow.name,
+                        graph_hash=workflow.graph_signature_hash,
+                        scope_key=scope.storage_key,
+                        conversation_id=head.conversation_id,
+                        previous_response_id=head.binding.response_id if head.binding is not None else None,
+                    )
+                    await run.store.save_response(
+                        WorkflowRecord(interrupted_binding, head.owner, "blocked"),
+                        expected_etag=None,
+                    )
+                    await run.store.save_head(replace(head, blocked=True), expected_etag=etag)
+                    raise WorkflowBlockedError(_BLOCKED)
                 raise WorkflowConflictError(
                     "This workflow has an in-flight turn. Wait for it or start a fresh lineage."
                 )

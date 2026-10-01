@@ -26,6 +26,7 @@ from agent_framework import (
     FinishReason,
     Message,
     WorkflowCheckpoint,
+    WorkflowCheckpointException,
     WorkflowEvent,
 )
 from anyio import CancelScope
@@ -57,7 +58,7 @@ from ._responses import (
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
-from ._state_store import ContextScopedStoreProvider
+from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
 from ._workflow_source import WorkflowResolver, WorkflowSource, prepare_workflow_kwargs, workflow_agents
 from ._workflow_state import HostedWorkflowRun, WorkflowConflictError
 
@@ -459,6 +460,18 @@ class NativeResponsesWorkflow:
                 turn = await turn
             phase = "input validation"
             turn = run.validate_turn(turn)
+            if (
+                run.stored
+                and turn.input is not None
+                and isinstance(self.checkpoint_store_provider, CheckpointStoreProvider)
+            ):
+                try:
+                    self.checkpoint_store_provider.validate_checkpoint_value(turn.input)
+                except WorkflowCheckpointException as exc:
+                    raise _WorkflowRequestError(
+                        "Stored native workflow input uses an application type that is not checkpoint-allowlisted. "
+                        'Configure CheckpointStoreProvider(allowed_checkpoint_types=["module:qualname"]).'
+                    ) from exc
             client_kwargs, function_kwargs = prepare_workflow_kwargs(
                 workflow,
                 turn,

@@ -232,6 +232,22 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         """
         self._allowed_checkpoint_types = allowed_checkpoint_types
 
+    def validate_checkpoint_value(self, value: object) -> None:
+        """Verify a value can round-trip through this provider's restricted decoder.
+
+        Native hosts use this before claiming a stored typed workflow turn so an
+        omitted application allowlist fails before executors or tools run.
+        """
+        from agent_framework._workflows._checkpoint_encoding import (
+            decode_checkpoint_value,
+            encode_checkpoint_value,
+        )
+
+        decode_checkpoint_value(
+            encode_checkpoint_value(value),
+            allowed_types=frozenset(self._allowed_checkpoint_types or ()),
+        )
+
     def get_store(
         self,
         *,

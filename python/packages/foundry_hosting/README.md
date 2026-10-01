@@ -38,7 +38,12 @@ complete batch of validated pending replies:
 ```python
 from pydantic import BaseModel
 
-from agent_framework_foundry_hosting import HostedResponseRequest, ResponsesHostServer, WorkflowTurn
+from agent_framework_foundry_hosting import (
+    CheckpointStoreProvider,
+    HostedResponseRequest,
+    ResponsesHostServer,
+    WorkflowTurn,
+)
 
 
 class Ticket(BaseModel):
@@ -56,7 +61,13 @@ async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]
     return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
 
 
-ResponsesHostServer(workflow=build_workflow, parse_response=parse_response)
+ResponsesHostServer(
+    workflow=build_workflow,
+    parse_response=parse_response,
+    checkpoint_store_provider=CheckpointStoreProvider(
+        allowed_checkpoint_types=[f"{Ticket.__module__}:{Ticket.__qualname__}"],
+    ),
+)
 ```
 
 A direct built workflow is single-use. Use a request-aware sync or async
