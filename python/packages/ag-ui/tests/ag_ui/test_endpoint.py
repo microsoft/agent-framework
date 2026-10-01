@@ -5244,10 +5244,12 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
 
 
-async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with_reused_call_id(
-    streaming_chat_client_stub,
-) -> None:
-    """Distinct hidden occurrences sharing a provider call ID resume and execute once."""
+def _build_reused_provider_call_id_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
+) -> tuple[TestClient, list[str], dict[str, str], AgentFrameworkAgent]:
+    """Pause on one guarded call whose two safe siblings reuse its provider call ID."""
     executed: list[str] = []
     state = {"phase": "pause"}
 
@@ -5313,8 +5315,21 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     app = FastAPI()
-    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
-    client = TestClient(app)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "test") if snapshot_store is not None else None,
+    )
+    return TestClient(app), executed, state, wrapped_agent
+
+
+async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with_reused_call_id(
+    streaming_chat_client_stub,
+) -> None:
+    """Distinct hidden occurrences sharing a provider call ID resume and execute once."""
+    client, executed, state, wrapped_agent = _build_reused_provider_call_id_endpoint(streaming_chat_client_stub)
     thread_id = "thread-shared-provider-call"
 
     pause_response = client.post(
@@ -5373,6 +5388,52 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {occurrence.identity.call_id for occurrence in occurrences} == {"provider-shared"}
     assert len({occurrence.identity.occurrence_id for occurrence in occurrences}) == 3
     assert {occurrence.status for occurrence in occurrences} == {ApprovalStatus.SETTLED}
+
+
+async def test_endpoint_approval_snapshot_keeps_every_result_for_reused_call_id(streaming_chat_client_stub) -> None:
+    """Results of distinct occurrences sharing a provider call ID all survive the snapshot round trip."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, executed, state, _ = _build_reused_provider_call_id_endpoint(
+        streaming_chat_client_stub, snapshot_store=store
+    )
+    thread_id = "thread-shared-provider-call-snapshot"
+    expected_results = ["guarded result", "first safe result", "second safe result"]
+
+    def post(run_id: str, *, text: str | None = None, interrupt_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if interrupt_id:
+            payload["resume"] = [{"interruptId": interrupt_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def tool_results(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        return [
+            (str(message.get("toolCallId") or message.get("tool_call_id")), message["content"])
+            for message in messages
+            if message.get("role") == "tool"
+        ]
+
+    post("run-pause", text="Run all three tools")
+    state["phase"] = "resume"
+    resume_events = post("run-resume", interrupt_id="guarded-occurrence")
+    assert Counter(executed) == {"guarded": 1, "first-safe": 1, "second-safe": 1}
+
+    snapshot_events = [event for event in resume_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    event_messages = snapshot_events[-1]["messages"]
+    assert tool_results(event_messages) == [("provider-shared", result) for result in expected_results]
+    assert [message["role"] for message in event_messages] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert tool_results(saved.messages) == [("provider-shared", result) for result in expected_results]
 
 
 def _build_fides_policy_approval_endpoint(
