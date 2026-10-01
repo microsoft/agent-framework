@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
@@ -344,6 +345,7 @@ public sealed class CompactionProviderTests
             MessageGroups = [.. index.Groups],
             ProcessedInputMessageCount = index.ProcessedInputMessageCount,
             InputSummaryGroupIndices = index.InputSummaryGroupIndices,
+            InputPrefixFingerprint = index.InputPrefixFingerprint,
         };
         session.StateBag.SetValue(provider.StateKeys[0], state, AgentJsonUtilities.DefaultOptions);
         var serializedState = session.StateBag.Serialize();
@@ -374,6 +376,202 @@ public sealed class CompactionProviderTests
         Assert.Equal(2, resultMessages.Count);
         Assert.Equal("X", resultMessages[0].Text);
         Assert.Equal("U", resultMessages[1].Text);
+    }
+
+    [Fact]
+    public async Task InvokingAsyncKeepsReducedHistoryWhenInputIsAppendedAfterSerializationAsync()
+    {
+        // Arrange — reduction leaves only C, while the fingerprint still validates the full original input.
+        RecordingChatReducer reducer = new();
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> firstInput =
+        [
+            new(ChatRole.User, "A"),
+            new(ChatRole.Assistant, "B"),
+            new(ChatRole.User, "C"),
+        ];
+        AIContext firstResult = await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = firstInput }));
+        var serializedState = session.StateBag.Serialize();
+        Assert.Equal(3, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(serializedState));
+        List<ChatMessage> appended =
+        [
+            new(ChatRole.User, "A"),
+            new(ChatRole.Assistant, "B"),
+            new(ChatRole.User, "C"),
+            new(ChatRole.Assistant, "D"),
+        ];
+
+        // Act
+        AIContext secondResult = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = appended }));
+
+        // Assert — the reducer sees the retained C plus D, not the full input again.
+        Assert.Equal(["C"], firstResult.Messages!.Select(message => message.Text));
+        Assert.Equal(["D"], secondResult.Messages!.Select(message => message.Text));
+        Assert.Equal(2, reducer.Inputs.Count);
+        Assert.Equal(["A", "B", "C"], reducer.Inputs[0].Select(message => message.Text));
+        Assert.Equal(["C", "D"], reducer.Inputs[1].Select(message => message.Text));
+        Assert.Equal(4, restoredSession.StateBag.Serialize().GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+
+        // Act & Assert — another serialized turn retains the new reduced boundary.
+        TestAgentSession thirdSession = new(AgentSessionStateBag.Deserialize(restoredSession.StateBag.Serialize()));
+        List<ChatMessage> thirdInput = [.. appended, new(ChatRole.User, "E")];
+        AIContext thirdResult = await provider.InvokingAsync(new(mockAgent.Object, thirdSession, new AIContext { Messages = thirdInput }));
+        Assert.Equal(["E"], thirdResult.Messages!.Select(message => message.Text));
+        Assert.Equal(["D", "E"], reducer.Inputs[2].Select(message => message.Text));
+    }
+
+    [Fact]
+    public async Task InvokingAsyncRebuildsReducedHistoryWhenInputPrefixChangesAsync()
+    {
+        // Arrange — the saved boundary C remains, but the earlier input is edited with the same MessageId.
+        RecordingChatReducer reducer = new();
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> firstInput =
+        [
+            new(ChatRole.User, "A") { MessageId = "message-1" },
+            new(ChatRole.Assistant, "B"),
+            new(ChatRole.User, "C"),
+        ];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = firstInput }));
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        List<ChatMessage> replacement =
+        [
+            new(ChatRole.User, "X") { MessageId = "message-1" },
+            new(ChatRole.Assistant, "B"),
+            new(ChatRole.User, "C"),
+            new(ChatRole.Assistant, "D"),
+        ];
+
+        // Act
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = replacement }));
+
+        // Assert — rebuilding is necessary because X changed the saved prefix.
+        Assert.Equal(["D"], result.Messages!.Select(message => message.Text));
+        Assert.Equal(2, reducer.Inputs.Count);
+        Assert.Equal(["X", "B", "C", "D"], reducer.Inputs[1].Select(message => message.Text));
+        Assert.Equal(4, restoredSession.StateBag.Serialize().GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvokingAsyncRebuildsReducedHistoryWhenInputIsMutatedAsync(bool serializeSession)
+    {
+        // Arrange
+        RecordingChatReducer reducer = new();
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> input = [new(ChatRole.User, "Old"), new(ChatRole.User, "Keep")];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = input }));
+        if (serializeSession)
+        {
+            session = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        }
+
+        ((TextContent)input[0].Contents[0]).Text = "Edited";
+        input.Add(new(ChatRole.User, "New"));
+
+        // Act
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = input }));
+
+        // Assert — the reducer sees the changed original input, rather than the stale retained subset.
+        Assert.Equal(["Edited", "Keep", "New"], reducer.Inputs[1].Select(message => message.Text));
+    }
+
+    [Fact]
+    public async Task InvokingAsyncStoresFixedSizeFingerprintAfterReductionAsync()
+    {
+        // Arrange — discarded content must not be retained solely to validate future input.
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(new RecordingChatReducer(), CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        string discarded = new('x', 65536);
+        List<ChatMessage> input = [new(ChatRole.User, discarded), new(ChatRole.User, "Keep")];
+
+        // Act
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = input }));
+        var serialized = session.StateBag.Serialize();
+        var state = serialized.GetProperty(provider.StateKeys[0]);
+
+        // Assert
+        Assert.Equal(44, state.GetProperty("inputprefixfingerprint").GetString()!.Length);
+        Assert.False(state.TryGetProperty("reducedinputprefix", out _));
+        Assert.DoesNotContain(discarded, serialized.GetRawText());
+        Assert.True(serialized.GetRawText().Length < 2048);
+    }
+
+    [Fact]
+    public async Task InvokingAsyncPreservesToolExclusionAfterSessionSerializationAsync()
+    {
+        // Arrange — serialized tool payload values may deserialize as JsonElement instead of their original CLR types.
+        CompactionProvider provider = new(new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(100000)));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> firstInput =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?> { ["query"] = "Seattle" })]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", 123)]),
+            new(ChatRole.User, "Question"),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(firstInput);
+        index.Groups[0].IsExcluded = true;
+        CompactionProvider.State state = new()
+        {
+            MessageGroups = [.. index.Groups],
+            ProcessedInputMessageCount = index.ProcessedInputMessageCount,
+            InputSummaryGroupIndices = index.InputSummaryGroupIndices,
+            InputPrefixFingerprint = index.InputPrefixFingerprint,
+        };
+        session.StateBag.SetValue(provider.StateKeys[0], state, AgentJsonUtilities.DefaultOptions);
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        List<ChatMessage> appended = [.. firstInput, new(ChatRole.User, "Follow-up")];
+
+        // Act
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = appended }));
+
+        // Assert — unchanged tool history remains excluded and only the new user message is appended.
+        Assert.Equal(["Question", "Follow-up"], result.Messages!.Select(message => message.Text));
+    }
+
+    [Fact]
+    public async Task InvokingAsyncKeepsEmptyReducedHistoryWhenInputIsAppendedAsync()
+    {
+        // Arrange — an empty reduction still needs its saved input boundary on the next turn.
+        RecordingChatReducer reducer = new(keepLastMessage: false);
+        CompactionProvider provider = new(new ChatReducerCompactionStrategy(reducer, CompactionTriggers.Always));
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        TestAgentSession session = new();
+        List<ChatMessage> firstInput = [new(ChatRole.User, "A"), new(ChatRole.Assistant, "B")];
+        await provider.InvokingAsync(new(mockAgent.Object, session, new AIContext { Messages = firstInput }));
+        var serializedState = session.StateBag.Serialize();
+        Assert.Equal(0, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("messagegroups").GetArrayLength());
+        Assert.Equal(2, serializedState.GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+        TestAgentSession unchangedSession = new(AgentSessionStateBag.Deserialize(serializedState));
+        TestAgentSession restoredSession = new(AgentSessionStateBag.Deserialize(serializedState));
+        List<ChatMessage> appended = [new(ChatRole.User, "A"), new(ChatRole.Assistant, "B"), new(ChatRole.User, "C")];
+
+        // Act
+        AIContext unchangedResult = await provider.InvokingAsync(new(mockAgent.Object, unchangedSession, new AIContext { Messages = firstInput }));
+        AIContext result = await provider.InvokingAsync(new(mockAgent.Object, restoredSession, new AIContext { Messages = appended }));
+
+        // Assert — only C is indexed; a single non-system group does not trigger reduction.
+        Assert.Empty(unchangedResult.Messages!);
+        Assert.Equal(["C"], result.Messages!.Select(message => message.Text));
+        Assert.Single(reducer.Inputs);
+        Assert.Equal(3, restoredSession.StateBag.Serialize().GetProperty(provider.StateKeys[0]).GetProperty("processedinputmessagecount").GetInt32());
+
+        // Act & Assert — after another append, the reducer sees only the retained C and new D.
+        TestAgentSession thirdSession = new(AgentSessionStateBag.Deserialize(restoredSession.StateBag.Serialize()));
+        List<ChatMessage> thirdInput = [.. appended, new(ChatRole.Assistant, "D")];
+        AIContext thirdResult = await provider.InvokingAsync(new(mockAgent.Object, thirdSession, new AIContext { Messages = thirdInput }));
+        Assert.Empty(thirdResult.Messages!);
+        Assert.Equal(["C", "D"], reducer.Inputs[1].Select(message => message.Text));
     }
 
     [Fact]
@@ -581,6 +779,25 @@ public sealed class CompactionProviderTests
         // A3, Q4 are new — they should NOT be ChatHistory
         Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[5].GetAgentRequestMessageSourceType());
         Assert.NotEqual(AgentRequestMessageSourceType.ChatHistory, resultList3[6].GetAgentRequestMessageSourceType());
+    }
+
+    private sealed class RecordingChatReducer : IChatReducer
+    {
+        private readonly bool _keepLastMessage;
+
+        public RecordingChatReducer(bool keepLastMessage = true)
+        {
+            this._keepLastMessage = keepLastMessage;
+        }
+
+        public List<List<ChatMessage>> Inputs { get; } = [];
+
+        public Task<IEnumerable<ChatMessage>> ReduceAsync(IEnumerable<ChatMessage> messages, System.Threading.CancellationToken cancellationToken = default)
+        {
+            List<ChatMessage> input = [.. messages];
+            this.Inputs.Add(input);
+            return Task.FromResult<IEnumerable<ChatMessage>>(this._keepLastMessage ? [input[^1]] : []);
+        }
     }
 
     private sealed class TestAgentSession : AgentSession

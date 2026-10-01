@@ -27,7 +27,6 @@ public sealed class CompactionMessageIndex
 {
     private int _currentTurn;
     private HashSet<CompactionMessageGroup>? _inputSummaryGroups;
-    private bool _hasSummaryProvenance = true;
 
     /// <summary>
     /// Gets the list of message groups in this collection.
@@ -86,16 +85,13 @@ public sealed class CompactionMessageIndex
         return instance;
     }
 
-    internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount, IReadOnlyList<int>? inputSummaryGroupIndices)
+    internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount, IReadOnlyList<int>? inputSummaryGroupIndices, string? inputPrefixFingerprint = null)
     {
         CompactionMessageIndex instance = new(groups);
         instance.ProcessedInputMessageCount = processedInputMessageCount;
+        instance.InputPrefixFingerprint = processedInputMessageCount is >= 0 ? inputPrefixFingerprint : null;
 
-        if (inputSummaryGroupIndices is null)
-        {
-            instance._hasSummaryProvenance = !groups.Any(group => group.Kind == CompactionGroupKind.Summary);
-        }
-        else
+        if (inputSummaryGroupIndices is not null)
         {
             foreach (int index in inputSummaryGroupIndices)
             {
@@ -103,7 +99,6 @@ public sealed class CompactionMessageIndex
                     !(instance._inputSummaryGroups ??= []).Add(groups[index]))
                 {
                     instance._inputSummaryGroups?.Clear();
-                    instance._hasSummaryProvenance = false;
                     break;
                 }
             }
@@ -113,6 +108,8 @@ public sealed class CompactionMessageIndex
     }
 
     internal int? ProcessedInputMessageCount { get; private set; }
+
+    internal string? InputPrefixFingerprint { get; private set; }
 
     internal List<int> InputSummaryGroupIndices
     {
@@ -159,30 +156,22 @@ public sealed class CompactionMessageIndex
     {
         if (allMessages.Count == 0)
         {
-            this.Groups.Clear();
-            this._currentTurn = 0;
-            this._inputSummaryGroups?.Clear();
-            this._hasSummaryProvenance = true;
-            this.ProcessedInputMessageCount = 0;
-            return;
-        }
-
-        int processedMessageCount = this.ProcessedInputMessageCount ?? this.RawMessageCount;
-
-        // Older state with summaries may lack the input count or summary provenance.
-        // Rebuild it once rather than guessing which summary groups came from the input.
-        if ((!this.ProcessedInputMessageCount.HasValue || !this._hasSummaryProvenance) &&
-            this.Groups.Any(group => group.Kind == CompactionGroupKind.Summary))
-        {
             this.RebuildFromMessages(allMessages);
             return;
         }
 
-        // Without a history version, the represented input prefix must match before preserving groups:
-        // a repeated message at the saved boundary can hide replaced or shifted history.
-        if (this.MatchesInputPrefix(allMessages, processedMessageCount))
+        // A content fingerprint validates the original input even after strategies replace its groups
+        // or the caller mutates the same message objects. Older state is rebuilt once to capture it.
+        if (this.InputPrefixFingerprint is { } fingerprint &&
+            this.ProcessedInputMessageCount is { } processedMessageCount &&
+            allMessages.Count >= processedMessageCount &&
+            string.Equals(fingerprint, CompactionInputFingerprint.Compute(allMessages, processedMessageCount), StringComparison.Ordinal))
         {
-            this.AppendFromMessages(allMessages, processedMessageCount);
+            if (allMessages.Count > processedMessageCount)
+            {
+                this.AppendFromMessages(allMessages, processedMessageCount);
+            }
+
             return;
         }
 
@@ -194,39 +183,20 @@ public sealed class CompactionMessageIndex
         this.Groups.Clear();
         this._currentTurn = 0;
         this._inputSummaryGroups?.Clear();
-        this._hasSummaryProvenance = true;
         this.AppendFromMessages(messages, 0);
     }
 
-    private bool MatchesInputPrefix(IList<ChatMessage> messages, int processedMessageCount)
+    internal void ReplaceWithReducedMessages(IList<ChatMessage> reducedMessages)
     {
-        if (messages.Count < processedMessageCount)
+        CompactionMessageIndex rebuilt = Create(reducedMessages, this.Tokenizer);
+        this.Groups.Clear();
+        foreach (CompactionMessageGroup group in rebuilt.Groups)
         {
-            return false;
+            this.Groups.Add(group);
         }
 
-        int inputIndex = 0;
-        foreach (CompactionMessageGroup group in this.Groups)
-        {
-            if (group.Kind == CompactionGroupKind.Summary && this._inputSummaryGroups?.Contains(group) is not true)
-            {
-                continue;
-            }
-
-            foreach (ChatMessage message in group.Messages)
-            {
-                if (inputIndex >= processedMessageCount ||
-                    !messages[inputIndex].ContentEquals(message) ||
-                    IsSummaryMessage(messages[inputIndex]) != IsSummaryMessage(message))
-                {
-                    return false;
-                }
-
-                inputIndex++;
-            }
-        }
-
-        return inputIndex == processedMessageCount;
+        this._currentTurn = rebuilt._currentTurn;
+        this._inputSummaryGroups?.Clear();
     }
 
     private void AppendFromMessages(IList<ChatMessage> messages, int startIndex)
@@ -320,6 +290,7 @@ public sealed class CompactionMessageIndex
             }
         }
 
+        this.InputPrefixFingerprint = CompactionInputFingerprint.Compute(messages, messages.Count);
         this.ProcessedInputMessageCount = messages.Count;
     }
 
@@ -578,7 +549,7 @@ public sealed class CompactionMessageIndex
     private static bool HasOnlyReasoning(ChatMessage message) =>
         message.Contents.All(content => content is TextReasoningContent);
 
-    private static bool IsSummaryMessage(ChatMessage message) =>
+    internal static bool IsSummaryMessage(ChatMessage message) =>
         message.AdditionalProperties?.TryGetValue(CompactionMessageGroup.SummaryPropertyKey, out object? value) is true
             && value switch
             {

@@ -659,7 +659,7 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello"), summary];
         CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
         original.Groups[0].IsExcluded = true;
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices, original.InputPrefixFingerprint);
 
         // Act
         messages.Add(new ChatMessage(ChatRole.User, "What is the weather today?"));
@@ -683,7 +683,7 @@ public class CompactionMessageIndexTests
         ];
         CompactionMessageIndex original = CompactionMessageIndex.Create(originalMessages);
         original.Groups[0].IsExcluded = true;
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices, original.InputPrefixFingerprint);
         List<ChatMessage> replacement =
         [
             new ChatMessage(ChatRole.User, "New question"),
@@ -733,6 +733,193 @@ public class CompactionMessageIndexTests
     }
 
     [Fact]
+    public void UpdateRebuildsWhenMessageContentChangesWithSameMessageId()
+    {
+        // Arrange
+        ChatMessage originalMessage = new(ChatRole.User, "Old") { MessageId = "message-1" };
+        CompactionMessageIndex index = CompactionMessageIndex.Create([originalMessage]);
+        index.Groups[0].IsExcluded = true;
+        ChatMessage replacement = new(ChatRole.User, "Edited") { MessageId = "message-1" };
+        List<ChatMessage> input = [replacement, new(ChatRole.User, "Follow-up")];
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.Same(replacement, index.Groups[0].Messages[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UpdateRebuildsWhenReducedInputMessageIsMutated(bool appendMessage)
+    {
+        // Arrange — the caller retains and edits the same object that the reducer discarded.
+        ChatMessage original = new(ChatRole.User, "Old");
+        List<ChatMessage> messages = [original, new(ChatRole.User, "Keep")];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.ReplaceWithReducedMessages([messages[1]]);
+        ((TextContent)original.Contents[0]).Text = "Edited";
+        if (appendMessage)
+        {
+            messages.Add(new(ChatRole.User, "New"));
+        }
+
+        // Act
+        index.Update(messages);
+
+        // Assert — changed input invalidates the old reduction, even without an appended message.
+        Assert.Equal(messages.Count, index.Groups.Count);
+        Assert.Same(original, index.Groups[0].Messages[0]);
+        Assert.Equal("Edited", index.Groups[0].Messages[0].Text);
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenExcludedToolPayloadIsMutated()
+    {
+        // Arrange — a nested mutable tool argument shares its object with the original index.
+        Dictionary<string, object?> query = new() { ["city"] = "Seattle" };
+        ChatMessage toolCall = new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?> { ["query"] = query })]);
+        List<ChatMessage> messages = [toolCall, new(ChatRole.Tool, [new FunctionResultContent("call-1", "Result")])];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup previousGroup = index.Groups[0];
+        query["city"] = "London";
+
+        // Act
+        index.Update(messages);
+
+        // Assert
+        Assert.NotSame(previousGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Fact]
+    public void UpdateRebuildsForContentWithoutSerializationContract()
+    {
+        // Arrange — an unknown content type cannot provide a reliable saved fingerprint.
+        List<ChatMessage> messages = [new(ChatRole.User, [new UnserializableContent()])];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.Groups[0].IsExcluded = true;
+        CompactionMessageGroup previousGroup = index.Groups[0];
+
+        // Act
+        index.Update(messages);
+
+        // Assert — unsupported content keeps working, but its old compaction state is not reused.
+        Assert.NotSame(previousGroup, index.Groups[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Fact]
+    public void UpdatePreservesExclusionForEquivalentJsonToolPayloads()
+    {
+        // Arrange
+        ChatMessage toolCall = new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?>
+        {
+            ["query"] = ParseJson("{\"items\":[1,2],\"label\":\"text\"}"),
+        })]);
+        ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("{\"found\":true}"))]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([toolCall, toolResult]);
+        index.Groups[0].IsExcluded = true;
+        List<ChatMessage> input =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?>
+            {
+                ["query"] = ParseJson("{\"label\":\"te\\u0078t\",\"items\":[1.0,2e0]}"),
+            })]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("{\"found\":true}"))]),
+            new(ChatRole.User, "Follow-up"),
+        ];
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.True(index.Groups[0].IsExcluded);
+        Assert.Same(toolCall, index.Groups[0].Messages[0]);
+        Assert.Same(input[2], index.Groups[1].Messages[0]);
+    }
+
+    [Fact]
+    public void UpdatePreservesExclusionWhenToolPayloadBecomesJsonAfterSerialization()
+    {
+        // Arrange
+        ChatMessage toolCall = new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?> { ["query"] = "Seattle" })]);
+        ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call-1", 123)]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([toolCall, toolResult]);
+        index.Groups[0].IsExcluded = true;
+        List<ChatMessage> input =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("call-1", "lookup", new Dictionary<string, object?> { ["query"] = ParseJson("\"Seattle\"") })]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("123"))]),
+            new(ChatRole.User, "Follow-up"),
+        ];
+
+        // Act
+        index.Update(input);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.True(index.Groups[0].IsExcluded);
+        Assert.Same(toolCall, index.Groups[0].Messages[0]);
+        Assert.Same(input[2], index.Groups[1].Messages[0]);
+    }
+
+    [Fact]
+    public void UpdatePreservesExclusionForClrAndJsonNullPayloads()
+    {
+        // Arrange — serializer omission of a CLR null must not change the meaning of the payload.
+        ChatMessage original = new(ChatRole.Tool, [new FunctionResultContent("call-1", null)]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([original]);
+        index.Groups[0].IsExcluded = true;
+
+        // Act
+        index.Update([new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("null"))]), new(ChatRole.User, "Follow-up")]);
+
+        // Assert
+        Assert.True(index.Groups[0].IsExcluded);
+        Assert.Same(original, index.Groups[0].Messages[0]);
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenNestedJsonNullIsRemoved()
+    {
+        // Arrange — an explicit null inside the payload remains different from a missing property.
+        ChatMessage original = new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("{\"result\":null}"))]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([original]);
+        index.Groups[0].IsExcluded = true;
+        ChatMessage replacement = new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("{}"))]);
+
+        // Act
+        index.Update([replacement]);
+
+        // Assert
+        Assert.Same(replacement, index.Groups[0].Messages[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Fact]
+    public void UpdateRebuildsWhenJsonNumberDiffersBeyondDecimalPrecision()
+    {
+        // Arrange — rounding both values through decimal would hide this change.
+        ChatMessage original = new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("0.1234567890123456789012345678901"))]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([original]);
+        index.Groups[0].IsExcluded = true;
+        ChatMessage replacement = new(ChatRole.Tool, [new FunctionResultContent("call-1", ParseJson("0.1234567890123456789012345678902"))]);
+
+        // Act
+        index.Update([replacement]);
+
+        // Assert
+        Assert.Same(replacement, index.Groups[0].Messages[0]);
+        Assert.False(index.Groups[0].IsExcluded);
+    }
+
+    [Fact]
     public void RestoreSkipsGeneratedSummaryButMatchesInputSummary()
     {
         // Arrange — a strategy inserts a generated summary ahead of an input summary.
@@ -743,7 +930,7 @@ public class CompactionMessageIndexTests
         original.InsertGroup(0, CompactionGroupKind.Summary, [new ChatMessage(ChatRole.Assistant, "Generated summary")]);
         original.Groups[2].IsExcluded = true;
         Assert.Equal([1], original.InputSummaryGroupIndices);
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices, original.InputPrefixFingerprint);
 
         // Act
         messages.Add(new ChatMessage(ChatRole.User, "Follow-up"));
@@ -759,6 +946,72 @@ public class CompactionMessageIndexTests
     }
 
     [Fact]
+    public void ReplaceWithReducedMessagesRetainsInputSummaryInSavedPrefix()
+    {
+        // Arrange — a generated summary must not be mistaken for an input summary when the reducer replaces groups.
+        ChatMessage inputSummary = new(ChatRole.Assistant, "Input summary");
+        (inputSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> messages = [inputSummary, new(ChatRole.User, "Old"), new(ChatRole.User, "Keep")];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        ChatMessage generatedSummary = new(ChatRole.Assistant, "Generated summary");
+        (generatedSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        index.InsertGroup(1, CompactionGroupKind.Summary, [generatedSummary]);
+
+        // Act
+        index.ReplaceWithReducedMessages([messages[2]]);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. index.Groups], index.ProcessedInputMessageCount, index.InputSummaryGroupIndices, index.InputPrefixFingerprint);
+        ChatMessage restoredSummary = new(ChatRole.Assistant, "Input summary");
+        (restoredSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        List<ChatMessage> appended = [restoredSummary, new(ChatRole.User, "Old"), new(ChatRole.User, "Keep"), new(ChatRole.User, "New")];
+        restored.Update(appended);
+
+        // Assert — the old reduced group survives and only the new input is appended.
+        Assert.Equal(2, restored.Groups.Count);
+        Assert.Equal("Keep", restored.Groups[0].Messages[0].Text);
+        Assert.Same(appended[3], restored.Groups[1].Messages[0]);
+        Assert.NotNull(restored.InputPrefixFingerprint);
+        Assert.Equal(4, restored.ProcessedInputMessageCount);
+        Assert.Empty(restored.InputSummaryGroupIndices);
+    }
+
+    [Fact]
+    public void RestoreRebuildsOlderReducedStateWithoutInputFingerprint()
+    {
+        // Arrange — state written before the input snapshot cannot validate the removed messages.
+        List<ChatMessage> messages = [new(ChatRole.User, "A"), new(ChatRole.Assistant, "B"), new(ChatRole.User, "C")];
+        CompactionMessageIndex original = CompactionMessageIndex.Create(messages);
+        original.ReplaceWithReducedMessages([messages[2]]);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        List<ChatMessage> appended = [.. messages, new(ChatRole.Assistant, "D")];
+
+        // Act
+        restored.Update(appended);
+
+        // Assert — the old reduction is discarded once, without dropping or duplicating input.
+        Assert.Equal(4, restored.Groups.Count);
+        Assert.Equal(4, restored.ProcessedInputMessageCount);
+        Assert.Same(appended[0], restored.Groups[0].Messages[0]);
+        Assert.Same(appended[3], restored.Groups[3].Messages[0]);
+    }
+
+    [Fact]
+    public void ReplaceWithReducedMessagesContinuesTurnIndicesFromReducedGroups()
+    {
+        // Arrange
+        List<ChatMessage> messages = [new(ChatRole.User, "A"), new(ChatRole.User, "B"), new(ChatRole.User, "C")];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+
+        // Act
+        index.ReplaceWithReducedMessages([messages[2]]);
+        index.Update([.. messages, new(ChatRole.User, "D")]);
+
+        // Assert
+        Assert.Equal(2, index.Groups.Count);
+        Assert.Equal(1, index.Groups[0].TurnIndex);
+        Assert.Equal(2, index.Groups[1].TurnIndex);
+    }
+
+    [Fact]
     public void RestoreRebuildsWhenGeneratedSummaryMatchesChangedInputSummary()
     {
         // Arrange — the new input summary matches the generated group, not the old input group.
@@ -769,7 +1022,7 @@ public class CompactionMessageIndexTests
         (generatedSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
         original.InsertGroup(0, CompactionGroupKind.Summary, [generatedSummary]);
         original.Groups[1].IsExcluded = true;
-        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices);
+        CompactionMessageIndex restored = CompactionMessageIndex.Restore([.. original.Groups], original.ProcessedInputMessageCount, original.InputSummaryGroupIndices, original.InputPrefixFingerprint);
         ChatMessage replacementSummary = new(ChatRole.Assistant, "X");
         (replacementSummary.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
         List<ChatMessage> replacement = [replacementSummary, new ChatMessage(ChatRole.User, "U")];
@@ -1764,4 +2017,12 @@ public class CompactionMessageIndexTests
         Assert.Single(index.Groups);
         Assert.Equal(expectedCompactionGroupKind, index.Groups[0].Kind);
     }
+
+    private static JsonElement ParseJson(string json)
+    {
+        using JsonDocument document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    private sealed class UnserializableContent : AIContent;
 }
