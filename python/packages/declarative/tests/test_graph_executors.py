@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import WorkflowInvocationKwargs
+from agent_framework._workflows._state import State
 
 try:
     import powerfx  # noqa: F401
@@ -17,11 +18,13 @@ except (ImportError, RuntimeError):
 
 _requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
 
+from agent_framework_declarative import WorkflowFactory, WorkflowState  # noqa: E402
 from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
     DECLARATIVE_STATE_KEY,
     ActionComplete,
     ActionTrigger,
+    DeclarativeActionExecutor,
     DeclarativeWorkflowBuilder,
     DeclarativeWorkflowState,
     ForeachInitExecutor,
@@ -29,6 +32,53 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     SendActivityExecutor,
     SetValueExecutor,
 )
+
+
+class TestFactoryStateMemberRoutes:
+    """Factory-created workflows use modern state for expressions and templates."""
+
+    @_requires_powerfx
+    async def test_factory_uses_modern_member_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Record:
+            _private = "private-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "public-marker"
+
+        forbidden = MagicMock(side_effect=AssertionError("Standalone state used by factory"))
+        monkeypatch.setattr(WorkflowState, "get", forbidden)
+        monkeypatch.setattr(WorkflowState, "eval", forbidden)
+        seen: list[type[DeclarativeWorkflowState]] = []
+        original = DeclarativeActionExecutor._get_state
+
+        def track(executor: DeclarativeActionExecutor, store: State) -> DeclarativeWorkflowState:
+            state = original(executor, store)
+            seen.append(type(state))
+            return state
+
+        monkeypatch.setattr(DeclarativeActionExecutor, "_get_state", track)
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: member_routes
+  actions:
+    - kind: SendActivity
+      id: public_expression
+      activity: =Workflow.Inputs.record.public_value
+    - kind: SendActivity
+      id: private_expression
+      activity: =Workflow.Inputs.record._private
+    - kind: SendActivity
+      id: private_template
+      activity: "template:{Workflow.Inputs.record._private}"
+""")
+
+        result = await workflow.run({"record": Record()})
+
+        assert result.get_outputs() == ["public-marker", "template:"]
+        assert seen and all(kind is DeclarativeWorkflowState for kind in seen)
+        forbidden.assert_not_called()
 
 
 class TestDeclarativeWorkflowState:

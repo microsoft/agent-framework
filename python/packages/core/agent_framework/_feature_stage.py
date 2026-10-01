@@ -51,6 +51,7 @@ class ExperimentalFeature(str, Enum):
     """
 
     AGENT_HOOKS = "AGENT_HOOKS"
+    COMPUTER_USE = "COMPUTER_USE"
     DECLARATIVE_AGENTS = "DECLARATIVE_AGENTS"
     EVALS = "EVALS"
     FILE_HISTORY = "FILE_HISTORY"

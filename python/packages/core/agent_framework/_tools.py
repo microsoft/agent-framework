@@ -3029,6 +3029,7 @@ def _bind_approval_responses_to_pending_requests(
     invocation_session: AgentSession | None,
     *,
     consume: bool = True,
+    staged_response_ids: set[int] | None = None,
 ) -> set[int]:
     """Rebind approval responses and remove unissued or duplicate responses."""
     if invocation_session is None:
@@ -3049,6 +3050,8 @@ def _bind_approval_responses_to_pending_requests(
                 consume=consume,
             )
             if rebound is None:
+                if staged_response_ids and id(content) in staged_response_ids:
+                    continue
                 logger.warning(
                     "Ignored an approval response with id %r because it did not match the active approval "
                     "occurrence identity; the pending request was retained for retry.",
@@ -3107,8 +3110,13 @@ def _store_already_approved_approval_requests(
 def _stage_approval_batch_responses(
     invocation_session: AgentSession | None,
     approval_responses: Sequence[Content],
+    *,
+    staged_response_ids: set[int] | None = None,
 ) -> tuple[list[Content], list[dict[str, str | None]], list[Content] | None]:
-    """Accumulate approval decisions and release a batch only when every decision is present."""
+    """Accumulate approval decisions and release a batch only when every decision is present.
+
+    ``staged_response_ids`` records matched source objects for diagnostic-only warning suppression.
+    """
     if not approval_responses:
         return [], [], None
     state = _get_tool_approval_state(invocation_session)
@@ -3154,6 +3162,8 @@ def _stage_approval_batch_responses(
                 continue
             if request_id not in stored_responses:
                 stored_responses[request_id] = rebound
+            if staged_response_ids is not None:
+                staged_response_ids.add(id(response))
             matched = True
 
         if not matched:
@@ -4593,9 +4603,11 @@ async def _resolve_approval_responses(
     pending_responses_before_binding = list(
         _collect_approval_responses(prepared_messages, non_approval_result_ids=host_result_ids).values()
     )
+    staged_response_ids: set[int] = set()
     staged_responses, function_call_order, waiting_requests = _stage_approval_batch_responses(
         approval_session,
         pending_responses_before_binding,
+        staged_response_ids=staged_response_ids,
     )
     if waiting_requests is not None:
         response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(waiting_requests)
@@ -4610,6 +4622,7 @@ async def _resolve_approval_responses(
         prepared_messages,
         approval_session,
         consume=False,
+        staged_response_ids=staged_response_ids,
     )
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
@@ -4845,7 +4858,12 @@ async def _process_model_function_calls(
         had_errors=execution.had_errors,
         max_errors=max_errors,
     )
-    if execution.should_terminate:
+    has_pending_computer_call = any(
+        content.type == "computer_tool_call" and content.user_input_request
+        for message in response.messages
+        for content in message.contents
+    )
+    if execution.should_terminate or has_pending_computer_call:
         processing_result.action = "return"
     if processing_result.action == "return":
         returned_approval_requests = [

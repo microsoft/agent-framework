@@ -21,40 +21,79 @@ but introduces complexity:
 - How do you process updates as they arrive?
 - How do you also get a final, complete response?
 - How do you ensure the underlying stream is only consumed once?
-- How do you add custom logic (hooks) at different stages?
+- How do you transform or block content at defined stages?
+- How do you hold all updates until a final result is approved?
 
 ResponseStream solves all these problems by wrapping an async iterable and providing:
 - Multiple consumption patterns (iteration OR direct finalization)
-- Hook points for transformation, cleanup, finalization, and result processing
-- The `wrap()` API to layer behavior without double-consuming the stream
+- Ordered gates (checks that return `None` to allow a value or raise to block it) and transforms
+- Live or buffered update release
+- Cleanup, finalization, and mapping without double-consuming the stream
 
-=== The Four Hook Types ===
+=== The Content Pipeline ===
 
-ResponseStream provides four ways to inject custom logic. All can be passed via constructor
-or added later via fluent methods:
+Each update follows this pipeline:
 
-1. **Transform Hooks** (`transform_hooks=[]` or `.with_transform_hook()`)
-   - Called for EACH update as it's yielded during iteration
-   - Can transform updates before they're returned to the consumer
-   - Multiple hooks are called in order, each receiving the previous hook's output
-   - Only triggered during iteration (not when calling get_final_response directly)
+```text
+source update
+  -> before-transform update gates
+  -> update transforms
+  -> after-transform update gates
+  -> stream immediately or buffer
+```
 
-2. **Cleanup Hooks** (`cleanup_hooks=[]` or `.with_cleanup_hook()`)
-   - Called ONCE when iteration completes (stream fully consumed), BEFORE finalizer
-   - Used for cleanup: closing connections, releasing resources, logging
-   - Cannot modify the stream or response
-   - Triggered regardless of how the stream ends (normal completion or exception)
+Updates stream immediately by default. Set `stream_updates=False` in the
+constructor, or call `.buffer_updates()` on an existing stream, to hold every
+update until finalization and all configured gates have passed.
 
-3. **Finalizer** (`finalizer=` constructor parameter)
-   - Called ONCE when `get_final_response()` is invoked
-   - Receives the list of collected updates and converts to the final type
-   - There is only ONE finalizer per stream (set at construction)
+The final result follows a matching pipeline:
 
-4. **Result Hooks** (`result_hooks=[]` or `.with_result_hook()`)
-   - Called ONCE after the finalizer produces its result
-   - Transform the final response before returning
-   - Multiple result hooks are called in order, each receiving the previous result
-   - Can return None to keep the previous value unchanged
+```text
+finalizer
+  -> before-transform result gates
+  -> result transforms
+  -> after-transform result gates
+```
+
+The complete lifecycle is:
+
+1. **Pull a source update.**
+2. **Run before-transform update gates** from
+   `update_gates={"before_transform": [...]}`.
+3. **Apply update transforms** from `update_transforms=[]` or
+   `.with_update_transform()`, in registration order. A transform returns a
+   replacement update, or `None` to keep the current update.
+4. **Run after-transform update gates** from
+   `update_gates={"after_transform": [...]}`. A gate can block a transformed
+   update even when buffered mode will hold rather than immediately emit it.
+5. **Emit or hold the transformed update.**
+   - Live mode emits it immediately after step 4 passes.
+   - Buffered mode holds it until the final result has passed its complete pipeline.
+6. **Repeat steps 1-5** until the source is exhausted.
+7. **Run cleanup hooks** from `cleanup_hooks=[]` or `.with_cleanup_hook()`.
+8. **Run the finalizer** supplied through `finalizer=` over the collected source
+   updates.
+9. **Run before-transform result gates** from
+   `result_gates={"before_transform": [...]}`.
+10. **Apply result transforms** from `result_transforms=[]` or
+   `.with_result_transform()`, in registration order. A transform returns a
+   replacement result, or `None` to keep the current result.
+11. **Run after-transform result gates** from
+    `result_gates={"after_transform": [...]}`.
+12. **Gate and emit buffered updates.** If a result transform returned a
+    replacement, `result_to_updates` creates the updates to release. ResponseStream
+    runs every after-transform update gate against those replacement updates before
+    emitting the first one.
+
+The older `transform_hooks`, `result_hooks`, `.with_transform_hook()`, and
+`.with_result_hook()` names remain compatible aliases.
+
+Middleware should register stream transforms, gates, buffering, and conversion
+on its `AgentContext` or `ChatContext` before calling `call_next()`. The
+middleware pipeline applies that configuration to the eventual ResponseStream
+after the chain unwinds, in unwind order: inner middleware post-processing runs
+before outer middleware post-processing. Use the fluent ResponseStream helpers
+when code outside middleware already owns a concrete stream.
 
 === Two Consumption Patterns ===
 
@@ -67,7 +106,7 @@ async for update in response_stream:
 - Transform hooks are called for each yielded item
 - Cleanup hooks are called after the last item
 - The stream collects all updates internally for later finalization
-- Does not run the finalizer automatically
+- The stream finalizes automatically when iteration reaches the end
 
 **Pattern 2: Direct Finalization**
 ```python
@@ -75,7 +114,7 @@ final = await response_stream.get_final_response()
 ```
 - If the stream hasn't been iterated, it auto-iterates (consuming all updates)
 - The finalizer converts collected updates to a final response
-- Result hooks transform the response
+- Update and result pipelines run normally
 - You get the complete response without ever seeing individual updates
 
 ** Pattern 3: Combined Usage **
@@ -92,14 +131,14 @@ async for update in response_stream:
 final = await response_stream.get_final_response()  # Get the aggregated result
 ```
 
-=== Chaining with .map() and .with_finalizer() ===
+=== Chaining with .map(), .flat_map(), and .with_finalizer() ===
 
 When building a Agent on top of a ChatClient, we face a challenge:
 - The ChatClient returns a ResponseStream[ChatResponseUpdate, ChatResponse]
 - The Agent needs to return a ResponseStream[AgentResponseUpdate, AgentResponse]
 - We can't iterate the ChatClient's stream twice!
 
-The `.map()` and `.with_finalizer()` methods solve this by creating new ResponseStreams that:
+The mapping and finalizer methods solve this by creating new ResponseStreams that:
 - Delegate iteration to the inner stream (only consuming it once)
 - Maintain their OWN separate transform hooks, result hooks, and cleanup hooks
 - Allow type-safe transformation of updates and final responses
@@ -184,31 +223,30 @@ async def main() -> None:
     print(f"Number of updates collected internally: {len(stream2.updates)}")
 
     # =========================================================================
-    # Example 3: Transform hooks - transform updates during iteration
+    # Example 3: Update transforms - transform updates during iteration
     # =========================================================================
-    print("\n=== Example 3: Transform Hooks ===\n")
+    print("\n=== Example 3: Update Transforms ===\n")
 
     update_count = {"value": 0}
 
-    def counting_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
-        """Hook that counts and annotates each update."""
+    def counting_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        """Transform that counts each update without replacing it."""
         update_count["value"] += 1
-        # Return the update (or a modified version)
         return update
 
-    def uppercase_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
-        """Hook that converts text to uppercase."""
+    def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        """Transform that converts text to uppercase."""
         if update.text:
             return ChatResponseUpdate(
                 contents=[Content.from_text(update.text.upper())], role=None, response_id=update.response_id
             )
         return update
 
-    # Pass transform_hooks directly to constructor
+    # Pass update transforms directly to the constructor.
     stream3: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
-        transform_hooks=[counting_hook, uppercase_hook],  # First counts, then uppercases
+        update_transforms=[counting_transform, uppercase_transform],
     )
 
     print("Iterating with hooks applied:")
@@ -242,18 +280,18 @@ async def main() -> None:
     print(f"Cleanup was performed: {cleanup_performed['value']}")
 
     # =========================================================================
-    # Example 5: Result hooks - transform the final response
+    # Example 5: Result transforms - transform the final response
     # =========================================================================
-    print("\n=== Example 5: Result Hooks ===\n")
+    print("\n=== Example 5: Result Transforms ===\n")
 
-    def add_metadata_hook(response: ChatResponse) -> ChatResponse:
-        """Result hook that adds metadata to the response."""
+    def add_metadata_transform(response: ChatResponse) -> ChatResponse:
+        """Result transform that adds metadata to the response."""
         response.additional_properties["processed"] = True
         response.additional_properties["word_count"] = len((response.text or "").split())
         return response
 
-    def wrap_in_quotes_hook(response: ChatResponse) -> ChatResponse:
-        """Result hook that wraps the response text in quotes."""
+    def wrap_in_quotes_transform(response: ChatResponse) -> ChatResponse:
+        """Result transform that wraps the response text in quotes."""
         if response.text:
             return ChatResponse(
                 messages=[Message(contents=[f'"{response.text}"'], role="assistant")],
@@ -261,11 +299,11 @@ async def main() -> None:
             )
         return response
 
-    # Finalizer converts updates to response, then result hooks transform it
+    # The finalizer creates a response, then result transforms run in order.
     stream5: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
-        result_hooks=[add_metadata_hook, wrap_in_quotes_hook],  # First adds metadata, then wraps in quotes
+        result_transforms=[add_metadata_transform, wrap_in_quotes_transform],
     )
 
     final5 = await stream5.get_final_response()
@@ -273,9 +311,100 @@ async def main() -> None:
     print(f"Metadata: {final5.additional_properties}")
 
     # =========================================================================
-    # Example 6: The wrap() API - layering without double-consumption
+    # Example 6: Gates before and after transforms
     # =========================================================================
-    print("\n=== Example 6: wrap() API for Layering ===\n")
+    print("\n=== Example 6: Gates Around Transforms ===\n")
+
+    async def generate_policy_updates() -> AsyncIterable[ChatResponseUpdate]:
+        """Produce content that must be transformed before egress."""
+        for text in ("Public content. ", "Internal secret."):
+            await asyncio.sleep(0.05)
+            yield ChatResponseUpdate(contents=[Content.from_text(text)], role="assistant")
+
+    def inspect_source_update(update: ChatResponseUpdate) -> None:
+        """A before-transform gate can inspect the provider's original update."""
+        print(f"  [Before gate] Saw: '{update.text}'")
+
+    def redact_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
+        """Transforms own all content replacement."""
+        text = (update.text or "").replace("Internal secret", "[redacted]")
+        return ChatResponseUpdate(contents=[Content.from_text(text)], role="assistant")
+
+    def require_safe_update(update: ChatResponseUpdate) -> None:
+        """An after-transform gate blocks if unsafe content would egress."""
+        if "secret" in (update.text or "").lower():
+            raise RuntimeError("Unsafe update was not redacted.")
+
+    def redact_result(response: ChatResponse) -> ChatResponse:
+        """Apply the corresponding replacement to the finalized response."""
+        text = (response.text or "").replace("Internal secret", "[redacted]")
+        return ChatResponse(messages=[Message(role="assistant", contents=[text])])
+
+    def require_safe_result(response: ChatResponse) -> None:
+        """Validate the final result after its transforms."""
+        if "secret" in (response.text or "").lower():
+            raise RuntimeError("Unsafe final result was not redacted.")
+
+    gated_stream: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
+        generate_policy_updates(),
+        finalizer=combine_updates,
+        update_gates={
+            "before_transform": [inspect_source_update],
+            "after_transform": [require_safe_update],
+        },
+        update_transforms=[redact_update],
+        result_gates={"after_transform": [require_safe_result]},
+        result_transforms=[redact_result],
+    )
+
+    print("Released updates:")
+    async for update in gated_stream:
+        print(f"  -> '{update.text}'")
+    print(f"Final result: '{(await gated_stream.get_final_response()).text}'")
+
+    # =========================================================================
+    # Example 7: Buffer updates so a final-result replacement controls egress
+    # =========================================================================
+    print("\n=== Example 7: Buffered Final Replacement ===\n")
+
+    def log_original_result(response: ChatResponse) -> None:
+        """A before-transform result gate sees the original finalized response."""
+        print(f"  [Before result gate] Original: '{response.text}'")
+
+    def replace_result(_: ChatResponse) -> ChatResponse:
+        """Return a completely different final response."""
+        return ChatResponse(messages=[Message(role="assistant", contents=["Approved replacement response."])])
+
+    def response_to_updates(response: ChatResponse) -> Sequence[ChatResponseUpdate]:
+        """Convert a replacement final result back into updates for buffered release."""
+        return [ChatResponseUpdate(contents=list(message.contents), role="assistant") for message in response.messages]
+
+    buffered_stream: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
+        generate_policy_updates(),
+        finalizer=combine_updates,
+    )
+
+    # Fluent methods are convenient when middleware or another layer receives an
+    # existing ResponseStream rather than constructing it itself.
+    (
+        buffered_stream
+        .with_result_gate(log_original_result, phase="before_transform")
+        .with_result_transform(replace_result)
+        .with_result_gate(require_safe_result, phase="after_transform")
+        .with_update_transform(redact_update)
+        .with_update_gate(require_safe_update, phase="after_transform")
+        .buffer_updates(result_to_updates=response_to_updates)
+    )
+
+    print("The source is fully consumed and the replacement is approved before the first update is released:")
+    async for update in buffered_stream:
+        print(f"  -> '{update.text}'")
+    print(f"Final replacement: '{(await buffered_stream.get_final_response()).text}'")
+
+    # =========================================================================
+    # Example 8: Mapping - layering without double-consumption
+    # =========================================================================
+    print("\n=== Example 8: Mapping for Layering ===\n")
 
     # Simulate what ChatClient returns
     inner_stream = ResponseStream(generate_updates(), finalizer=combine_updates)
@@ -315,9 +444,9 @@ async def main() -> None:
     print(f"Inner stream consumed: {inner_stream._consumed}")
 
     # =========================================================================
-    # Example 7: Combining all patterns
+    # Example 9: Combining lifecycle patterns
     # =========================================================================
-    print("\n=== Example 7: Full Integration ===\n")
+    print("\n=== Example 9: Lifecycle Integration ===\n")
 
     stats = {"updates": 0, "characters": 0}
 
@@ -332,16 +461,16 @@ async def main() -> None:
         print(f"  [Cleanup] Stream complete: {stats['updates']} updates, {stats['characters']} chars")
 
     def add_stats_to_response(response: ChatResponse) -> ChatResponse:
-        """Result hook to include the statistics in the final response."""
+        """Result transform that includes statistics in the final response."""
         response.additional_properties["stats"] = stats.copy()
         return response
 
-    # All hooks can be passed via constructor
+    # Transforms and cleanup hooks can be assembled together in the constructor.
     full_stream: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
-        transform_hooks=[track_stats],
-        result_hooks=[add_stats_to_response],
+        update_transforms=[track_stats],
+        result_transforms=[add_stats_to_response],
         cleanup_hooks=[log_cleanup],
     )
 
@@ -356,3 +485,16 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# Expected output includes:
+# === Example 6: Gates Around Transforms ===
+#   [Before gate] Saw: 'Public content. '
+#   -> 'Public content. '
+#   [Before gate] Saw: 'Internal secret.'
+#   -> '[redacted].'
+# Final result: 'Public content. [redacted].'
+#
+# === Example 7: Buffered Final Replacement ===
+#   [Before result gate] Original: 'Public content. Internal secret.'
+#   -> 'Approved replacement response.'
+# Final replacement: 'Approved replacement response.'
