@@ -44,6 +44,7 @@ from agent_framework._compaction import (
     CompactionStrategy,
     TokenizerProtocol,
 )
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
@@ -203,6 +204,7 @@ class ReasoningOptions(TypedDict, total=False):
     """How to summarize reasoning in the response."""
 
 
+@experimental(feature_id=ExperimentalFeature.SERVER_COMPACTION)
 class ContextManagementOptions(TypedDict, total=False):
     """Service-side context management entry for the Responses API."""
 

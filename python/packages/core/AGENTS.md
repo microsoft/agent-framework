@@ -74,6 +74,9 @@ agent_framework/
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
   Completed call/result pairs remain in the transcript but are not user-input requests.
+- **Server-side compaction** - `Content.from_compaction` and the `compaction` content type are experimental under
+  `SERVER_COMPACTION`. The content carries a provider's opaque compacted conversation state in `protected_data`;
+  how it composes with `CompactionStrategy` / `CompactionProvider` is not settled yet.
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)

@@ -1507,6 +1507,7 @@ class Content:
         )
 
     @classmethod
+    @experimental(feature_id=ExperimentalFeature.SERVER_COMPACTION)
     def from_compaction(
         cls: type[ContentT],
         *,
