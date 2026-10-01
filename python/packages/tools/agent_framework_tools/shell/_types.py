@@ -76,6 +76,7 @@ def _parse_shell_result(result: Any) -> str | list[Content]:  # pyright: ignore[
                 "stdout": shell_result.stdout,
                 "stderr": shell_result.stderr,
                 "exit_code": shell_result.exit_code,
+                "truncated": shell_result.truncated,
                 "timed_out": shell_result.timed_out,
             },
         )

@@ -2399,8 +2399,17 @@ class RawOpenAIChatClient(
         stdout = properties.get("stdout")
         stderr = properties.get("stderr")
         exit_code = properties.get("exit_code")
+        truncated = properties.get("truncated", False)
         timed_out = properties.get("timed_out")
-        if isinstance(stdout, str) and isinstance(stderr, str) and type(exit_code) is int and type(timed_out) is bool:
+        if (
+            isinstance(stdout, str)
+            and isinstance(stderr, str)
+            and type(exit_code) is int
+            and type(truncated) is bool
+            and type(timed_out) is bool
+        ):
+            if truncated:
+                stdout = f"{stdout}\n[output truncated]" if stdout else "[output truncated]"
             return [
                 {
                     "stdout": stdout,

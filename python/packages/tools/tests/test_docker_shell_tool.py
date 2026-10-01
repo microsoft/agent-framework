@@ -483,6 +483,7 @@ async def test_as_function_preserves_structured_shell_result() -> None:
         "stdout": "container output",
         "stderr": "container error",
         "exit_code": 7,
+        "truncated": False,
         "timed_out": False,
     }
     assert isinstance(raw_result, str)

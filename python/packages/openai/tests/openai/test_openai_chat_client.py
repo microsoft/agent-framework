@@ -2266,22 +2266,80 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     ("properties", "expected_local", "expected_shell"),
     [
         pytest.param(
-            {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "truncated": False, "timed_out": False},
             {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
             [{"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
             id="success",
         ),
         pytest.param(
-            {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
+            {
+                "stdout": "",
+                "stderr": "command failed",
+                "exit_code": 3,
+                "truncated": False,
+                "timed_out": False,
+            },
             {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
             [{"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}}],
             id="nonzero-exit",
         ),
         pytest.param(
-            {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
+            {
+                "stdout": "partial",
+                "stderr": "timeout details",
+                "exit_code": 124,
+                "truncated": False,
+                "timed_out": True,
+            },
             {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
             [{"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}}],
             id="timeout",
+        ),
+        pytest.param(
+            {
+                "stdout": "partial output",
+                "stderr": "",
+                "exit_code": 0,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "partial output\n[output truncated]",
+                "stderr": "",
+                "exit_code": 0,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "partial output\n[output truncated]",
+                    "stderr": "",
+                    "outcome": {"type": "exit", "exit_code": 0},
+                }
+            ],
+            id="truncated-stdout",
+        ),
+        pytest.param(
+            {
+                "stdout": "",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "[output truncated]",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "[output truncated]",
+                    "stderr": "partial error",
+                    "outcome": {"type": "exit", "exit_code": 1},
+                }
+            ],
+            id="truncated-empty-stdout",
         ),
     ],
 )

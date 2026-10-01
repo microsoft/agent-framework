@@ -402,6 +402,7 @@ async def test_as_function_preserves_structured_shell_result() -> None:
         stderr="command failed",
         exit_code=3,
         duration_ms=12,
+        truncated=True,
         timed_out=True,
     )
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
@@ -418,6 +419,7 @@ async def test_as_function_preserves_structured_shell_result() -> None:
         "stdout": "partial output",
         "stderr": "command failed",
         "exit_code": 3,
+        "truncated": True,
         "timed_out": True,
     }
     assert isinstance(raw_result, str)
