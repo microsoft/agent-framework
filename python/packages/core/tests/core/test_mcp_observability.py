@@ -15,7 +15,7 @@ from mcp import MCPError, types
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanKind, StatusCode
 
-from agent_framework import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
+from agent_framework import MCPStdioTool, MCPStreamableHTTPTool
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ToolExecutionException
 from agent_framework.observability import OtelAttr
@@ -334,23 +334,6 @@ def test_mcp_http_tool_http_default_port():
     tool = MCPStreamableHTTPTool(name="test", url="http://localhost/mcp")
     attrs = tool._mcp_base_span_attributes()
     assert attrs[OtelAttr.PORT] == 80
-
-
-def test_mcp_websocket_tool_transport_attributes():
-    """MCPWebsocketTool should have tcp transport and URL-based server address/port."""
-    tool = MCPWebsocketTool(name="test", url="wss://ws.example.com:9090/mcp")
-    attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.NETWORK_TRANSPORT] == "tcp"
-    assert attrs[OtelAttr.NETWORK_PROTOCOL_NAME] == "websocket"
-    assert attrs[OtelAttr.ADDRESS] == "ws.example.com"
-    assert attrs[OtelAttr.PORT] == 9090
-
-
-def test_mcp_websocket_tool_default_port():
-    """MCPWebsocketTool should default to 443 for wss."""
-    tool = MCPWebsocketTool(name="test", url="wss://ws.example.com/mcp")
-    attrs = tool._mcp_base_span_attributes()
-    assert attrs[OtelAttr.PORT] == 443
 
 
 # endregion

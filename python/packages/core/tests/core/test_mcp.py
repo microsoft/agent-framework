@@ -161,14 +161,6 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
         ).tool_name_prefix
         == "http"
     )
-    assert (
-        MCPWebsocketTool(
-            name="ws",
-            url="wss://example.com/mcp",
-            tool_name_prefix="ws",
-        ).tool_name_prefix
-        == "ws"
-    )
 
 
 @pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
@@ -2885,29 +2877,20 @@ def test_mcp_transport_subclasses_accept_progressive_disclosure_options() -> Non
         use_progressive_disclosure=True,
         always_load=["search"],
     )
-    websocket = MCPWebsocketTool(
-        name="ws",
-        url="wss://example.com/mcp",
-        use_progressive_disclosure=True,
-        always_load=["search"],
-    )
 
     assert stdio.use_progressive_disclosure is True
     assert http.use_progressive_disclosure is True
-    assert websocket.use_progressive_disclosure is True
     assert stdio.always_load == ["search"]
     assert http.always_load == ["search"]
-    assert websocket.always_load == ["search"]
 
 
 def test_mcp_transport_subclasses_forward_host_payload_limit() -> None:
     tools = [
         MCPStdioTool(name="stdio", command="python", max_host_payload_size_bytes=101),
         MCPStreamableHTTPTool(name="http", url="https://example.com/mcp", max_host_payload_size_bytes=102),
-        MCPWebsocketTool(name="ws", url="wss://example.com/mcp", max_host_payload_size_bytes=103),
     ]
 
-    assert [tool.max_host_payload_size_bytes for tool in tools] == [101, 102, 103]
+    assert [tool.max_host_payload_size_bytes for tool in tools] == [101, 102]
 
 
 def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
@@ -3529,18 +3512,19 @@ def test_local_mcp_stdio_tool_init():
     assert tool.args == ["hello"]
 
 
-def test_local_mcp_websocket_tool_init():
-    """Test MCPWebsocketTool initialization."""
-    tool = MCPWebsocketTool(name="test", url="ws://localhost:8080")
-    assert tool.name == "test"
-    assert tool.url == "ws://localhost:8080"
-
-
 def test_local_mcp_streamable_http_tool_init():
     """Test MCPStreamableHTTPTool initialization."""
     tool = MCPStreamableHTTPTool(name="test", url="http://localhost:8080")
     assert tool.name == "test"
     assert tool.url == "http://localhost:8080"
+
+
+def test_mcp_websocket_tool_is_deprecated() -> None:
+    with pytest.warns(DeprecationWarning, match="MCP WebSocket transport was removed in MCP v2"):
+        tool = MCPWebsocketTool(name="test", url="ws://localhost:8080")  # pyright: ignore[reportDeprecated]
+
+    with pytest.raises(RuntimeError, match="Use MCPStreamableHTTPTool instead"):
+        tool.get_mcp_client()
 
 
 # Integration test
@@ -5147,28 +5131,6 @@ async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     finally:
         await tool.close()
     assert http_client.is_closed
-
-
-def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
-    """Test MCPWebsocketTool.get_mcp_client() with client kwargs."""
-    tool = MCPWebsocketTool(
-        name="test",
-        url="wss://example.com",
-        max_size=1024,
-        ping_interval=30,
-        compression="deflate",
-    )
-
-    with patch("mcp.client.websocket.websocket_client") as mock_ws_client:
-        tool.get_mcp_client()
-
-        # Verify all kwargs were passed
-        mock_ws_client.assert_called_once_with(
-            url="wss://example.com",
-            max_size=1024,
-            ping_interval=30,
-            compression="deflate",
-        )
 
 
 async def test_mcp_tool_deduplication():
