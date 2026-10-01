@@ -2374,56 +2374,99 @@ class RawOpenAIChatClient(
                 return {}
 
     @staticmethod
+    def _shell_output_payloads_from_items(content: Content) -> list[dict[str, Any]] | None:
+        """Extract structured shell output carried by canonical function-result items."""
+        if not content.items:
+            return None
+
+        if all(item.type == "shell_command_output" for item in content.items):
+            payloads: list[dict[str, Any]] = []
+            for item in content.items:
+                payload: dict[str, Any] = {
+                    "stdout": item.stdout or "",
+                    "stderr": item.stderr or "",
+                    "timed_out": item.timed_out is True,
+                }
+                if item.exit_code is not None:
+                    payload["exit_code"] = item.exit_code
+                payloads.append(payload)
+            return payloads
+
+        if len(content.items) != 1 or content.items[0].type != "text":
+            return None
+
+        properties = content.items[0].additional_properties
+        stdout = properties.get("stdout")
+        stderr = properties.get("stderr")
+        exit_code = properties.get("exit_code")
+        timed_out = properties.get("timed_out")
+        if isinstance(stdout, str) and isinstance(stderr, str) and type(exit_code) is int and type(timed_out) is bool:
+            return [
+                {
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                }
+            ]
+        return None
+
+    @staticmethod
     def _to_local_shell_output_payload(content: Content) -> str:
         """Convert function tool output to the local shell JSON payload format."""
         payload: dict[str, Any]
         if isinstance(content.result, Mapping):
             payload = dict(content.result)  # type: ignore[assignment]
+        elif structured_payloads := RawOpenAIChatClient._shell_output_payloads_from_items(content):
+            payload = structured_payloads[0] if len(structured_payloads) == 1 else {"output": structured_payloads}
         else:
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if "exit_code" not in payload:
+        if "exit_code" not in payload and not bool(payload.get("timed_out", False)):
             payload["exit_code"] = 1 if content.exception is not None else 0
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
     def _to_shell_call_output_payload(content: Content) -> list[dict[str, Any]]:
         """Convert function tool output to shell_call_output payload format."""
-        payload: dict[str, Any]
+        payloads: list[dict[str, Any]]
         if isinstance(content.result, Mapping):
-            payload = dict(content.result)  # type: ignore[assignment]
+            mapped_payload: dict[str, Any] = dict(content.result)  # type: ignore[assignment]
+            payloads = [mapped_payload]
+        elif structured_payloads := RawOpenAIChatClient._shell_output_payloads_from_items(content):
+            payloads = structured_payloads
         else:
-            payload = {
-                "stdout": "" if content.result is None else str(content.result),
-            }
+            payloads = [{"stdout": "" if content.result is None else str(content.result)}]
 
         # Pass through native payload shape when tool already returns shell output entries.
-        direct_output = payload.get("output")
-        if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):  # type: ignore[reportUnknownMemberType]
-            return [dict(item) for item in direct_output]  # type: ignore[reportUnknownMemberType]
+        if len(payloads) == 1:
+            direct_output = payloads[0].get("output")
+            if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):  # type: ignore[reportUnknownMemberType]
+                return [dict(item) for item in direct_output]  # type: ignore[reportUnknownMemberType]
 
-        stdout = str(payload.get("stdout", ""))
-        stderr = str(payload.get("stderr", ""))
-        timed_out = bool(payload.get("timed_out", False))
-        if timed_out:
-            outcome: dict[str, Any] = {"type": "timeout"}
-        else:
-            exit_code_raw = payload.get("exit_code")
-            try:
-                exit_code = (
-                    int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception is not None else 0)
-                )
-            except (TypeError, ValueError):
-                exit_code = 1 if content.exception is not None else 0
-            outcome = {"type": "exit", "exit_code": exit_code}
-        return [
-            {
+        output: list[dict[str, Any]] = []
+        for payload in payloads:
+            stdout = str(payload.get("stdout", ""))
+            stderr = str(payload.get("stderr", ""))
+            timed_out = bool(payload.get("timed_out", False))
+            if timed_out:
+                outcome: dict[str, Any] = {"type": "timeout"}
+            else:
+                exit_code_raw = payload.get("exit_code")
+                try:
+                    exit_code = (
+                        int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception is not None else 0)
+                    )
+                except (TypeError, ValueError):
+                    exit_code = 1 if content.exception is not None else 0
+                outcome = {"type": "exit", "exit_code": exit_code}
+            output.append({
                 "stdout": stdout,
                 "stderr": stderr,
                 "outcome": outcome,
-            }
-        ]
+            })
+        return output
 
     def _image_generation_item_to_contents(self, item: Any) -> list[Content]:
         """Convert a completed ``image_generation_call`` output item into framework ``Content`` objects.

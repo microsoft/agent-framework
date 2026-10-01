@@ -67,6 +67,7 @@ from azure.ai.agentserver.responses.models import (
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
+    FunctionShellCallOutputTimeoutOutcome,
     Item,
     ItemReasoningItem,
     LocalEnvironmentResource,
@@ -2349,14 +2350,19 @@ class _OutputItemTracker:
             if content.outputs:
                 for out in content.outputs:
                     exit_code = getattr(out, "exit_code", None)
+                    outcome = (
+                        FunctionShellCallOutputTimeoutOutcome(type="timeout")
+                        if getattr(out, "timed_out", False)
+                        else FunctionShellCallOutputExitOutcome(
+                            type="exit",
+                            exit_code=exit_code if exit_code is not None else 0,
+                        )
+                    )
                     output_items.append(
                         FunctionShellCallOutputContent(
                             stdout=getattr(out, "stdout", "") or "",
                             stderr=getattr(out, "stderr", "") or "",
-                            outcome=FunctionShellCallOutputExitOutcome(
-                                type="exit",
-                                exit_code=exit_code if exit_code is not None else 0,
-                            ),
+                            outcome=outcome,
                         )
                     )
             async for event in self._stream.output_item_function_shell_call_output(
@@ -2770,6 +2776,17 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     return output
 
 
+def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
+    outcome = output["outcome"]
+    outcome_type = outcome.get("type")
+    return Content.from_shell_command_output(
+        stdout=output.get("stdout") or "",
+        stderr=output.get("stderr") or "",
+        exit_code=outcome.get("exit_code") if outcome_type == "exit" else None,
+        timed_out=True if outcome_type == "timeout" else False if outcome_type == "exit" else None,
+    )
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -2887,14 +2904,7 @@ async def _item_to_message(
         )
 
     if item["type"] == "shell_call_output":
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out["stdout"] or "",
-                stderr=out["stderr"] or "",
-                exit_code=out["outcome"].get("exit_code"),
-            )
-            for out in (item["output"] or [])
-        ]
+        outputs = [_shell_command_output_to_content(out) for out in (item["output"] or [])]
         return Message(
             role="tool",
             contents=[

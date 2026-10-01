@@ -2262,6 +2262,119 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
 
 
+@pytest.mark.parametrize(
+    ("properties", "expected_local", "expected_shell"),
+    [
+        pytest.param(
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
+            [{"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+            id="success",
+        ),
+        pytest.param(
+            {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
+            {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
+            [{"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}}],
+            id="nonzero-exit",
+        ),
+        pytest.param(
+            {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
+            {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
+            [{"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}}],
+            id="timeout",
+        ),
+    ],
+)
+def test_shell_output_payloads_use_structured_function_result_items(
+    properties: dict[str, Any],
+    expected_local: dict[str, Any],
+    expected_shell: list[dict[str, Any]],
+) -> None:
+    display_text = "model-facing shell result"
+    content = Content.from_function_result(
+        call_id="call-structured",
+        result=[Content.from_text(display_text, additional_properties=properties)],
+    )
+    round_tripped = Content.from_dict(content.to_dict())
+
+    assert round_tripped.result == display_text
+    assert round_tripped.items is not None
+    assert round_tripped.items[0].additional_properties == properties
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(round_tripped)) == expected_local
+    assert OpenAIChatClient._to_shell_call_output_payload(round_tripped) == expected_shell
+
+
+def test_shell_output_payloads_accept_native_shell_command_output() -> None:
+    content = Content.from_function_result(
+        call_id="call-native",
+        result=[
+            Content.from_shell_command_output(
+                stdout="native output",
+                stderr="native error",
+                exit_code=9,
+                timed_out=False,
+            )
+        ],
+    )
+
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(content)) == {
+        "stdout": "native output",
+        "stderr": "native error",
+        "timed_out": False,
+        "exit_code": 9,
+    }
+    assert OpenAIChatClient._to_shell_call_output_payload(content) == [
+        {
+            "stdout": "native output",
+            "stderr": "native error",
+            "outcome": {"type": "exit", "exit_code": 9},
+        }
+    ]
+
+
+def test_prepare_messages_uses_structured_local_shell_result() -> None:
+    from agent_framework_openai._chat_client import (
+        OPENAI_SHELL_OUTPUT_TYPE_KEY,
+        OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    shell_result = Content.from_function_result(
+        call_id="shell-call-1",
+        result=[
+            Content.from_text(
+                "stderr: command failed\nexit_code: 3",
+                additional_properties={
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "exit_code": 3,
+                    "timed_out": False,
+                },
+            )
+        ],
+        additional_properties={OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL},
+    )
+
+    prepared = client._prepare_message_for_openai(
+        Message(role="tool", contents=[shell_result]),
+        request_uses_service_side_storage=False,
+    )
+
+    assert prepared == [
+        {
+            "call_id": "shell-call-1",
+            "type": "shell_call_output",
+            "output": [
+                {
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "outcome": {"type": "exit", "exit_code": 3},
+                }
+            ],
+        }
+    ]
+
+
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
     """Regression: the prepared shell tool must be a subscriptable dict.
 

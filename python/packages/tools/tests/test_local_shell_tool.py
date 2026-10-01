@@ -18,7 +18,7 @@ from agent_framework.security import (
 )
 
 from agent_framework_tools._feature_usage import FeatureIndex
-from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
+from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy, ShellResult
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
 
 _TEST_SHELL = "agent-framework-test-shell"
@@ -394,6 +394,30 @@ async def test_as_function_wires_kind_and_approval() -> None:
     assert ft.name == "shell_exec"
     assert ft.kind == "shell"
     assert ft.approval_mode == "always_require"
+
+
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="partial output",
+        stderr="command failed",
+        exit_code=3,
+        duration_ms=12,
+        timed_out=True,
+    )
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        result = await tool.as_function().invoke(arguments={"command": "ignored"})
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "partial output",
+        "stderr": "command failed",
+        "exit_code": 3,
+        "timed_out": True,
+    }
 
 
 async def test_variable_shell_approval_executes_only_the_reviewed_command() -> None:

@@ -461,6 +461,29 @@ def test_as_function_carries_shell_kind():
     )
 
 
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="container output",
+        stderr="container error",
+        exit_code=7,
+        duration_ms=25,
+    )
+    tool = DockerShellTool(mode="stateless")
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        result = await tool.as_function().invoke(arguments={"command": "ignored"})
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "container output",
+        "stderr": "container error",
+        "exit_code": 7,
+        "timed_out": False,
+    }
+
+
 async def test_start_and_close_are_noops_in_stateless_mode() -> None:
     tool = DockerShellTool(mode="stateless")
 

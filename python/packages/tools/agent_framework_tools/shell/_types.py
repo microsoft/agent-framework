@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from agent_framework import Content
+
 ShellMode = Literal["persistent", "stateless"]
 
 
@@ -45,6 +47,19 @@ class ShellResult:
             parts.append("[command timed out]")
         parts.append(f"exit_code: {self.exit_code}")
         return "\n".join(parts)
+
+
+def _shell_result_to_content(result: ShellResult) -> Content:  # pyright: ignore[reportUnusedFunction]
+    """Preserve structured shell fields alongside the model-facing text."""
+    return Content.from_text(
+        result.format_for_model(),
+        additional_properties={
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+        },
+    )
 
 
 class ShellExecutionError(RuntimeError):

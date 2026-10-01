@@ -10,7 +10,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
-from agent_framework import FunctionTool, tool
+from agent_framework import Content, FunctionTool, tool
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
@@ -19,7 +19,12 @@ from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
 from ._session import ShellSession
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _shell_result_to_content,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -306,12 +311,12 @@ class LocalShellTool:
                 ``None`` a mode-appropriate default is used.
         """
 
-        async def _run_shell(command: str) -> str:
+        async def _run_shell(command: str) -> str | Content:
             try:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_content(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
