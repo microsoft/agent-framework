@@ -63,6 +63,7 @@ def create_agent() -> Agent:
         name="GitHub",
         url="https://api.githubcopilot.com/mcp/",
         headers={"Authorization": f"Bearer {github_pat}"},
+        allowed_tools=["get_me", "search_repositories", "get_file_contents"],
         approval_mode="never_require",
     )
     return Agent(

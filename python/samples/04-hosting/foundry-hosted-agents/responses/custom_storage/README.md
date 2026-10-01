@@ -22,6 +22,15 @@ snapshot under a response ID and a conversation ID; each key has its own ETag.
 The snapshot's inner `session_id` is preserved when loading. Keys are not built
 from caller model options or an inner model-service session ID.
 
+Cosmos items have a 2 MB service limit. Before a create or replacement, this
+sample checks the complete compact, escaped-JSON snapshot against a conservative
+**2,000,000-byte budget**, leaving room for service metadata. Oversized state
+fails explicitly before a backend write; a service 413 also becomes an
+actionable size error. Reduce the state or start a new conversation instead of
+retrying an oversized snapshot. This per-item check is not a retention policy
+or aggregate storage quota; those remain tracked in
+microsoft/agent-framework#8901.
+
 **Existing unscoped data is not migrated.** The old `/user_id` container layout
 and connection-string configuration are intentionally replaced. Use a new
 container partitioned by `/scope_key` and start fresh conversations; do not fall

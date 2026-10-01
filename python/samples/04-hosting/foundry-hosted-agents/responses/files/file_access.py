@@ -69,6 +69,8 @@ def _read_file(directory: int, filename: str) -> bytes:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("Only regular uploaded files can be read.")
+        if metadata.st_nlink != 1:
+            raise ValueError("Uploaded files must not have hard links.")
         if metadata.st_size > MAX_FILE_BYTES:
             raise ValueError("Only UTF-8 files of at most 1,000,000 bytes can be read.")
     except BaseException:
@@ -91,7 +93,11 @@ def list_uploaded_files() -> list[str]:
         return []
     try:
         with os.scandir(directory) as entries:
-            return sorted(entry.name for entry in entries if entry.is_file(follow_symlinks=False))
+            return sorted(
+                entry.name
+                for entry in entries
+                if entry.is_file(follow_symlinks=False) and entry.stat(follow_symlinks=False).st_nlink == 1
+            )
     finally:
         os.close(directory)
 
@@ -107,14 +113,22 @@ def read_uploaded_file(filename: str) -> str:
 
 
 def read_upload_source(source: Path) -> bytes:
-    """Read an explicitly selected local upload, with the same size and symlink checks."""
-    source = source.expanduser().absolute()
+    """Read the operator-selected source portably; sandbox access remains descriptor-relative."""
     validate_filename(source.name)
-    directory = _open_directory(source.parent)
-    try:
-        return _read_file(directory, source.name)
-    finally:
-        os.close(directory)
+    source = source.expanduser().resolve(strict=True)
+    if not source.is_file():
+        raise ValueError("The upload source must be a regular UTF-8 file.")
+    with source.open("rb") as file:
+        metadata = os.fstat(file.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("The upload source must be a regular UTF-8 file.")
+        if metadata.st_size > MAX_FILE_BYTES:
+            raise ValueError("Only UTF-8 files of at most 1,000,000 bytes can be uploaded.")
+        data = file.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("Only UTF-8 files of at most 1,000,000 bytes can be uploaded.")
+    data.decode("utf-8")
+    return data
 
 
 def write_local_upload(filename: str, data: bytes) -> None:
@@ -132,8 +146,11 @@ def write_local_upload(filename: str, data: bytes) -> None:
             dir_fd=directory,
         )
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
                 raise ValueError("Only regular uploaded files can be written.")
+            if metadata.st_nlink != 1:
+                raise ValueError("Uploaded files must not have hard links.")
         except BaseException:
             os.close(descriptor)
             raise

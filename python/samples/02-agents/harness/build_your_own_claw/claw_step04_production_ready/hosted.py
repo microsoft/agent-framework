@@ -186,18 +186,39 @@ async def create_agent() -> Agent:
                     raise
             inner = context.result
             if not isinstance(inner, ResponseStream):
-                raise RuntimeError("The streaming hosted harness must return a ResponseStream.")
+                async with release_background():
+                    raise RuntimeError("The streaming hosted harness must return a ResponseStream.")
+
+            cleaned_up = False
+
+            async def cleanup() -> None:
+                nonlocal cleaned_up
+                if cleaned_up:
+                    return
+                cleaned_up = True
+                async with release_background():
+                    await inner.close()
 
             async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                async with release_background():
+                run_failed = False
+                try:
+                    async for update in inner:
+                        yield update
+                    await inner.get_final_response()
+                except BaseException:
+                    run_failed = True
+                    raise
+                finally:
                     try:
-                        async for update in inner:
-                            yield update
-                        await inner.get_final_response()
-                    finally:
-                        await inner.close()
+                        await cleanup()
+                    except BaseException as cleanup_error:
+                        logger.error("Failed to clean up the request stream (%s).", type(cleanup_error).__name__)
+                        if not run_failed:
+                            raise
 
-            context.result = ResponseStream(updates(), finalizer=lambda _: inner.get_final_response())
+            context.result = ResponseStream(
+                updates(), finalizer=lambda _: inner.get_final_response(), cleanup_hooks=[cleanup]
+            )
         else:
             async with release_background():
                 await call_next()

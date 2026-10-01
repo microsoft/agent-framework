@@ -21,6 +21,11 @@ the sample does not silently run an agent with its GitHub integration disabled.
 The PAT is deployment-owned and selects a single external GitHub account,
 **not** the Foundry calling user's GitHub identity. Use a least-privilege,
 read-only token for this demonstration and restrict who can call the agent.
+The MCP configuration additionally permits only `get_me`,
+`search_repositories` and `get_file_contents`. All other tools, including
+write operations, are excluded even if the PAT has broader permissions.
+Auto-approval applies only to those listed read tools; changing the allowlist
+is an explicit operator code change, not a caller option.
 For per-user GitHub access, use an appropriately configured user-authenticated
 Toolbox connection instead. Do not pass a PAT in model options or log it;
 platform user/call headers are not forwarded to GitHub.

@@ -32,6 +32,12 @@ and requires a trusted user and call ID before constructing the integration.
 Caller model options cannot choose that namespace, and literal template strings
 such as `{{$userId}}` are **not** substituted by the framework.
 
+Sharing is user-wide **within the configured project Memory Store**, including
+different agents that use that same store and user-scope algorithm. The agent
+name is deliberately not part of the hash. Configure separate Memory Stores
+when agents must not share a user's long-term memories; do not assume sandbox
+or agent names provide that boundary.
+
 `history_source="agent_server"` supplies conversation history from the outer
 Responses service and disables inner model storage. This is separate from
 application-owned long-term Memory: outer `store=false` disables host-managed

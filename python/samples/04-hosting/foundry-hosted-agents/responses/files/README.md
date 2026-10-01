@@ -10,11 +10,12 @@ The reader opens every directory component and the file without following
 symlinks, using directory descriptors rather than a check-then-open pathname.
 Replacing a directory or file with a symlink cannot redirect a read outside the
 upload directory. It rejects traversal, absolute paths, Windows-style paths,
-control characters, directory/file symlinks, non-regular files, invalid UTF-8 and
+control characters, directory/file symlinks, hard links, non-regular files, invalid UTF-8 and
 files larger than **1,000,000 bytes**. It checks size before reading, then uses a
 bounded read to catch growth during the read. POSIX descriptor-relative,
-`O_NOFOLLOW` and `O_DIRECTORY` support are required; unsupported platforms fail
-closed rather than falling back to an unsafe reader.
+`O_NOFOLLOW` and `O_DIRECTORY` support are required **inside the sandbox** and
+for local staging; unsupported platforms fail closed rather than falling back
+to an unsafe sandbox reader. The hosted-upload helper can run on Windows.
 
 ## Prerequisites and lifecycle
 
@@ -49,8 +50,12 @@ curl -X POST http://localhost:8088/responses \
   -d '{"input":"Read contoso_q1_2026_report.txt and compare Q1 revenue."}'
 ```
 
-The helper applies the same bounded-read and symlink checks to the selected
-source and destination. `--local` never calls Azure. Local query/body session IDs
+The explicitly selected developer source is read portably: symlinked source
+directories are resolved, the opened file must be regular UTF-8, and the byte
+limit is checked before and after a bounded read. That source is operator-chosen,
+not a path supplied by the model. The `--local` destination retains the strict
+descriptor-relative, no-follow and hard-link checks. `--local` never calls Azure.
+Local query/body session IDs
 do **not** create separate filesystem sandboxes: a local server is a single-user
 development process. To simulate two sandboxes, run hosts with separate `HOME`
 directories and upload only to the first. The second must list no uploads and
@@ -74,7 +79,8 @@ SDK prerequisite for hosted-session file operations. The SDK uploads to
 `sample_files/contoso_q1_2026_report.txt`, relative to that
 sandbox's home directory. A portal/CLI upload to the home directory's root will
 not be visible to these tools; specify the `sample_files/` destination, or use
-this helper. No real upload is performed by the sample's offline tests.
+this helper. Live uploads require separately configured credentials and an
+explicitly selected agent/session.
 
 Send the request to the deployed agent's Responses endpoint, routing to the same
 sandbox with the **request body** selector:
@@ -101,14 +107,3 @@ same prompt to a fresh sandbox B without uploading: its `list_files()` must be
 empty and the named read must fail. Upload separately to B if it needs the file.
 Do not claim this live check ran unless those resources and uploads were
 explicitly authorized.
-
-## Offline checks
-
-From `python/`, run:
-
-```bash
-uv run pytest samples/04-hosting/foundry-hosted-agents/responses/files/tests -q
-```
-
-The tests use temporary home directories, including descriptor-replacement
-checks. They require no Foundry project, credentials, deployment or real files.

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import uuid
 from contextlib import AsyncExitStack
@@ -44,6 +45,10 @@ from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
 _CONFLICT = "Another request advanced this agent session; reload before writing."
+_MAX_COSMOS_ITEM_BYTES = 2_000_000
+_SESSION_TOO_LARGE = (
+    "Agent session exceeds the 2,000,000-byte Cosmos snapshot budget; reduce session state or start a new conversation."
+)
 
 
 class CosmosSessionStore(SessionStore):
@@ -91,6 +96,8 @@ class CosmosSessionStore(SessionStore):
             "scope_key": self._scope_key,
             "session": session.to_dict(),
         }
+        if len(json.dumps(item, separators=(",", ":")).encode("utf-8")) > _MAX_COSMOS_ITEM_BYTES:
+            raise ValueError(_SESSION_TOO_LARGE)
         try:
             etag = self._etags.get(session_id)
             if etag is None:
@@ -103,6 +110,8 @@ class CosmosSessionStore(SessionStore):
                     match_condition=MatchConditions.IfNotModified,
                 )
         except CosmosHttpResponseError as exc:
+            if exc.status_code == 413:
+                raise ValueError(_SESSION_TOO_LARGE) from exc
             if exc.status_code not in (409, 412):
                 raise
             raise RuntimeError(_CONFLICT) from exc
