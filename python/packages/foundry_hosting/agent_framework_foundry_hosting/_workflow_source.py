@@ -18,6 +18,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     RawAgent,
+    SupportsAgentRun,
     Workflow,
     WorkflowCheckpoint,
     WorkflowExecutor,
@@ -155,9 +156,8 @@ def prepare_workflow_kwargs(
     identity = {"session_id": scope.session_id, "user_id": scope.user_id, "call_id": scope.call_id}
     global_client["additional_function_arguments"] = identity
     global_model_options = global_client.pop("options", {})
-    agents = list(workflow_executors(workflow))
-    for executor in agents:
-        agent_value = executor.agent
+    agents = list(workflow_agent_targets(workflow))
+    for executor_id, agent_value in agents:
         if not isinstance(agent_value, RawAgent):
             raise TypeError(
                 "Native workflow custom agents must expose a verifiable client/storage contract. "
@@ -182,7 +182,7 @@ def prepare_workflow_kwargs(
             for provider in agent.context_providers
         ):
             raise ValueError("store=false cannot disable an external workflow HistoryProvider.")
-        values = specific_client.setdefault(executor.id, {})
+        values = specific_client.setdefault(executor_id, {})
         effective = {**global_model_options, **values.get("options", {}), **model_options}
         values["additional_function_arguments"] = identity
         if isinstance(agent_value, Agent):
@@ -224,6 +224,45 @@ def workflow_executors(workflow: Workflow) -> Iterator[AgentExecutor]:
             yield executor
         elif isinstance(executor, WorkflowExecutor):
             yield from workflow_executors(executor.workflow)
+
+
+def workflow_agent_targets(workflow: Workflow) -> Iterator[tuple[str, SupportsAgentRun]]:
+    """Walk core and registry-backed executor agents with their run-kwargs routing IDs."""
+    seen: set[tuple[str, int]] = set()
+    for graph in _workflow_graphs(workflow):
+        for executor in graph.get_executors_list():
+            values: list[object] = []
+            if isinstance(executor, AgentExecutor):
+                values.append(executor.agent)
+            registry = getattr(executor, "_agents", None)
+            if isinstance(registry, Mapping):
+                values.extend(cast(Mapping[object, object], registry).values())
+            for value in values:
+                agent = value.agent if isinstance(value, AgentExecutor) else value
+                if not isinstance(agent, SupportsAgentRun):
+                    raise TypeError("A workflow agent registry contains an unsupported agent value.")
+                key = (executor.id, id(agent))
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield executor.id, agent
+
+
+def workflow_agents(workflow: Workflow) -> Iterator[SupportsAgentRun]:
+    """Walk every unique agent owned by core or registry-backed executors."""
+    seen: set[int] = set()
+    for _, agent in workflow_agent_targets(workflow):
+        if id(agent) in seen:
+            continue
+        seen.add(id(agent))
+        yield agent
+
+
+def _workflow_graphs(workflow: Workflow) -> Iterator[Workflow]:
+    yield workflow
+    for executor in workflow.get_executors_list():
+        if isinstance(executor, WorkflowExecutor):
+            yield from _workflow_graphs(executor.workflow)
 
 
 def validate_workflow_provider_state(workflow: Workflow, checkpoint: WorkflowCheckpoint | None = None) -> None:
@@ -315,21 +354,18 @@ class WorkflowResolver(Generic[RequestT]):
                 resources.append(executor)
                 if isinstance(executor, WorkflowExecutor):
                     collect(executor.workflow)
-                elif isinstance(executor, AgentExecutor):
-                    agent_value = executor.agent
-                    resources.append(agent_value)
-                    if isinstance(agent_value, RawAgent):
-                        agent = cast(RawAgent[Any], agent_value)
-                        resources.append(agent.client)
-                        resources.extend(agent.context_providers)
-                        resources.extend(agent.mcp_tools)
-                        tools = agent.default_options.get("tools", ())
-                        if isinstance(tools, Sequence):
-                            resources.extend(
-                                tool for tool in cast(Sequence[object], tools) if not isinstance(tool, Mapping)
-                            )
 
         collect(workflow)
+        for agent_value in workflow_agents(workflow):
+            resources.append(agent_value)
+            if isinstance(agent_value, RawAgent):
+                agent = cast(RawAgent[Any], agent_value)
+                resources.append(agent.client)
+                resources.extend(agent.context_providers)
+                resources.extend(agent.mcp_tools)
+                tools = agent.default_options.get("tools", ())
+                if isinstance(tools, Sequence):
+                    resources.extend(tool for tool in cast(Sequence[object], tools) if not isinstance(tool, Mapping))
         for resource in resources:
             previous = self._owned.get(id(resource))
             if previous is not None and previous() is resource:

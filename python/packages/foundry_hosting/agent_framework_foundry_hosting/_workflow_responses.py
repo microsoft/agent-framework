@@ -58,7 +58,7 @@ from ._responses import (
 )
 from ._scope import FoundryRequestScope
 from ._state_store import ContextScopedStoreProvider
-from ._workflow_source import WorkflowResolver, WorkflowSource, prepare_workflow_kwargs, workflow_executors
+from ._workflow_source import WorkflowResolver, WorkflowSource, prepare_workflow_kwargs, workflow_agents
 from ._workflow_state import HostedWorkflowRun, WorkflowConflictError
 
 logger = logging.getLogger(__name__)
@@ -385,6 +385,7 @@ class NativeResponsesWorkflow:
         phase = "preparation"
         completed = False
         preserve_for_recovery = False
+        resources: AsyncExitStack | None = None
         sequence = 0
 
         def wire(event: ResponseStreamEvent) -> ResponseStreamEvent:
@@ -413,6 +414,11 @@ class NativeResponsesWorkflow:
             await prepare_response_options(hosted, self.options_hook)
             validate_request_options(hosted.options)
             workflow = await self.resolver.resolve(hosted)
+            resources = AsyncExitStack()
+            await resources.__aenter__()
+            for agent in workflow_agents(workflow):
+                if isinstance(agent, AbstractAsyncContextManager):
+                    await resources.enter_async_context(agent)
             resilient = (
                 self.resilient_background and request.get("background") is True and request.get("store") is not False
             )
@@ -495,47 +501,40 @@ class NativeResponsesWorkflow:
                 return run.checkpoint_id
 
             phase = "execution"
-            async with AsyncExitStack() as resources:
-                if not run.has_completed_output:
-                    entered: set[int] = set()
-                    for executor in workflow_executors(workflow):
-                        agent = executor.agent
-                        if id(agent) not in entered and isinstance(agent, AbstractAsyncContextManager):
-                            entered.add(id(agent))
-                            await resources.enter_async_context(agent)
-                    iterator = _SignalledIterator(
-                        run.events(turn, client_kwargs=client_kwargs, function_invocation_kwargs=function_kwargs),
-                        context.shutdown,
-                        cancellation_signal,
-                        stamp=checkpoint_stamp,
-                    )
-                    async with aclosing(iterator):
-                        async for event in iterator:
-                            if event.type == "request_info" and event.request_id not in represented_pending:
-                                if not self.resolver.is_factory:
-                                    raise _WorkflowRequestError(
-                                        "A pausing native workflow requires a fresh request-aware factory."
-                                    )
-                                buffered.append(event)
-                            elif event.type in ("output", "intermediate", "data"):
-                                buffered.append(event)
-                            elif event.type == "superstep_started" and run.stored and run.snapshot is None:
-                                await run.stage(_snapshot(stream), checkpoint_id=iterator.stamp)
-                                if resilient:
-                                    yield stream.checkpoint()
-                            elif event.type == "superstep_completed":
-                                for output_event in await flush(iterator.stamp):
-                                    yield wire(output_event)
-                                if resilient:
-                                    yield stream.checkpoint()
-                    if iterator.signalled:
-                        if context.shutdown.is_set() and resilient and run.snapshot is not None:
-                            preserve_for_recovery = True
-                            await context.exit_for_recovery()
-                        if cancellation_signal.is_set():
-                            await abort()
-                            return
-                        raise _WorkflowRequestError("The workflow stopped without a recoverable background pair.")
+            if not run.has_completed_output:
+                iterator = _SignalledIterator(
+                    run.events(turn, client_kwargs=client_kwargs, function_invocation_kwargs=function_kwargs),
+                    context.shutdown,
+                    cancellation_signal,
+                    stamp=checkpoint_stamp,
+                )
+                async with aclosing(iterator):
+                    async for event in iterator:
+                        if event.type == "request_info" and event.request_id not in represented_pending:
+                            if not self.resolver.is_factory:
+                                raise _WorkflowRequestError(
+                                    "A pausing native workflow requires a fresh request-aware factory."
+                                )
+                            buffered.append(event)
+                        elif event.type in ("output", "intermediate", "data"):
+                            buffered.append(event)
+                        elif event.type == "superstep_started" and run.stored and run.snapshot is None:
+                            await run.stage(_snapshot(stream), checkpoint_id=iterator.stamp)
+                            if resilient:
+                                yield stream.checkpoint()
+                        elif event.type == "superstep_completed":
+                            for output_event in await flush(iterator.stamp):
+                                yield wire(output_event)
+                            if resilient:
+                                yield stream.checkpoint()
+                if iterator.signalled:
+                    if context.shutdown.is_set() and resilient and run.snapshot is not None:
+                        preserve_for_recovery = True
+                        await context.exit_for_recovery()
+                    if cancellation_signal.is_set():
+                        await abort()
+                        return
+                    raise _WorkflowRequestError("The workflow stopped without a recoverable background pair.")
             if cancellation_signal.is_set():
                 await abort()
                 return
@@ -572,5 +571,9 @@ class NativeResponsesWorkflow:
                 yield wire(stream.emit_in_progress())
             yield wire(stream.emit_failed(message=message))
         finally:
-            if not completed and not preserve_for_recovery:
-                await abort()
+            try:
+                if not completed and not preserve_for_recovery:
+                    await abort()
+            finally:
+                if resources is not None:
+                    await resources.aclose()

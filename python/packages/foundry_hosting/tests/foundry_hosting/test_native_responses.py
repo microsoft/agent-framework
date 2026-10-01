@@ -32,6 +32,8 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
+from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider, ResponsesServerOptions
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from pydantic import BaseModel
@@ -173,6 +175,23 @@ class _Progress(Executor):
         )
         if message:
             await ctx.send_message(message - 1)
+
+
+class _RegistryExecutor(Executor):
+    def __init__(self, agent: Agent[Any]) -> None:
+        super().__init__("registered_action")
+        self._agents = {"registered": agent}
+
+    @handler
+    async def run_registered(self, message: str, ctx: WorkflowContext[str, Message]) -> None:
+        run_kwargs = prepare_executor_run_kwargs(
+            self.id,
+            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}),
+            ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY),
+        )
+        options = run_kwargs.pop("options", None)
+        result = await self._agents["registered"].run(message, options=options, **run_kwargs)
+        await ctx.yield_output(result.messages[-1])
 
 
 def _progress_factory(
@@ -519,6 +538,47 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     assert all("options" not in call["kwargs"] for call in calls)
 
 
+async def test_registry_backed_executor_gets_native_options_and_resource_lifecycle() -> None:
+    calls: list[dict[str, Any]] = []
+    lifecycle: list[str] = []
+
+    def create(request: HostedResponseRequest) -> Workflow:
+        agent = Agent(
+            client=_RecordingClient(calls, lifecycle),
+            name="registered",
+            default_options=cast(ChatOptions[Any], {"temperature": 0.2, "store": True}),
+        )
+        return _build(_RegistryExecutor(agent))
+
+    response = await _post(_server(create, parser=_parse_text), "hello", temperature=0.7)
+
+    assert response["status"] == "completed", response
+    assert _texts(response) == ["safe"]
+    assert calls[0]["options"]["temperature"] == 0.7
+    assert calls[0]["options"]["store"] is False
+    assert lifecycle == ["open", "close"]
+
+
+@pytest.mark.parametrize("failure", ["parser", "continuation"])
+async def test_request_owned_resources_close_when_pre_execution_preparation_fails(failure: str) -> None:
+    calls: list[dict[str, Any]] = []
+    lifecycle: list[str] = []
+
+    def create(request: HostedResponseRequest) -> Workflow:
+        agent = Agent(client=_RecordingClient(calls, lifecycle), name="owned")
+        return _build(AgentExecutor(agent, id="owned"))
+
+    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+        raise ValueError("malformed typed input")
+
+    kwargs = {"previous_response_id": IdGenerator.new_response_id()} if failure == "continuation" else {}
+    response = await _post(_server(create, parser=parse), "hello", **kwargs)
+
+    assert response["status"] == "failed"
+    assert calls == []
+    assert lifecycle == ["open", "close"]
+
+
 async def test_native_provider_that_ignores_store_false_cannot_commit_or_leak_token() -> None:
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
@@ -622,7 +682,7 @@ async def test_raw_agent_unverified_storage_defaults_fail_before_claim(default_s
 
     response = await _post(_server(create, parser=parse), "hello")
     assert response["status"] == "failed"
-    assert calls == [] and lifecycle == []
+    assert calls == [] and lifecycle == ["open", "close"]
 
 
 @pytest.mark.parametrize("stored", [False, True])

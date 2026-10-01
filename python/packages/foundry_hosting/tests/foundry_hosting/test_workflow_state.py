@@ -120,6 +120,16 @@ class _Loop(Executor):
             await ctx.send_message(message - 1)
 
 
+class _RegistryExecutor(Executor):
+    def __init__(self, agent: Agent[Any]) -> None:
+        super().__init__("registry")
+        self._agents = {"registered": agent}
+
+    @handler
+    async def start(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output(message)
+
+
 def _workflow(executor: Executor | None = None, *, name: str = "native-test") -> Workflow:
     executor = executor or _Counter()
     builder = WorkflowBuilder(name=name, start_executor=executor)
@@ -244,6 +254,19 @@ async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
     assert first.get_start_executor().id == "agent"
+
+
+async def test_resolver_rejects_reused_registry_backed_agent_resources() -> None:
+    class _UnusedClient(BaseChatClient):
+        async def _inner_get_response(self, **kwargs: Any) -> Any:
+            raise AssertionError("Ownership validation must not call the model.")
+
+    shared = Agent(client=_UnusedClient(), name="registered")
+    resolver = WorkflowResolver(lambda request: _workflow(_RegistryExecutor(shared)))
+
+    await resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="cannot share"):
+        await resolver.resolve(object())
 
 
 @pytest.mark.parametrize("raw", [False, True])

@@ -50,8 +50,9 @@ def build_workflow(request: HostedResponseRequest):
 
 
 async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]:
-    if replies := await request.get_workflow_responses():
-        return WorkflowTurn(responses=replies)
+    items = await request.get_input_items()
+    if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
+        return WorkflowTurn(responses=await request.get_workflow_responses())
     return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
 
 
