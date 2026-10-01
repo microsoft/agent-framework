@@ -759,7 +759,7 @@ class TestCheckpointing:
         storage = InMemoryCheckpointStorage()
         call_count = 0
 
-        @step
+        @step(replay_key=lambda x: str(x))
         async def counting_task(x: int) -> int:
             nonlocal call_count
             call_count += 1
@@ -840,13 +840,13 @@ class TestCheckpointing:
         step1_calls = 0
         step2_calls = 0
 
-        @step
+        @step(replay_key=lambda x: str(x))
         async def slow_step1(x: int) -> int:
             nonlocal step1_calls
             step1_calls += 1
             return x + 10
 
-        @step
+        @step(replay_key=lambda x: str(x))
         async def crashing_step2(x: int) -> int:
             nonlocal step2_calls
             step2_calls += 1
@@ -1110,8 +1110,9 @@ class TestStepReplayIdentity:
         assert replayed.get_outputs() == initial.get_outputs()
         assert calls == ["first", "second"]
 
-    async def test_existing_generated_wrapper_fails_closed_after_collision(self):
-        storage = InMemoryCheckpointStorage()
+    async def test_identical_generated_wrappers_do_not_cross_workflows(self):
+        first_storage = InMemoryCheckpointStorage()
+        second_storage = InMemoryCheckpointStorage()
         _factory_step_calls.clear()
 
         def make_step() -> StepWrapper[str]:
@@ -1122,26 +1123,26 @@ class TestStepReplayIdentity:
             return step(name="generated")(generated)
 
         first = make_step()
-
-        @built_workflow(checkpoint_storage=storage)
-        async def wf(value: str) -> str:
-            return await first(value)
-
-        initial = await wf.run("input")
-        checkpoints = await storage.list_checkpoints(workflow_name="wf")
-        checkpoint = checkpoints[-1]
         second = make_step()
 
-        with pytest.raises(ValueError, match="multiple wrappers"):
-            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+        @built_workflow(name="first_wf", checkpoint_storage=first_storage)
+        async def first_wf(value: str) -> str:
+            return await first(value)
 
-        del second
-        gc.collect()
-        replayed = await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+        @built_workflow(name="second_wf", checkpoint_storage=second_storage)
+        async def second_wf(value: str) -> str:
+            return await second(value)
 
-        assert initial.get_outputs() == ["input"]
-        assert replayed.get_outputs() == initial.get_outputs()
-        assert _factory_step_calls == ["input"]
+        first_initial = await first_wf.run("first")
+        second_initial = await second_wf.run("second")
+        first_checkpoints = await first_storage.list_checkpoints(workflow_name="first_wf")
+        second_checkpoints = await second_storage.list_checkpoints(workflow_name="second_wf")
+        first_replayed = await first_wf.run(checkpoint_id=first_checkpoints[-1].checkpoint_id)
+        second_replayed = await second_wf.run(checkpoint_id=second_checkpoints[-1].checkpoint_id)
+
+        assert first_replayed.get_outputs() == first_initial.get_outputs() == ["first"]
+        assert second_replayed.get_outputs() == second_initial.get_outputs() == ["second"]
+        assert _factory_step_calls == ["first", "second"]
 
     async def test_cyclic_arguments_use_sequential_fallback(self):
         call_count = 0
@@ -1390,7 +1391,7 @@ class TestStepReplayIdentity:
         assert marker_func.__kwdefaults__ is not None
         marker_func.__kwdefaults__["suffix"] = b"B"
 
-        with pytest.raises(ValueError, match="changed after decoration"):
+        with pytest.raises(ValueError, match="not compatible"):
             await wf.run(checkpoint_id=checkpoint.checkpoint_id)
 
         assert initial.get_outputs() == ["input:A"]
@@ -1416,14 +1417,15 @@ class TestStepReplayIdentity:
         initial = await wf.run("input")
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         checkpoint = checkpoints[-1]
+        old_alias = marker
         marker = step(name="marker")(new_marker)
-        gc.collect()
 
-        with pytest.raises(ValueError, match="different step definition"):
+        with pytest.raises(ValueError, match="not compatible"):
             await wf.run(checkpoint_id=checkpoint.checkpoint_id)
 
         assert initial.get_outputs() == ["old:input"]
         assert _factory_step_calls == ["old"]
+        assert old_alias.name == "marker"
 
     async def test_rebound_default_change_rejects_versioned_checkpoint(self):
         storage = InMemoryCheckpointStorage()
@@ -1443,13 +1445,177 @@ class TestStepReplayIdentity:
         initial = await wf.run("input")
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         checkpoint = checkpoints[-1]
+        old_alias = marker
         marker = step(name="marker")(new_marker)
-        gc.collect()
 
-        with pytest.raises(ValueError, match="different step definition"):
+        with pytest.raises(ValueError, match="not compatible"):
             await wf.run(checkpoint_id=checkpoint.checkpoint_id)
 
         assert initial.get_outputs() == ["input:A"]
+        assert old_alias.name == "marker"
+
+    async def test_rebound_helper_body_rejects_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def marker(value: str) -> str:
+            return value
+
+        async def old_helper(value: str) -> str:
+            return await marker(value)
+
+        async def new_helper(value: str) -> str:
+            return f"{await marker(value)}:changed"
+
+        helper = old_helper
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await helper(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        old_alias = helper
+        helper = new_helper
+
+        with pytest.raises(ValueError, match="not compatible"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["input"]
+        assert old_alias.__name__ == "old_helper"
+
+    async def test_rebound_imported_workflow_helper_rejects_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def marker(value: str) -> str:
+            return f"marker:{value}"
+
+        async def old_helper(value: str) -> str:
+            return await marker(value)
+
+        async def new_helper(value: str) -> str:
+            return f"changed:{await marker(value)}"
+
+        old_helper.__module__ = "external_helpers"
+        new_helper.__module__ = "external_helpers"
+        helper = old_helper
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await helper(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        old_alias = helper
+        helper = new_helper
+
+        with pytest.raises(ValueError, match="not compatible"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["marker:input"]
+        assert old_alias.__name__ == "old_helper"
+
+    async def test_rebound_step_helper_body_rejects_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        async def old_helper(value: str) -> str:
+            return f"old:{value}"
+
+        async def new_helper(value: str) -> str:
+            return f"new:{value}"
+
+        helper = old_helper
+
+        @step(replay_key=lambda value: value)
+        async def marker(value: str) -> str:
+            return await helper(value)
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await marker(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        old_alias = helper
+        helper = new_helper
+
+        with pytest.raises(ValueError, match="not compatible"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["old:input"]
+        assert old_alias.__name__ == "old_helper"
+
+    async def test_rebound_imported_step_helper_rejects_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        async def old_helper(value: str) -> str:
+            return f"old:{value}"
+
+        async def new_helper(value: str) -> str:
+            return f"new:{value}"
+
+        old_helper.__module__ = "external_steps"
+        new_helper.__module__ = "external_steps"
+        helper = old_helper
+
+        async def marker_func(value: str) -> str:
+            return await helper(value)
+
+        marker_func.__module__ = "external_steps"
+        imported_marker = step(replay_key=lambda value: value)(marker_func)
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(value: str) -> str:
+            return await imported_marker(value)
+
+        initial = await wf.run("input")
+        checkpoints = await storage.list_checkpoints(workflow_name="wf")
+        checkpoint = checkpoints[-1]
+        old_alias = helper
+        helper = new_helper
+
+        with pytest.raises(ValueError, match="not compatible"):
+            await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert initial.get_outputs() == ["old:input"]
+        assert old_alias.__name__ == "old_helper"
+
+    async def test_nested_helper_rebound_global_step_rejects_checkpoint(self):
+        storage = InMemoryCheckpointStorage()
+
+        @step(name="old")
+        async def old_step(value: int) -> int:
+            return value + 1
+
+        @step(name="new")
+        async def new_step(value: int) -> int:
+            return value + 100
+
+        globals()["nested_current_step"] = old_step
+        try:
+
+            @built_workflow(checkpoint_storage=storage)
+            async def wf(value: int) -> int:
+                async def nested_helper() -> int:
+                    return await nested_current_step(value)  # type: ignore[name-defined]  # pyright: ignore[reportUndefinedVariable]  # ty: ignore[unresolved-reference]  # noqa: F821
+
+                return await nested_helper()
+
+            initial = await wf.run(1)
+            checkpoints = await storage.list_checkpoints(workflow_name="wf")
+            checkpoint = checkpoints[-1]
+            globals()["nested_current_step"] = new_step
+
+            with pytest.raises(ValueError, match="not compatible"):
+                await wf.run(checkpoint_id=checkpoint.checkpoint_id)
+        finally:
+            del globals()["nested_current_step"]
+
+        assert initial.get_outputs() == [2]
 
     async def test_mutable_step_result_isolated_across_response_replay(self):
         _factory_step_calls.clear()
@@ -1490,6 +1656,39 @@ class TestStepReplayIdentity:
         assert result.get_outputs() == [["after"]]
         assert len(completed) == 1
         assert completed[0].data == []
+
+    async def test_non_deepcopyable_result_succeeds_without_replay(self):
+        import threading
+
+        @step
+        async def create_lock() -> threading.Lock:
+            return threading.Lock()
+
+        @built_workflow
+        async def wf(_: str) -> threading.Lock:
+            return await create_lock()
+
+        result = await wf.run("input")
+        lock = result.get_outputs()[0]
+
+        assert lock.acquire(blocking=False) is True
+        lock.release()
+
+    async def test_non_deepcopyable_result_rejects_checkpointing(self):
+        import threading
+
+        storage = InMemoryCheckpointStorage()
+
+        @step
+        async def create_lock() -> threading.Lock:
+            return threading.Lock()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: str) -> threading.Lock:
+            return await create_lock()
+
+        with pytest.raises(ValueError, match="Cannot checkpoint"):
+            await wf.run("input")
 
     async def test_legacy_checkpoint_replays_sequential_step(self):
         from agent_framework import WorkflowCheckpoint
@@ -1687,7 +1886,7 @@ class TestStepReplayIdentity:
         key_ctx = _RunContext("mixed_wf")
         versioned_key = key_ctx._get_explicit_step_cache_key(  # pyright: ignore[reportPrivateUsage]
             "mixed",
-            mixed._wrapper_identity,  # pyright: ignore[reportPrivateUsage]
+            mixed._wrapper_source_identity,  # pyright: ignore[reportPrivateUsage]
             identity,
         )
         checkpoint = WorkflowCheckpoint(
@@ -2094,8 +2293,8 @@ class TestCheckpointValidation:
         assert _get_step_wrapper_identity(first_default)[0] != _get_step_wrapper_identity(second_default)[0]
         first_closure_identity, first_closure_is_durable = _get_step_wrapper_identity(first_closure)
         second_closure_identity, second_closure_is_durable = _get_step_wrapper_identity(second_closure)
-        assert first_closure_is_durable is True
-        assert second_closure_is_durable is True
+        assert first_closure_is_durable is False
+        assert second_closure_is_durable is False
         assert first_closure_identity != second_closure_identity
 
     def test_wrapper_identity_marks_mutable_closure_state_non_durable(self):
@@ -2107,6 +2306,32 @@ class TestCheckpointValidation:
         _, is_durable = _get_step_wrapper_identity(generated)
 
         assert is_durable is False
+
+    def test_attribute_name_does_not_discover_same_named_global_helper(self):
+        @step
+        async def unrelated_step(value: str) -> str:
+            return value
+
+        async def unrelated_helper(value: str) -> str:
+            return await unrelated_step(value)
+
+        class Client:
+            async def signature_probe(self, value: str) -> str:
+                return value
+
+        client = Client()
+        globals()["signature_probe"] = unrelated_helper
+        try:
+
+            @built_workflow
+            async def wf(value: str) -> str:
+                return await client.signature_probe(value)
+
+            wrappers, _ = wf._discover_workflow_dependencies(wf._func)  # pyright: ignore[reportPrivateUsage]
+        finally:
+            del globals()["signature_probe"]
+
+        assert unrelated_step not in wrappers
 
     async def test_checkpoint_signature_mismatch_raises(self):
         from agent_framework import WorkflowCheckpoint
@@ -2182,7 +2407,7 @@ class TestExecutorBypassed:
         storage = InMemoryCheckpointStorage()
         call_count = 0
 
-        @step
+        @step(replay_key=lambda x: str(x))
         async def tracked(x: int) -> int:
             nonlocal call_count
             call_count += 1
@@ -2427,7 +2652,7 @@ class TestHITLInStepWithCaching:
         """Response-only HITL resumes must preserve state written before a cached step."""
         seed_calls = 0
 
-        @step
+        @step(replay_key=lambda: "seed")
         async def seed_state(ctx: RunContext) -> str:
             nonlocal seed_calls
             seed_calls += 1
@@ -2453,7 +2678,7 @@ class TestHITLInStepWithCaching:
         resuming should bypass the first step (cached) and re-execute the HITL step."""
         call_count_a = 0
 
-        @step
+        @step(replay_key=lambda x: str(x))
         async def step_a(x: int) -> int:
             nonlocal call_count_a
             call_count_a += 1
@@ -2600,7 +2825,7 @@ class TestDeterministicAutoRequestId:
     async def test_cached_step_advances_auto_request_id_counter(self):
         call_count = 0
 
-        @step
+        @step(replay_key=lambda value: str(value))
         async def first_review(value: int, ctx: RunContext) -> str:
             nonlocal call_count
             call_count += 1
