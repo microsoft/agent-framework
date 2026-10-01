@@ -269,8 +269,13 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
         parts = prefix.split(";")
         if media_type is None:
             media_type = parts[0][5:] or "text/plain"  # Remove 'data:'
-        for parameter in parts[1:]:
-            if parameter and parameter != "base64" and "=" not in parameter:
+        parameters = parts[1:]
+        for index, parameter in enumerate(parameters):
+            if parameter == "base64":
+                # base64 is only valid as the last parameter, and only once.
+                if index != len(parameters) - 1:
+                    raise ContentError("Data URI 'base64' marker must be the last parameter")
+            elif parameter and "=" not in parameter:
                 raise ContentError(f"Unsupported data URI encoding: {parameter}")
         return {"type": "data", "uri": uri, "media_type": media_type}
 

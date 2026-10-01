@@ -37,6 +37,21 @@ class TestDataUriParameters:
         content = Content.from_uri("data:application/json;charset=utf-8;base64,e30=")
         assert content.media_type == "application/json"
 
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "data:image/png;base64;charset=utf-8,aGk=",
+            "data:image/png;base64;base64,aGk=",
+        ],
+    )
+    def test_base64_must_be_last_parameter(self, uri: str) -> None:
+        with pytest.raises(ContentError, match="must be the last parameter"):
+            Content.from_uri(uri)
+
+    def test_base64_as_last_parameter_accepted(self) -> None:
+        content = Content.from_uri("data:image/png;charset=utf-8;base64,aGk=")
+        assert content.media_type == "image/png"
+
     def test_unknown_bare_encoding_still_rejected(self) -> None:
         with pytest.raises(ContentError, match="Unsupported data URI encoding"):
             Content.from_uri("data:text/plain;gzip,hello")
