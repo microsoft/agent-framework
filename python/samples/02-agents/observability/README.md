@@ -208,6 +208,34 @@ configure_otel_providers(exporters=[exporter])
 enable_sensitive_telemetry()
 ```
 
+Or with [Arize AX](https://arize.com/docs/ax/integrations/python-agent-frameworks/microsoft/microsoft-agent-framework) or [Phoenix](https://arize.com/docs/phoenix), which use the [OpenInference](https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-agent-framework) format. Install `openinference-instrumentation-agent-framework>=0.1.12` and `opentelemetry-exporter-otlp-proto-http`. The OpenInference span processor converts Agent Framework's GenAI spans and must run before the exporter, so set up the tracer provider yourself rather than calling `configure_otel_providers()`:
+
+```python
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from openinference.instrumentation.agent_framework import AgentFrameworkToOpenInferenceProcessor
+from agent_framework.observability import enable_sensitive_telemetry
+
+# Arize AX: send to https://otlp.arize.com/v1/traces with your space ID and API key
+exporter = OTLPSpanExporter(
+    endpoint="https://otlp.arize.com/v1/traces",
+    headers={"arize-space-id": "<space_id>", "arize-api-key": "<api_key>"},
+)
+# Phoenix: send to your Phoenix instance instead, e.g. a local `phoenix serve`
+# exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
+
+tracer_provider = TracerProvider(resource=Resource.create({"openinference.project.name": "<project_name>"}))
+tracer_provider.add_span_processor(AgentFrameworkToOpenInferenceProcessor())
+tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
+trace.set_tracer_provider(tracer_provider)
+
+# Optional: opt in to capturing sensitive data
+enable_sensitive_telemetry()
+```
+
 **4. Manual setup**
 
 For full control, set up providers and exporters yourself. See [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a complete example that sends traces, logs, and metrics to the console. The `create_resource()` helper in `agent_framework.observability` can build a resource with the appropriate service name and version from environment variables (or sensible defaults), although the sample does not use it.
@@ -240,6 +268,7 @@ Exporters are **not** installed by default — install only what you need:
 - **Application Insights**: `azure-monitor-opentelemetry`
 - **Aspire Dashboard or other OTLP/gRPC backends**: `opentelemetry-exporter-otlp-proto-grpc`
 - **OTLP over HTTP**: `opentelemetry-exporter-otlp-proto-http`
+- **Arize AX or Phoenix**: `openinference-instrumentation-agent-framework` and `opentelemetry-exporter-otlp-proto-http`
 
 For other backends, refer to the documentation of the specific exporter.
 
