@@ -275,6 +275,34 @@ The last form is not corrected automatically. When a chat client is turned into 
 
 The user id from the prompt message(s) is reused for the response evaluation so both evaluations map consistently to the same user.
 
+### Blocked content and conversation history
+
+Where Purview sits in the pipeline decides whether a blocked response can still be written
+to conversation history.
+
+**Chat-client level** (`WithPurview` on a `ChatClientBuilder`, or `PurviewChatClient`) —
+the response is evaluated and replaced inside `GetResponseAsync`, before the agent stores
+the turn, so the replacement is what becomes durable and the model's own content never
+reaches the history provider. This holds as long as Purview is composed below any chat
+client that stores history itself, which is the same ordering rule described above for
+function invocation.
+
+**Agent level** (`WithPurview` on an `AIAgentBuilder`, or `PurviewAgent`) — the agent
+stores the turn as part of the run, and Purview wraps the whole run, so the response is
+evaluated after the turn has already been written. A blocked response is replaced for the
+caller, but the original content can still be read back from history on a later turn. Use
+the chat-client level composition where history must not retain blocked content.
+
+**Service-managed history** — both of the above describe history the framework stores.
+Some chat clients instead keep the conversation on the service and return an id to
+continue from, for example a Responses-style API called with `store` enabled. There the
+service records the prompt and the response as part of the model call, before the response
+comes back to be evaluated, and the agent's session advances to that turn so the next run
+resumes from a conversation that still contains the blocked content. Purview still replaces
+what the caller receives, but the service's copy is outside the framework's reach and
+cannot be withdrawn. Where blocked content must not be retained, turn service-side storage
+off so the framework owns the conversation, and use a `ChatHistoryProvider`.
+
 There are several optimizations to speed up Purview calls. Protection scope lookups (the first step in evaluation) are cached to minimize network calls. When a lookup is not cached, the middleware will refresh it in a background worker so the foreground ProcessContent request does not have to wait.
 If the policies allow content to be processed offline, the middleware will add the process content request to a channel and run it in a background worker. Similarly, the middleware will run a background request if no scopes apply and the interaction only has to be logged in Audit. Payment Required responses from background scope lookups are cached at the tenant level so subsequent requests for the tenant short-circuit.
 

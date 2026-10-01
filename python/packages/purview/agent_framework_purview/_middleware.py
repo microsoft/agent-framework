@@ -169,12 +169,15 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             session_id_response = session_id
 
         if isinstance(context.result, ResponseStream):
-            context.result = self._gate_stream(
+            context.result = self._evaluate_stream(
+                context,
                 cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", context.result),
                 session_id_response,
                 resolved_user_id,
             )
-        elif context.result is not None:
+            return
+
+        if context.result is not None:
             should_block_response = await _should_block_response(
                 self._processor,
                 self._settings,
@@ -190,34 +193,32 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         msg = self._settings.get("blocked_response_message", None) or "Response blocked by policy"
         return AgentResponse(messages=[Message(role="system", contents=[msg])])
 
-    def _gate_stream(
+    def _evaluate_stream(
         self,
+        context: AgentContext,
         inner: "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]",
         session_id: str | None,
         user_id: str | None,
     ) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
         """Buffer a streamed run and evaluate its complete content before anything is released.
 
-        The stream is drained in full, the assembled response is evaluated exactly as a
-        non-streaming response is, and only then are updates released. A blocked response
-        is replaced. The released updates are always re-derived from the response that was
-        evaluated, so what the caller receives cannot diverge from what policy saw even when
-        the inner stream's finalizer returns something other than the assembly of its own
-        updates.
+        The processing stages are registered on the context rather than applied by wrapping
+        the stream, so several middleware can guard the same run and each one's work is
+        applied. The pipeline buffers the stream, applies the registered transforms to the
+        assembled response, and releases updates re-derived from the result.
+
+        Response transforms run in middleware order, so a middleware placed after this one
+        can replace the response after it has been evaluated. Attach this middleware last
+        for its evaluation to cover what the caller actually receives; see the package
+        README on middleware order.
+
+        This covers what the caller receives. The run writes its messages to conversation
+        history as part of the run itself, below this middleware, so that write has already
+        happened by the time the response is evaluated here; see the package README on
+        blocked content and conversation history.
         """
 
-        async def _consume() -> tuple[Sequence[AgentResponseUpdate], "AgentResponse[Any]"]:
-            try:
-                final = await inner.get_final_response()
-            finally:
-                # Cancellation or failure part-way through the drain still has to release
-                # the inner stream, which the cleanup hook below would never reach.
-                await inner.close()
-            return list(inner.updates), final
-
-        async def _gate(
-            _updates: list[AgentResponseUpdate], final: "AgentResponse[Any]"
-        ) -> tuple["AgentResponse[Any]", bool]:
+        async def _transform(final: "AgentResponse[Any]") -> "AgentResponse[Any]":
             should_block_response = await _should_block_response(
                 self._processor,
                 self._settings,
@@ -226,23 +227,17 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 user_id,
             )
             if should_block_response:
-                return self._blocked_response(), True
-            # Reported as transformed even when the content is allowed through unchanged, so
-            # the released updates are re-derived from the evaluated response rather than
-            # replayed from the buffer.
-            return final, True
+                return self._blocked_response()
+            # Returning the evaluated response, rather than None, is what makes the
+            # released updates be re-derived from it. A finalizer may produce a response
+            # that is not the assembly of its own updates, so releasing the buffered
+            # updates instead would release content this evaluation never saw.
+            return final
 
-        gated = cast(
-            "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume,
-                gate=_gate,
-                rederive=AgentResponse.to_updates,
-            ),
-        )
-        # Closing the gated stream before it is ever pulled never reaches ``_consume``, so
-        # the inner stream is released through a cleanup hook rather than from inside it.
-        return gated.with_cleanup_hook(inner.close)
+        context.stream_result_transforms.append(_transform)
+        context.stream_result_to_updates = AgentResponse.to_updates
+        context.stream_buffer_updates = True
+        return inner
 
 
 class PurviewChatPolicyMiddleware(ChatMiddleware):
@@ -321,12 +316,15 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
             session_id_response = session_id
 
         if isinstance(context.result, ResponseStream):
-            context.result = self._gate_stream(
+            context.result = self._evaluate_stream(
+                context,
                 cast("ResponseStream[ChatResponseUpdate, ChatResponse[Any]]", context.result),
                 session_id_response,
                 resolved_user_id,
             )
-        elif context.result is not None:
+            return
+
+        if context.result is not None:
             should_block_response = await _should_block_response(
                 self._processor,
                 self._settings,
@@ -345,34 +343,32 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         )
         return ChatResponse(messages=[blocked_message])
 
-    def _gate_stream(
+    def _evaluate_stream(
         self,
+        context: ChatContext,
         inner: "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
         session_id: str | None,
         user_id: str | None,
     ) -> "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]":
         """Buffer a streamed response and evaluate its complete content before anything is released.
 
-        The stream is drained in full, the assembled response is evaluated exactly as a
-        non-streaming response is, and only then are updates released. A blocked response
-        is replaced. The released updates are always re-derived from the response that was
-        evaluated, so what the caller receives cannot diverge from what policy saw even when
-        the inner stream's finalizer returns something other than the assembly of its own
-        updates.
+        The processing stages are registered on the context rather than applied by wrapping
+        the stream, so several middleware can guard the same call and each one's work is
+        applied. The pipeline buffers the stream, applies the registered transforms to the
+        assembled response, and releases updates re-derived from the result.
+
+        Response transforms run in middleware order, so a middleware placed after this one
+        can replace the response after it has been evaluated. Attach this middleware last
+        for its evaluation to cover what the caller actually receives; see the package
+        README on middleware order.
+
+        This covers what the caller receives, and the evaluated response is what an agent
+        run above this middleware stores. Per-service-call history writes happen below it
+        and are not covered; see the package README on blocked content and conversation
+        history.
         """
 
-        async def _consume() -> tuple[Sequence[ChatResponseUpdate], "ChatResponse[Any]"]:
-            try:
-                final = await inner.get_final_response()
-            finally:
-                # Cancellation or failure part-way through the drain still has to release
-                # the inner stream, which the cleanup hook below would never reach.
-                await inner.close()
-            return list(inner.updates), final
-
-        async def _gate(
-            _updates: list[ChatResponseUpdate], final: "ChatResponse[Any]"
-        ) -> tuple["ChatResponse[Any]", bool]:
+        async def _transform(final: "ChatResponse[Any]") -> "ChatResponse[Any]":
             should_block_response = await _should_block_response(
                 self._processor,
                 self._settings,
@@ -381,20 +377,14 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 user_id,
             )
             if should_block_response:
-                return self._blocked_response(), True
-            # Reported as transformed even when the content is allowed through unchanged, so
-            # the released updates are re-derived from the evaluated response rather than
-            # replayed from the buffer.
-            return final, True
+                return self._blocked_response()
+            # Returning the evaluated response, rather than None, is what makes the
+            # released updates be re-derived from it. A finalizer may produce a response
+            # that is not the assembly of its own updates, so releasing the buffered
+            # updates instead would release content this evaluation never saw.
+            return final
 
-        gated = cast(
-            "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(
-                consume=_consume,
-                gate=_gate,
-                rederive=ChatResponse.to_updates,
-            ),
-        )
-        # Closing the gated stream before it is ever pulled never reaches ``_consume``, so
-        # the inner stream is released through a cleanup hook rather than from inside it.
-        return gated.with_cleanup_hook(inner.close)
+        context.stream_result_transforms.append(_transform)
+        context.stream_result_to_updates = ChatResponse.to_updates
+        context.stream_buffer_updates = True
+        return inner

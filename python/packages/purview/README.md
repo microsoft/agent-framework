@@ -80,6 +80,8 @@ asyncio.run(main())
 
 If a policy violation is detected on the prompt, the middleware terminates the run and substitutes a system message: `"Prompt blocked by policy"`. If on the response, the result becomes `"Response blocked by policy"`.
 
+If you attach other middleware as well, put the Purview middleware last — see [Middleware order matters](#middleware-order-matters).
+
 ---
 
 ## Configuration
@@ -228,6 +230,7 @@ you want.
 | A model's tool call, before the tool executes | not evaluated | evaluated |
 | Tool results | evaluated at the end of the run | evaluated on the next request |
 | Final response | evaluated | evaluated |
+| A blocked response | replaced for the caller, but [kept in history](#blocked-content-and-conversation-history) | [replaced before the turn is stored](#blocked-content-and-conversation-history), unless history is written per service call |
 | How often it evaluates | once per run | once per model request |
 
 The agent middleware receives the messages passed to `Agent.run()`. Content added while
@@ -284,6 +287,9 @@ agent = Agent(client=client, instructions="You are helpful.")
 Both middlewares can be attached at the same time. The chat middleware then evaluates
 each model round trip and the agent middleware evaluates the run boundary.
 
+In either list, attach the Purview middleware last — see
+[Middleware order matters](#middleware-order-matters).
+
 ---
 
 ## Middleware Lifecycle
@@ -301,6 +307,94 @@ each model round trip and the agent middleware evaluates the run boundary.
 The user identifier is discovered from `Message.additional_properties['user_id']` during the prompt phase and reused for the response phase, ensuring both evaluations map consistently to the same user. See [Fail-closed behaviour](#fail-closed-behaviour) for what happens when no user identifier can be resolved.
 
 You can customize the blocking messages using the `blocked_prompt_message` and `blocked_response_message` fields in `PurviewSettings`. For more advanced scenarios, you can wrap the middleware or post-process `context.result` in later middleware.
+
+### Middleware order matters
+
+**Attach the Purview middleware last in the middleware list.**
+
+```python
+agent = Agent(
+    ...,
+    middleware=[logging_middleware, caching_middleware, purview_middleware],
+    #                                                   ^ last
+)
+```
+
+Middleware are free to replace the response, and those replacements are applied in
+middleware order. Whichever middleware comes last gets the final say over what the caller
+receives. So any middleware attached *after* Purview can return a response that Purview
+never evaluated, and no error or warning is raised when this happens — the response is
+simply delivered unevaluated.
+
+Attaching Purview last also means it evaluates the response *after* other middleware have
+finished changing it, so the content that was evaluated is the content the caller
+receives.
+
+The same applies to `PurviewChatPolicyMiddleware` in a chat client's middleware list.
+
+### Blocked content and conversation history
+
+Which middleware you use decides whether a blocked response can still be read back from
+conversation history.
+
+**Chat middleware** (`PurviewChatPolicyMiddleware`, in a chat client's middleware list) —
+the response is evaluated and replaced during the model call, before an agent run stores
+the turn, so the replacement is what becomes durable and the model's own content does not
+reach the history provider.
+
+**Agent middleware** (`PurviewPolicyMiddleware`, in an agent's middleware list) — an agent
+run writes its messages to history as part of the run, and this middleware wraps the whole
+run, so the turn has already been written by the time the response is evaluated. A blocked
+response is replaced for the caller, but the original content can still be read back from
+history on a later turn. Use the chat middleware where history must not retain blocked
+content.
+
+Both cover the history providers the agent run writes through. Neither covers code that
+writes somewhere else of its own accord, such as a tool that saves its own output.
+
+#### Not recommended: history written per service call
+
+The chat middleware description above assumes history is written once per run, which is
+the default. An agent configured with `require_per_service_call_history_persistence=True`
+instead writes history as each model call returns.
+
+That writer is added by the agent itself and placed *below* anything in your chat
+middleware list, closer to the model. It therefore stores the model's own response before
+the chat middleware evaluates it, and a blocked response can still be read back from
+history on a later turn. No ordering of your own middleware can change this, because the
+writer is always placed below them.
+
+Avoid per-service-call history persistence where history must not retain blocked content.
+
+#### Exception: history kept by the service
+
+Both of the above cover history the framework stores. Some chat clients instead keep the
+conversation on the service and return an id to continue from — for example a
+Responses-style API run with `store=True`, which is the default for some clients.
+
+In that mode the framework does not attach a local history provider of its own, and the
+service records the prompt and the response as part of the model call, before the response
+comes back to be evaluated. The service's copy is outside the framework's reach. The
+session's continuation id also advances to that turn, so the next turn resumes from a
+conversation that still contains the blocked content.
+
+Purview still replaces what the caller receives. It cannot remove what the service kept.
+
+If blocked content must not be retained, set `store` to `False` so the framework owns the
+conversation, and attach a history provider:
+
+```python
+client = ChatClient(...)
+client.chat_middleware = [PurviewChatPolicyMiddleware(credential, settings)]
+
+agent = Agent(
+    client=client,
+    context_providers=[InMemoryHistoryProvider()],
+    default_options={"store": False},
+)
+```
+
+`store` can also be set per run, with `agent.run(..., options={"store": False})`.
 
 ---
 
@@ -376,6 +470,10 @@ sent as Purview binary content, and function calls, function results and other s
 serialized to text. Only `usage` content is skipped, because it carries token counts rather than user
 data.
 
+Evaluation covers the response as it stands when the middleware runs. Because middleware can replace
+the response afterwards, what is evaluated depends on where the middleware is attached — see
+[Middleware order matters](#middleware-order-matters).
+
 ### Remote references are not dereferenced
 
 Purview classifies the content it is handed; a reference to content is not the content.
@@ -398,12 +496,18 @@ evaluated.
 This uses an experimental core API, so attaching the middleware to a streaming call emits an
 `ExperimentalWarning`.
 
+A streamed response is evaluated once it has been assembled, at the same point a
+non-streaming response is, so [Middleware order matters](#middleware-order-matters)
+applies to streaming in exactly the same way.
+
 ---
 
 ## Notes
 - **User Identification**: When the configured credential resolves to a user token, that token's `user_id` is used for per-user policy scoping. For app-token credentials, provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`). If no user_id can be provided or inferred, the request fails rather than proceeding unevaluated — see [Security Considerations](#security-considerations).
 - **Blocking Messages**: Can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
+- **Middleware Order**: Attach the middleware last in the middleware list. Anything attached after it can return a response it never evaluated — see [Middleware order matters](#middleware-order-matters).
 - **Streaming Responses**: Streamed responses are buffered and evaluated in full before any update is released, so content is not delivered incrementally while the middleware is attached — see [Streaming responses](#streaming-responses).
+- **Blocked Content and History**: The chat middleware replaces a blocked response before the turn is stored; the agent middleware replaces it only for the caller, and history keeps the original. Per-service-call history persistence is not recommended with either — see [Blocked content and conversation history](#blocked-content-and-conversation-history).
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.
 - **Caching**: Protection scopes responses and 402 errors are cached by default with a 4-hour TTL. Cache is automatically invalidated when protection scope state changes.
 - **Cold-cache parallelization**: On a `ProtectionScopes` cache miss, scopes are refreshed in the background while `ProcessContent` runs in the foreground.

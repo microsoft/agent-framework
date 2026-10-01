@@ -8,15 +8,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
+    AgentSession,
     ChatContext,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    InMemoryHistoryProvider,
     Message,
     MiddlewareTermination,
     ResponseStream,
 )
 from azure.core.credentials import AccessToken
+from conftest import run_chat_middleware  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
 from agent_framework_purview._models import Activity
@@ -133,7 +137,7 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next() -> None:
                 streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=ChatResponse.from_updates))
 
-            await middleware.process(streaming_context, mock_next)
+            await run_chat_middleware(middleware, streaming_context, mock_next)
             released = [update async for update in cast(Any, streaming_context.result)]
 
         assert mock_proc.call_count == 2
@@ -167,7 +171,7 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next() -> None:
                 streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=ChatResponse.from_updates))
 
-            await middleware.process(streaming_context, mock_next)
+            await run_chat_middleware(middleware, streaming_context, mock_next)
             released = [update async for update in cast(Any, streaming_context.result)]
 
         assert mock_proc.call_count == 2
@@ -203,7 +207,7 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next() -> None:
                 streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=diverging_finalizer))
 
-            await middleware.process(streaming_context, mock_next)
+            await run_chat_middleware(middleware, streaming_context, mock_next)
             released = [update async for update in cast(Any, streaming_context.result)]
 
         released_text = "".join(update.text for update in released)
@@ -244,7 +248,7 @@ class TestPurviewChatPolicyMiddleware:
             async def mock_next() -> None:
                 streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=finalizer))
 
-            await middleware.process(streaming_context, mock_next)
+            await run_chat_middleware(middleware, streaming_context, mock_next)
             released = [update async for update in cast(Any, streaming_context.result)]
 
         assert released[-1].response_id == "resp-1"
@@ -287,7 +291,7 @@ class TestPurviewChatPolicyMiddleware:
                 inner.with_cleanup_hook(_mark_closed)
                 streaming_context.result = cast(Any, inner)
 
-            await middleware.process(streaming_context, mock_next)
+            await run_chat_middleware(middleware, streaming_context, mock_next)
             await cast(Any, streaming_context.result).close()
 
         assert closed is True
@@ -610,3 +614,105 @@ class TestPurviewChatPolicyMiddleware:
             # Check post-check call includes session_id
             post_check_call = mock_proc.call_args_list[1]
             assert post_check_call[1]["session_id"] == "conv-999"
+
+
+class TestPurviewChatPolicyMiddlewareDurableHistory:
+    """How this middleware's response check relates to what is written to history.
+
+    An agent run that stores history once per run does so above this middleware, so the
+    evaluated response is what gets stored. Per-service-call history writes happen below
+    it, as each model call returns, so those are not covered.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewChatPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @staticmethod
+    def _build(middleware: PurviewChatPolicyMiddleware, client_factory: Any, per_service_call: bool) -> Any:
+        client = client_factory()
+        client.chat_middleware = [middleware]
+        provider = InMemoryHistoryProvider()
+        agent = Agent(
+            client=client,
+            context_providers=[provider],
+            require_per_service_call_history_persistence=per_service_call,
+        )
+        return agent, provider
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_blocked_response_is_replaced_before_the_turn_is_stored(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """With once-per-run history, the replacement is what becomes durable."""
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call=False)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert "Response blocked by policy" in text
+        assert stored_texts(session, provider) == ["hello there", "Response blocked by policy"]
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_blocked_response_stays_in_history_when_written_per_service_call(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """Per-service-call writes happen below this middleware, so they keep the original.
+
+        Pinned so the documented behaviour cannot drift unnoticed: per-service-call history
+        persistence is not recommended alongside this middleware.
+        """
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call=True)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert "Response blocked by policy" in text
+        assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("per_service_call", [False, True], ids=["per_run", "per_service_call"])
+    async def test_allowed_response_still_becomes_history(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+        per_service_call: bool,
+    ) -> None:
+        """Evaluating the response must not disturb an allowed call's history write."""
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert text == "model reply"
+        assert stored_texts(session, provider) == ["hello there", "model reply"]

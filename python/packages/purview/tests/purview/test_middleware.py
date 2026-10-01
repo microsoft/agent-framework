@@ -3,22 +3,26 @@
 """Tests for Purview middleware."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentContext,
+    AgentMiddleware,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     Content,
+    InMemoryHistoryProvider,
     Message,
     MiddlewareTermination,
     ResponseStream,
 )
 from azure.core.credentials import AccessToken
+from conftest import run_agent_middleware  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_purview import PurviewPolicyMiddleware, PurviewSettings
 from agent_framework_purview._models import Activity
@@ -186,7 +190,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next() -> None:
                 context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
             released = [update async for update in cast(Any, context.result)]
 
         assert mock_proc.call_count == 2
@@ -215,7 +219,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next() -> None:
                 context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
             released = [update async for update in cast(Any, context.result)]
 
         assert mock_proc.call_count == 2
@@ -248,7 +252,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next() -> None:
                 context.result = cast(Any, ResponseStream(updates(), finalizer=diverging_finalizer))
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
             released = [update async for update in cast(Any, context.result)]
 
         released_text = "".join(update.text for update in released)
@@ -283,7 +287,7 @@ class TestPurviewPolicyMiddleware:
             async def mock_next() -> None:
                 context.result = cast(Any, ResponseStream(updates(), finalizer=finalizer))
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
             released = [update async for update in cast(Any, context.result)]
 
         assert released[-1].response_id == "resp-1"
@@ -318,7 +322,7 @@ class TestPurviewPolicyMiddleware:
                 inner.with_cleanup_hook(_mark_closed)
                 context.result = cast(Any, inner)
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
             await cast(Any, context.result).close()
 
         assert closed is True
@@ -352,7 +356,7 @@ class TestPurviewPolicyMiddleware:
                 inner.with_cleanup_hook(_mark_closed)
                 context.result = cast(Any, inner)
 
-            await middleware.process(context, mock_next)
+            await run_agent_middleware(middleware, context, mock_next)
 
             async def drain() -> None:
                 async for _ in cast(Any, context.result):
@@ -625,3 +629,291 @@ class TestPurviewPolicyMiddleware:
             # Check post-check call includes session_id
             post_check_call = mock_proc.call_args_list[1]
             assert post_check_call[1]["session_id"] == "thread-999"
+
+
+class TestPurviewPolicyMiddlewareDurableHistory:
+    """How this middleware's response check relates to what the run writes to history.
+
+    An agent run writes its messages to conversation history as part of the run itself,
+    which happens below this middleware. The response check therefore runs after that
+    write, and governs what the caller receives rather than what is stored.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_blocked_response_is_replaced_for_the_caller_but_stays_in_history(
+        self,
+        middleware: PurviewPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """The caller receives the replacement, while history keeps what the run wrote.
+
+        Pinned so the documented behaviour cannot drift unnoticed: callers who need
+        history to exclude blocked content use the chat middleware instead.
+        """
+        provider = InMemoryHistoryProvider()
+        session = AgentSession()
+        agent = Agent(client=stub_chat_client(), context_providers=[provider], middleware=[middleware])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert "Response blocked by policy" in text
+        assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_allowed_response_still_becomes_history(
+        self,
+        middleware: PurviewPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """Evaluating the response must not disturb an allowed run's history write."""
+        provider = InMemoryHistoryProvider()
+        session = AgentSession()
+        agent = Agent(client=stub_chat_client(), context_providers=[provider], middleware=[middleware])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert text == "model reply"
+        assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+
+class _SuffixMiddleware(AgentMiddleware):
+    """A second middleware that also inspects and rewrites a streamed response.
+
+    It registers the same kind of whole-response processing that Purview does, so a run
+    guarded by both exercises the case where two middleware each need the assembled
+    response before anything is released to the caller.
+    """
+
+    def __init__(self, suffix: str) -> None:
+        self.suffix = suffix
+        self.seen_text: str | None = None
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        if not isinstance(context.result, ResponseStream):
+            return
+
+        async def _transform(final: "AgentResponse[Any]") -> "AgentResponse[Any]":
+            self.seen_text = final.text
+            return AgentResponse(messages=[Message(role="assistant", contents=[final.text + self.suffix])])
+
+        context.stream_result_transforms.append(_transform)
+        context.stream_result_to_updates = AgentResponse.to_updates
+        context.stream_buffer_updates = True
+
+
+class _ResponseSubstitutingMiddleware(AgentMiddleware):
+    """A middleware that supplies its own response instead of passing on what it received.
+
+    Caching and fallback middleware behave this way: they hand back a stored answer and
+    discard whatever the run produced. Registered on the ordinary rewrite stage, which is
+    where such middleware belongs.
+    """
+
+    def __init__(self) -> None:
+        self.ran = False
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        if not isinstance(context.result, ResponseStream):
+            return
+
+        def _rewrite(_: "AgentResponse[Any]") -> "AgentResponse[Any]":
+            self.ran = True
+            return AgentResponse(messages=[Message(role="assistant", contents=["confidential"])])
+
+        context.stream_result_transforms.append(_rewrite)
+        context.stream_buffer_updates = True
+        context.stream_result_to_updates = AgentResponse.to_updates
+
+
+class TestPurviewPolicyMiddlewareSharedStream:
+    """Purview guarding a streamed run alongside another middleware that rewrites responses.
+
+    Response rewrites run in middleware order, so these use the arrangement the package
+    README recommends: Purview attached last, after any middleware that rewrites responses.
+    """
+
+    @pytest.fixture
+    def mock_credential(self) -> AsyncMock:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return credential
+
+    @pytest.fixture
+    def middleware(self, mock_credential: AsyncMock) -> PurviewPolicyMiddleware:
+        return PurviewPolicyMiddleware(mock_credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @pytest.fixture
+    def mock_agent(self) -> MagicMock:
+        agent = MagicMock()
+        agent.name = "test-agent"
+        return agent
+
+    async def test_both_middleware_change_the_same_streamed_run_when_allowed(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Neither middleware's work is lost when both act on one streamed run."""
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+        other = _SuffixMiddleware(" [checked]")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="all clear")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ) as mock_proc:
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
+
+            await run_agent_middleware([other, middleware], context, mock_next)
+            released = [update async for update in cast(Any, context.result)]
+
+        assert other.seen_text == "all clear"
+        assert mock_proc.call_count == 2
+        assert "".join(update.text for update in released) == "all clear [checked]"
+
+    async def test_the_evaluated_response_is_the_one_the_caller_receives(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Attached last, the evaluation sees the response after other middleware rewrote it."""
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+        other = _SuffixMiddleware(" [checked]")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="all clear")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ) as mock_proc:
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
+
+            await run_agent_middleware([other, middleware], context, mock_next)
+            released = [update async for update in cast(Any, context.result)]
+
+        evaluated = mock_proc.call_args_list[1][0][0]
+        evaluated_text = "".join(part.text for message in evaluated for part in message.contents if part.text)
+        assert "[checked]" in evaluated_text
+        assert "".join(update.text for update in released) == evaluated_text
+
+    async def test_purview_still_blocks_when_another_middleware_shares_the_stream(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """A second middleware on the same run cannot let blocked content reach the caller."""
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+        other = _SuffixMiddleware(" [checked]")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="confidential")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
+
+            await run_agent_middleware([other, middleware], context, mock_next)
+            released = [update async for update in cast(Any, context.result)]
+
+        released_text = "".join(update.text for update in released)
+        assert "confidential" not in released_text
+        assert "blocked" in released_text.lower()
+
+    async def test_policy_replacement_survives_a_middleware_that_substitutes_the_response(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """A middleware that discards the response it is given cannot reinstate blocked content.
+
+        Cache and fallback middleware return a stored answer rather than the one the run
+        produced. Attached last, the evaluation sees that substituted answer.
+        """
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+        other = _ResponseSubstitutingMiddleware()
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="something else")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
+
+            await run_agent_middleware([other, middleware], context, mock_next)
+            released = [update async for update in cast(Any, context.result)]
+
+        released_text = "".join(update.text for update in released)
+        assert other.ran is True
+        assert "confidential" not in released_text
+        assert "blocked" in released_text.lower()
+
+    async def test_a_middleware_attached_after_purview_can_replace_the_evaluated_response(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
+    ) -> None:
+        """Pins the documented limitation: attaching Purview before a rewriting middleware.
+
+        Response transforms run in middleware order, so a middleware attached after this
+        one gets the last word and its response is never evaluated. The package README
+        tells users to attach Purview last for this reason. This test records what
+        actually happens when they do not, so the documentation cannot drift away from
+        the behaviour.
+        """
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+        other = _ResponseSubstitutingMiddleware()
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="something else")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=AgentResponse.from_updates))
+
+            await run_agent_middleware([middleware, other], context, mock_next)
+            released = [update async for update in cast(Any, context.result)]
+
+        assert "".join(update.text for update in released) == "confidential"
