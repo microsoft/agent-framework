@@ -12,7 +12,7 @@ import struct
 import sys
 import typing
 import warnings
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -48,6 +48,7 @@ from uuid import UUID, uuid4
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -221,6 +222,15 @@ def _immutable_scalar_token(value: Any) -> tuple[Any, ...] | None:
     return None
 
 
+def _unordered_token(tokens: Iterable[Any]) -> frozenset[tuple[Any, int]]:
+    """Return an order-free token that keeps how many items share each token.
+
+    A plain frozenset would merge distinct items that share a token: a set or dict can hold
+    several NaNs, because NaN is not equal to itself, and every NaN gets the same token.
+    """
+    return frozenset(Counter(tokens).items())
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -228,7 +238,7 @@ def _argument_comparison_token(value: Any) -> Any:
     if isinstance(value, dict):
         return (
             "dict",
-            frozenset(
+            _unordered_token(
                 (_argument_comparison_token(key), _argument_comparison_token(item))
                 for key, item in cast(dict[Any, Any], value).items()
             ),
@@ -238,9 +248,9 @@ def _argument_comparison_token(value: Any) -> Any:
     if isinstance(value, tuple):
         return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
     if isinstance(value, frozenset):
-        return ("frozenset", frozenset(_argument_comparison_token(item) for item in cast(frozenset[Any], value)))
+        return ("frozenset", _unordered_token(_argument_comparison_token(item) for item in cast(frozenset[Any], value)))
     if isinstance(value, set):
-        return ("set", frozenset(_argument_comparison_token(item) for item in cast(set[Any], value)))
+        return ("set", _unordered_token(_argument_comparison_token(item) for item in cast(set[Any], value)))
     if isinstance(value, float):
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
@@ -2016,9 +2026,43 @@ def _function_argument_validation_error_result(
     )
 
 
+def _replacement_arguments(tool: FunctionTool, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return middleware-repaired arguments in the JSON form a replacement approval request holds.
+
+    The request is persisted with the session, so its arguments must be JSON-native. Approving it
+    prepares the JSON arguments again, so they must reproduce the repaired values exactly. JSON
+    cannot carry a datetime's ``fold`` or a UUID's ``is_safe``, and offsets parse into pydantic's
+    own time zone type; for such values every approval would only lead to another replacement.
+    """
+    from ._middleware import MiddlewareFailure
+
+    message = (
+        "Function arguments changed after approval to values a replacement approval request cannot "
+        "represent exactly. Middleware should produce the values the tool's input model parses from JSON."
+    )
+    try:
+        json_arguments = cast(dict[str, Any], to_jsonable_python(dict(arguments)))
+    except PydanticSerializationError as exc:
+        raise MiddlewareFailure(message) from exc
+    try:
+        repaired = tool._prepare_arguments(arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError:
+        # Arguments that do not validate (such as approval-visible security placeholders, or a
+        # short-circuited repair) produce no values to reproduce.
+        return json_arguments
+    try:
+        reproduced = tool._prepare_arguments(json_arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError as exc:
+        raise MiddlewareFailure(message) from exc
+    if _argument_comparison_token(reproduced) != _argument_comparison_token(repaired):
+        raise MiddlewareFailure(message)
+    return json_arguments
+
+
 def _replacement_approval_request(
     function_call: Content,
     arguments: Mapping[str, Any],
+    tool: FunctionTool,
 ) -> Content:
     """Create a new approval generation for middleware-repaired arguments."""
     from ._types import Content
@@ -2031,7 +2075,7 @@ def _replacement_approval_request(
     repaired_call = Content.from_function_call(
         call_id=call_id,
         name=function_call.name,  # type: ignore[arg-type]
-        arguments=copy.deepcopy(dict(arguments)),
+        arguments=_replacement_arguments(tool, arguments),
         id=occurrence_id,
         annotations=copy.deepcopy(function_call.annotations),
         additional_properties=copy.deepcopy(function_call.additional_properties),
@@ -2326,7 +2370,7 @@ async def _auto_invoke_function(
             except _FunctionArgumentsChangedAfterApproval as exc:
                 raise MiddlewareTermination(
                     "Function arguments changed after approval.",
-                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                    result=_replacement_approval_request(function_call_content, exc.arguments, tool),
                 ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -2349,7 +2393,7 @@ async def _auto_invoke_function(
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
             "Function arguments changed after approval.",
-            result=_replacement_approval_request(function_call_content, exc.arguments),
+            result=_replacement_approval_request(function_call_content, exc.arguments, tool),
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
