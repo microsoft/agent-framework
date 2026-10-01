@@ -32,6 +32,14 @@ async def main() -> None:
     # The API key is read from NVIDIA_API_KEY.
     client = NvidiaEmbeddingClient(model="nvidia/nemotron-3-embed-1b")
 
+    # To use a self-hosted NIM container instead of the hosted endpoint, set base_url
+    # (also read from NVIDIA_BASE_URL):
+    # client = NvidiaEmbeddingClient(
+    #     model="nvidia/nemotron-3-embed-1b",
+    #     base_url="http://localhost:8000/v1",
+    #     api_key="not-used-by-local-nim",
+    # )
+
     try:
         # 1. Generate a single embedding.
         result = await client.get_embeddings(["Hello, world!"])
@@ -70,15 +78,6 @@ async def main() -> None:
         )
         async for item in results:
             print(f"Best match: {item['record'].text}")
-
-        # 4. Point at a self-hosted NIM container instead of the hosted endpoint.
-        #    base_url also reads from NVIDIA_BASE_URL.
-        # local_client = NvidiaEmbeddingClient(
-        #     model="nvidia/nemotron-3-embed-1b",
-        #     base_url="http://localhost:8000/v1",
-        #     api_key="not-used-by-local-nim",
-        # )
-
     finally:
         await client.close()
 
