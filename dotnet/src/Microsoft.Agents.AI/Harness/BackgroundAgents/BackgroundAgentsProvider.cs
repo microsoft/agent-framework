@@ -730,13 +730,13 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     lock (runtimeState.SyncRoot)
                     {
                         BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == completedEntry.Id);
-                        if (taskInfo is not null)
+                        // A continuation may replace the run for this ID while the waiter is outside the lock.
+                        if (taskInfo is not null &&
+                            taskInfo.Status == BackgroundTaskStatus.Running &&
+                            runtimeState.InFlightTasks.TryGetValue(completedEntry.Id, out Task<AgentResponse>? currentTask) &&
+                            ReferenceEquals(currentTask, completedEntry.Task))
                         {
-                            if (taskInfo.Status == BackgroundTaskStatus.Running)
-                            {
-                                FinalizeTask(taskInfo, completedEntry.Task, runtimeState);
-                            }
-
+                            FinalizeTask(taskInfo, completedEntry.Task, runtimeState);
                             this._sessionState.SaveState(session, state);
                         }
 
