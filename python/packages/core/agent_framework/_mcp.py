@@ -953,14 +953,13 @@ class MCPTool:
 
     Note:
         MCPTool cannot be instantiated directly. Use one of the subclasses:
-        MCPStdioTool, MCPStreamableHTTPTool, or MCPWebsocketTool.
+        MCPStdioTool or MCPStreamableHTTPTool.
 
     Examples:
         See the subclass documentation for usage examples:
 
         - :class:`MCPStdioTool` for stdio-based MCP servers
         - :class:`MCPStreamableHTTPTool` for HTTP-based MCP servers
-        - :class:`MCPWebsocketTool` for WebSocket-based MCP servers
     """
 
     def __init__(
@@ -4600,7 +4599,7 @@ class MCPStreamableHTTPTool(MCPTool):
         return await super().call_tool(tool_name, **kwargs)
 
 
-@deprecated("Websocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
+@deprecated("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
 class MCPWebsocketTool(MCPTool):
     """MCP tool for connecting to WebSocket-based MCP servers.
 
