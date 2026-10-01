@@ -10,11 +10,16 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import Any, Generic, TypeAlias, TypeVar, cast
 
 from agent_framework import (
+    Agent,
+    AgentContext,
     AgentExecutor,
+    AgentMiddleware,
+    AgentResponse,
     HistoryProvider,
     InMemoryHistoryProvider,
     RawAgent,
     Workflow,
+    WorkflowCheckpoint,
     WorkflowExecutor,
     WorkflowInvocationKwargs,
     WorkflowRunState,
@@ -38,6 +43,7 @@ _CLIENT_CONTROLS = frozenset({
     "conversation_id",
     "extra_body",
     "function_invocation_kwargs",
+    "fresh_factory",
     "input",
     "instructions",
     "messages",
@@ -58,6 +64,48 @@ _CLIENT_CONTROLS = frozenset({
 })
 
 
+class _NativeAgentOptions(AgentMiddleware):
+    """Apply native workflow options at the existing agent boundary, not as client **kwargs."""
+
+    def __init__(self, scope: FoundryRequestScope) -> None:
+        self.scope = scope
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        options = context.client_kwargs.pop("options", {})
+        if not isinstance(options, Mapping):
+            raise TypeError("Native workflow model options must be a mapping.")
+        options = cast(Mapping[str, Any], options)
+        if (_CLIENT_CONTROLS - {"store"}).intersection(options):
+            raise ValueError("Native workflow model options cannot override hosting or transport controls.")
+        if context.session is not None and context.session.service_session_id is not None:
+            raise RuntimeError("Native workflow checkpoints cannot resume a private downstream service session.")
+        effective = {**(context.options or {}), **options}
+        client = getattr(context.agent, "client", None)
+        if getattr(client, "STORES_BY_DEFAULT", None) is True:
+            effective["store"] = False
+        else:
+            if effective.pop("store", None) is True:
+                raise RuntimeError("The native workflow client cannot safely override a storing runtime option.")
+        context.options = effective
+        context.client_kwargs["additional_function_arguments"] = {
+            "session_id": self.scope.session_id,
+            "user_id": self.scope.user_id,
+            "call_id": self.scope.call_id,
+        }
+
+        def check_result(result: AgentResponse[Any]) -> None:
+            if context.session is not None and context.session.service_session_id is not None:
+                raise RuntimeError("The native workflow client stored a service session despite store=False.")
+            if result.continuation_token is not None:
+                raise RuntimeError("Native workflows cannot checkpoint an unfinished provider background response.")
+
+        if context.stream:
+            context.stream_result_hooks.append(check_result)
+        await call_next()
+        if not context.stream and isinstance(context.result, AgentResponse):
+            check_result(context.result)
+
+
 def prepare_workflow_kwargs(
     workflow: Workflow,
     turn: WorkflowTurn[Any],
@@ -65,12 +113,17 @@ def prepare_workflow_kwargs(
     *,
     options: Mapping[str, Any] | None = None,
     stored: bool = True,
+    fresh_factory: bool = False,
 ) -> tuple[WorkflowInvocationKwargs, WorkflowInvocationKwargs]:
     """Separate model options, explicit tool kwargs, and trusted current-call context.
 
     Agent executors use MAF checkpoint history, not downstream service storage.
     Applications keep tool context in ``function_invocation_kwargs``; generation
     options cannot become workflow, agent lifecycle, or storage controls.
+    ``Agent`` uses its existing middleware boundary without changing defaults.
+    Bare ``RawAgent`` requires ``fresh_factory`` from a validated resolver,
+    explicit non-storing defaults, and pre-materialized matching model overrides.
+    No nested options keyword is forwarded to a bare client's ``**kwargs``.
     """
     client, _ = workflow._resolve_invocation_kwargs(  # pyright: ignore[reportPrivateUsage]
         turn.client_kwargs or {}, "client_kwargs"
@@ -101,11 +154,15 @@ def prepare_workflow_kwargs(
 
     identity = {"session_id": scope.session_id, "user_id": scope.user_id, "call_id": scope.call_id}
     global_client["additional_function_arguments"] = identity
+    global_model_options = global_client.pop("options", {})
     agents = list(workflow_executors(workflow))
     for executor in agents:
         agent_value = executor.agent
         if not isinstance(agent_value, RawAgent):
-            raise TypeError("Native workflow agent executors require RawAgent to enforce inner storage.")
+            raise TypeError(
+                "Native workflow custom agents must expose a verifiable client/storage contract. "
+                "Use Agent or a validated fresh RawAgent factory."
+            )
         agent = cast(RawAgent[Any], agent_value)
         validate_default_transport_options(agent.default_options, allow_agent_store=False)
         if any(
@@ -126,11 +183,30 @@ def prepare_workflow_kwargs(
         ):
             raise ValueError("store=false cannot disable an external workflow HistoryProvider.")
         values = specific_client.setdefault(executor.id, {})
-        effective = {**global_client.get("options", {}), **values.get("options", {}), **model_options}
-        if stores:
-            effective["store"] = False
-        values["options"] = effective
+        effective = {**global_model_options, **values.get("options", {}), **model_options}
         values["additional_function_arguments"] = identity
+        if isinstance(agent_value, Agent):
+            if stores:
+                effective["store"] = False
+            values["options"] = effective
+            policies = [
+                middleware for middleware in agent_value.middleware or () if isinstance(middleware, _NativeAgentOptions)
+            ]
+            if policies:
+                if len(policies) != 1 or policies[0].scope != scope:
+                    raise RuntimeError("Native workflow option policy cannot be shared across request scopes.")
+            else:
+                agent_value.middleware = [*(agent_value.middleware or ()), _NativeAgentOptions(scope)]
+        else:
+            if not fresh_factory:
+                raise TypeError("Native RawAgent workflows require a validated request-aware fresh factory.")
+            if stores and agent.default_options.get("store") is not False:
+                raise ValueError("A storing native RawAgent client requires explicit factory default store=False.")
+            if any(agent.default_options.get(key) != value for key, value in effective.items()):
+                raise ValueError(
+                    "RawAgent workflow generation overrides must be materialized in the fresh factory defaults."
+                )
+            values.pop("options", None)
     global_functions = validate_values(functions.get("global_kwargs", {}))
     specific_functions = {
         key: validate_values(value) for key, value in cast(dict[str, Any], functions.get("executor_kwargs", {})).items()
@@ -148,6 +224,37 @@ def workflow_executors(workflow: Workflow) -> Iterator[AgentExecutor]:
             yield executor
         elif isinstance(executor, WorkflowExecutor):
             yield from workflow_executors(executor.workflow)
+
+
+def validate_workflow_provider_state(workflow: Workflow, checkpoint: WorkflowCheckpoint | None = None) -> None:
+    """Refuse unexpected private service continuation before pairing or publishing native output."""
+    if checkpoint is None:
+        for executor in workflow_executors(workflow):
+            if executor._session.service_session_id is not None:  # pyright: ignore[reportPrivateUsage]
+                raise RuntimeError("The native workflow client stored a service session despite store=False.")
+        return
+    states = checkpoint.state.get("_executor_state", {})
+    if not isinstance(states, Mapping):
+        raise ValueError("Invalid native workflow executor checkpoint state.")
+    states = cast(Mapping[str, Any], states)
+    for executor in workflow.get_executors_list():
+        state = states.get(executor.id, {})
+        if not isinstance(state, Mapping):
+            raise ValueError("Invalid native workflow executor checkpoint state.")
+        state = cast(Mapping[str, Any], state)
+        if isinstance(executor, AgentExecutor):
+            session = state.get("agent_session", {})
+            if not isinstance(session, Mapping):
+                raise ValueError("Invalid native workflow agent checkpoint state.")
+            session = cast(Mapping[str, Any], session)
+            if session.get("service_session_id") is not None:
+                raise RuntimeError("The native workflow checkpoint contains unexpected private service continuation.")
+        elif isinstance(executor, WorkflowExecutor):
+            child = state.get("sub_workflow_checkpoint")
+            if child is not None:
+                if not isinstance(child, WorkflowCheckpoint):
+                    raise ValueError("Invalid native subworkflow checkpoint state.")
+                validate_workflow_provider_state(executor.workflow, child)
 
 
 def validate_workflow_source(source: object) -> None:

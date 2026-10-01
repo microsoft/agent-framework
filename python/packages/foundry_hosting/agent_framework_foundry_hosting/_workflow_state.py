@@ -12,6 +12,10 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, cast
 
 from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    ChatResponse,
+    ChatResponseUpdate,
     CheckpointStorage,
     Content,
     Workflow,
@@ -43,7 +47,7 @@ from azure.ai.agentserver.core.storage import (
 from ._request import WorkflowTurn
 from ._scope import FoundryRequestScope
 from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
-from ._workflow_source import prepare_workflow_kwargs
+from ._workflow_source import prepare_workflow_kwargs, validate_workflow_provider_state
 
 _CONFLICT = "Another request advanced this workflow. Reload its current response or start a fresh lineage."
 _BLOCKED = "This workflow turn was interrupted or failed; start a fresh workflow lineage to avoid replaying effects."
@@ -276,6 +280,7 @@ class _CheckpointWrites:
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> str:
         await self.run.assert_claim()
+        validate_workflow_provider_state(self.run.workflow, checkpoint)
         identifier = await self.storage.save(checkpoint)
         if identifier != checkpoint.checkpoint_id:
             raise RuntimeError("Workflow checkpoint storage acknowledged a different checkpoint.")
@@ -314,11 +319,20 @@ class HostedWorkflowRun:
     releasing potentially consumed approvals or replaying external side effects.
     """
 
-    def __init__(self, workflow: Workflow, scope: FoundryRequestScope, *, stored: bool, recovery: bool) -> None:
+    def __init__(
+        self,
+        workflow: Workflow,
+        scope: FoundryRequestScope,
+        *,
+        stored: bool,
+        recovery: bool,
+        fresh_factory: bool,
+    ) -> None:
         self.workflow = workflow
         self.scope = scope
         self.stored = stored
         self.recovery = recovery
+        self.fresh_factory = fresh_factory
         self.store = FoundryWorkflowBindingStore(scope)
         self.binding: WorkflowBinding
         self._head: WorkflowHead | None = None
@@ -350,6 +364,7 @@ class HostedWorkflowRun:
         lineage_id: str | None = None,
         stored: bool = True,
         recovery: bool = False,
+        fresh_factory: bool = False,
     ) -> HostedWorkflowRun:
         """Read exact continuation state without claiming, consuming replies, or executing."""
         if not workflow.name or not workflow.graph_signature_hash:
@@ -358,7 +373,7 @@ class HostedWorkflowRun:
             raise ValueError("A workflow turn cannot combine previous_response_id and conversation.")
         if not stored and (recovery or previous_response_id is not None or conversation_id is not None):
             raise ValueError("store=false workflow requests cannot continue stored state; start a one-shot turn.")
-        run = cls(workflow, scope, stored=stored, recovery=recovery)
+        run = cls(workflow, scope, stored=stored, recovery=recovery, fresh_factory=fresh_factory)
         run.binding = WorkflowBinding(
             response_id=response_id,
             checkpoint_id=None,
@@ -473,6 +488,7 @@ class HostedWorkflowRun:
             ):
                 raise ValueError("The exact workflow checkpoint does not match its response binding.")
             run._checkpoint = checkpoint
+            validate_workflow_provider_state(workflow, checkpoint)
         return run
 
     @property
@@ -549,7 +565,11 @@ class HostedWorkflowRun:
         if not isinstance(turn, WorkflowTurn):
             raise TypeError("The workflow parser must return WorkflowTurn.")
         self._client_kwargs, self._function_kwargs = prepare_workflow_kwargs(
-            self.workflow, turn, self.scope, stored=self.stored
+            self.workflow,
+            turn,
+            self.scope,
+            stored=self.stored,
+            fresh_factory=self.fresh_factory,
         )
         if self.recovery:
             self._turn = turn
@@ -673,12 +693,21 @@ class HostedWorkflowRun:
         )
         try:
             async for event in stream:
+                data = event.data
+                if (
+                    isinstance(data, (AgentResponse, AgentResponseUpdate, ChatResponse, ChatResponseUpdate))
+                    and data.continuation_token is not None
+                ):
+                    raise RuntimeError("Native workflows cannot checkpoint unfinished provider background output.")
+                if event.type == "superstep_completed":
+                    validate_workflow_provider_state(self.workflow)
                 if event.type == "request_info" and not self.stored:
                     raise ValueError("Approval and user-input continuation requires store=true.")
                 yield event
             result = await stream.get_final_response()
             if result.get_final_state() not in (WorkflowRunState.IDLE, WorkflowRunState.IDLE_WITH_PENDING_REQUESTS):
                 raise RuntimeError("The workflow did not finalize successfully.")
+            validate_workflow_provider_state(self.workflow)
             self._finalized = True
         finally:
             await stream.close()
@@ -738,6 +767,7 @@ class HostedWorkflowRun:
             or checkpoint.graph_signature_hash != self.workflow.graph_signature_hash
         ):
             raise ValueError("The acknowledged workflow checkpoint identity changed.")
+        validate_workflow_provider_state(self.workflow, checkpoint)
         return checkpoint
 
     async def commit(self, snapshot: Mapping[str, Any] | None = None) -> None:

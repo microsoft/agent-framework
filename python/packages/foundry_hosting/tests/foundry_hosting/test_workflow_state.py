@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,10 +12,15 @@ from agent_framework import (
     Agent,
     AgentExecutor,
     BaseChatClient,
+    ChatResponse,
+    ChatResponseUpdate,
     Content,
     Executor,
     InMemoryCheckpointStorage,
     MCPStreamableHTTPTool,
+    Message,
+    RawAgent,
+    ResponseStream,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -237,6 +243,78 @@ async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
     assert first.get_start_executor().id == "agent"
+
+
+@pytest.mark.parametrize("raw", [False, True])
+async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: bool) -> None:
+    calls: list[dict[str, Any]] = []
+    agents: list[RawAgent[Any]] = []
+
+    class RecordingClient(BaseChatClient):
+        STORES_BY_DEFAULT = True
+
+        def _inner_get_response(
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            calls.append({"options": dict(options), "kwargs": kwargs})
+
+            async def updates() -> AsyncIterator[ChatResponseUpdate]:
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("safe")])
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+    def create(request: object) -> Workflow:
+        agent = (
+            RawAgent(client=RecordingClient(), name="model", default_options={"store": False, "temperature": 0.6})
+            if raw
+            else Agent(client=RecordingClient(), name="model", default_options={"store": True, "temperature": 0.2})
+        )
+        agents.append(agent)
+        return _workflow(AgentExecutor(agent, id="model"))
+
+    resolver = WorkflowResolver(create)
+    workflow = await resolver.resolve(object())
+    run = await _prepare("model-turn", workflow=workflow, fresh_factory=resolver.is_factory)
+    turn = run.validate_turn(WorkflowTurn(input=[Message("user", "hello")]))
+    clients, functions = prepare_workflow_kwargs(
+        workflow,
+        turn,
+        run.scope,
+        options={"temperature": 0.6},
+        fresh_factory=resolver.is_factory,
+    )
+    await run.claim()
+    events = [event async for event in run.events(turn, client_kwargs=clients, function_invocation_kwargs=functions)]
+    assert any(event.type == "output" for event in events)
+    await run.stage({"output": ["safe"]})
+    await run.commit()
+    assert calls[0]["options"]["store"] is False
+    assert calls[0]["options"]["temperature"] == 0.6
+    assert "options" not in calls[0]["kwargs"]
+    assert agents[0].default_options["temperature"] == (0.6 if raw else 0.2)
+    if raw:
+        with pytest.raises(ValueError, match="materialized"):
+            prepare_workflow_kwargs(
+                _workflow(
+                    AgentExecutor(
+                        RawAgent(
+                            client=RecordingClient(),
+                            name="model",
+                            default_options={"store": False, "temperature": 0.2},
+                        ),
+                        id="model",
+                    )
+                ),
+                WorkflowTurn(input=[Message("user", "hello")]),
+                run.scope,
+                options={"temperature": 0.6},
+                fresh_factory=True,
+            )
 
 
 async def test_exact_pairs_restore_state_and_reject_old_lineage() -> None:
