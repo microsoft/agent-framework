@@ -2584,9 +2584,9 @@ class TestGitHubCopilotAgentToolConversion:
         session = agent.create_session()
         session.service_session_id = "shared-session-id"
 
-        run_a = asyncio.create_task(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "a"}))
+        run_a = asyncio.ensure_future(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "a"}))
         await first_run_sending.wait()
-        run_b = asyncio.create_task(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "b"}))
+        run_b = asyncio.ensure_future(agent.run("Hi", session=session, function_invocation_kwargs={"tenant": "b"}))
         await asyncio.sleep(0.05)
 
         # Run B must wait for run A instead of resuming the session and replacing A's handlers.
@@ -2609,7 +2609,12 @@ class TestGitHubCopilotAgentToolConversion:
 
         self._last_registration_wins_client(mock_client, mock_session)
         handlers: list[Any] = []
-        mock_session.on = lambda handler: handlers.append(handler) or (lambda: None)
+
+        def mock_on(handler: Any) -> Any:
+            handlers.append(handler)
+            return lambda: None
+
+        mock_session.on = mock_on
         mock_session.send = AsyncMock()
 
         agent = GitHubCopilotAgent(client=mock_client)
