@@ -35,7 +35,7 @@ public sealed class MemoryCacheExtensionsTests
         int activeFactoryCount = 0;
         int maxActiveFactoryCount = 0;
 
-        Func<ICacheEntry, object> factory = _ =>
+        object Factory(ICacheEntry _)
         {
             int call = Interlocked.Increment(ref factoryCallCount);
             int active = Interlocked.Increment(ref activeFactoryCount);
@@ -64,7 +64,7 @@ public sealed class MemoryCacheExtensionsTests
             {
                 Interlocked.Decrement(ref activeFactoryCount);
             }
-        };
+        }
 
         Task<object>? owner = null;
         Task<object>? queuedWaiter = null;
@@ -72,12 +72,12 @@ public sealed class MemoryCacheExtensionsTests
 
         try
         {
-            owner = Task.Run(async () => await cache.GetOrCreateAtomicAsync(key, factory).ConfigureAwait(false));
+            owner = Task.Run(async () => await cache.GetOrCreateAtomicAsync(key, Factory).ConfigureAwait(false));
             await ownerFactoryEntered.Task.WaitAsync(s_gateTimeout);
 
             // The call executes synchronously through WaitAsync. Its pending return proves it queued on the
             // semaphore currently held by the first factory.
-            queuedWaiter = cache.GetOrCreateAtomicAsync(key, factory);
+            queuedWaiter = cache.GetOrCreateAtomicAsync(key, Factory);
             Assert.False(queuedWaiter.IsCompleted);
 
             // Fail the first owner only after the waiter has queued on its semaphore.
@@ -89,7 +89,7 @@ public sealed class MemoryCacheExtensionsTests
 
             // Act: the queued waiter is now blocked in its retry factory. A new same-key caller must join that
             // same semaphore and remain pending until the retry completes.
-            newCaller = cache.GetOrCreateAtomicAsync(key, factory);
+            newCaller = cache.GetOrCreateAtomicAsync(key, Factory);
 
             // Assert: old waiters and new callers must share the lock even after its first factory fails.
             Assert.Equal(2, Volatile.Read(ref factoryCallCount));
