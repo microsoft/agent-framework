@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import inspect
 import json
 import os
@@ -2242,6 +2243,30 @@ async def test_streaming_closes_provider_stream_when_transform_hook_raises(
         assert isinstance(stream, ResponseStream)
         stream._transform_hooks.append(failing_hook)
         with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_cancellation(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Cancellation after a yielded update must close the SDK stream too (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    async def cancelling_hook(update: Any) -> Any:
+        raise asyncio.CancelledError
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(cancelling_hook)
+        with pytest.raises(asyncio.CancelledError):
             async for _ in stream:
                 pass
 

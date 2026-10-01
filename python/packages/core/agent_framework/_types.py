@@ -4011,16 +4011,20 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             await self._finish_consumption()
             raise
-        except Exception as exc:
-            # Run the error-scoped cleanup hooks first: they read
-            # self._stream_error, and close() would consume the one-shot
-            # cleanup run without it. close() still runs in finally so the
-            # provider stream is released even when a hook raises.
+        except BaseException as exc:
+            # CancelledError must reach close() too: a cancel landing in an
+            # async map/flat_map transform, hook, or gate otherwise leaves the
+            # provider stream suspended until GC. Hooks run first because they
+            # read self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() stays in finally so the provider
+            # stream is released even when a hook raises; the original
+            # exception always re-raises.
             try:
                 await self._handle_stream_error(exc)
             finally:
                 await self.close()
             raise
+
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
 
