@@ -33,37 +33,40 @@ while every adapter decides placement independently.
 [Spec 004](../specs/004-python-function-calling-loop.md) already defines function-call identity:
 `function_call.Content.id` identifies one locally actionable Agent Framework occurrence, while `call_id` is the
 provider's call/result correlation. [ADR 0039](0039-python-refusal-content.md) defines the flat
-`model_output_kind="refusal"` marker. This decision keeps spec 004's identity semantics and ADR 0039's marker
-unchanged. It does change which field marks the hosted server boundary in spec 004's approval scenarios; the
-implementing change updates spec 004's hosted-server-boundary scenario row and its authoritative test mapping.
+`model_output_kind="refusal"` marker. This decision keeps spec 004's identity semantics and the meaning of ADR
+0039's marker unchanged, but moves that marker into the `generic` namespace described below. It also changes which
+field marks the hosted server boundary in spec 004's approval scenarios; the implementing change updates spec 004's
+hosted-server-boundary scenario row and its authoritative test mapping.
 
 `additional_properties` merges are shallow and not uniform: text, reasoning, and function-call addition keeps the
 existing value on collision, code-interpreter aggregation keeps the incoming value, and nested values are shared by
-copies. Any convention must remain correct under those rules.
+copies. Grouping metadata in nested mappings therefore requires changing how core merges and copies them.
 
 ## Decision Drivers
 
 - Keep function-call occurrence identity unambiguous and separate from provider identifiers.
 - Replay persisted history without `raw_representation`.
 - Base core behavior, especially approval handling, on documented first-class fields rather than provider keys.
+- Make each provider's metadata explicit and discoverable as a unit, separate from application data.
 - Keep existing histories and pending approvals readable after upgrading.
 - Keep independently versioned packages working together in one process.
 - Keep core provider-neutral and avoid growing `Content` for provider-specific concepts.
-- Behave predictably under shallow merges and copies.
+- Behave predictably when streamed content is merged and copied.
 - Give contributors a rule that is simple to follow and to test.
 
 ## Considered Options
 
 1. Document the current keys without changing them.
 2. Add first-class provider identity fields, such as `provider_item_id`, to `Content`.
-3. Store each protocol's metadata in one nested mapping, such as `additional_properties["openai.responses"]`.
-4. Use existing first-class fields, flat namespaced keys for provider data, and a small set of reserved flat keys.
+3. Use flat prefixed keys in `additional_properties`, such as `openai.item_id`.
+4. Group metadata in nested namespaces in `additional_properties`: one per provider, plus `generic`.
 
 ## Decision Outcome
 
-Chosen option: **"Use existing first-class fields, flat namespaced keys for provider data, and a small set of reserved
-flat keys"**. It fixes the ambiguous and cross-package cases without adding provider concepts to core, and it is the
-only option that works unchanged with the existing merge behavior.
+Chosen option: **"Group metadata in nested namespaces in `additional_properties`: one per provider, plus `generic`"**,
+combined with using existing first-class fields first. It gives each provider's data one explicit, typed home and
+gives provider-neutral semantics a documented place instead of bare top-level names, without adding provider concepts
+to core. In exchange, core must merge and copy namespaces one level deep.
 
 ### Identity
 
@@ -72,8 +75,8 @@ only option that works unchanged with the existing merge behavior.
 - `call_id` is the correlation between a call and its result. When a hosted protocol item exposes only one
   identifier and Agent Framework needs to pair call and result contents, adapters use that identifier as `call_id`.
   This replaces core's code-interpreter fallback on `item_id`.
-- A provider item ID that has no first-class field is stored under the provider's namespace, for example
-  `openai.responses.item_id` for function calls and function results.
+- A provider item ID that has no first-class field is stored in the provider's namespace, for example
+  `additional_properties["openai"]["item_id"]` for OpenAI function calls and function results.
 - Existing uses of `Content.id` for a provider identifier remain documented exceptions: reasoning items, computer
   calls and results, and hosted-tool approval requests and responses, which both keep the provider's approval ID so
   the provider can correlate the decision. Local approval requests and responses use the occurrence ID, as spec 004
@@ -140,53 +143,92 @@ every first-class field this decision relies on:
 
 ### Metadata placement
 
+```python
+content.additional_properties == {
+    "generic": {"model_output_kind": "refusal"},     # provider-neutral, documented by core
+    "openai": {"item_id": "fc_123"},                 # owned by agent-framework-openai
+    "foundry": {"reasoning_item": {...}},            # owned by agent-framework-foundry
+    "_approval_request_id": "...",                   # core-private, unchanged
+    "ticket": "ABC-42",                              # application data, unchanged
+}
+```
+
 1. **Use first-class fields first.** Existing fields such as `status`, `protected_data`, `name`, `file_id`, and
    `server_name` are used where they apply. Missing constructor parameters for existing fields are added, such as
    `status` on function calls, function results, and reasoning, and `name` on data and URI content. No new fields are
    added for provider-specific concepts; the one new field, `hosted`, records a framework decision.
-2. **Reserved flat keys have provider-neutral meaning.** Unprefixed keys are reserved for semantics documented by
-   core: `model_output_kind` (ADR 0039), and the caller-facing conventions `prompt_cache_breakpoint` and `filename`,
-   which applications already set. `filename` remains a supported fallback for `Content.name`.
-3. **Provider and protocol data use flat namespaced keys.** Keys have the form `<namespace>.<name>`, such as
-   `openai.responses.item_id`, `openai.chat_completions.reasoning_details`, `foundry.reasoning_item`, or
-   `ag_ui.thread_id`. Each namespace is documented by one owning package. Other adapters of the same protocol, such as
-   hosts implementing Responses, may read and write that package's documented keys. Values are plain JSON data
-   (mappings, lists, strings, numbers, booleans, and `None`), never dataclass or Pydantic instances, because
-   `Content.from_dict()` does not reconstruct arbitrary types. Values are treated as immutable; code copies composite
-   values before changing them. A namespace owner may publish `TypedDict` definitions and small accessor functions for
-   its keys, which give discoverability and typing without changing what is stored.
-4. **Leading-underscore keys are private to core.** Other packages use their namespace. Markers that exist only while
-   building a request are never stored on Agent Framework objects.
-5. **Persisted replay data is defined per key.** Data that must survive persistence uses `protected_data` for opaque
-   provider payloads or a namespaced key whose owner documents its exact shape. The documentation states whether the
+2. **Provider data lives in the provider's namespace.** `additional_properties["<namespace>"]` is a mapping owned by
+   one integration package and named after it: `openai`, `foundry`, `anthropic`, `gemini`, `bedrock`, `a2a`,
+   `ag_ui`, and so on. Data for a wire protocol belongs to the package that owns that protocol's mapping: Foundry chat
+   and the hosts that implement Responses read and write `openai` for Responses data, and Foundry keeps Foundry-only
+   data under `foundry`. Each owner documents its keys in its package README and may publish a `TypedDict` for its
+   namespace and small accessor functions.
+3. **Provider-neutral data lives in `generic`.** `additional_properties["generic"]` holds semantics documented by
+   core that any package may read or write: `model_output_kind` from ADR 0039 and the caller-facing
+   `prompt_cache_breakpoint`. Only core adds keys to `generic`. File names use the first-class `Content.name` field.
+4. **Namespaces are exactly one level deep.** A namespace maps flat key names to plain JSON values (mappings, lists,
+   strings, numbers, booleans, and `None`), never dataclass or Pydantic instances, because `Content.from_dict()` does
+   not reconstruct arbitrary types. An owner that implements several protocols qualifies key names where needed rather
+   than adding another level. Values inside a namespace are opaque to merging and treated as immutable.
+5. **Other top-level keys.** Leading-underscore keys remain core-private at the top level. Keys defined by other
+   decisions, such as the security labels of ADR 0024, are not moved by this decision. Markers that exist only while
+   building a request are never stored on Agent Framework objects. All other top-level keys belong to applications;
+   `generic` and the namespace names are reserved.
+6. **Persisted replay data is defined per key.** Data that must survive persistence uses `protected_data` for opaque
+   provider payloads or a namespace key whose owner documents its exact shape. The documentation states whether the
    value can contain encrypted or protected data, what is sanitized or excluded, and that only adapters write it.
    Adapters store only fields required for replay, not converted SDK objects, and reject malformed values when
    replaying. `raw_representation` may be used as a fast path only when the persisted path gives the same result or
    fails explicitly.
 
-Flat keys are required because merges are shallow with different conflict rules. A nested per-protocol mapping would
-be replaced as a whole, losing fields from earlier fragments or from another producer.
+#### Merging and copying namespaces
 
-Core documents the reserved flat keys and naming rules in its package documentation. Each namespace owner documents
-its keys in its package README, which is published with the package. There is no central allowlist and no runtime
-validation; `additional_properties` remains open to applications.
+With today's shallow merges, a namespace would be replaced as a whole, losing fields from earlier stream fragments or
+from another producer. Core therefore changes how `additional_properties` are combined and copied:
+
+- One core merge function combines two mappings. When both hold a mapping under the same top-level key, it merges
+  them one level deep. Each merge site keeps its existing conflict rule for colliding keys: content addition keeps
+  the existing value; code-interpreter and response aggregation keep the incoming value.
+- Every core merge site uses it: content addition, code-interpreter aggregation, response aggregation, workflow-agent
+  response merging, and function-result carriers. Packages that merge metadata themselves, such as A2A combining task
+  metadata, use it too.
+- The rule applies to any top-level mapping, not only known namespace names, because core cannot list every
+  third-party provider. Application values that are mappings therefore also merge one level deep when streamed
+  fragments are combined, instead of being replaced.
+- `Content` and `Message` constructors copy namespace mappings one level, so constructed objects don't share them.
+  Writers never change a namespace in place; they replace it with an updated copy. Core provides small public helpers
+  to read a namespaced value and to store an updated copy, so providers outside this repository follow the same rule.
+- Compaction's token estimation strips opaque values inside namespaces as well as at the top level. Today it removes
+  only a top-level `encrypted_content`, so the encrypted payload inside Foundry's persisted reasoning item is counted.
+
+Core documents `generic`, the namespace rules, and the merge behavior in its package documentation. There is no
+central allowlist and no runtime validation; `additional_properties` remains open to applications outside the
+reserved names.
 
 ### Compatibility
 
 - Readers accept legacy locations indefinitely. Removing a legacy read is a separate breaking-change decision.
-- **Older runtimes cannot read new histories.** `hosted` is a new serialized field, and `Content`'s constructor
-  rejects fields it does not know. Once a runtime with this change writes history containing a function call,
-  earlier runtimes fail to load that history. Downgrades and mixed-version deployments that share history across
-  this boundary are not supported. The implementing change is marked breaking, and its release notes say so.
+- **Upgrading is safe; downgrading is not.** New runtimes read every existing history: content written before this
+  change, with or without `server_label`, loads through the legacy inference and legacy key reads described above.
+  The break is in the other direction: `hosted` is a new serialized field, and `Content`'s constructor rejects fields
+  it does not know, so runtimes that predate this change fail to load history a new runtime has written once it
+  contains a function call. Downgrades and mixed-version deployments that share history across this boundary are not
+  supported. The implementing change is marked breaking for that reason, and its release notes say that existing
+  histories remain readable after upgrading.
 - For replay-critical keys, writers write both the new and legacy locations until the writing package's next major
   version. This keeps independently versioned packages in one process working, for example an older Hosting
   Responses reading `fc_id`, or older AG-UI, Foundry hosting, and Hosting Responses reading `server_label` from
   content that a newer provider package produced.
+- `model_output_kind` and `prompt_cache_breakpoint` move into `generic`; their meaning is unchanged. Readers accept the
+  flat keys indefinitely, writers write both until their next major version, and applications that set the flat keys
+  keep working. ADR 0039 remains the record of the refusal decision.
+- A package that writes namespaces requires, as its minimum core version, the core release that merges them. On an
+  older core, streamed fragments would lose namespace fields during aggregation.
 - Keys used only for display, diagnostics, or a single request switch directly.
 
 Response-level `additional_properties` are out of scope. `ChatResponse.to_dict()` does not persist them by default,
 so preserving response-level metadata would need its own serialization decision. New response-level keys should
-nevertheless use the same namespace convention.
+nevertheless use the same namespaces; response aggregation uses the namespace-aware merge, so they combine safely.
 
 ### Consequences
 
@@ -194,18 +236,35 @@ nevertheless use the same namespace convention.
   provider identity.
 - Good, because approval handling and auto-approval rules depend on an explicit field rather than on the presence
   of a provider string.
+- Good, because each provider's metadata sits under one explicit key that can be typed as one `TypedDict`, inspected,
+  or stripped as a unit, and is visibly separate from application data.
+- Good, because provider-neutral semantics have one documented home instead of competing with application keys.
 - Good, because shared Responses conversion can later rely on one documented set of locations.
 - Good, because persisted histories can be replayed after reload, and what they store is explicit.
+- Bad, because core's merge behavior changes at every merge site, including for application values that are mappings.
+- Bad, because writers must replace namespaces rather than mutate them; a writer that mutates in place corrupts
+  metadata shared with copies. The core helpers make the safe path easy but cannot enforce it.
+- Bad, because core gains public helper functions, and writer packages must raise their minimum core version.
+- Bad, because ADR 0039's marker and the caller-facing `prompt_cache_breakpoint` move, so samples and documentation
+  change, although the flat keys remain readable.
+- Bad, because `generic` and every namespace name become reserved top-level keys. No collisions exist in this
+  repository, but applications outside it could already use those names.
 - Bad, because writers carry duplicated legacy keys until their next major version.
-- Bad, because runtimes that predate `hosted` cannot read histories written after the upgrade.
+- Bad, because runtimes that predate `hosted` cannot read histories written after the upgrade, although upgraded
+  runtimes read all existing histories.
 - Bad, because a provider adapter that forgets to set `hosted` makes a hosted call look local; only adapter tests
   catch this.
 - Neutral, because existing `Content.id` exceptions remain, although they are now documented and closed.
 
 ### Validation
 
-- Each package's tests assert that converting its fixture corpus writes only reserved flat keys, keys in namespaces
-  it documents, core-private keys it intentionally sets, and legacy keys it still dual-writes.
+- Each package's tests assert that converting its fixture corpus writes only keys in its own namespace, documented
+  `generic` keys, core-private keys it intentionally sets, and legacy keys it still dual-writes.
+- Core tests cover namespace merging at each merge site with both conflict rules, one-level depth, non-mapping values
+  under a namespace name, constructor copying, the helpers' copy-on-write behavior, and compaction stripping opaque
+  values inside namespaces.
+- OpenAI and Foundry streaming tests merge fragments whose namespaces carry different keys and assert that none is
+  lost.
 - Every replay-critical path has persisted-history fixtures with legacy-only, dual-written, and new-only metadata.
 - Replay tests serialize and reload history, so `raw_representation` is absent.
 - Core tests cover `hosted` round trips, rejection of non-boolean values, precedence over `server_label`, and legacy
@@ -233,47 +292,54 @@ nevertheless use the same namespace convention.
 - Bad, because provider concepts enter the provider-neutral core API.
 - Bad, because every other provider-specific value would still need a separate rule.
 
-### Store each protocol's metadata in one nested mapping
+### Use flat prefixed keys
 
-- Good, because each protocol's metadata sits under one key.
-- Bad, because shallow merges replace the whole mapping and lose fields from streamed fragments.
-- Bad, because copies share nested mappings, making accidental mutation likely.
+- Good, because existing shallow merges keep working unchanged and no core helpers are needed.
+- Good, because it extends the existing `openai.responses.*` shell keys.
+- Bad, because a provider's data is spread across many top-level keys mixed with application data, and cannot be
+  typed, inspected, or stripped as a unit.
+- Bad, because provider-neutral keys would stay as bare top-level names that compete with application keys.
 
-### Use existing first-class fields, flat namespaced keys, and reserved flat keys
+### Group metadata in nested namespaces, one per provider plus `generic`
 
-- Good, because it reuses existing fields and the existing namespaced shell keys.
-- Good, because flat keys merge predictably.
+- Good, because each provider's metadata is explicit, typed, and separable from application data.
+- Good, because provider-neutral semantics have a documented home.
+- Bad, because core merges must become namespace-aware, writers must copy on write, and writer packages need a newer
+  core.
 - Bad, because it requires migrating existing keys with a compatibility period.
 
 ## More Information
 
 ### Current keys and targets
 
-This mapping is guidance for implementation and is not exhaustive. "Replay" marks keys covered by the dual-write
-rule.
+This mapping is guidance for implementation and is not exhaustive. `openai["item_id"]` is short for
+`additional_properties["openai"]["item_id"]`. "Replay" marks keys covered by the dual-write rule.
 
 | Current key | Current use | Target | Replay |
 | --- | --- | --- | --- |
-| `fc_id` | OpenAI function-call item ID; Hosting Responses output item ID | `openai.responses.item_id` | Yes |
-| `item_id` | OpenAI hosted custom, tool-search, and function-output item IDs | `openai.responses.item_id` | Yes |
+| `fc_id` | OpenAI function-call item ID; Hosting Responses output item ID | `openai["item_id"]` | Yes |
+| `item_id` | OpenAI hosted custom, tool-search, and function-output item IDs | `openai["item_id"]` | Yes |
 | `item_id` | OpenAI code-interpreter streaming correlation; core fallback | `call_id` | No |
 | `status` | OpenAI function-call and reasoning status | `Content.status`, with new constructor parameters | Yes |
-| `reasoning_text`, `summary` | OpenAI reasoning replay parts | `openai.responses.*` | Yes |
+| `reasoning_text`, `summary` | OpenAI reasoning replay parts | `openai["reasoning_text"]`, `openai["summary"]` | Yes |
 | `server_label` | Hosted marker and hosted server name on a `function_call` | `hosted=True` and `server_name`; `ToolApprovalRule.server_label` is unchanged | Yes |
-| `__foundry_reasoning_replay_item__` | Foundry reasoning item persisted for replay | `foundry.reasoning_item` | Yes |
-| `computer_action_format` | OpenAI preview computer-action shape | `openai.responses.computer_action_format` | Yes |
-| `openai_content_type` | OpenAI and DevUI input file versus image | `openai.responses.content_type` | Yes |
-| `detail` | Image detail written by hosts and read by OpenAI | `openai.image_detail` | Yes |
+| `model_output_kind` | Refusal marker from ADR 0039 | `generic["model_output_kind"]` | Yes |
+| `prompt_cache_breakpoint` | Caller-set prompt-cache boundary | `generic["prompt_cache_breakpoint"]`, with the flat key still read | Yes |
+| `__foundry_reasoning_replay_item__` | Foundry reasoning item persisted for replay | `foundry["reasoning_item"]` | Yes |
+| `computer_action_format` | OpenAI preview computer-action shape | `openai["computer_action_format"]` | Yes |
+| `openai_content_type` | OpenAI and DevUI input file versus image | `openai["content_type"]` | Yes |
+| `detail` | Image detail written by hosts and read by OpenAI | `openai["image_detail"]` | Yes |
 | `file_id` | Provider file ID on image and screenshot content | `Content.file_id` | Yes |
-| `filename` | File name on data and URI content | `Content.name`, with `filename` still read | Yes |
-| `openai.local_shell_command_parts` | OpenAI local shell command | `openai.responses.local_shell.command_parts` | Yes |
-| `reasoning_details` | Chat Completions reasoning replay on `Message` | `openai.chat_completions.reasoning_details` | Yes |
-| `tool_call_index`, `tool_call_choice_index` | Chat Completions streaming aggregation | `openai.chat_completions.*` if persisted; otherwise removed after aggregation | No |
-| AG-UI and A2A keys | Approval occurrence, state, display, and metadata | `ag_ui.*` and `a2a.*` if persisted; otherwise not stored on Agent Framework objects | Per key |
+| `filename` | File name on data and URI content | `Content.name`, with the flat key still read | Yes |
+| `openai.responses.shell.output_type` | OpenAI shell output type | `openai["shell_output_type"]` | Yes |
+| `openai.responses.local_shell.call_item_id` | OpenAI local shell call item ID | `openai["local_shell_call_item_id"]` | Yes |
+| `openai.local_shell_command_parts` | OpenAI local shell command | `openai["local_shell_command_parts"]` | Yes |
+| `reasoning_details` | Chat Completions reasoning replay on `Message` | `openai["reasoning_details"]` | Yes |
+| `tool_call_index`, `tool_call_choice_index` | Chat Completions streaming aggregation | `openai[...]` if persisted; otherwise removed after aggregation | No |
+| AG-UI and A2A keys | Approval occurrence, state, display, and metadata | `ag_ui[...]` and `a2a[...]` if persisted; otherwise not stored on Agent Framework objects | Per key |
 
-Unchanged: `model_output_kind`, `prompt_cache_breakpoint`, `openai.responses.shell.output_type`,
-`openai.responses.local_shell.call_item_id`, core-private underscore keys, and the legacy `encrypted_content` read
-that now falls back to `protected_data`.
+Unchanged: core-private underscore keys, the security keys defined by ADR 0024, and the legacy `encrypted_content`
+read that now falls back to `protected_data`.
 
 Raw-dependent replay in OpenAI shell handling, Gemini tool-call parts, and the Foundry hosting OAuth fallback moves to
 documented replay data under rule 5. Hosting Responses may keep raw output reuse as a fast path.
