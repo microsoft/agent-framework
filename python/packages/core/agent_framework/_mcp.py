@@ -915,8 +915,7 @@ class MCPTool:
         """Initialize the MCP Tool base.
 
         Note:
-            Do not use this method, use one of the subclasses: MCPStreamableHTTPTool, MCPWebsocketTool
-            or MCPStdioTool.
+            Do not use this method directly. Use MCPStreamableHTTPTool or MCPStdioTool.
 
         Args:
             name: The name of the MCP tool.
@@ -4329,24 +4328,11 @@ class MCPStreamableHTTPTool(MCPTool):
 
 @deprecated("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
 class MCPWebsocketTool(MCPTool):
-    """MCP tool for connecting to WebSocket-based MCP servers.
+    """Deprecated compatibility symbol for the removed MCP WebSocket transport.
 
-    This class connects to MCP servers that communicate via WebSocket.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import MCPWebsocketTool, Agent
-
-            # Create an MCP WebSocket tool
-            mcp_tool = MCPWebsocketTool(
-                name="realtime-service", url="wss://service.example.com/mcp", description="Real-time service operations"
-            )
-
-            # Use with a chat agent
-            async with mcp_tool:
-                agent = Agent(client=client, name="assistant", tools=mcp_tool)
-                response = await agent.run("Connect to the real-time service")
+    MCP v2 removed WebSocket transport because it was never part of the MCP
+    specification. Use :class:`MCPStreamableHTTPTool` instead. This class remains
+    importable during the deprecation window but cannot create a connection.
     """
 
     def __init__(
@@ -4377,17 +4363,16 @@ class MCPWebsocketTool(MCPTool):
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
-        """Initialize the MCP WebSocket tool.
+        """Initialize the deprecated MCP WebSocket compatibility wrapper.
 
         Note:
-            The arguments are used to create a WebSocket client.
-            See ``mcp.client.websocket.websocket_client`` for more details.
-            Any extra arguments passed to the constructor will be passed to the
-            WebSocket client constructor.
+            The constructor signature is retained for source compatibility.
+            MCP v2 cannot create a WebSocket transport, and extra ``kwargs`` are
+            accepted but unused.
 
         Args:
             name: The name of the tool.
-            url: The URL of the MCP server.
+            url: The former WebSocket URL, retained for source compatibility.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -4469,7 +4454,7 @@ class MCPWebsocketTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
-            kwargs: Any extra arguments to pass to the WebSocket client.
+            kwargs: Deprecated compatibility arguments. They are not used.
         """
         super().__init__(
             name=name,
@@ -4517,4 +4502,9 @@ class MCPWebsocketTool(MCPTool):
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+        """Raise because MCP v2 removed WebSocket transport.
+
+        Raises:
+            RuntimeError: Always. Use :class:`MCPStreamableHTTPTool` instead.
+        """
         raise RuntimeError("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")

@@ -4431,7 +4431,7 @@ async def apply_mcp_security_labels(
 
     Args:
         mcp_tool: A connected ``MCPTool`` instance (``MCPStdioTool``,
-            ``MCPStreamableHTTPTool``, ``MCPWebsocketTool``).
+            ``MCPStreamableHTTPTool``).
         default_integrity: Integrity label to assign when the server provides
             no annotations.  Defaults to ``UNTRUSTED`` (conservative).
         annotation_overrides: Optional per-tool-name overrides.  Keys are
@@ -4637,7 +4637,7 @@ class SecureMCPToolProxy:
 
     There are two ways to create a proxy:
 
-    1. **Wrap an existing MCPTool** (local binary, WebSocket, or HTTP)::
+    1. **Wrap an existing MCPTool** (local binary or Streamable HTTP)::
 
         async with SecureMCPToolProxy(
             MCPStdioTool(name="github", command="gh-mcp", args=["stdio"])

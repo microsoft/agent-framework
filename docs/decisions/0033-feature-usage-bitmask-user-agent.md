@@ -22,6 +22,13 @@ The detailed mechanism is in [SPEC-004](../specs/004-feature-usage-telemetry.md)
 the per-language bit tables are in
 [feature-usage-bit-registry.md](../specs/feature-usage-bit-registry.md).
 
+### Amendment: MCP WebSocket transport
+
+As of the MCP Python SDK v2 migration, `MCPWebsocketTool` is a deprecated
+compatibility symbol because upstream removed WebSocket transport. The examples
+below record the public surface considered when this ADR was accepted; the
+currently supported MCP transports are stdio and Streamable HTTP.
+
 ## Decision Drivers
 
 - **Transparency** — openly documented, human-decodable, user-controllable. No
