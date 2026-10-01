@@ -38,7 +38,6 @@ from agent_framework._sessions import (
     SessionContext,
     _filter_approval_control_messages,
 )
-from agent_framework._types import _CONTENT_ITEM_SNAPSHOT_KEY
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
@@ -70,7 +69,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework_openai._chat_client import _CONTENT_ITEM_SNAPSHOT_KEY, OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))

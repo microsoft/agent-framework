@@ -2246,6 +2246,30 @@ def test_code_interpreter_snapshot_chunk_replaces_accumulated_deltas():
     assert "".join(item.text or "" for item in calls[0].inputs) == "import pandas as pd"
 
 
+def test_code_interpreter_delta_merges_onto_an_empty_placeholder():
+    """A placeholder chunk with an empty `inputs`/`outputs` list must not blow up the merge.
+
+    A provider can open a call with an empty list before any text streams in (an
+    `outputs=[]` placeholder is exactly what the OpenAI client sends when a call
+    starts). `existing` is then `[]`, not `None`, so the merge has to hand the
+    first real delta back rather than index into the empty list.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[])]),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="import os")])
+            ]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].inputs is not None
+    assert "".join(item.text or "" for item in calls[0].inputs) == "import os"
+
+
 # region Role & FinishReason basics
 
 

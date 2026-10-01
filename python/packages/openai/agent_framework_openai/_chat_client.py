@@ -58,7 +58,6 @@ from agent_framework._tools import (
     tool,
 )
 from agent_framework._types import (
-    _CONTENT_ITEM_SNAPSHOT_KEY,  # pyright: ignore[reportPrivateUsage]
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -154,6 +153,7 @@ logger = logging.getLogger("agent_framework.openai")
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
 
 
 def _is_refusal_text_content(content: Content) -> bool:

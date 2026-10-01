@@ -430,8 +430,8 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 # complete value (e.g. the OpenAI Responses API's `code_interpreter_call_code.done`, sent
 # after a series of `.delta` events for the same call). Text content alone can't reliably
 # tell that apart from a delta that merely happens to start with what came before - e.g. a
-# delta of "(" followed by a delta of "()" is two characters streamed in order, not a
-# two-character-value resend - so providers must set this explicitly on a full resend.
+# delta of "(" followed by a delta of "()" is two chunks that combine into "(()", not a
+# resend of "()" - so providers must set this explicitly on a full resend.
 _CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
 
 # endregion
@@ -2358,6 +2358,13 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
 
     if _is_content_item_snapshot(incoming):
         return deepcopy(incoming)
+
+    # An empty list has no item to fold a delta into (and nothing to add from one),
+    # so hand back whichever side actually has content before indexing into it below.
+    if not existing:
+        return deepcopy(incoming)
+    if not incoming:
+        return existing
 
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
