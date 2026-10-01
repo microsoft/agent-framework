@@ -208,7 +208,7 @@ configure_otel_providers(exporters=[exporter])
 enable_sensitive_telemetry()
 ```
 
-Or with [Arize AX](https://arize.com/docs/ax/integrations/python-agent-frameworks/microsoft/microsoft-agent-framework) or [Phoenix](https://arize.com/docs/phoenix), which use the [OpenInference](https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-agent-framework) format. Install `openinference-instrumentation-agent-framework>=0.1.12` and `opentelemetry-exporter-otlp-proto-http`. The OpenInference span processor converts Agent Framework's GenAI spans and must run before the exporter, so set up the tracer provider yourself rather than calling `configure_otel_providers()`:
+Or with [Arize AX](https://arize.com/docs/ax/integrations/python-agent-frameworks/microsoft/microsoft-agent-framework) or [Phoenix](https://arize.com/docs/phoenix), which use the [OpenInference](https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-agent-framework) format. Install `openinference-instrumentation-agent-framework>=0.1.12` and `opentelemetry-exporter-otlp-proto-http`. The OpenInference span processor converts Agent Framework's GenAI spans and must run before the exporter, so set up the tracer provider yourself rather than calling `configure_otel_providers()`. The example sends to Arize AX; for Phoenix, use the commented-out exporter instead and point it at your Phoenix endpoint:
 
 ```python
 from opentelemetry import trace
@@ -219,12 +219,14 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from openinference.instrumentation.agent_framework import AgentFrameworkToOpenInferenceProcessor
 from agent_framework.observability import enable_sensitive_telemetry
 
-# Arize AX: send to https://otlp.arize.com/v1/traces with your space ID and API key
+# Arize AX: authenticate with your space ID and API key
 exporter = OTLPSpanExporter(
     endpoint="https://otlp.arize.com/v1/traces",
     headers={"arize-space-id": "<space_id>", "arize-api-key": "<api_key>"},
 )
-# Phoenix: send to your Phoenix instance instead, e.g. a local `phoenix serve`
+
+# Phoenix: use this exporter instead. localhost:6006 is a local `phoenix serve`;
+# replace it with your Phoenix endpoint if Phoenix runs elsewhere
 # exporter = OTLPSpanExporter(endpoint="http://localhost:6006/v1/traces")
 
 tracer_provider = TracerProvider(resource=Resource.create({"openinference.project.name": "<project_name>"}))
