@@ -670,6 +670,10 @@ class FlakyMessage:
 class FlakyStateExecutor(Executor):
     """An executor that fails on demand to test state discard on failure."""
 
+    def __init__(self, id: str, write_staged_event: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._write_staged_event = write_staged_event
+
     @handler
     async def handle_message(
         self,
@@ -678,6 +682,9 @@ class FlakyStateExecutor(Executor):
     ) -> None:
         if message.fail:
             ctx.set_state("secret", "leaked-from-failed-run")
+            # Signal that the write has been staged for deterministic test synchronization
+            if self._write_staged_event:
+                self._write_staged_event.set()
             # Small delay to ensure cancellation can happen after write is staged
             await asyncio.sleep(0.01)
             raise RuntimeError("simulated transient failure")
@@ -821,8 +828,11 @@ async def test_workflow_discards_pending_state_on_cancellation():
     before completing (via a slow executor). We cancel the task while it's mid-superstep
     to ensure the write is staged and the runner's except block is hit.
     """
-    # Use the existing FlakyStateExecutor which stages a write then raises
-    workflow = WorkflowBuilder(start_executor=FlakyStateExecutor(id="flaky")).build()
+    # Use deterministic synchronization to ensure write is staged before cancellation
+    write_staged_event = asyncio.Event()
+    workflow = WorkflowBuilder(
+        start_executor=FlakyStateExecutor(id="flaky", write_staged_event=write_staged_event)
+    ).build()
 
     # Create a task that will stage a state write then fail
     async def _run_failing():
@@ -830,8 +840,8 @@ async def test_workflow_discards_pending_state_on_cancellation():
 
     run_task = asyncio.create_task(_run_failing())
 
-    # Yield to let the task start and stage its write
-    await asyncio.sleep(0)
+    # Wait for the write to be staged before cancelling (deterministic synchronization)
+    await write_staged_event.wait()
 
     # Cancel the task while it's mid-superstep (after write is staged but before error handling completes)
     run_task.cancel()
