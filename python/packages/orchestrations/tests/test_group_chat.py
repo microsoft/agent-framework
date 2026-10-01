@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
+import time
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, cast
 
@@ -31,6 +33,7 @@ from agent_framework.orchestrations import (
 )
 
 from agent_framework_orchestrations import AgentBasedGroupChatOrchestrator, BaseGroupChatOrchestrator
+from agent_framework_orchestrations._orchestrator_helpers import extract_markdown_fence_bodies
 
 
 class StubAgent(BaseAgent):
@@ -474,6 +477,14 @@ async def test_agent_manager_handles_fenced_json_output() -> None:
         '```JSON\r\n{"terminate": true, "reason": "done", "final_message": "bye"}\r\n```',
         '```json {"terminate": true, "reason": "done", "final_message": "bye"} ```',
         'Here is my decision:\n```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```application/json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '``` json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```{"terminate": true, "reason": "done", "final_message": "bye"}```',
+        '````json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n````',
+        (
+            'Draft:\n```json\n{"terminate": false, "reason": "draft"}\n```\n'
+            'Final:\n```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```'
+        ),
     ],
 )
 def test_agent_orchestrator_parses_fenced_json(text: str) -> None:
@@ -483,6 +494,45 @@ def test_agent_orchestrator_parses_fenced_json(text: str) -> None:
 
     assert output.terminate is True
     assert output.final_message == "bye"
+
+
+def test_agent_orchestrator_parses_fenced_json_with_nested_fence_in_final_message() -> None:
+    final_message = "Run this:\n```python\nprint('hi')\n```\nDone."
+    payload = json.dumps({"terminate": True, "reason": "done", "final_message": final_message}, indent=2)
+    response = AgentResponse(messages=[Message(role="assistant", contents=[f"```json\n{payload}\n```"])])
+
+    output = AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+
+    assert output.terminate is True
+    assert output.final_message == final_message
+
+
+def test_agent_orchestrator_rejects_unterminated_fence_in_linear_time() -> None:
+    # A backtracking extractor stalled for seconds on an unterminated fence followed by
+    # whitespace, and this parser runs on the event loop.
+    text = "```json\n" + " " * 200_000 + "\n" + "\t" * 200_000
+    response = AgentResponse(messages=[Message(role="assistant", contents=[text])])
+
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="Failed to parse agent orchestration output"):
+        AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("no fences here", []),
+        ("```json\n{}\n```", ["{}"]),
+        ("```\nfirst\n```\ntext\n```py\nsecond\n```", ["first", "second"]),
+        ("````md\nouter\n```py\ninner\n```\n````", ["outer\n```py\ninner\n```"]),
+        ('```json\n{"a": "x ``` y"}\n```', ['{"a": "x ``` y"}']),
+        ("```json\n{}", []),
+        ("```\n```", []),
+    ],
+)
+def test_extract_markdown_fence_bodies(text: str, expected: list[str]) -> None:
+    assert extract_markdown_fence_bodies(text) == expected
 
 
 def test_agent_orchestrator_rejects_fenced_non_json() -> None:

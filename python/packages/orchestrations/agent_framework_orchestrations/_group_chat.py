@@ -23,7 +23,6 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import re
 import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
@@ -53,7 +52,7 @@ from ._base_group_chat_orchestrator import (
 )
 from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor
-from ._orchestrator_helpers import clean_conversation_for_handoff
+from ._orchestrator_helpers import clean_conversation_for_handoff, extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -71,9 +70,6 @@ else:
 
 logger = logging.getLogger(__name__)
 DEFAULT_WORKFLOW_NAME = "GroupChat"
-
-# Matches a Markdown code fence with an optional language tag (```json ... ```) and captures its body.
-_CODE_FENCE_PATTERN = re.compile(r"```[\w-]*\s*(.*?)\s*```", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -477,9 +473,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             text_candidates.append(response_text)
 
         for candidate in list(text_candidates):
-            fenced_blocks = _CODE_FENCE_PATTERN.findall(candidate)
-            if fenced_blocks and fenced_blocks[-1] and fenced_blocks[-1] not in text_candidates:
-                text_candidates.append(fenced_blocks[-1])
+            fence_bodies = extract_markdown_fence_bodies(candidate)
+            if fence_bodies and fence_bodies[-1] not in text_candidates:
+                text_candidates.append(fence_bodies[-1])
 
         last_error: Exception | None = None
         for candidate in text_candidates:
