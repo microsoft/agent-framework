@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_framework import Content
 
@@ -49,17 +49,37 @@ class ShellResult:
         return "\n".join(parts)
 
 
-def _shell_result_to_content(result: ShellResult) -> Content:  # pyright: ignore[reportUnusedFunction]
+class _ShellResultText(str):
+    """Model-facing shell text that retains its structured source for normal parsing."""
+
+    shell_result: ShellResult
+
+    def __new__(cls, result: ShellResult) -> _ShellResultText:
+        value = super().__new__(cls, result.format_for_model())
+        value.shell_result = result
+        return value
+
+
+def _shell_result_to_text(result: ShellResult) -> str:  # pyright: ignore[reportUnusedFunction]
+    return _ShellResultText(result)
+
+
+def _parse_shell_result(result: Any) -> str | list[Content]:  # pyright: ignore[reportUnusedFunction]
     """Preserve structured shell fields alongside the model-facing text."""
-    return Content.from_text(
-        result.format_for_model(),
-        additional_properties={
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "exit_code": result.exit_code,
-            "timed_out": result.timed_out,
-        },
-    )
+    if not isinstance(result, _ShellResultText):
+        return str(result)
+    shell_result = result.shell_result
+    return [
+        Content.from_text(
+            result,
+            additional_properties={
+                "stdout": shell_result.stdout,
+                "stderr": shell_result.stderr,
+                "exit_code": shell_result.exit_code,
+                "timed_out": shell_result.timed_out,
+            },
+        )
+    ]
 
 
 class ShellExecutionError(RuntimeError):

@@ -10,7 +10,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
-from agent_framework import Content, FunctionTool, tool
+from agent_framework import FunctionTool, tool
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
@@ -23,7 +23,8 @@ from ._types import (
     ShellCommandError,
     ShellMode,
     ShellResult,
-    _shell_result_to_content,  # pyright: ignore[reportPrivateUsage]
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = logging.getLogger(__name__)
@@ -311,12 +312,12 @@ class LocalShellTool:
                 ``None`` a mode-appropriate default is used.
         """
 
-        async def _run_shell(command: str) -> str | Content:
+        async def _run_shell(command: str) -> str:
             try:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return _shell_result_to_content(result)
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -326,6 +327,7 @@ class LocalShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )
 
     # ------------------------------------------------------------------ helpers

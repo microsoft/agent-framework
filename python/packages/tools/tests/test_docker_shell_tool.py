@@ -11,6 +11,7 @@ available in CI / dev sandboxes).
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -471,7 +472,9 @@ async def test_as_function_preserves_structured_shell_result() -> None:
     tool = DockerShellTool(mode="stateless")
 
     with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
-        result = await tool.as_function().invoke(arguments={"command": "ignored"})
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
 
     assert len(result) == 1
     assert result[0].type == "text"
@@ -482,6 +485,9 @@ async def test_as_function_preserves_structured_shell_result() -> None:
         "exit_code": 7,
         "timed_out": False,
     }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
 
 
 async def test_start_and_close_are_noops_in_stateless_mode() -> None:

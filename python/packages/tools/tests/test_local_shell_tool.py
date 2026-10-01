@@ -407,7 +407,9 @@ async def test_as_function_preserves_structured_shell_result() -> None:
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
 
     with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
-        result = await tool.as_function().invoke(arguments={"command": "ignored"})
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
 
     assert len(result) == 1
     assert result[0].type == "text"
@@ -418,6 +420,9 @@ async def test_as_function_preserves_structured_shell_result() -> None:
         "exit_code": 3,
         "timed_out": True,
     }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
 
 
 async def test_variable_shell_approval_executes_only_the_reviewed_command() -> None:
