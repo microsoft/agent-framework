@@ -88,7 +88,7 @@ async def get_weather(location: Annotated[str, "The city name"]) -> str:
     return f"The weather in {location} is 72°F and sunny."
 
 
-@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-history"])
+@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-managed-service-history"])
 def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
@@ -104,7 +104,7 @@ def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
     )
 
 
-@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-history"])
+@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-managed-service-history"])
 def history_server_with_tools(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry tool-calling server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
