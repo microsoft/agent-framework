@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest, InvocationRun
+    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn
     from ._responses import ResponsesHostServer
     from ._scope import FoundryRequestScope
     from ._state_store import (
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         StoreProvider,
     )
     from ._toolbox import FoundryToolbox
+    from ._workflow_source import WorkflowSource
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -42,6 +43,8 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "InvocationsHostServer": "._invocations",
     "ResponsesHostServer": "._responses",
     "StoreProvider": "._state_store",
+    "WorkflowSource": "._workflow_source",
+    "WorkflowTurn": "._request",
 }
 
 __all__ = [
@@ -60,6 +63,8 @@ __all__ = [
     "InvocationsHostServer",
     "ResponsesHostServer",
     "StoreProvider",
+    "WorkflowSource",
+    "WorkflowTurn",
 ]
 
 

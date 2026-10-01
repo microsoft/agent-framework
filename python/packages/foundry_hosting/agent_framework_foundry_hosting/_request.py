@@ -9,15 +9,57 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Generic, Literal, TypeAlias, cast
 
-from agent_framework import AgentRunInputs, Content, Message
+from agent_framework import AgentRunInputs, Content, Message, WorkflowInvocationKwargs
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item
+from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+InputT = TypeVar("InputT", default=Any)
+
+
+@dataclass(frozen=True)
+class WorkflowTurn(Generic[InputT]):
+    """A typed workflow start input or a complete batch of pending replies.
+
+    Args:
+        input: Application input accepted by the start executor. ``None`` is not a start input.
+        responses: Replies keyed by the exact pending workflow request IDs. The host validates
+            the batch against its scoped checkpoint before consuming any reply authority.
+        client_kwargs: Existing workflow kwargs forwarded to agent clients, not raw workflow run arguments.
+        function_invocation_kwargs: Existing workflow kwargs forwarded to tools. Trusted hosting
+            identity is supplied separately and cannot be overridden.
+        stream: Application streaming intent for protocols with a custom request parser.
+            Responses continues to use its native request's ``stream`` flag.
+    """
+
+    input: InputT | None = None
+    responses: Mapping[str, Any] | None = None
+    client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    stream: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.input is None and self.responses is None) or (self.input is not None and self.responses is not None):
+            raise ValueError("WorkflowTurn requires exactly one of input or non-empty responses.")
+        if self.responses is not None:
+            if (
+                not isinstance(self.responses, Mapping)
+                or not self.responses
+                or any(not isinstance(key, str) or not key for key in self.responses)
+            ):
+                raise ValueError("WorkflowTurn.responses must be a non-empty mapping of request IDs to replies.")
+            object.__setattr__(self, "responses", MappingProxyType(dict(self.responses)))
+        for name in ("client_kwargs", "function_invocation_kwargs"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, (Mapping, WorkflowInvocationKwargs)):
+                raise TypeError(f"WorkflowTurn.{name} must be a mapping or WorkflowInvocationKwargs.")
+        if not isinstance(self.stream, bool):
+            raise TypeError("WorkflowTurn.stream must be a boolean.")
 
 
 @dataclass(frozen=True)
@@ -121,6 +163,7 @@ class HostedResponseRequest:
         self.conversation_id = context.conversation_id
         self._context = context
         self._options: Mapping[str, Any] = MappingProxyType(dict(options))
+        self._workflow_responses: Callable[[], Awaitable[dict[str, Any]]] | None = None
 
     @property
     def options(self) -> Mapping[str, Any]:
@@ -138,6 +181,20 @@ class HostedResponseRequest:
     async def get_input_text(self) -> str | None:
         """Read this turn's text input, if present."""
         return await self._context.get_input_text()
+
+    async def get_workflow_responses(self) -> dict[str, Any]:
+        """Decode replies against this turn's exact scoped workflow checkpoint.
+
+        Use this explicitly in ``parse_response`` to resume a native workflow.
+        Unknown, duplicate, stale, and incomplete reply batches are rejected before
+        the host claims the workflow or executes any response handler.
+        """
+        if self._workflow_responses is None:
+            raise RuntimeError("Workflow replies require a native workflow host and a pending stored checkpoint.")
+        return await self._workflow_responses()
+
+    def _set_workflow_responses(self, loader: Callable[[], Awaitable[dict[str, Any]]]) -> None:
+        self._workflow_responses = loader
 
 
 OptionsHook: TypeAlias = Callable[

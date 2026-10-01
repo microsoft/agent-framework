@@ -44,6 +44,8 @@ from agent_framework_foundry_hosting import (
     InvocationsHostServer,
     ResponsesHostServer,
     StoreProvider,
+    WorkflowSource,
+    WorkflowTurn,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -89,6 +91,8 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "ResponsesHostServer",
     "StoreProvider",
+    "WorkflowSource",
+    "WorkflowTurn",
     "evaluate_foundry_target",
     "evaluate_traces",
     "to_prompt_agent",
