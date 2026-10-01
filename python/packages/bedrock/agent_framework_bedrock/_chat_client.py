@@ -570,7 +570,11 @@ class BedrockChatClient(
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
-            if block is None or ("image" in block and message.role != "user"):
+            if (
+                block is None
+                or ("image" in block and message.role != "user")
+                or ("reasoningContent" in block and message.role != "assistant")
+            ):
                 logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
                 continue
             blocks.append(block)
@@ -587,6 +591,12 @@ class BedrockChatClient(
                     logger.warning("Skipping %s image: Bedrock accepts gif, jpeg, png or webp.", content.media_type)
                     return None
                 return {"image": {"format": image_format, "source": {"bytes": _get_data_bytes(content)}}}
+            case "text_reasoning" if content.text is not None:
+                # Extended thinking with tool use requires the signed reasoning to be sent back unchanged.
+                reasoning_text: dict[str, Any] = {"text": content.text}
+                if content.protected_data:
+                    reasoning_text["signature"] = content.protected_data
+                return {"reasoningContent": {"reasoningText": reasoning_text}}
             case "function_call":
                 arguments = content.parse_arguments() or {}
                 return {
@@ -733,6 +743,17 @@ class BedrockChatClient(
                         arguments=tool_use_delta.get("input", ""),
                     )
                 )
+            elif reasoning_delta := delta.get("reasoningContent"):
+                # Reasoning text and its signature arrive in separate deltas; they are merged into one
+                # text_reasoning content when the updates are combined into the final response.
+                reasoning_text = reasoning_delta.get("text")
+                signature = reasoning_delta.get("signature")
+                if reasoning_text is not None or signature is not None:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=reasoning_text, protected_data=signature, raw_representation=delta
+                        )
+                    )
         elif message_stop := event.get("messageStop"):
             finish_reason = self._map_finish_reason(message_stop.get("stopReason"))
         elif (metadata := event.get("metadata")) and (usage_details := self._parse_usage(metadata.get("usage"))):
@@ -770,6 +791,18 @@ class BedrockChatClient(
                 contents.append(
                     Content.from_text(text=json.dumps(json_value, ensure_ascii=False), raw_representation=block)
                 )
+                continue
+            if isinstance(reasoning := block.get("reasoningContent"), Mapping):
+                if isinstance(reasoning_text := reasoning.get("reasoningText"), Mapping):
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=reasoning_text.get("text") or "",
+                            protected_data=reasoning_text.get("signature"),
+                            raw_representation=block,
+                        )
+                    )
+                else:
+                    logger.debug("Ignoring Bedrock reasoning block without reasoning text: %s", block)
                 continue
             tool_use_value = block.get("toolUse")
             tool_use = (
