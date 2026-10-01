@@ -4328,6 +4328,7 @@ class MCPStreamableHTTPTool(MCPTool):
         return await super().call_tool(tool_name, **kwargs)
 
 
+@deprecated("Websocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
 class MCPWebsocketTool(MCPTool):
     """MCP tool for connecting to WebSocket-based MCP servers.
 
@@ -4517,31 +4518,4 @@ class MCPWebsocketTool(MCPTool):
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-        """Get an MCP WebSocket client.
-
-        Returns:
-            An async context manager for the WebSocket client transport.
-        """
-        try:
-            websocket_module = __import__("mcp.client.websocket", fromlist=["websocket_client"])
-        except ModuleNotFoundError as ex:
-            missing_name = ex.name or "mcp/websocket dependencies"
-            if missing_name == "mcp" or missing_name.startswith("mcp."):
-                reason = "The `mcp` package is not installed."
-            elif missing_name == "websockets" or missing_name.startswith("websockets."):
-                reason = "WebSocket transport support is not installed."
-            else:
-                reason = f"The optional dependency `{missing_name}` is not installed."
-            raise ModuleNotFoundError(
-                f"`MCPWebsocketTool` requires websocket transport support. {reason} "
-                "Please install `mcp` and update your dependencies."
-            ) from ex
-
-        # Support MCP releases from before and after the transport gained its deprecation marker.
-        websocket_client = websocket_module.websocket_client
-        args: dict[str, Any] = {
-            "url": self.url,
-        }
-        if self._client_kwargs:
-            args.update(self._client_kwargs)
-        return websocket_client(**args)
+        raise RuntimeError("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
