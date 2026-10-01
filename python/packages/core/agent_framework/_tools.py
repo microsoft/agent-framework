@@ -12,6 +12,7 @@ import struct
 import sys
 import typing
 import warnings
+import weakref
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -94,6 +95,8 @@ else:
 
 
 logger = logging.getLogger("agent_framework")
+
+_BOUND_TOOL_CACHE: weakref.WeakKeyDictionary[Any, weakref.WeakKeyDictionary[Any, Any]] = weakref.WeakKeyDictionary()
 
 
 def _generate_function_call_occurrence_id() -> str:
@@ -730,7 +733,7 @@ class FunctionTool(SerializationMixin):
             objtype: The type that owns the descriptor.
 
         Returns:
-            A new FunctionTool with the instance bound to the wrapped function.
+            A FunctionTool with the instance bound to the wrapped function.
         """
         if obj is None:
             # Accessed from the class, not an instance
@@ -741,12 +744,17 @@ class FunctionTool(SerializationMixin):
             sig = inspect.signature(self.func)
             params = list(sig.parameters.keys())
             if params and params[0] in {"self", "cls"}:
-                # Create a new FunctionTool with the bound method
-                import copy
-
-                bound_func = copy.copy(self)
-                bound_func._instance = obj
-                return bound_func
+                try:
+                    bound_tools = _BOUND_TOOL_CACHE[self]
+                except KeyError:
+                    bound_tools = _BOUND_TOOL_CACHE[self] = weakref.WeakKeyDictionary()
+                try:
+                    return bound_tools[obj]
+                except KeyError:
+                    bound_func = copy.copy(self)
+                    bound_func._instance = obj
+                    bound_tools[obj] = bound_func
+                    return bound_func
 
         return self
 
