@@ -8,15 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
+    AgentExecutor,
+    BaseChatClient,
     Content,
     Executor,
     InMemoryCheckpointStorage,
+    MCPStreamableHTTPTool,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowInvocationKwargs,
     handler,
     response_handler,
+    tool,
 )
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
@@ -24,7 +29,12 @@ from azure.ai.agentserver.core.storage import FoundryStorageConflictError, Found
 
 from agent_framework_foundry_hosting import CheckpointStoreProvider, FoundryRequestScope, WorkflowTurn
 from agent_framework_foundry_hosting._workflow_source import WorkflowResolver, prepare_workflow_kwargs
-from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, HostedWorkflowRun, WorkflowHead
+from agent_framework_foundry_hosting._workflow_state import (
+    FoundryWorkflowBindingStore,
+    HostedWorkflowRun,
+    WorkflowConflictError,
+    WorkflowHead,
+)
 
 
 def _scope(*, user: str = "user", sandbox: str = "sandbox", call: str = "call") -> FoundryRequestScope:
@@ -205,6 +215,30 @@ async def test_request_aware_async_factory() -> None:
     assert requests == [one, two]
 
 
+@pytest.mark.parametrize("mcp", [False, True])
+async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
+    class _UnusedClient(BaseChatClient):
+        async def _inner_get_response(self, **kwargs: Any) -> Any:
+            raise AssertionError("Ownership validation must not call the model.")
+
+    @tool
+    def local_tool(value: str) -> str:
+        """Return a value without accessing external services."""
+        return value
+
+    shared = MCPStreamableHTTPTool(name="shared", url="https://unused.example.test/mcp") if mcp else local_tool
+
+    def create(request: object) -> Workflow:
+        agent = Agent(client=_UnusedClient(), name="agent", tools=[shared])
+        return _workflow(AgentExecutor(agent, id="agent"))
+
+    resolver = WorkflowResolver(create)
+    first = await resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="cannot share"):
+        await resolver.resolve(object())
+    assert first.get_start_executor().id == "agent"
+
+
 async def test_exact_pairs_restore_state_and_reject_old_lineage() -> None:
     first = await _prepare("one")
     assert await _finish(first, WorkflowTurn(input=2)) == [2]
@@ -213,7 +247,7 @@ async def test_exact_pairs_restore_state_and_reject_old_lineage() -> None:
     assert second.checkpoint_id == first_checkpoint
     assert await _finish(second, WorkflowTurn(input=3)) == [5]
     assert second.checkpoint_id != first_checkpoint
-    with pytest.raises(ValueError, match="stale or forked"):
+    with pytest.raises(WorkflowConflictError, match="stale or forked"):
         await _prepare("fork", previous_response_id="one")
     store = FoundryWorkflowBindingStore(_scope())
     old, _ = await store.get_response("one")
@@ -243,7 +277,7 @@ async def test_checkpoint_and_reply_scope_isolation(scope: FoundryRequestScope) 
 async def test_graph_and_name_mismatch(changed: Workflow) -> None:
     first = await _prepare("one", lineage_id="invocations")
     await _finish(first, WorkflowTurn(input=1))
-    with pytest.raises(ValueError, match="incompatible"):
+    with pytest.raises(WorkflowConflictError, match="incompatible"):
         await _prepare("two", workflow=changed, lineage_id="invocations")
 
 
@@ -260,7 +294,7 @@ async def test_partial_and_invalid_replies_do_not_claim_or_consume() -> None:
         "review:True",
         "review:False",
     ]
-    with pytest.raises(ValueError, match="stale or forked"):
+    with pytest.raises(WorkflowConflictError, match="stale or forked"):
         await _prepare("replay", workflow=_workflow(_Review()), previous_response_id="one")
 
 
@@ -386,7 +420,7 @@ async def test_recovery_refreshes_private_current_call_kwargs() -> None:
             break
     await events.aclose()
     recovered = await _prepare("one", workflow=_workflow(_Loop(calls)), scope=_scope(call="new-call"), recovery=True)
-    await _finish(recovered, WorkflowTurn(input=1))
+    await _finish(recovered, recovered.recovery_turn())
     assert calls == ["old-call", "new-call"]
 
 

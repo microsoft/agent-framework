@@ -49,6 +49,14 @@ _CONFLICT = "Another request advanced this workflow. Reload its current response
 _BLOCKED = "This workflow turn was interrupted or failed; start a fresh workflow lineage to avoid replaying effects."
 
 
+class WorkflowConflictError(RuntimeError):
+    """A scoped workflow head, graph, or reply authority no longer permits this turn."""
+
+
+class WorkflowBlockedError(WorkflowConflictError):
+    """A failed or cancelled turn blocks its lineage to prevent uncertain effect replay."""
+
+
 def _key(kind: str, identifier: str) -> str:
     if not isinstance(identifier, str) or not identifier:
         raise ValueError("A non-empty workflow state identifier is required.")
@@ -251,7 +259,7 @@ class FoundryWorkflowBindingStore:
                 else:
                     result = await store.set_item(key, value, if_match=expected_etag, call_id=self.scope.call_id)
             except (FoundryStorageConflictError, FoundryStoragePreconditionError) as exc:
-                raise RuntimeError(_CONFLICT) from exc
+                raise WorkflowConflictError(_CONFLICT) from exc
         if not result.etag:
             raise RuntimeError("Workflow storage did not acknowledge a conditional write with an ETag.")
         return result.etag
@@ -371,12 +379,14 @@ class HostedWorkflowRun:
                     "No acknowledged checkpoint/output pair can recover this response; start a fresh lineage."
                 )
             if own.status == "blocked":
-                raise RuntimeError(_BLOCKED)
+                raise WorkflowBlockedError(_BLOCKED)
             run._record, run._record_etag = own, own_etag
             run.binding = own.binding
             run._reply_approvals = own.approvals or {}
         elif own is not None:
-            raise ValueError("This workflow response already exists; retrieve it instead of executing it again.")
+            raise WorkflowConflictError(
+                "This workflow response already exists; retrieve it instead of executing it again."
+            )
 
         previous: WorkflowBinding | None = None
         if not recovery and previous_response_id is not None:
@@ -407,19 +417,21 @@ class HostedWorkflowRun:
                 if current is not None:
                     run.already_completed = True
                 elif head.response_id != response_id or head.blocked:
-                    raise RuntimeError(_CONFLICT)
+                    raise WorkflowConflictError(_CONFLICT)
                 else:
                     run._finalized = True
             elif own is None or head.response_id != response_id or head.owner != own.owner or head.blocked:
-                raise RuntimeError(_CONFLICT)
+                raise WorkflowConflictError(_CONFLICT)
             previous = run.binding
         elif head is not None:
             if head.blocked:
-                raise RuntimeError(_BLOCKED)
+                raise WorkflowBlockedError(_BLOCKED)
             if head.response_id is not None:
-                raise RuntimeError("This workflow has an in-flight turn. Wait for it or start a fresh lineage.")
+                raise WorkflowConflictError(
+                    "This workflow has an in-flight turn. Wait for it or start a fresh lineage."
+                )
             if previous is not None and head.binding != previous:
-                raise ValueError("This workflow continuation is stale or forked; use its current response.")
+                raise WorkflowConflictError("This workflow continuation is stale or forked; use its current response.")
             previous = head.binding
             if previous is not None:
                 record, _ = await run.store.get_response(previous.response_id)
@@ -447,7 +459,7 @@ class HostedWorkflowRun:
         run._storage = _CheckpointWrites(storage, run)
         if previous is not None:
             if previous.workflow_name != workflow.name or previous.graph_hash != workflow.graph_signature_hash:
-                raise ValueError(
+                raise WorkflowConflictError(
                     "The stored workflow graph is incompatible. Rebuild its original graph or start a fresh lineage."
                 )
             if previous.checkpoint_id is None:
@@ -496,6 +508,41 @@ class HostedWorkflowRun:
         """The exact acknowledged checkpoint ID, never a latest-checkpoint query."""
         checkpoint = self.current_checkpoint
         return checkpoint.checkpoint_id if checkpoint is not None else None
+
+    def recovery_turn(self) -> WorkflowTurn[Any]:
+        """Restore application kwargs without re-parsing already consumed approval input.
+
+        The checkpoint, rather than a new start input or replayed reply, is the
+        recovery action. Host-injected identity and storage controls are replaced
+        by ``prepare_workflow_kwargs`` for the current trusted request.
+        """
+        if not self.recovery or self._checkpoint is None:
+            raise RuntimeError("A recovery turn requires an exact restored checkpoint.")
+        resolved = self._checkpoint.state.get(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {})
+        if not isinstance(resolved, Mapping):
+            raise ValueError("Invalid persisted workflow invocation kwargs.")
+        resolved = cast(Mapping[str, Any], resolved)
+
+        def invocation_kwargs(name: str) -> WorkflowInvocationKwargs:
+            values = resolved.get(name, {})
+            if not isinstance(values, Mapping):
+                raise ValueError("Invalid persisted workflow invocation kwargs.")
+            values = cast(Mapping[str, Any], values)
+            global_kwargs = dict(values.get("global_kwargs", {}))
+            executor_kwargs = {key: dict(value) for key, value in values.get("executor_kwargs", {}).items()}
+            if name == "client_kwargs":
+                for kwargs in (global_kwargs, *executor_kwargs.values()):
+                    kwargs.pop("additional_function_arguments", None)
+                    if "options" in kwargs:
+                        kwargs["options"] = dict(kwargs["options"])
+                        kwargs["options"].pop("store", None)
+            return WorkflowInvocationKwargs(global_kwargs, executor_kwargs)
+
+        return WorkflowTurn(
+            input=self._checkpoint,
+            client_kwargs=invocation_kwargs("client_kwargs"),
+            function_invocation_kwargs=invocation_kwargs("function_invocation_kwargs"),
+        )
 
     def validate_turn(self, turn: WorkflowTurn[Any]) -> WorkflowTurn[Any]:
         """Validate all input/replies and existing workflow kwargs before claiming authority."""
@@ -595,7 +642,7 @@ class HostedWorkflowRun:
             return
         head, etag = await self.store.get_head(self.binding.lineage_id, self.binding.conversation_id)
         if head != self._head or etag != self._head_etag or head is None or head.blocked:
-            raise RuntimeError(_CONFLICT)
+            raise WorkflowConflictError(_CONFLICT)
 
     async def events(
         self,

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import inspect
 import weakref
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from typing import Any, Generic, TypeAlias, TypeVar, cast
 
 from agent_framework import (
@@ -215,6 +215,12 @@ class WorkflowResolver(Generic[RequestT]):
                         agent = cast(RawAgent[Any], agent_value)
                         resources.append(agent.client)
                         resources.extend(agent.context_providers)
+                        resources.extend(agent.mcp_tools)
+                        tools = agent.default_options.get("tools", ())
+                        if isinstance(tools, Sequence):
+                            resources.extend(
+                                tool for tool in cast(Sequence[object], tools) if not isinstance(tool, Mapping)
+                            )
 
         collect(workflow)
         for resource in resources:
