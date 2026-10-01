@@ -62,46 +62,118 @@ card with the same policy, replace its mapping with:
 app.MapWellKnownAgentCard(policyAgentCard).RequireAuthorization("InvokeAgent");
 ```
 
-For persisted sessions and tasks, also configure caller isolation as described in
-[the server setup](./A2AServer/Program.cs). Register the required HTTP context
-accessor before building the app:
+Configure caller isolation for retained sessions and tasks, including tasks kept
+in memory when session persistence is disabled. Reference
+`Microsoft.Agents.AI.Hosting.AspNetCore` and register the provider before
+`builder.Build()`:
 
 ```csharp
+using Microsoft.Agents.AI.Hosting;
+
 builder.Services.AddHttpContextAccessor();
+builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = "sub" });
 ```
 
-With inbound claim mapping disabled, choose the actual token claim (for example,
-`sub`) in the isolation provider instead of a mapped `ClaimTypes.NameIdentifier`.
-Use a validated identity claim with an
-appropriate issuer/tenant boundary, not a caller-supplied context or task ID.
+With `MapInboundClaims = false`, `sub` is the token's unmapped subject claim.
+This example assumes a single trusted issuer and tenant. For multiple issuers or
+tenants, choose a validated identity boundary that prevents subject collisions;
+see [Choose the isolation boundary](../../04-hosting/README.md#choose-the-isolation-boundary)
+in the shared hosting guide. Never use a caller-supplied context or task ID as
+proof of ownership. Authentication and endpoint authorization do not replace
+isolation of retained caller data.
 
 ## Authenticate the calling agent
 
-For protected discovery and invocation, supply an authenticated `HttpClient` to
-both the resolver and `GetAIAgentAsync` in `A2AClient/Program.cs`:
+For an interactive console caller using Microsoft Entra ID, reference
+`Microsoft.Identity.Client` in the client project and use
+[MSAL device-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-desktop-acquire-token-device-code-flow).
+Register the console app as a public client and enable public client flows.
+Expose a delegated permission on the A2A host app registration and grant the
+console app that permission with the required consent. Configure:
+
+- `A2A_AGENT_URL`: the trusted HTTPS agent-card base URL.
+- `AZURE_TENANT_ID`: the tenant serving the A2A host.
+- `AZURE_CLIENT_ID`: the console app registration's client ID.
+- `A2A_SCOPE`: the A2A host's delegated scope, such as `api://<host-app-id>/access_as_user`.
+
+The host policy above additionally requires `roles: Agent.Invoke`. To retain
+that policy for this delegated example, enable the app role for users/groups and
+assign it to the signed-in user in the host's enterprise application. Granting a
+delegated scope alone does not satisfy the role policy. If using scope-based
+endpoint authorization instead, replace the named policy with one that checks the
+required individual value in the space-delimited `scp` claim. The token audience
+must match the host's configured `Auth:Audience`, not the console application's
+client ID.
+
+Replace the existing resolver construction and `GetAIAgentAsync()` call in
+`A2AClient/Program.cs` with the following. It authenticates discovery, validates
+all advertised service origins, and only then constructs the calling agent:
 
 ```csharp
+using Microsoft.Identity.Client;
+
+var trustedOrigin = new Uri(Environment.GetEnvironmentVariable("A2A_AGENT_URL")
+    ?? throw new InvalidOperationException("A2A_AGENT_URL is required."), UriKind.Absolute);
+if (trustedOrigin.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(trustedOrigin.UserInfo))
+{
+    throw new InvalidOperationException("Configure a trusted HTTPS agent URL without user information.");
+}
+
+var identityClient = PublicClientApplicationBuilder
+    .Create(Environment.GetEnvironmentVariable("AZURE_CLIENT_ID")
+        ?? throw new InvalidOperationException("AZURE_CLIENT_ID is required."))
+    .WithAuthority(AzureCloudInstance.AzurePublic,
+        Environment.GetEnvironmentVariable("AZURE_TENANT_ID")
+            ?? throw new InvalidOperationException("AZURE_TENANT_ID is required."))
+    .Build();
+string[] scopes = [Environment.GetEnvironmentVariable("A2A_SCOPE")
+    ?? throw new InvalidOperationException("A2A_SCOPE is required.")];
+var authentication = await identityClient.AcquireTokenWithDeviceCode(scopes, deviceCode =>
+{
+    Console.WriteLine(deviceCode.Message);
+    return Task.CompletedTask;
+}).ExecuteAsync();
+
 using var handler = new HttpClientHandler { AllowAutoRedirect = false };
 using var httpClient = new HttpClient(handler);
 httpClient.DefaultRequestHeaders.Authorization =
-    new System.Net.Http.Headers.AuthenticationHeaderValue(
-        "Bearer",
-        Environment.GetEnvironmentVariable("A2A_ACCESS_TOKEN")
-            ?? throw new InvalidOperationException("A2A_ACCESS_TOKEN is required."));
+    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", authentication.AccessToken);
 
-var agentCardResolver = new A2ACardResolver(new Uri(agentUrl), httpClient);
-AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync(httpClient: httpClient);
+var agentCardResolver = new A2ACardResolver(trustedOrigin, httpClient);
+var card = await agentCardResolver.GetAgentCardAsync();
+if (card.SupportedInterfaces is not { Count: > 0 })
+{
+    throw new InvalidOperationException("The agent card advertises no service interfaces.");
+}
+
+foreach (var service in card.SupportedInterfaces)
+{
+    if (!Uri.TryCreate(service.Url, UriKind.Absolute, out var serviceUri)
+        || serviceUri.Scheme != trustedOrigin.Scheme
+        || !string.Equals(serviceUri.IdnHost, trustedOrigin.IdnHost, StringComparison.OrdinalIgnoreCase)
+        || serviceUri.Port != trustedOrigin.Port
+        || !string.IsNullOrEmpty(serviceUri.UserInfo))
+    {
+        throw new InvalidOperationException("The agent card advertises an untrusted service URL.");
+    }
+}
+
+AIAgent policyAgent = card.AsAIAgent(httpClient);
 ```
 
-This replaces both the existing resolver construction and `GetAIAgentAsync()`
-call. Define `agentUrl` from `A2A_AGENT_URL` as in the sample. The token must be issued for
-the A2A host's audience. Use HTTPS and a trusted, configured agent-card origin;
-verify advertised service URLs before sending credentials to them. This example
-uses one token for one console user. It does not acquire or refresh tokens.
+The configured discovery origin must be trusted before sending it a token.
+The service checks require the same HTTPS scheme, hostname, and effective port;
+redirects are disabled for both discovery and invocation. A card advertising a
+different origin is rejected, even if it also lists a trusted interface.
 
-The resolver fetches the card before constructing the agent. Passing the client
-to both the resolver constructor and `GetAIAgentAsync` authenticates discovery
-and invocation. Supplying it only to `GetAIAgentAsync` leaves discovery unauthenticated.
+This example acquires a token for one console user. For subsequent calls in a
+long-running client, reuse the MSAL application and use `AcquireTokenSilent`
+with the selected account, falling back to an interactive flow when required.
+Acquire a valid token before sending each request rather than retaining an
+expired authorization header. For unattended callers, use
+[client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/scenario-daemon-acquire-token)
+with the host's `/.default` scope and an application-assigned `Agent.Invoke` role;
+that identity represents the application rather than an interactive user.
 
 In a multi-user host, acquire a token for the current caller and destination through
 your identity library and attach it to each outgoing request. Do not mutate shared
