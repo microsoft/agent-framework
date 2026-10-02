@@ -293,10 +293,9 @@ async def main() -> None:
     def wrap_in_quotes_transform(response: ChatResponse) -> ChatResponse:
         """Result transform that wraps the response text in quotes."""
         if response.text:
-            return ChatResponse(
-                messages=[Message(contents=[f'"{response.text}"'], role="assistant")],
-                additional_properties=response.additional_properties,
-            )
+            transformed = copy(response)
+            transformed.messages = [Message(contents=[f'"{response.text}"'], role="assistant")]
+            return transformed
         return response
 
     # The finalizer creates a response, then result transforms run in order.
