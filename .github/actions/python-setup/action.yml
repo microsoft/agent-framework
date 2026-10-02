@@ -40,6 +40,7 @@ runs:
                   sed -i.bak '/\[tool\.uv\.workspace\]/a\exclude = ["'"$pkg_dir"'"]' python/pyproject.toml
                 fi
                 sed -i.bak '/'"$pkg"' = { workspace = true }/d' python/pyproject.toml
+                sed -i.bak '/"'"$pkg"'\([<>=;]\|"\)/d' python/packages/core/pyproject.toml
               fi
             done
           done

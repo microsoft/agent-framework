@@ -24,6 +24,9 @@ python/
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages extend core with specific integrations
 - Root `agent-framework` depends on `agent-framework-core[all]`
+- Entries in `agent-framework-core[all]` carry lower and upper bounds. Workspace integrations use the version
+  released with the current Core cohort as their lower bound so pip does not backtrack across old cyclic
+  `core[all] -> integration -> core` combinations.
 - `packages/lab` is intentionally excluded from the root uv workspace. It has its own
   `pyproject.toml`, `uv.lock`, environment, CI matrix, and dependency updates so experimental
   dependencies cannot constrain released provider packages. Lab is also an explicit exception
@@ -247,6 +250,10 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If package B is promoted to a different lifecycle stage, update package A's dependency
   declaration to the new versioning scheme for package B even when the only change is the stage
   transition itself.
+- When Core releases, advance each workspace package floor in `agent-framework-core[all]` to that package's
+  co-released version, including unchanged packages at their existing version. Keep an upper bound appropriate
+  for the package's current major version. This release-cohort metadata is independent of whether the package
+  itself needed a version bump.
 - Use this guidance both for ordinary version updates and for package promotion work.
 
 - All non-core packages declare a lower bound on `agent-framework-core`
