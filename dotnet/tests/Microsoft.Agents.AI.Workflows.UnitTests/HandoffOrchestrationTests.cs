@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
@@ -354,6 +355,50 @@ public class HandoffOrchestrationTests
 
         Assert.Equal(expected, GetMessageSequence(nonStreamingWorkflowSession.ChatHistoryProvider.GetAllMessages(nonStreamingWorkflowSession).Skip(1)));
         Assert.Equal(expected, GetMessageSequence(streamingWorkflowSession.ChatHistoryProvider.GetAllMessages(streamingWorkflowSession).Skip(1)));
+    }
+
+    [Fact]
+    public async Task Handoffs_AsAgent_PropagatesRunOptionsAndPreservesHandoffToolsAsync()
+    {
+        // Arrange
+        HandoffTestEchoAgent firstAgent = new("first-agent", "FirstAgent");
+        HandoffTestEchoAgent secondAgent = new("second-agent", "SecondAgent");
+        AITool callerTool = AIFunctionFactory.CreateDeclaration(
+            "CallerTool",
+            description: null,
+            AIFunctionFactory.Create(() => { }).JsonSchema);
+        Func<IChatClient, IChatClient> chatClientFactory = static chatClient => chatClient;
+        AIAgent workflowAgent = AgentWorkflowBuilder.CreateHandoffBuilderWith(firstAgent)
+            .WithHandoff(firstAgent, secondAgent)
+            .Build()
+            .AsAIAgent();
+        ChatClientAgentRunOptions runOptions = new(new ChatOptions
+        {
+            ModelId = "test-model",
+            Instructions = "Caller instructions",
+            Tools = [callerTool],
+        })
+        {
+            AdditionalProperties = new() { ["test-property"] = "test-value" },
+            ChatClientFactory = chatClientFactory,
+        };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Hello", options: runOptions);
+
+        // Assert
+        ChatClientAgentRunOptions firstAgentOptions = Assert.IsType<ChatClientAgentRunOptions>(Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.NotSame(runOptions, firstAgentOptions);
+        Assert.NotNull(firstAgentOptions.AdditionalProperties);
+        Assert.Equal("test-value", firstAgentOptions.AdditionalProperties["test-property"]);
+        Assert.Same(chatClientFactory, firstAgentOptions.ChatClientFactory);
+        Assert.NotNull(firstAgentOptions.ChatOptions);
+        Assert.Equal("test-model", firstAgentOptions.ChatOptions!.ModelId);
+        Assert.EndsWith("Caller instructions", firstAgentOptions.ChatOptions.Instructions);
+        Assert.NotNull(firstAgentOptions.ChatOptions.Tools);
+        Assert.Contains(callerTool, firstAgentOptions.ChatOptions.Tools);
+        Assert.Contains(firstAgentOptions.ChatOptions.Tools, tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal));
+        Assert.Same(runOptions, Assert.Single(secondAgent.RecordedRunOptions));
     }
 
     [Fact]

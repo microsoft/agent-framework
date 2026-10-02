@@ -195,3 +195,8 @@ public interface IWorkflowContext
     /// </summary>
     bool ConcurrentRunsEnabled { get; }
 }
+
+internal interface IWorkflowAgentRunOptionsContext
+{
+    bool TryGetAgentRunOptions(out AgentRunOptions? runOptions);
+}

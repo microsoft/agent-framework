@@ -200,7 +200,7 @@ internal sealed class WorkflowSession : AgentSession
         };
     }
 
-    private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
+    private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, AgentRunOptions? runOptions, CancellationToken cancellationToken = default)
     {
         // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the session,
         // and does not need to be checked again here.
@@ -212,9 +212,10 @@ internal sealed class WorkflowSession : AgentSession
             // cause unwanted duplicate events visible to the consumer.
             StreamingRun run =
                 await this._inProcEnvironment
-                            .ResumeStreamingInternalAsync(this._workflow,
+                            .ResumeStreamingWithAgentRunOptionsInternalAsync(this._workflow,
                                                this.LastCheckpoint,
                                                republishPendingEvents: false,
+                                               runOptions,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
@@ -224,8 +225,9 @@ internal sealed class WorkflowSession : AgentSession
         }
 
         StreamingRun newRun = await this._inProcEnvironment
-                            .RunStreamingAsync(this._workflow,
+                            .RunStreamingWithAgentRunOptionsAsync(this._workflow,
                                          messages,
+                                         runOptions,
                                          this.SessionId,
                                          cancellationToken)
                             .ConfigureAwait(false);
@@ -469,13 +471,14 @@ internal sealed class WorkflowSession : AgentSession
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
+        AgentRunOptions? runOptions = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         this.LastResponseId = Guid.NewGuid().ToString("N");
         List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
         ResumeRunResult resumeResult =
-            await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+            await this.CreateOrResumeRunAsync(messages, runOptions, cancellationToken).ConfigureAwait(false);
         bool resumeWithoutNewTurn = this._resumeWithoutNewTurn;
         this._resumeWithoutNewTurn = false;
 
@@ -496,7 +499,7 @@ internal sealed class WorkflowSession : AgentSession
                 || !dispatchInfo.HasMatchedResponseForStartExecutor);
         if (shouldSendTurnToken)
         {
-            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+            await run.TrySendMessageAsync(new TurnToken(emitEvents: true, runOptions)).ConfigureAwait(false);
         }
 
         AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
