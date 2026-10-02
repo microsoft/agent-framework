@@ -128,6 +128,18 @@ def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str)
     return None, None
 
 
+def _top_level_argument_keys(context: FunctionInvocationContext) -> set[str]:
+    """Union of top level keys in context.arguments and context.kwargs."""
+    keys: set[str] = set()
+    args = cast(Any, context.arguments)
+    if isinstance(args, Mapping):
+        keys.update(cast(Mapping[str, Any], args).keys())
+    kwargs = cast(Any, context.kwargs)
+    if isinstance(kwargs, Mapping):
+        keys.update(cast(Mapping[str, Any], kwargs).keys())
+    return keys
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class _Principal:
     """Canonical tenant/user identity used internally for comparisons."""
@@ -1425,12 +1437,21 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         to index 1 must not let a tool treat index 1 as safe.
 
         For non-list arguments, uses -1 as before.
+        If validation changes top-level keys (e.g., a Pydantic field alias
+        ``fileNames`` normalizes to the callable parameter ``files``), entries
+        keyed by the pre-validation name cannot be located under the final
+        callable argument name. In that case, fail closed under the final key
+        set: mark every final top-level argument as fully rewritten so a tool
+        looking up the actual parameter does not miss hidden content.
         """
         rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
         if not rewritten:
             return
+        final_keys = _top_level_argument_keys(context)
+        pre_validation_keys = set(cast(dict[str, set[int]], rewritten).keys())
+        iterable_keys = final_keys if pre_validation_keys != final_keys else pre_validation_keys
         degraded: dict[str, set[int]] = {}
-        for arg_name in cast(dict[str, set[int]], rewritten):
+        for arg_name in iterable_keys:
             value, _ = _top_level_argument_value(context, arg_name)
             if isinstance(value, (list, tuple)):
                 degraded[arg_name] = set(range(len(cast(Sequence[Any], value))))
@@ -2389,8 +2410,11 @@ def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dic
     if indices_snapshot is not None:
         current_snapshot = _argument_authority_token(context.arguments, boundary="security policy")
         if current_snapshot != indices_snapshot:
+            rewritten_keys = set(cast(dict[str, set[int]], rewritten).keys())
+            final_keys = _top_level_argument_keys(context)
+            iterable_keys = final_keys if rewritten_keys != final_keys else rewritten_keys
             result: dict[str, set[int]] = {}
-            for arg_name in cast(dict[str, set[int]], rewritten):
+            for arg_name in iterable_keys:
                 value, _ = _top_level_argument_value(context, arg_name)
                 if isinstance(value, (list, tuple)):
                     result[arg_name] = set(range(len(cast(Sequence[Any], value))))

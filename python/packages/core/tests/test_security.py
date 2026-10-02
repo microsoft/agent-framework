@@ -35,6 +35,8 @@ from agent_framework._tools import (
 )
 from agent_framework._types import Content
 from agent_framework.security import (
+    _REWRITTEN_ARGUMENT_INDICES_KEY,
+    _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
     ConfidentialityLabel,
     ContentLabel,
     ContentVariableStore,
@@ -8175,3 +8177,49 @@ async def test_rewritten_arguments_kwargs_collision_excluded():
     await tracker.process(context, call_next)
     assert captured["received"] == ["safe.txt", "also_safe.txt"]
     assert captured["rewritten"] == {}
+
+
+def test_degrade_rewritten_arguments_remaps_when_keys_differ():
+    """Auto-prep path: when validation changes top-level keys (e.g., a
+    Pydantic field alias ``fileNames`` normalizes to the callable parameter
+    ``files``), ``_degrade_rewritten_arguments`` must fail closed under the
+    final key set rather than leaving the rewritten entry stranded under the
+    pre-validation name where a tool's lookup would miss it."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={_REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}}},
+    )
+
+    LabelTrackingFunctionMiddleware._degrade_rewritten_arguments(context)
+    assert context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] == {"files": {0, 1}}
+
+
+def test_rewritten_arguments_fail_closed_when_keys_differ():
+    """Public ``rewritten_arguments()`` snapshot branch: when validation
+    changes top-level keys (e.g., a Pydantic field alias ``fileNames``
+    normalizes to the callable parameter ``files``), fail closed under the
+    final key set so a tool looking up the actual callable parameter does
+    not miss hidden content."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={
+            _REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}},
+            _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: "pre-validation-token",
+        },
+    )
+
+    assert rewritten_arguments(context) == {"files": {0, 1}}
