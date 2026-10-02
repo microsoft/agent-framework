@@ -907,3 +907,49 @@ def test_prepare_options_single_stop_string_becomes_list(ollama_unit_test_env: d
     request = client._prepare_options(messages, {"stop": "END"})
 
     assert request["options"]["stop"] == ["END"]
+
+
+@pytest.mark.parametrize("tool_choice", ["none", {"mode": "none"}])
+def test_prepare_options_tool_choice_none_omits_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """Ollama has no tool_choice parameter, so "none" is honored by not offering the tools."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})
+
+    assert "tools" not in request
+    assert "tool_choice" not in request
+
+
+@pytest.mark.parametrize("tool_choice", [None, "auto", "required"])
+def test_prepare_options_other_tool_choices_keep_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """Tool choices other than "none" still send the tools to Ollama."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})
+
+    assert request["tools"] == [hello_world.to_json_schema_spec()]
+    assert "tool_choice" not in request
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_function_invocation_limit_final_request_omits_tools(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_tool_call: OllamaChatResponse,
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """After the function invocation limit, the final request must not offer tools to Ollama."""
+    mock_chat.side_effect = [mock_chat_completion_tool_call, mock_chat_completion_response]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient()
+    ollama_client.function_invocation_configuration["max_iterations"] = 1
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
+
+    assert mock_chat.call_count == 2
+    assert "tools" in mock_chat.call_args_list[0].kwargs
+    assert "tools" not in mock_chat.call_args_list[1].kwargs
+    assert result.text == "test"
