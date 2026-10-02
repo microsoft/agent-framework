@@ -62,10 +62,12 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient, Request, Response
+    # TODO(jpalvarezl): clean up and consolidate under httpx2
+    import httpx2
+    from httpx import Request
     from mcp import types
+    from mcp.client.context import ClientRequestContext
     from mcp.client.session import ClientSession
-    from mcp.shared.context import RequestContext
 
     from ._clients import SupportsChatGetResponse
     from ._middleware import FunctionInvocationContext
@@ -508,7 +510,7 @@ def _capture_mcp_tool_result(mcp_type: Any) -> None:
 class _MCPHeaderScopedClient:
     """Attach private tool context to MCP transport requests."""
 
-    def __init__(self, client: AsyncClient, owner: object) -> None:
+    def __init__(self, client: httpx2.AsyncClient, owner: object) -> None:
         self._client = client
         self._owner = owner
 
@@ -532,7 +534,7 @@ class _MCPHeaderScopedClient:
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         return self._client.stream(*args, **self._tagged_kwargs(kwargs))
 
-    async def send(self, request: Request, **kwargs: Any) -> Response:
+    async def send(self, request: httpx2.Request, **kwargs: Any) -> httpx2.Response:
         request.extensions[_MCP_HEADER_OWNER_EXTENSION] = self._owner
         return await self._client.send(request, **kwargs)
 
@@ -1967,38 +1969,9 @@ class MCPTool:
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
-                transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
-            except (Exception, asyncio.CancelledError) as ex:
-                # On Python >= 3.11, re-raise genuine task cancellation (task.cancelling() > 0)
-                # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
-                # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
-                # caller-driven cancellation; they are wrapped as ToolException in that case.
-                cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
-                if cancelled:
-                    raise
-                command = getattr(self, "command", None)
-                if command:
-                    error_msg = f"Failed to start MCP server '{command}': {_describe_with_cleanup(ex, cleanup_error)}"
-                else:
-                    error_msg = f"Failed to connect to MCP server: {_describe_with_cleanup(ex, cleanup_error)}"
-                # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
-                # inner_exception=None and ToolException.__init__ won't log exc_info.
-                if isinstance(ex, asyncio.CancelledError):
-                    _log_mcp_exception(
-                        logging.DEBUG,
-                        ex,
-                        error_msg,
-                        redacted_message="MCP transport startup failed",
-                        sensitive_exc_info=True,
-                    )
-                raise _mcp_tool_exception(
-                    error_msg,
-                    inner_exception=ex if isinstance(ex, Exception) else None,
-                ) from ex
             try:
                 try:
-                    from mcp import types
-                    from mcp.client.session import ClientSession as runtime_client_session
+                    from mcp import Client, types
                 except ModuleNotFoundError as ex:
                     await self._safe_close_exit_stack()
                     raise _mcp_tool_exception(
@@ -2011,19 +1984,19 @@ class MCPTool:
                     sampling_capabilities = types.SamplingCapability(
                         tools=types.SamplingToolsCapability(),
                     )
-                session = await self._exit_stack.enter_async_context(
-                    runtime_client_session(
-                        read_stream=transport[0],
-                        write_stream=transport[1],
+                mcp_client = await self._exit_stack.enter_async_context(
+                    Client(
+                        server=self.get_mcp_client(),
                         read_timeout_seconds=(
-                            timedelta(seconds=self.request_timeout) if self.request_timeout else None
+                            timedelta(seconds=self.request_timeout).seconds if self.request_timeout else None
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
-                        sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                         sampling_capabilities=sampling_capabilities,
+                        sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                     )
                 )
+                session = mcp_client.session
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2047,13 +2020,9 @@ class MCPTool:
                     attributes=self._mcp_base_span_attributes(),
                     capture_unhandled_exceptions=False,
                 ) as init_span:
-                    try:
-                        initialize_result = await session.initialize()
-                    except Exception as init_ex:
-                        set_mcp_span_error(init_span, type(init_ex).__name__, str(init_ex))
-                        raise
-                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocol_version)
-                    self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+                    init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, mcp_client.protocol_version)
+                    self._set_server_capabilities(mcp_client.server_capabilities)
+                    self._ping_available = session.initialize_result is not None
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2213,7 +2182,7 @@ class MCPTool:
     @deprecated(_MCP_SAMPLING_DEPRECATION_MESSAGE, category=None)
     async def sampling_callback(
         self,
-        context: RequestContext[ClientSession, Any],
+        context: ClientRequestContext,
         params: types.CreateMessageRequestParams,
     ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
@@ -3474,7 +3443,7 @@ class MCPStreamableHTTPTool(MCPTool):
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
-        http_client: AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
         static_headers: Mapping[str, str] | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -3671,7 +3640,7 @@ class MCPStreamableHTTPTool(MCPTool):
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
-        self._httpx_client: AsyncClient | None = http_client
+        self._httpx_client: httpx2.AsyncClient | None = http_client
         self._static_headers = dict(static_headers or {})
         self._header_provider = header_provider
         # Headers for the in-flight call_tool invocation. The streamable HTTP transport
@@ -3693,7 +3662,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
         self._header_request_owner = object()
-        self._header_hook_client: AsyncClient | None = None
+        self._header_hook_client: httpx2.AsyncClient | None = None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3725,7 +3694,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        from httpx import URL, AsyncClient, Timeout
+        from httpx2 import URL, AsyncClient, Timeout
 
         self._promote_pending_session_headers()
 
@@ -3825,7 +3794,7 @@ class MCPStreamableHTTPTool(MCPTool):
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
 
-    async def _close_owned_http_client(self, http_client: AsyncClient) -> None:
+    async def _close_owned_http_client(self, http_client: httpx2.AsyncClient) -> None:
         """Release a framework-created client without retaining it for reconnect."""
         try:
             await http_client.aclose()
