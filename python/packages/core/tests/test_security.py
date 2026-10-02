@@ -6078,7 +6078,7 @@ def _make_connected_mcp_tool_for_ifc(
             "confidentiality": confidentiality.value,
         },
     )
-    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]
+    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mcp_tool.is_connected = True
     mcp_tool.session = AsyncMock()
     mcp_tool.session.list_tools = AsyncMock(  # type: ignore[method-assign]

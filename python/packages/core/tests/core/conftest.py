@@ -353,4 +353,4 @@ def agent_session() -> AgentSession:
 
 @fixture
 def agent() -> SupportsAgentRun:
-    return MockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+    return MockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]

@@ -760,7 +760,7 @@ class TestReasoningHostedMcpReplay:
                 "Keep the final answer to one short sentence."
             ),
             tools=[learn_mcp],
-            default_options={  # pyrefly: ignore[bad-argument-type]
+            default_options={  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
                 "store": False,
                 "reasoning": {"effort": "low", "summary": "auto"},
                 "include": ["reasoning.encrypted_content"],
