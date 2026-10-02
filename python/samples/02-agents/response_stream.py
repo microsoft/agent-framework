@@ -118,18 +118,16 @@ final = await response_stream.get_final_response()
 - You get the complete response without ever seeing individual updates
 
 ** Pattern 3: Combined Usage **
-
-When you first iterate the stream and then call `get_final_response()`, the following occurs:
-- Iteration yields updates with transform hooks applied
-- Cleanup hooks run after iteration completes
-- Calling `get_final_response()` uses the already collected updates to produce the final response
-- Note that it does not re-iterate the stream since it's already been consumed
-
 ```python
 async for update in response_stream:
     print(update.text)  # See each update
 final = await response_stream.get_final_response()  # Get the aggregated result
 ```
+When you first iterate the stream and then call `get_final_response()`, the following occurs:
+- Iteration yields updates with transform hooks applied
+- Cleanup hooks run after iteration completes
+- Calling `get_final_response()` uses the already collected updates to produce the final response
+- Note that it does not re-iterate the stream since it's already been consumed
 
 === Chaining with .map(), .flat_map(), and .with_finalizer() ===
 
