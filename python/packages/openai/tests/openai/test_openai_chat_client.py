@@ -7724,6 +7724,25 @@ def test_prepare_content_for_openai_audio_content() -> None:
     assert result["input_audio"]["data"] == "data:audio/mpeg;base64,ghi789"
     assert result["input_audio"]["format"] == "mp3"
 
+    # Test MP3 aliases with media type parameters and mixed case
+    parameterized_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,jkl012",
+        media_type="Audio/MPEG; codecs=mpeg-3",
+    )
+    result = client._prepare_content_for_openai("user", parameterized_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
+
+def test_prepare_content_for_openai_non_mp3_mpeg_audio_is_unsupported() -> None:
+    """Test _prepare_content_for_openai omits MPEG audio that is not MP3."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    for media_type in ("audio/mpegurl", "audio/mpeg4-generic"):
+        content = Content.from_uri(uri=f"data:{media_type};base64,abc123", media_type=media_type)
+
+        assert client._prepare_content_for_openai("user", content) == {}
+
 
 def test_prepare_content_for_openai_unsupported_content() -> None:
     """Test _prepare_content_for_openai with unsupported content types."""

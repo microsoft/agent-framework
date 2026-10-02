@@ -56,6 +56,29 @@ AzureTokenProvider = Callable[[], str | Awaitable[str]]
 PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
 
 
+MP3_MEDIA_TYPES = frozenset({"audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"})
+
+
+def _is_mp3_media_type(  # pyright: ignore[reportUnusedFunction]
+    media_type: str | None,
+) -> bool:
+    """Check whether an audio media type names MP3 audio.
+
+    The media type is stripped of parameters and case-folded before it is compared against
+    the registered MP3 aliases, so that sibling MPEG subtypes such as ``audio/mpegurl`` or
+    ``audio/mpeg4-generic`` are not mistaken for MP3.
+
+    Args:
+        media_type: The media type of the audio content, if any.
+
+    Returns:
+        True if the media type is an alias of MP3 audio, False otherwise.
+    """
+    if not media_type:
+        return False
+    return media_type.partition(";")[0].strip().lower() in MP3_MEDIA_TYPES
+
+
 def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
     part: dict[str, Any], content: Content
 ) -> dict[str, Any]:

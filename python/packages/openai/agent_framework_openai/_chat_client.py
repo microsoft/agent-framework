@@ -117,6 +117,7 @@ from ._feature_usage import FeatureIndex
 from ._shared import (
     AzureTokenProvider,
     _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
+    _is_mp3_media_type,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -2150,7 +2151,7 @@ class RawOpenAIChatClient(
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
-                    elif content.media_type and ("mp3" in content.media_type or "mpeg" in content.media_type):
+                    elif _is_mp3_media_type(content.media_type):
                         format = "mp3"
                     else:
                         logger.warning("Unsupported audio media type: %s", content.media_type)
