@@ -61,6 +61,14 @@ Both default to `None` (no-op → byte-identical stock OpenAI behavior) and are 
 **both**: the parser surfaces the field for display, the preparer sends it back. Prefer a dedicated
 client (e.g. `agent-framework-mistral`) when an endpoint diverges substantially.
 
+## Adapting the embedding client to OpenAI-compatible endpoints
+
+`RawOpenAIEmbeddingClient.get_embeddings` forwards only the OpenAI embedding schema (`dimensions`,
+`encoding_format`, `user`) and drops other option keys. A dedicated client for an OpenAI-compatible
+service overrides `_prepare_extra_request_options(options)` to return extra `embeddings.create`
+keyword arguments, typically `extra_body`, and to raise `ValueError` for invalid values. It runs
+before the request is marked or sent. `agent-framework-nvidia` uses it for `input_type` and `truncate`.
+
 Native Responses and Chat Completions refusals remain ordinary text content with the experimental
 `additional_properties["model_output_kind"] == "refusal"` marker. Assistant history reconstructs
 the provider's native refusal field without splitting mixed text/refusal turns; non-assistant
