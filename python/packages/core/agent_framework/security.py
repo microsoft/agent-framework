@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field
 
@@ -1278,6 +1279,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     - (not set): Inherits integrity from resolved, owned variable references, or uses
       default_integrity (UNTRUSTED by default). Argument labels may only restrict this baseline.
 
+    Tools may also declare additional_properties["standing_guidance"]: list[str] —
+    sentences the middleware appends to the result as trusted Content, explaining
+    what a hidden or labeled result means. Declared at the tool level, so it cannot
+    vary with arguments or runtime data; the tool body never sees or returns it.
+
+
     This middleware:
     1. Extracts labels from tool input arguments (tier 3 input)
     2. Checks tool's source_integrity declaration (tier 2)
@@ -1287,6 +1294,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     6. Accepts complete labels only from identity-stamped framework producers
     7. Maintains confidentiality labels based on tool declarations
     8. Automatically hides untrusted content using variable indirection
+    9. Appends a tool's declared standing_guidance as framework-stamped, trusted
+       Content — fixed at declaration time, never produced by the tool body.
+
 
     Attributes:
         default_integrity: Default integrity for tools without source_integrity declaration.
@@ -1332,6 +1342,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.default_confidentiality = default_confidentiality
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
+        self._standing_guidance_cache: WeakKeyDictionary[Any, tuple[str, ...]] = WeakKeyDictionary()
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -1770,6 +1781,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             input_labels = self._get_input_labels(context)
             declared_source_integrity = self._get_source_integrity(context)
             confidentiality = self._get_function_confidentiality(context)
+            standing_guidance_snapshot = self._get_standing_guidance(context.function)
 
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
@@ -1837,7 +1849,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             await call_next()
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
-            self._label_result(context, function_name, fallback_label)
+            self._label_result(context, function_name, fallback_label, standing_guidance_snapshot)
         finally:
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
@@ -1847,6 +1859,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         context: FunctionInvocationContext,
         function_name: str,
         fallback_label: ContentLabel,
+        standing_guidance: tuple[str, ...] = (),
     ) -> None:
         """Label, optionally hide, and update context label for a tool result.
 
@@ -1863,12 +1876,19 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context: The function invocation context (result is read/written).
             function_name: Name of the function that produced the result.
             fallback_label: Tiered fallback label (tier 2 or tier 3).
+            standing_guidance: Snapshot of the tool's declared standing_guidance,
+                captured before call_next() so a tool body cannot inject or alter
+                it at runtime. None if the tool declared none.
         """
-        if context.result is None:
-            context.metadata["result_label"] = fallback_label
-            return
+        standing_guidance_items = self._standing_guidance_items(standing_guidance, fallback_label)
 
-        original_items = self._ensure_content_list(context.result)
+        if context.result is None:
+            if not standing_guidance_items:
+                context.metadata["result_label"] = fallback_label
+                return
+            original_items = standing_guidance_items
+        else:
+            original_items = [*self._ensure_content_list(context.result), *standing_guidance_items]
 
         # Process items — apply per-item labels + hide untrusted items
         processed, result_label, visible_result_label = self._process_result_with_embedded_labels(
@@ -2021,6 +2041,106 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         combined = combine_labels(*item_labels) if item_labels else fallback_label
         visible_combined = combine_labels(*visible_item_labels) if visible_item_labels else None
         return processed, combined, visible_combined
+
+    def _get_standing_guidance(self, function: Any) -> tuple[str, ...]:
+        """Return the tool's standing guidance, validated and frozen on first access.
+
+        The value is read from ``additional_properties["standing_guidance"]`` and
+        frozen into an immutable tuple of non-empty strings on the *first*
+        invocation. Because the snapshot is taken before ``call_next()`` (before
+        the tool body executes) and cached thereafter, a tool closure that mutates
+        ``additional_properties["standing_guidance"]`` at runtime cannot influence
+        this or any future invocation — the cached declaration-time value is reused.
+
+        The cache is a WeakKeyDictionary keyed by the live tool object, not by
+        id(function). CPython may reuse an id after the original object is
+        garbage collected; a plain dict would then hand a new, unrelated tool
+        the prior tool's frozen guidance, which _standing_guidance_items()
+        would stamp TRUSTED. WeakKeyDictionary removes entries automatically
+        when the tool object is collected, so stale entries cannot survive.
+
+        Falls back to recomputing on every call if the tool object does not
+        support weak references. The cache is shared across scope clones via the
+        shallow copy() in _clone_for_scope(), so scoped middleware instances
+        reuse the same frozen snapshot.
+        """
+        cached = self._standing_guidance_cache.get(function)
+        if cached is not None:
+            return cached
+        raw = _get_additional_properties(function).get("standing_guidance")
+        frozen = self._validate_and_freeze_standing_guidance(raw)
+        try:
+            self._standing_guidance_cache[function] = frozen
+        except TypeError:
+            return frozen
+        return frozen
+
+    @staticmethod
+    def _validate_and_freeze_standing_guidance(raw: Any) -> tuple[str, ...]:
+        """Validate standing_guidance and freeze it as an immutable tuple.
+
+        Returns a tuple of non-empty strings. Malformed declarations degrade to
+        "no guidance" with a warning rather than raising, so a bad value never
+        prevents the tool from running. Validation happens here — before any
+        deepcopy — so non-deepcopyable values are dropped, not raised.
+        """
+        if not raw:
+            return ()
+        if not isinstance(raw, list):
+            logger.warning("Ignoring non-list standing_guidance: %r", raw)
+            return ()
+        validated: list[str] = []
+        for sentence in cast(list[Any], raw):
+            if not isinstance(sentence, str) or not sentence:
+                logger.warning("Ignoring non-string/empty standing_guidance entry: %r", sentence)
+                continue
+            validated.append(sentence)
+        return tuple(validated)
+
+    @staticmethod
+    def _standing_guidance_items(
+        standing_guidance: tuple[str, ...],
+        resolved_label: ContentLabel,
+    ) -> list[Content]:
+        """Build framework-owned Content items from a tool's frozen standing guidance.
+
+        The guidance text was validated and frozen into an immutable tuple on
+        first invocation (see ``_get_standing_guidance``) and never passes through
+        the tool body. Each item is identity-stamped authoritative TRUSTED, the same
+        mechanism ``quarantined_llm``'s primary response and ``inspect_variable``
+        errors use, because the framework — not a third party — is the producer.
+
+        Args:
+            standing_guidance: Pre-validated, frozen tuple of non-empty strings
+                captured before the tool body first executes.
+            resolved_label: The invocation's resolved fallback label. Its
+                confidentiality stamps the guidance so it doesn't leak at a
+                lower level than the tool's own result, and its metadata is
+                carried through so a USER_IDENTITY confidentiality keeps its
+                principal set — an authoritative label missing principals
+                fails validation and falls back to restrict-only, which would
+                silently hide the guidance instead of surfacing it.
+
+        Returns:
+            A list of Content items, one per guidance sentence. Empty if
+            the tool declared no standing guidance.
+        """
+        items: list[Content] = []
+        for sentence in standing_guidance:
+            items.append(
+                Content.from_text(
+                    sentence,
+                    additional_properties={
+                        "security_label": ContentLabel(
+                            integrity=IntegrityLabel.TRUSTED,
+                            confidentiality=resolved_label.confidentiality,
+                            metadata=resolved_label.metadata,
+                        ).to_dict(),
+                        _AUTHORITATIVE_SECURITY_LABEL: _INTERNAL_RESULT_MARKER,
+                    },
+                )
+            )
+        return items
 
     def _extract_content_label(
         self,

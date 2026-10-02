@@ -474,6 +474,267 @@ class TestLabelTrackingMiddleware:
         assert label.integrity == IntegrityLabel.UNTRUSTED
 
     @pytest.mark.asyncio
+    async def test_standing_guidance_appended_as_trusted_content(self, middleware):
+        """A tool's declared standing_guidance is appended as its own trusted Content item."""
+
+        class ValidateArgs(BaseModel):
+            files: list[str]
+
+        async def validate(files: list[str]) -> str:
+            return "compiler output the model must not act on"
+
+        guidance_text = "A result you cannot read is not a clean validation."
+        validate_function = FunctionTool(
+            fn=validate,
+            name="validate",
+            description="Validate files",
+            args_schema=ValidateArgs,
+            additional_properties={
+                "source_integrity": "untrusted",
+                "standing_guidance": [guidance_text],
+            },
+        )
+
+        args = validate_function.args_schema(files=["main.bicep"])  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        context = FunctionInvocationContext(function=validate_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("compiler output the model must not act on")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        assert guidance_item.text == guidance_text
+
+        guidance_label = guidance_item.additional_properties["security_label"]
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+
+        original_item = context.result[0]
+        assert (original_item.additional_properties or {}).get("_variable_reference") is not None
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_absent_by_default(self, middleware, mock_function):
+        """A tool with no standing_guidance declared gets no extra Content item."""
+        args = mock_function.args_schema(arg="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("mock result")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_ignores_non_string_entries(self, middleware):
+        """Non-string or empty entries in standing_guidance are dropped, not raised."""
+
+        class NoiseArgs(BaseModel):
+            pass
+
+        async def noisy() -> str:
+            return "ok"
+
+        noisy_function = FunctionTool(
+            fn=noisy,
+            name="noisy",
+            description="Tool with malformed guidance",
+            args_schema=NoiseArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Valid sentence.", "", 42, None],
+            },
+        )
+        context = FunctionInvocationContext(function=noisy_function, arguments={})
+
+        async def next_fn():
+            context.result = [Content.from_text("ok")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        assert context.result[1].text == "Valid sentence."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_when_result_is_none(self, middleware):
+        """standing_guidance still surfaces even if the tool body returns nothing."""
+
+        class EmptyArgs(BaseModel):
+            pass
+
+        async def empty() -> None:
+            return None
+
+        empty_function = FunctionTool(
+            fn=empty,
+            name="empty_fn",
+            description="Returns nothing",
+            args_schema=EmptyArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Nothing was returned, which is expected."],
+            },
+        )
+        context = FunctionInvocationContext(function=empty_function, arguments={})
+
+        async def next_fn():
+            context.result = None
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "Nothing was returned, which is expected."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_preserves_user_identity_principal(self, middleware) -> None:
+        """standing_guidance on a USER_IDENTITY-confidentiality tool keeps its principal set."""
+
+        class IdentityArgs(BaseModel):
+            pass
+
+        async def identity_source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=identity_source,
+            name="identity_source_with_guidance",
+            description="Locally declared identity source with guidance",
+            args_schema=IdentityArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+                "standing_guidance": ["This result is scoped to a single user."],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        guidance_label = guidance_item.additional_properties["security_label"]
+
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+        assert guidance_label["confidentiality"] == "user_identity"
+        assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_immutable_across_invocations(self, middleware):
+        """A tool body that mutates standing_guidance cannot affect future invocations.
+
+        The cache freezes declaration-time text on first access (before call_next),
+        so even if the tool body overwrites additional_properties['standing_guidance']
+        during execution, the next invocation reuses the frozen snapshot — not the
+        mutated value.
+        """
+
+        class MutableArgs(BaseModel):
+            pass
+
+        holder: dict[str, Any] = {}
+
+        async def mutable_tool() -> str:
+            holder["tool"].additional_properties["standing_guidance"] = [
+                "INJECTED BY TOOL BODY — should never be stamped TRUSTED"
+            ]
+            return "result"
+
+        fn = FunctionTool(
+            fn=mutable_tool,
+            name="mutable_tool",
+            description="Tool that mutates its own guidance",
+            args_schema=MutableArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Original guidance."],
+            },
+        )
+        holder["tool"] = fn
+
+        ctx1 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next1():
+            ctx1.result = [Content.from_text("result")]
+
+        await middleware.process(ctx1, next1)
+        assert ctx1.result[1].text == "Original guidance."
+
+        ctx2 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next2():
+            ctx2.result = [Content.from_text("result")]
+
+        await middleware.process(ctx2, next2)
+        assert ctx2.result[1].text == "Original guidance."
+        assert "INJECTED" not in ctx2.result[1].text
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_cache_does_not_leak_across_tools(self, middleware):
+        """A short lived tool cached guidance must not be inherited by a later tool
+        whose id() happens to be reused. WeakKeyDictionary keys by object identity,
+        so collection removed the entry before any id reuse."""
+        import gc
+
+        class A(BaseModel):
+            pass
+
+        async def a_tool() -> str:
+            return "a"
+
+        tool_a = FunctionTool(
+            fn=a_tool,
+            name="tool_a",
+            description="A",
+            args_schema=A,
+            additional_properties={"source_integrity": "trusted", "standing_guidance": ["Guidance from A."]},
+        )
+
+        ctx = FunctionInvocationContext(function=tool_a, arguments={})
+
+        async def next_a():
+            ctx.result = [Content.from_text("a")]
+
+        await middleware.process(ctx, next_a)
+        assert ctx.result[1].text == "Guidance from A."
+
+        del tool_a
+        gc.collect()
+
+        class B(BaseModel):
+            pass
+
+        async def b_tool() -> str:
+            return "b"
+
+        tool_b = FunctionTool(
+            fn=b_tool,
+            name="tool_b",
+            description="B",
+            args_schema=B,
+            additional_properties={"source_integrity": "trusted"},
+        )
+
+        ctx_b = FunctionInvocationContext(function=tool_b, arguments={})
+
+        async def next_b():
+            ctx_b.result = [Content.from_text("b")]
+
+        await middleware.process(ctx_b, next_b)
+        assert isinstance(ctx_b.result, list)
+        assert len(ctx_b.result) == 1
+        assert ctx_b.result[0].text == "b"
+
+    @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
         """Test that source_integrity overrides input labels (tier 2 > tier 3).
 
