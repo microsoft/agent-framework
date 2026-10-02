@@ -13,6 +13,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -456,10 +457,12 @@ internal sealed class InvokeFunctionToolExecutor(
     }
 
     private string GetFunctionName() =>
-        this.Evaluator.GetValue(
-            Throw.IfNull(
-                this.Model.FunctionName,
-                $"{nameof(this.Model)}.{nameof(this.Model.FunctionName)}")).Value;
+        this.GetInvocationValue(
+            this.Evaluator.GetValue(
+                Throw.IfNull(
+                    this.Model.FunctionName,
+                    $"{nameof(this.Model)}.{nameof(this.Model.FunctionName)}")),
+            "function name");
 
     private string? GetConversationId()
     {
@@ -551,10 +554,22 @@ internal sealed class InvokeFunctionToolExecutor(
         Dictionary<string, object?> result = [];
         foreach (KeyValuePair<string, ValueExpression> argument in this.Model.Arguments)
         {
-            result[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+            result[argument.Key] = this.GetInvocationValue(
+                this.Evaluator.GetValue(argument.Value),
+                $"argument '{argument.Key}'").ToObject();
         }
 
         return result;
+    }
+
+    private T GetInvocationValue<T>(EvaluationResult<T> result, string location)
+    {
+        if (result.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw this.Exception($"Cannot use a protected value in function invocation {location}.");
+        }
+
+        return result.Value;
     }
 
     /// <summary>

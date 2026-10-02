@@ -37,6 +37,7 @@ from ._message_adapters import agui_messages_to_snapshot_format
 from ._run_common import (
     _cancelled_resume_interrupt_ids,
     _extract_resume_payload,
+    _is_snapshot_hydration_request,
     _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
 )
@@ -619,7 +620,11 @@ class AgentFrameworkWorkflow:
 
         # A checkpoint resume legitimately carries no new messages; it must reach the
         # core workflow's restore path rather than replaying a stored thread snapshot.
-        if checkpoint_id is None and snapshot_session.enabled and not raw_messages and resume_payload is None:
+        if _is_snapshot_hydration_request(
+            input_data,
+            snapshot_enabled=snapshot_session.enabled,
+            supports_checkpoint_resume=True,
+        ):
             async for event in snapshot_session.hydrate_events(run_id=run_id):
                 yield event
             return
