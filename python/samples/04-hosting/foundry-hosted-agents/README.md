@@ -15,7 +15,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 2 | [Tools](responses/tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
 | 3 | [MCP](responses/mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
-| 5 | [Workflows](responses/workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
+| 5 | [Native Workflows](responses/workflows/) | Typed native Responses workflows, including exact checkpoint continuation and approval resume without `.as_agent()`. |
 | 6 | [Files](responses/files/) | Bounded, symlink-safe reads of explicitly uploaded files under the current sandbox's home, with local staging and hosted upload guidance. |
 | 7 | [Observability](responses/observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
 | 8 | [Azure AI Search RAG](responses/azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
@@ -23,7 +23,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 10 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
 | 13 | [Custom Storage](responses/custom_storage/) | Trusted user-and-sandbox session snapshots with create-only/ETag writes and managed-identity Cosmos authentication; local snapshots need no account. |
-| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A long-running, crash-resilient workflow demonstrating how `resilient_background=True` lets a background response survive a hard crash of the server process and resume from its last checkpoint instead of restarting from scratch. |
+| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A model-free native background workflow that pairs each outer response snapshot with its exact scoped checkpoint for crash recovery. |
 | 15 | [Long-Running Agent (steering gated)](responses/steerable_long_running_agent/) | A working long-running Responses agent with ordinary background polling; steering currently fails at host construction until a patched AgentServer SDK is published and verified. |
 | 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
 

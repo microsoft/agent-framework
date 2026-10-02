@@ -4993,6 +4993,8 @@ def _extract_archive_to_memory(
     ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
     raising. Extraction is bounded by a maximum file count and total uncompressed size
     to mitigate decompression-bomb attacks. No filesystem is touched.
+    Later members whose normalized paths match case-insensitively are skipped
+    with a warning; the first member's spelling and content are retained.
 
     Args:
         data: The raw archive bytes.
@@ -5023,6 +5025,7 @@ def _extract_zip_to_memory(
     """Read regular files from a ZIP archive into memory. See :func:`_extract_archive_to_memory`."""
     remaining_bytes = max_uncompressed_size_bytes
     files: dict[str, bytes] = {}
+    seen_names: set[str] = set()
     file_count = 0
 
     for info in archive.infolist():
@@ -5037,9 +5040,21 @@ def _extract_zip_to_memory(
         if name is None:
             continue
 
+        # Match FileSkill's case-insensitive lookup; retain the first member's spelling.
+        lookup_name = name.lower()
+        if lookup_name in seen_names:
+            logger.warning(
+                "Skipping duplicate archive member %r: normalized path %r matches an earlier member; "
+                "keeping the first file",
+                info.filename,
+                name,
+            )
+            continue
+
         with archive.open(info) as source:
             content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
         files[name] = content
+        seen_names.add(lookup_name)
 
     return files
 
@@ -5059,6 +5074,8 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Member paths are compared case-insensitively; collisions are skipped with a
+    warning, keeping the first file's spelling and content.
     Supplied SHA-256 digests are verified before extraction; archives without
     a digest remain supported.
     """
@@ -5332,6 +5349,10 @@ class MCPSkillsSource(SkillsSource):
       in-memory resources; nothing is written to disk. Scripts bundled inside an
       archive are surfaced as read-only resources only; MCP-delivered scripts
       are never discovered as runnable.
+
+    Archive member paths are compared case-insensitively, matching resource lookup.
+    The first file's spelling and content are retained; later colliding members
+    are skipped with a warning.
 
     Entries whose type has no registered handler (e.g. ``mcp-resource-template``)
     are skipped.

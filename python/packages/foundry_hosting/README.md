@@ -29,6 +29,84 @@ The Responses host continues regular agents through its existing session store a
 existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
 requests must remain in the supported stores.
 
+## Native Responses workflows
+
+Use `workflow=` to host a built `Workflow` directly, without `.as_agent()`.
+`parse_response` is required and returns exactly one typed start input or a
+complete batch of validated pending replies:
+
+```python
+from pydantic import BaseModel
+
+from agent_framework_foundry_hosting import (
+    CheckpointStoreProvider,
+    HostedResponseRequest,
+    ResponsesHostServer,
+    WorkflowTurn,
+)
+
+
+class Ticket(BaseModel):
+    text: str
+
+
+def build_workflow(request: HostedResponseRequest):
+    return build_fresh_graph()  # stable workflow/executor IDs; fresh mutable resources
+
+
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]:
+    items = await request.get_input_items()
+    if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
+        return WorkflowTurn(responses=await request.get_workflow_responses())
+    return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
+
+
+ResponsesHostServer(
+    workflow=build_workflow,
+    parse_response=parse_response,
+    checkpoint_store_provider=CheckpointStoreProvider(
+        allowed_checkpoint_types=[f"{Ticket.__module__}:{Ticket.__qualname__}"],
+    ),
+)
+```
+
+A direct built workflow is single-use. Use a request-aware sync or async
+factory for continuation, approval/user-input pauses, or background recovery.
+The factory must return a freshly built graph and freshly owned executors,
+agents, clients, context providers, and mutable tools; hosting rejects known
+sharing rather than cloning or unwrapping it. Workflow names and executor IDs
+must remain stable so the exact scoped checkpoint can be restored.
+
+Native workflow state is scoped to the trusted platform user plus Foundry
+sandbox. Each outer stored `response.id` is bound to its exact MAF checkpoint,
+graph identity, lineage, pending reply authority, output, and usage. The host
+never chooses an unrelated latest checkpoint. Named conversations and
+`previous_response_id` continuations advance one conditional head; stale,
+forked, replayed, partial, duplicate, forged, cross-user, and cross-sandbox
+replies fail before execution.
+
+`store=False` writes no native host state or inner service history and rejects
+a pause that would require later resumption. Native `Agent` executors receive
+request options through the existing agent middleware boundary, with supported
+inner clients forced to `store=False`. A bare `RawAgent` is accepted only from a
+fresh factory when its model overrides are already materialized in unchanged
+defaults and a storing client explicitly defaults to `store=False`. Private
+provider continuation is rejected before output is paired or committed.
+
+For legacy message-input workflows, `response_input_messages(request)` converts
+only the current Responses turn to `list[Message]`. It does not load outer
+history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
+remains for this beta with a once-per-host deprecation warning because wrapper
+context providers, history, event projection, and request-info translation are
+real semantics and are not silently unwrapped.
+
+With `resilient_background=True`, the application must also enable the
+AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
+recover emitted output and usage without selecting newer unpaired workflow
+state. This is not an exactly-once guarantee for external tools: make
+side-effecting operations idempotent. Legacy unscoped workflow state is not
+read; migration starts a fresh Responses chain.
+
 For Responses integrations, use a factory when an MCP connection, provider, tool
 cache or client carries request identity. A Toolbox's streamable-HTTP writer
 inherits the context of the request that **connects** it; sharing that connection
