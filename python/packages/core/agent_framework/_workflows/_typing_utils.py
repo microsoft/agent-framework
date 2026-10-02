@@ -71,13 +71,13 @@ def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
-    """Check if the given agent is a Agent.
+    """Check if the given agent is an Agent.
 
     Args:
         agent (Any): The agent to check.
 
     Returns:
-        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+        TypeGuard[Agent]: True if the agent is an Agent, False otherwise.
     """
     return isinstance(agent, Agent)
 

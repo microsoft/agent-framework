@@ -131,7 +131,7 @@ When you first iterate the stream and then call `get_final_response()`, the foll
 
 === Chaining with .map(), .flat_map(), and .with_finalizer() ===
 
-When building a Agent on top of a ChatClient, we face a challenge:
+When building an Agent on top of a ChatClient, we face a challenge:
 - The ChatClient returns a ResponseStream[ChatResponseUpdate, ChatResponse]
 - The Agent needs to return a ResponseStream[AgentResponseUpdate, AgentResponse]
 - We can't iterate the ChatClient's stream twice!
