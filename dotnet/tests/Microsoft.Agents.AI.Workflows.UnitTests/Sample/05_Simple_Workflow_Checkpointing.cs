@@ -143,6 +143,13 @@ internal static class Step5EntryPoint
 
             if (cancellationSource.IsCancellationRequested)
             {
+                // Cancelling the event consumer does not cancel the workflow. Drain the stream
+                // until the current run halts before the caller restores checkpoint state.
+                await foreach (WorkflowEvent _ in handle.WatchStreamAsync(blockOnPendingRequest: false).ConfigureAwait(false))
+                {
+                    // Intentionally ignore events while waiting for the halt boundary.
+                }
+
                 return null;
             }
 
