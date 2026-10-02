@@ -2603,6 +2603,9 @@ class MCPTool:
                 input_schema = dict(tool.inputSchema or {})
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
+                elif isinstance(input_schema.get("properties"), dict):
+                    # Sort property keys deterministically to preserve prompt cache stability
+                    input_schema["properties"] = dict(sorted(input_schema["properties"].items()))
 
                 # Register declared param names before the existing-tool skip below so that
                 # reloads (e.g. notifications/tools/list_changed) preserve the allowlist for
