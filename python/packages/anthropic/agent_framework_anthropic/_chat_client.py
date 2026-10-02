@@ -1366,6 +1366,16 @@ class RawAnthropicClient(
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
                     )
+                case "citations_delta":
+                    # Streaming delivers citations as separate deltas on the text block;
+                    # surface them as an empty text carrying the annotation so they merge into it.
+                    contents.append(
+                        Content.from_text(
+                            text="",
+                            raw_representation=content_block,
+                            annotations=self._parse_citations_from_anthropic(content_block),
+                        )
+                    )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     request_state.active_call_id = content_block.id
                     request_state.active_call_content_type = content_block.type
@@ -1664,7 +1674,9 @@ class RawAnthropicClient(
     def _parse_citations_from_anthropic(
         self, content_block: BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock
     ) -> list[Annotation] | None:
-        content_blocks = getattr(content_block, "citations", None)
+        content_blocks: Any = getattr(content_block, "citations", None)
+        if content_block.type == "citations_delta":
+            content_blocks = [content_block.citation]
         if not content_blocks:
             return None
         annotations: list[Annotation] = []

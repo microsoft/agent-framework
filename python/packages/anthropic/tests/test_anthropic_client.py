@@ -36,9 +36,14 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
+    BetaCitationsDelta,
+    BetaCitationsWebSearchResultLocation,
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRawContentBlockDeltaEvent,
+    BetaRawContentBlockStartEvent,
     BetaTextBlock,
+    BetaTextDelta,
     BetaToolUseBlock,
     BetaUsage,
 )
@@ -4192,6 +4197,55 @@ def test_parse_citations_search_result_location(
 
     assert result is not None
     assert len(result) > 0
+
+
+async def test_streaming_citations_delta_surfaces_annotations(mock_anthropic_client: MagicMock) -> None:
+    """Citations streamed as citations_delta events must end up as annotations, like non-streaming."""
+    citation = BetaCitationsWebSearchResultLocation(
+        type="web_search_result_location",
+        url="https://example.com/paris",
+        title="Paris weather",
+        cited_text="Paris is sunny today.",
+        encrypted_index="enc-1",
+    )
+
+    async def events() -> Any:
+        yield _message_start_event("msg_cited")
+        yield BetaRawContentBlockStartEvent(
+            type="content_block_start", index=0, content_block=BetaTextBlock(type="text", text="", citations=None)
+        )
+        yield BetaRawContentBlockDeltaEvent(
+            type="content_block_delta", index=0, delta=BetaCitationsDelta(type="citations_delta", citation=citation)
+        )
+        yield BetaRawContentBlockDeltaEvent(
+            type="content_block_delta", index=0, delta=BetaTextDelta(type="text_delta", text="It is sunny in Paris.")
+        )
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    async def create(**kwargs: Any) -> Any:
+        return events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response([Message(role="user", contents=["Weather in Paris?"])], stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    annotations = [
+        annotation
+        for message in response.messages
+        for content in message.contents
+        if content.type == "text"
+        for annotation in content.annotations or []
+    ]
+    assert len(annotations) == 1
+    assert annotations[0]["url"] == "https://example.com/paris"
+    assert annotations[0]["title"] == "Paris weather"
+    assert annotations[0]["snippet"] == "Paris is sunny today."
 
 
 @pytest.mark.flaky
