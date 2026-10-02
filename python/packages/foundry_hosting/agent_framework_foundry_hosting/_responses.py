@@ -42,7 +42,7 @@ from agent_framework import (
     add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._workflows._agent import _StreamingRoleGate
+from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
