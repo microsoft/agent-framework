@@ -973,10 +973,12 @@ def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_pr
     assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
 
 
-@pytest.mark.parametrize("workflow_mode", ["live", "factory", "cold-checkpoint"])
+@pytest.mark.parametrize(
+    "workflow_mode", ["live", "factory", "cold-checkpoint", "cold-restore", "cold-factory-restore"]
+)
 @pytest.mark.parametrize("response_kind", ["content-approval", "bool-approval", "text"])
 async def test_workflow_snapshot_uses_validated_resume_responses(workflow_mode: str, response_kind: str) -> None:
-    """Approval controls stay out of snapshots for live, factory and cold resumes."""
+    """Snapshots preserve conversational replies and pending cards across resume and cold restore."""
     import json
 
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
@@ -1079,23 +1081,34 @@ async def test_workflow_snapshot_uses_validated_resume_responses(workflow_mode: 
         "messages": [],
         "resume": {"interrupts": [{"id": "reply-1", "value": value}]},
     }
-    if workflow_mode == "cold-checkpoint":
+    restore_only = workflow_mode in {"cold-restore", "cold-factory-restore"}
+    if workflow_mode == "cold-checkpoint" or restore_only:
         checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
         latest = max(checkpoints, key=lambda checkpoint: checkpoint.timestamp)
         payload["forwarded_props"] = {"checkpoint_id": latest.checkpoint_id}
-        agent = AgentFrameworkWorkflow(workflow=build_workflow(), snapshot_store=store, checkpoint_storage=storage)
+        agent = AgentFrameworkWorkflow(
+            workflow=build_workflow() if workflow_mode != "cold-factory-restore" else None,
+            workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "cold-factory-restore" else None,
+            snapshot_store=store,
+            checkpoint_storage=storage,
+        )
+    if restore_only:
+        del payload["resume"]
     resumed = await _run(agent, payload)
-    assert "RUN_ERROR" not in [event.type for event in resumed]
-    assert len(handled) == 1
+    assert not [event.model_dump() for event in resumed if event.type == "RUN_ERROR"]
+    if restore_only:
+        restored_finished = next(event for event in resumed if event.type == "RUN_FINISHED")
+        assert [pending["id"] for pending in _interrupts_from_finished(restored_finished)] == ["reply-1"]
+    assert len(handled) == (0 if restore_only else 1)
     snapshot = await store.get(scope="tenant-a", thread_id="approval-thread")
     assert snapshot is not None
     user_contents = [message["content"] for message in snapshot.messages if message.get("role") == "user"]
-    assert user_contents == (["start", "approved"] if response_kind == "text" else ["start"])
-    # Hydration must replay the same safe history without executing the response again.
+    assert user_contents == (["start", "approved"] if response_kind == "text" and not restore_only else ["start"])
+    # Hydration must replay the same safe history without executing a pending response.
     hydrated = await _run(
         agent, {"thread_id": "approval-thread", _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a", "messages": []}
     )
     replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
     replay_users = [message.content for message in replay.messages if message.role == "user"]
     assert replay_users == user_contents
-    assert len(handled) == 1
+    assert len(handled) == (0 if restore_only else 1)

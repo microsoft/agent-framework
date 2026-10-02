@@ -735,7 +735,9 @@ class AgentFrameworkWorkflow:
                 )
                 return
         effective_pending_events = live_pending_events
-        if checkpoint_id is not None:
+        # Resolve persisted requests for response validation, but let a pure cold
+        # restore reach the core so it can re-emit its pending interrupt cards.
+        if checkpoint_id is not None and resume_payload is not None:
             effective_pending_events = dict(checkpoint.pending_request_info_events or {})
         if self.workflow is not None and checkpoint_id is None:
             for interrupt_id in resume_interrupt_ids:
