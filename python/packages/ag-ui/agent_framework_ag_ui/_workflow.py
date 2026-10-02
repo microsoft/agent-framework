@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncGenerator, Callable
 from typing import Any, cast
 
@@ -66,6 +68,117 @@ WorkflowRequestOwner = tuple[str | None, str | None]
 
 _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
+
+
+def _hashable_message_content(content: Any) -> Any:
+    """Return a hashable, order-stable form of snapshot message content."""
+    if isinstance(content, (str, int, float, bool)) or content is None:
+        return content
+    try:
+        return json.dumps(content, sort_keys=True, default=str)
+    except TypeError:
+        return repr(content)
+
+
+def _snapshot_messages_from_resume_value(
+    value: Any,
+) -> list[dict[str, Any]]:
+    """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
+
+    Values have already been coerced and validated by the execution path. Only
+    ``user`` turns are projected so resume cannot
+    forge assistant/system/tool history into the backend-owned snapshot.
+    """
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        return [{"role": "user", "content": text}]
+    if isinstance(value, dict):
+        # Function-approval style payloads are not chat turns.
+        if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
+            return []
+        if value.get("role") == "user":
+            return agui_messages_to_snapshot_format([_resume_message_to_agui_dict(value)])
+        return []
+    if isinstance(value, list):
+        message_like = [
+            _resume_message_to_agui_dict(item)
+            for item in value
+            if isinstance(item, dict) and item.get("role") == "user"
+        ]
+        if message_like:
+            return agui_messages_to_snapshot_format(message_like)
+    return []
+
+
+_RESUME_USER_ALLOWED_KEYS = frozenset({"id", "role", "content", "contents", "name"})
+
+
+def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize resume user turns for snapshot encoding.
+
+    Only chat-safe user fields are retained. Control fields such as ``tool_calls`` /
+    ``toolCalls``, ``actionExecutionId``, or ``function_approvals`` must not enter the
+    backend-owned thread snapshot — later hydrate/replay can otherwise reinterpret a
+    user turn as assistant/tool-control history.
+    """
+    normalized = {key: value for key, value in message.items() if key in _RESUME_USER_ALLOWED_KEYS}
+    normalized["role"] = "user"
+    if normalized.get("content") not in (None, ""):
+        normalized.pop("contents", None)
+        return normalized
+    contents = normalized.get("contents")
+    if isinstance(contents, list):
+        # Let the snapshot adapter normalize text and media without losing their order.
+        normalized["content"] = contents
+    normalized.pop("contents", None)
+    return normalized
+
+
+def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable identity for deduping resume-synthesized turns against request messages."""
+    return (message.get("role"), message.get("id"), _hashable_message_content(message.get("content")))
+
+
+def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Role+content identity used when message IDs differ across messages vs resume."""
+    return (message.get("role"), _hashable_message_content(message.get("content")))
+
+
+def _append_unique_snapshot_messages(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    content_dedupe_against: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Append resume-derived turns that are not already present in the seed.
+
+    Prefer id equality against ``existing``. Role/content fallback is limited to
+    ``content_dedupe_against`` (current-turn client overlap / id remaps). Callers
+    must not pass replayed prior transcript rows here — those keep their ids and
+    would otherwise let an earlier user ``"yes"`` consume a later resume interrupt
+    with the same text. When the list is empty or omitted, identical replies across
+    separate HITL turns on ``messages: []`` resumes are kept.
+    """
+    seen_ids = {message.get("id") for message in existing if message.get("id")}
+    content_source = content_dedupe_against if content_dedupe_against is not None else []
+    remaining_content = Counter(_message_content_identity(message) for message in content_source)
+    merged = list(existing)
+    for message in incoming:
+        message_id = message.get("id")
+        if message_id and message_id in seen_ids:
+            continue
+        content_key = _message_content_identity(message)
+        if remaining_content[content_key] > 0:
+            remaining_content[content_key] -= 1
+            continue
+        if message_id:
+            seen_ids.add(message_id)
+        merged.append(message)
+    return merged
 
 
 def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
@@ -146,6 +259,19 @@ class _WorkflowSnapshotBuilder:
         self._provisional_reasoning_messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] | None = None
         self.interrupt: list[dict[str, Any]] | None = None
+
+    def append_resume_messages(
+        self, messages: list[dict[str, Any]], *, content_dedupe_against: list[dict[str, Any]]
+    ) -> None:
+        """Seed validated user replies before any workflow output is observed."""
+        self._synthesized_messages = _append_unique_snapshot_messages(
+            self._synthesized_messages,
+            agui_messages_to_snapshot_format(messages),
+            content_dedupe_against=content_dedupe_against,
+        )
+        self._synthesized_message_ids = {
+            message_id for message in self._synthesized_messages if (message_id := message.get("id"))
+        }
 
     def observe(self, event: BaseEvent) -> None:
         """Fold one replayable AG-UI event into the latest snapshot state."""
@@ -544,6 +670,9 @@ class AgentFrameworkWorkflow:
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
         raw_messages = list(cast(list[dict[str, Any]], input_data.get("messages", []) or []))
+        # Preserve the client-supplied transcript for content-only dedupe of HITL
+        # resume turns. Stored history is not a confirmed client-replay overlap.
+        client_request_messages = list(raw_messages)
         resume_payload = _extract_resume_payload(input_data)
         snapshot_session = await ThreadSnapshotSession.open(
             store=self.snapshot_store,
@@ -572,7 +701,7 @@ class AgentFrameworkWorkflow:
                     "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
                     "checkpoint storage on the workflow instance."
                 )
-        live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
+        live_pending_events = await _pending_request_events(workflow)
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
@@ -606,6 +735,11 @@ class AgentFrameworkWorkflow:
                     code="WORKFLOW_RESUME_NOT_FOUND",
                 )
                 return
+        effective_pending_events = live_pending_events
+        # Resolve persisted requests for response validation, but let a pure cold
+        # restore reach the core so it can re-emit its pending interrupt cards.
+        if checkpoint_id is not None and resume_payload is not None:
+            effective_pending_events = dict(checkpoint.pending_request_info_events or {})
         if self.workflow is not None and checkpoint_id is None:
             for interrupt_id in resume_interrupt_ids:
                 request_event = live_pending_events.get(interrupt_id)
@@ -662,6 +796,30 @@ class AgentFrameworkWorkflow:
             else:
                 builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
+
+        def append_conversational_responses(values: list[Any]) -> None:
+            # Execution owns response validation and approval classification. Project only
+            # validated conversational values from its effective live/checkpoint requests.
+            if snapshot_builder is None or resume_payload is None:
+                return
+            hitl_messages = [
+                message for value in values for message in _snapshot_messages_from_resume_value(make_json_safe(value))
+            ]
+            stored_ids = {
+                message.get("id")
+                for message in (stored_snapshot.messages if stored_snapshot is not None else [])
+                if message.get("id")
+            }
+            current_turn_client_messages = [
+                message
+                for message in client_request_messages
+                if not (message.get("id") and message.get("id") in stored_ids)
+            ]
+            snapshot_builder.append_resume_messages(
+                hitl_messages,
+                content_dedupe_against=current_turn_client_messages,
+            )
+
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
             # persists the latest known Shared State instead of dropping it.
@@ -670,7 +828,12 @@ class AgentFrameworkWorkflow:
                 snapshot_builder.state = cast(dict[str, Any], state_snapshot)
         run_error_emitted = False
         async for event in run_workflow_stream(
-            input_data, workflow, checkpoint_storage=run_checkpoint_storage, checkpoint_id=checkpoint_id
+            input_data,
+            workflow,
+            checkpoint_storage=run_checkpoint_storage,
+            checkpoint_id=checkpoint_id,
+            pending_request_events=effective_pending_events,
+            on_conversational_responses=append_conversational_responses,
         ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)
