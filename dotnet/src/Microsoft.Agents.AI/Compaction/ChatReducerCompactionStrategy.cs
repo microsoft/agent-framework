@@ -79,13 +79,7 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
             return false;
         }
 
-        // Rebuild the index from the reduced messages
-        CompactionMessageIndex rebuilt = CompactionMessageIndex.Create(reducedMessages, index.Tokenizer);
-        index.Groups.Clear();
-        foreach (CompactionMessageGroup group in rebuilt.Groups)
-        {
-            index.Groups.Add(group);
-        }
+        index.ReplaceWithReducedMessages(reducedMessages);
 
         return true;
     }

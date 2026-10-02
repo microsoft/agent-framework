@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class CompactionMessageIndex
 {
     private int _currentTurn;
-    private ChatMessage? _lastProcessedMessage;
+    private HashSet<CompactionMessageGroup>? _inputSummaryGroups;
 
     /// <summary>
     /// Gets the list of message groups in this collection.
@@ -48,24 +48,13 @@ public sealed class CompactionMessageIndex
         this.Groups = Throw.IfNull(groups, nameof(groups));
         this.Tokenizer = tokenizer;
 
-        // Restore turn counter and last processed message from the groups
+        // Restore the turn counter from the latest group that belongs to a turn.
         for (int index = groups.Count - 1; index >= 0; --index)
         {
-            if (this._lastProcessedMessage is null && this.Groups[index].Kind != CompactionGroupKind.Summary)
-            {
-                IReadOnlyList<ChatMessage> groupMessages = this.Groups[index].Messages;
-                this._lastProcessedMessage = groupMessages[^1];
-            }
-
             if (this.Groups[index].TurnIndex.HasValue)
             {
                 this._currentTurn = this.Groups[index].TurnIndex!.Value;
-
-                // Both values restored — no need to keep scanning
-                if (this._lastProcessedMessage is not null)
-                {
-                    break;
-                }
+                break;
             }
         }
     }
@@ -96,6 +85,53 @@ public sealed class CompactionMessageIndex
         return instance;
     }
 
+    internal static CompactionMessageIndex Restore(IList<CompactionMessageGroup> groups, int? processedInputMessageCount, IReadOnlyList<int>? inputSummaryGroupIndices, string? inputPrefixFingerprint = null)
+    {
+        CompactionMessageIndex instance = new(groups);
+        instance.ProcessedInputMessageCount = processedInputMessageCount;
+        instance.InputPrefixFingerprint = processedInputMessageCount is >= 0 ? inputPrefixFingerprint : null;
+
+        if (inputSummaryGroupIndices is not null)
+        {
+            foreach (int index in inputSummaryGroupIndices)
+            {
+                if (index < 0 || index >= groups.Count || groups[index].Kind != CompactionGroupKind.Summary ||
+                    !(instance._inputSummaryGroups ??= []).Add(groups[index]))
+                {
+                    instance._inputSummaryGroups?.Clear();
+                    break;
+                }
+            }
+        }
+
+        return instance;
+    }
+
+    internal int? ProcessedInputMessageCount { get; private set; }
+
+    internal string? InputPrefixFingerprint { get; private set; }
+
+    internal List<int> InputSummaryGroupIndices
+    {
+        get
+        {
+            List<int> indices = [];
+            if (this._inputSummaryGroups is not null)
+            {
+                // Strategies may insert generated groups before an input summary, so record its current position.
+                for (int index = 0; index < this.Groups.Count; index++)
+                {
+                    if (this._inputSummaryGroups.Contains(this.Groups[index]))
+                    {
+                        indices.Add(index);
+                    }
+                }
+            }
+
+            return indices;
+        }
+    }
+
     /// <summary>
     /// Incrementally updates the groups with new messages from the conversation.
     /// </summary>
@@ -105,73 +141,62 @@ public sealed class CompactionMessageIndex
     /// </param>
     /// <remarks>
     /// <para>
-    /// Uses equality on the last processed message to detect changes.  Only the messages after that position are
-    /// processed and appended as new groups. Existing groups and their compaction state (exclusions) are preserved.
+    /// Verifies the previously processed input prefix before appending new messages. Existing groups and their
+    /// compaction state (exclusions) are preserved when that prefix is unchanged.
     /// </para>
     /// <para>
-    /// If the last processed message is not found (e.g., the message list was replaced entirely
-    /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
+    /// If the input prefix differs (e.g., the message list was replaced or a sliding window shifted it),
+    /// all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If the last message in <paramref name="allMessages"/> matches the last
-    /// processed message, no work is performed.
+    /// If the prefix is unchanged and no messages have been appended, no new groups are created.
     /// </para>
     /// </remarks>
     internal void Update(IList<ChatMessage> allMessages)
     {
         if (allMessages.Count == 0)
         {
-            this.Groups.Clear();
-            this._currentTurn = 0;
-            this._lastProcessedMessage = null;
+            this.RebuildFromMessages(allMessages);
             return;
         }
 
-        // If the last message is unchanged and the list hasn't shrunk, there is nothing new to process.
-        if (this._lastProcessedMessage is not null &&
-            allMessages.Count >= this.RawMessageCount &&
-            allMessages[allMessages.Count - 1].ContentEquals(this._lastProcessedMessage))
+        // A content fingerprint validates the original input even after strategies replace its groups
+        // or the caller mutates the same message objects. Older state is rebuilt once to capture it.
+        if (this.InputPrefixFingerprint is { } fingerprint &&
+            this.ProcessedInputMessageCount is { } processedMessageCount &&
+            allMessages.Count >= processedMessageCount &&
+            string.Equals(fingerprint, CompactionInputFingerprint.Compute(allMessages, processedMessageCount), StringComparison.Ordinal))
         {
-            return;
-        }
-
-        // Walk backwards to locate where we left off.
-        int foundIndex = -1;
-        if (this._lastProcessedMessage is not null)
-        {
-            for (int i = allMessages.Count - 1; i >= 0; --i)
+            if (allMessages.Count > processedMessageCount)
             {
-                if (allMessages[i].ContentEquals(this._lastProcessedMessage))
-                {
-                    foundIndex = i;
-                    break;
-                }
+                this.AppendFromMessages(allMessages, processedMessageCount);
             }
-        }
 
-        if (foundIndex < 0)
-        {
-            // Last processed message not found — total rebuild.
-            this.Groups.Clear();
-            this._currentTurn = 0;
-            this.AppendFromMessages(allMessages, 0);
             return;
         }
 
-        // Guard against a sliding window that removed messages from the front:
-        // the number of messages up to (and including) the found position must
-        // match the number of messages already represented by existing groups.
-        if (foundIndex + 1 < this.RawMessageCount)
+        this.RebuildFromMessages(allMessages);
+    }
+
+    private void RebuildFromMessages(IList<ChatMessage> messages)
+    {
+        this.Groups.Clear();
+        this._currentTurn = 0;
+        this._inputSummaryGroups?.Clear();
+        this.AppendFromMessages(messages, 0);
+    }
+
+    internal void ReplaceWithReducedMessages(IList<ChatMessage> reducedMessages)
+    {
+        CompactionMessageIndex rebuilt = Create(reducedMessages, this.Tokenizer);
+        this.Groups.Clear();
+        foreach (CompactionMessageGroup group in rebuilt.Groups)
         {
-            // Front of the message list was trimmed — rebuild.
-            this.Groups.Clear();
-            this._currentTurn = 0;
-            this.AppendFromMessages(allMessages, 0);
-            return;
+            this.Groups.Add(group);
         }
 
-        // Process only the delta messages.
-        this.AppendFromMessages(allMessages, foundIndex + 1);
+        this._currentTurn = rebuilt._currentTurn;
+        this._inputSummaryGroups?.Clear();
     }
 
     private void AppendFromMessages(IList<ChatMessage> messages, int startIndex)
@@ -212,7 +237,9 @@ public sealed class CompactionMessageIndex
             }
             else if (message.Role == ChatRole.Assistant && IsSummaryMessage(message))
             {
-                this.Groups.Add(CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
+                CompactionMessageGroup group = CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn);
+                this.Groups.Add(group);
+                (this._inputSummaryGroups ??= []).Add(group);
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasOnlyReasoning(message))
@@ -263,10 +290,8 @@ public sealed class CompactionMessageIndex
             }
         }
 
-        if (messages.Count > 0)
-        {
-            this._lastProcessedMessage = messages[^1];
-        }
+        this.InputPrefixFingerprint = CompactionInputFingerprint.Compute(messages, messages.Count);
+        this.ProcessedInputMessageCount = messages.Count;
     }
 
     /// <summary>
@@ -524,7 +549,7 @@ public sealed class CompactionMessageIndex
     private static bool HasOnlyReasoning(ChatMessage message) =>
         message.Contents.All(content => content is TextReasoningContent);
 
-    private static bool IsSummaryMessage(ChatMessage message) =>
+    internal static bool IsSummaryMessage(ChatMessage message) =>
         message.AdditionalProperties?.TryGetValue(CompactionMessageGroup.SummaryPropertyKey, out object? value) is true
             && value switch
             {
