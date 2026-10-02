@@ -48,6 +48,7 @@ from agent_framework import (
     AggregatingSkillsSource,
     DeduplicatingSkillsSource,
     FileAccessProvider,
+    FileMemoryProvider,
     FileSkillsSource,
     FileSystemAgentFileStore,
     HistoryProvider,
@@ -300,6 +301,7 @@ async def build_claw_agent(
     enable_file_access: bool = True,
     file_access_store: Any = None,
     file_memory_store: Any = None,
+    file_memory_provider: FileMemoryProvider | None = None,
     enable_shell: bool = True,
     purview_credential: TokenCredential | None = None,
     auto_approve_skill_scripts: bool = False,
@@ -324,6 +326,8 @@ async def build_claw_agent(
             None, the harness default is used, which writes to ``{cwd}/agent-file-memory``. Hosted
             deployments must supply a store rooted at a writable path, because the deployed code
             directory is mounted read-only.
+        file_memory_provider: Optional request-owned provider with lifecycle management. Mutually
+            exclusive with file_memory_store; the host owns its protection lifetime.
         enable_shell: When True (default), the agent can run shell commands. Disable it on
             shared/hosted deployments: arbitrary command execution inside the container is a serious
             security risk (data exfiltration, persistence, tampering) even behind a deny-list.
@@ -338,6 +342,8 @@ async def build_claw_agent(
     Returns:
         A fully configured harness agent with Step 03 capabilities plus opt-in Purview middleware.
     """
+    if file_memory_store is not None and file_memory_provider is not None:
+        raise ValueError("Supply either file_memory_store or file_memory_provider.")
     load_dotenv()
 
     # <create_client>
@@ -380,6 +386,8 @@ async def build_claw_agent(
 
     # <codeact>
     context_providers: list[Any] = [MontyCodeActProvider(approval_mode="never_require")]
+    if file_memory_provider is not None:
+        context_providers.append(file_memory_provider)
     logger.info("CodeAct enabled (Monty).")
     # </codeact>
 
@@ -400,6 +408,7 @@ async def build_claw_agent(
         history_provider=history_provider or InMemoryHistoryProvider(),
         file_access_store=access_store,
         file_memory_store=file_memory_store,
+        disable_file_memory=file_memory_provider is not None,
         skills_provider=skills_provider,
         background_agents=[research_agent],
         shell_executor=shell,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import regex
@@ -12,6 +13,7 @@ from agent_framework import (
     AgentSession,
     Content,
     FileMemoryProvider,
+    FileSystemAgentFileStore,
     FunctionTool,
     InMemoryAgentFileStore,
 )
@@ -663,3 +665,42 @@ async def test_file_memory_replace_lines_honours_expected_line() -> None:
 
 
 # endregion
+
+
+async def test_quota_failure_reports_committed_memory_and_unfinished_metadata() -> None:
+    """A later quota failure must not falsely claim the memory content was never written."""
+    store = InMemoryAgentFileStore(max_files=1)
+    _, tools = await _prepare(FileMemoryProvider(store=store, scope="user-1"))
+    result = await tools["file_memory_write"].invoke(
+        arguments={"file_name": "plan.md", "content": "plan", "description": "summary"}
+    )
+    text = _text(result)
+    assert "was written" in text and "description or index" in text and "max_files" in text
+    assert await store.read("user-1/plan.md") == "plan"
+    assert await store.read("user-1/plan_description.md") is None
+    assert await store.read("user-1/memories.md") is None
+
+
+async def test_quota_rejection_preserves_existing_memory_content() -> None:
+    """An oversized replacement must leave the existing memory and index intact."""
+    store = InMemoryAgentFileStore(max_total_bytes=60)
+    _, tools = await _prepare(FileMemoryProvider(store=store, scope="user-1"))
+    await tools["file_memory_write"].invoke(arguments={"file_name": "plan.md", "content": "old"})
+    result = await tools["file_memory_write"].invoke(arguments={"file_name": "plan.md", "content": "x" * 61})
+    assert "Could not write" in _text(result) and "max_total_bytes" in _text(result)
+    assert await store.read("user-1/plan.md") == "old"
+
+
+async def test_file_memory_list_reports_legacy_description_quota(tmp_path: Path) -> None:
+    """Listing refuses an oversized legacy description without discarding stored content."""
+    unlimited = FileSystemAgentFileStore(tmp_path)
+    await unlimited.write("user-1/notes.md", "body")
+    await unlimited.write("user-1/notes_description.md", "x" * 128)
+    store = FileSystemAgentFileStore(tmp_path, max_file_bytes=64)
+    _, tools = await _prepare(FileMemoryProvider(store=store, scope="user-1"))
+
+    result = _text(await tools["file_memory_ls"].invoke())
+
+    assert "Could not list memory files" in result and "max_file_bytes=64" in result
+    assert await unlimited.read("user-1/notes.md") == "body"
+    assert await unlimited.read("user-1/notes_description.md") == "x" * 128

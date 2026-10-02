@@ -44,7 +44,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Annotated, Any
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from functools import wraps
+from typing import Annotated, Any, ParamSpec, TypeVar, cast
 
 from pydantic import BaseModel, Field
 
@@ -54,15 +58,24 @@ from .._tools import tool
 from .._types import Message
 from ._file_access import (
     AgentFileStore,
+    FileAccessProvider,
     FileStoreEntry,
+    FileSystemAgentFileStore,
     _apply_replace,  # pyright: ignore[reportPrivateUsage]
     _apply_replace_lines,  # pyright: ignore[reportPrivateUsage]
     _line_edits,  # pyright: ignore[reportPrivateUsage]
     _matches_glob,  # pyright: ignore[reportPrivateUsage]
     _normalize_relative_path,  # pyright: ignore[reportPrivateUsage]
 )
+from ._file_memory_retention import (
+    FileMemoryRetentionManager,
+    _FileMemoryCommitError,  # pyright: ignore[reportPrivateUsage]
+)
+from ._file_store_limits import _FileStoreQuotaError  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
+_Params = ParamSpec("_Params")
+_ResultT = TypeVar("_ResultT")
 
 DEFAULT_FILE_MEMORY_SOURCE_ID = "file_memory"
 
@@ -274,6 +287,7 @@ class FileMemoryProvider(ContextProvider):
         source_id: str = DEFAULT_FILE_MEMORY_SOURCE_ID,
         scope: str | None = None,
         instructions: str | None = None,
+        retention: FileMemoryRetentionManager | None = None,
     ) -> None:
         """Initialize the file memory provider.
 
@@ -292,15 +306,77 @@ class FileMemoryProvider(ContextProvider):
                 instead of a nested directory.
             instructions: Optional instruction override. When ``None`` the
                 default file-memory instructions are used.
+            retention: Optional local-filesystem lifecycle manager. Omitted by default.
         """
         super().__init__(source_id)
         self.store = store
+        self.retention = retention
+        if retention is not None:
+            retention._validate_store(store)  # pyright: ignore[reportPrivateUsage]
+        self._operation_store: ContextVar[AgentFileStore | None] = ContextVar("file_memory_operation", default=None)
+        self._retention_started_at: float | None = None
         self.scope = scope
         self.instructions = instructions or DEFAULT_FILE_MEMORY_INSTRUCTIONS
         # Serializes write/delete operations (and their index rebuilds) so the
         # ``memories.md`` index stays consistent. A single per-instance lock is
         # sufficient for v1; concurrent writes across scopes are rare in practice.
         self._write_lock = asyncio.Lock()
+
+    def _active_store(self) -> AgentFileStore:
+        return self._operation_store.get() or self.store
+
+    @asynccontextmanager
+    async def protect(self) -> AsyncGenerator[None]:
+        """Protect a request-owned provider throughout its run and stream consumption.
+
+        The host must close this context on success, failure, cancellation and stream
+        close. Sharing this provider between concurrent protected requests is unsupported.
+        """
+        if self.retention is None:
+            yield
+            return
+        if self._retention_started_at is not None:
+            raise RuntimeError("This file-memory provider already protects a request.")
+        async with self.retention._protect_store(self.store) as started_at:  # pyright: ignore[reportPrivateUsage]
+            self._retention_started_at = started_at
+            try:
+                yield
+            finally:
+                self._retention_started_at = None
+
+    def _managed(
+        self, purpose: str
+    ) -> Callable[[Callable[_Params, Awaitable[_ResultT]]], Callable[_Params, Awaitable[_ResultT]]]:
+        def decorate(function: Callable[_Params, Awaitable[_ResultT]]) -> Callable[_Params, Awaitable[_ResultT]]:
+            @wraps(function)
+            async def invoke(*args: _Params.args, **kwargs: _Params.kwargs) -> _ResultT:
+                if self.retention is None:
+                    return await function(*args, **kwargs)
+
+                async def action(store: AgentFileStore) -> _ResultT:
+                    token = self._operation_store.set(store)
+                    try:
+                        return await function(*args, **kwargs)
+                    finally:
+                        self._operation_store.reset(token)
+
+                try:
+                    return await self.retention._run(  # pyright: ignore[reportPrivateUsage]
+                        self.store, action, started_at=self._retention_started_at, purpose=purpose
+                    )
+                except (ValueError, OSError) as exc:
+                    return cast(_ResultT, f"Could not complete memory operation: {self._error_text(exc)}")
+
+            return invoke
+
+        return decorate
+
+    def _error_text(self, exc: ValueError | OSError) -> str:
+        if self.retention is None:
+            return str(exc.strerror or exc) if isinstance(exc, OSError) else str(exc)
+        if isinstance(exc, (_FileStoreQuotaError, _FileMemoryCommitError)):
+            return str(exc)
+        return "Storage or lifecycle state is unavailable; check host diagnostics."
 
     def _resolve_working_folder(self, context: SessionContext) -> str:
         """Resolve the working folder for the current invocation.
@@ -333,20 +409,22 @@ class FileMemoryProvider(ContextProvider):
         Lists the non-internal files, sorts them deterministically, reads any
         companion descriptions, and writes a capped markdown summary.
         """
-        entries = await self.store.list_children(working_folder)
+        entries = await self._active_store().list_children(working_folder)
         file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
         sorted_files = sorted((name for name in file_names if not _is_internal_file(name)), key=str.lower)
 
         lines = ["# Memory Index", ""]
         for file_name in sorted_files[:_MAX_INDEX_ENTRIES]:
-            description = await self.store.read(_combine_paths(working_folder, _description_file_name(file_name)))
+            description = await self._active_store().read(
+                _combine_paths(working_folder, _description_file_name(file_name))
+            )
             if description and description.strip():
                 lines.append(f"- **{file_name}**: {description.strip()}")
             else:
                 lines.append(f"- **{file_name}**")
 
         index_path = _combine_paths(working_folder, _MEMORY_INDEX_FILE_NAME)
-        await self.store.write(index_path, "\n".join(lines) + "\n")
+        await self._active_store().write(index_path, "\n".join(lines) + "\n")
 
     async def before_run(
         self,
@@ -357,12 +435,24 @@ class FileMemoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-memory tools, instructions, and the memory index."""
+        if self.retention is not None and agent is not None:
+            for provider in agent.context_providers:
+                if (
+                    isinstance(provider, FileAccessProvider)
+                    and isinstance(provider.store, FileSystemAgentFileStore)
+                    and (
+                        self.retention.directory.is_relative_to(provider.store.root_path)
+                        or provider.store.root_path.is_relative_to(self.retention.directory)
+                    )
+                ):
+                    raise ValueError("File access must not expose the managed file-memory storage tree.")
         working_folder = self._resolve_working_folder(context)
 
-        if working_folder:
+        if working_folder and self.retention is None:
             await self.store.create_directory(working_folder)
 
         @tool(name="file_memory_write", schema=_WriteFileInput, approval_mode="never_require")
+        @self._managed("write")
         async def file_memory_write(file_name: str, content: str, description: str | None = None) -> str:
             """Write a memory file with the given name and content. Overwrites the file if it already exists. Include a description for large files to provide a summary that helps with future discovery."""  # ruff:ignore[line-too-long]
             try:
@@ -383,22 +473,32 @@ class FileMemoryProvider(ContextProvider):
             path = _combine_paths(working_folder, normalized)
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             async with self._write_lock:
+                file_written = False
                 try:
-                    await self.store.write(path, content)
+                    await self._active_store().write(path, content)
+                    file_written = True
                     if description and description.strip():
-                        await self.store.write(desc_path, description)
+                        await self._active_store().write(desc_path, description)
                     else:
-                        await self.store.delete(desc_path)
+                        await self._active_store().delete(desc_path)
                     await self._rebuild_index(working_folder)
+                except _FileStoreQuotaError as exc:
+                    if file_written:
+                        return (
+                            f"File '{file_name}' was written, but its description or index could not be updated: {exc} "
+                            "Delete unused memories to free storage before retrying."
+                        )
+                    return f"Could not write file '{file_name}': {exc}"
                 except ValueError as exc:
                     return f"Could not write file '{file_name}': {exc}"
                 except OSError as exc:
-                    return f"Could not write file '{file_name}': {exc.strerror or exc}"
+                    return f"Could not write file '{file_name}': {self._error_text(exc)}"
             if description and description.strip():
                 return f"File '{file_name}' written with description."
             return f"File '{file_name}' written."
 
         @tool(name="file_memory_read", schema=_ReadFileInput, approval_mode="never_require")
+        @self._managed("read")
         async def file_memory_read(file_name: str) -> str:
             r"""Read the content of a memory file by name. Returns the file content or a message indicating the file was not found. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
@@ -408,14 +508,15 @@ class FileMemoryProvider(ContextProvider):
             if _is_nested_path(normalized):
                 return f"File '{file_name}' not found."
             try:
-                content = await self.store.read(_combine_paths(working_folder, normalized))
+                content = await self._active_store().read(_combine_paths(working_folder, normalized))
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:
-                return f"Could not read file '{file_name}': {exc.strerror or exc}"
+                return f"Could not read file '{file_name}': {self._error_text(exc)}"
             return content if content is not None else f"File '{file_name}' not found."
 
         @tool(name="file_memory_delete", schema=_DeleteFileInput, approval_mode="never_require")
+        @self._managed("delete")
         async def file_memory_delete(file_name: str) -> str:
             """Delete a memory file by name. Also removes its companion description file if one exists."""
             try:
@@ -429,22 +530,25 @@ class FileMemoryProvider(ContextProvider):
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             async with self._write_lock:
                 try:
-                    deleted = await self.store.delete(path)
-                    await self.store.delete(desc_path)
+                    deleted = await self._active_store().delete(path)
+                    await self._active_store().delete(desc_path)
                     await self._rebuild_index(working_folder)
+                except _FileStoreQuotaError as exc:
+                    return f"File '{file_name}' is absent, but the memory index could not be updated: {exc}"
                 except ValueError as exc:
                     return f"Could not delete file '{file_name}': {exc}"
                 except OSError as exc:
-                    return f"Could not delete file '{file_name}': {exc.strerror or exc}"
+                    return f"Could not delete file '{file_name}': {self._error_text(exc)}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
         @tool(name="file_memory_ls", schema=_ListInput, approval_mode="never_require")
+        @self._managed("list")
         async def file_memory_ls(glob_pattern: str | None = None) -> list[dict[str, Any]] | str:
             """List all memory files with their descriptions (if available). Optionally filter file names with a glob_pattern (e.g. "*.md"). Internal files (description sidecars and the memory index) are not shown. Each entry is {"name": <name>, "type": "file", "description": <desc-or-null>}."""  # ruff:ignore[line-too-long]
             try:
-                entries = await self.store.list_children(working_folder)
+                entries = await self._active_store().list_children(working_folder)
             except OSError as exc:
-                return f"Could not list memory files: {exc.strerror or exc}"
+                return f"Could not list memory files: {self._error_text(exc)}"
 
             file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
             available = set(file_names)
@@ -457,11 +561,15 @@ class FileMemoryProvider(ContextProvider):
                 description: str | None = None
                 desc_file_name = _description_file_name(file_name)
                 if desc_file_name in available:
-                    description = await self.store.read(_combine_paths(working_folder, desc_file_name))
+                    try:
+                        description = await self._active_store().read(_combine_paths(working_folder, desc_file_name))
+                    except _FileStoreQuotaError as exc:
+                        return f"Could not list memory files: {exc}"
                 results.append({"name": file_name, "type": "file", "description": description})
             return results
 
         @tool(name="file_memory_replace", schema=_ReplaceInput, approval_mode="never_require")
+        @self._managed("write")
         async def file_memory_replace(
             file_name: str, old_string: str, new_string: str, replace_all: bool = False
         ) -> str:
@@ -480,18 +588,19 @@ class FileMemoryProvider(ContextProvider):
             path = _combine_paths(working_folder, normalized)
             async with self._write_lock:
                 try:
-                    content = await self.store.read(path)
+                    content = await self._active_store().read(path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content, count = _apply_replace(content, old_string, new_string, replace_all)
-                    await self.store.write(path, new_content)
+                    await self._active_store().write(path, new_content)
                 except ValueError as exc:
                     return f"Could not replace in file '{file_name}': {exc}"
                 except OSError as exc:
-                    return f"Could not replace in file '{file_name}': {exc.strerror or exc}"
+                    return f"Could not replace in file '{file_name}': {self._error_text(exc)}"
             return f"Replaced {count} occurrence(s) in '{file_name}'."
 
         @tool(name="file_memory_replace_lines", schema=_ReplaceLinesInput, approval_mode="never_require")
+        @self._managed("write")
         async def file_memory_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
             r"""Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
@@ -508,18 +617,19 @@ class FileMemoryProvider(ContextProvider):
             path = _combine_paths(working_folder, normalized)
             async with self._write_lock:
                 try:
-                    content = await self.store.read(path)
+                    content = await self._active_store().read(path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content = _apply_replace_lines(content, _line_edits(edits))
-                    await self.store.write(path, new_content)
+                    await self._active_store().write(path, new_content)
                 except ValueError as exc:
                     return f"Could not edit file '{file_name}': {exc}"
                 except OSError as exc:
-                    return f"Could not edit file '{file_name}': {exc.strerror or exc}"
+                    return f"Could not edit file '{file_name}': {self._error_text(exc)}"
             return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
         @tool(name="file_memory_grep", schema=_SearchFilesInput, approval_mode="never_require")
+        @self._managed("search")
         async def file_memory_grep(
             regex_pattern: str,
             glob_pattern: str | None = None,
@@ -527,7 +637,7 @@ class FileMemoryProvider(ContextProvider):
             """Search memory file contents using a case-insensitive regular expression. Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, content snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # ruff:ignore[line-too-long]
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             try:
-                results = await self.store.search(working_folder, regex_pattern, glob_filter, recursive=False)
+                results = await self._active_store().search(working_folder, regex_pattern, glob_filter, recursive=False)
                 # The index and the description sidecars are the provider's own bookkeeping and
                 # are never shown to the agent, so a match inside one is dropped rather than
                 # reported.
@@ -535,7 +645,7 @@ class FileMemoryProvider(ContextProvider):
             except ValueError as exc:
                 return f"Could not search memory files: {exc}"
             except OSError as exc:
-                return f"Could not search memory files: {exc.strerror or exc}"
+                return f"Could not search memory files: {self._error_text(exc)}"
             return [result.to_dict() for result in visible]
 
         context.extend_instructions(self.source_id, [self.instructions])
@@ -553,12 +663,21 @@ class FileMemoryProvider(ContextProvider):
         )
 
         try:
-            index_content = await self.store.read(_combine_paths(working_folder, _MEMORY_INDEX_FILE_NAME))
+            if self.retention is None:
+                index_content = await self.store.read(_combine_paths(working_folder, _MEMORY_INDEX_FILE_NAME))
+            else:
+
+                async def read_index(store: AgentFileStore) -> str | None:
+                    return await store.read(_combine_paths(working_folder, _MEMORY_INDEX_FILE_NAME))
+
+                index_content = await self.retention._run(  # pyright: ignore[reportPrivateUsage]
+                    self.store, read_index, started_at=self._retention_started_at, purpose="index"
+                )
         except (OSError, ValueError) as exc:
             # A corrupt/unavailable index (e.g. non-UTF8 bytes on disk or a store
             # error) must not block the run. Skip index injection for this run; it
             # self-heals on the next successful write/delete that rebuilds the index.
-            logger.warning("Could not read memory index; skipping index injection: %s", exc)
+            logger.warning("Could not read memory index; skipping index injection (%s).", type(exc).__name__)
             index_content = None
         if index_content and index_content.strip():
             context.extend_messages(
