@@ -105,9 +105,12 @@ _DELEGATED_STATE_MISSING = object()
 
 def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
     """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
     from ._harness._tool_approval import ToolApprovalMiddleware
 
-    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
 
 
 def _merge_delegated_session_state(
