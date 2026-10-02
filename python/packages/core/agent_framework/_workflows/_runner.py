@@ -124,45 +124,51 @@ class RunnerImpl:
             logger.info(f"Starting superstep {self._iteration + 1}")
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
-            # Wake on either a live event or iteration completion, including silent supersteps.
-            iteration_task = asyncio.create_task(self._run_iteration())
-            event_task: asyncio.Task[WorkflowEvent] | None = None
+            committed = False
             try:
-                while not iteration_task.done():
-                    event_task = asyncio.create_task(self._ctx.next_event())
-                    done, _ = await asyncio.wait((iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED)
-                    if event_task in done:
-                        yield event_task.result()
-            finally:
-                # Cancellation and generator closure must not leave an event waiter or executor running.
-                tasks: list[asyncio.Task[Any]] = (
-                    [iteration_task] if event_task is None else [iteration_task, event_task]
-                )
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                # Wake on either a live event or iteration completion, including silent supersteps.
+                iteration_task = asyncio.create_task(self._run_iteration())
+                event_task: asyncio.Task[WorkflowEvent] | None = None
+                try:
+                    while not iteration_task.done():
+                        event_task = asyncio.create_task(self._ctx.next_event())
+                        done, _ = await asyncio.wait((iteration_task, event_task), return_when=asyncio.FIRST_COMPLETED)
+                        if event_task in done:
+                            yield event_task.result()
+                finally:
+                    # Cancellation and generator closure must not leave an event waiter or executor running.
+                    tasks: list[asyncio.Task[Any]] = (
+                        [iteration_task] if event_task is None else [iteration_task, event_task]
+                    )
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Propagate errors from iteration, but first surface any pending events
-            try:
-                await iteration_task
-            except Exception:
-                # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                # Propagate errors from iteration, but first surface any pending events
+                try:
+                    await iteration_task
+                except (Exception, asyncio.CancelledError):
+                    # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                    if await self._ctx.has_events():
+                        for event in await self._ctx.drain_events():
+                            yield event
+                    raise
+                self._iteration += 1
+
+                # Drain any straggler events emitted at tail end
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
-                raise
-            self._iteration += 1
 
-            # Drain any straggler events emitted at tail end
-            if await self._ctx.has_events():
-                for event in await self._ctx.drain_events():
-                    yield event
+                logger.info(f"Completed superstep {self._iteration}")
 
-            logger.info(f"Completed superstep {self._iteration}")
-
-            # Commit pending state changes at superstep boundary
-            self._state.commit()
+                # Commit pending state changes at superstep boundary
+                self._state.commit()
+                committed = True
+            finally:
+                if not committed:
+                    self._state.discard()
 
             # Create checkpoint after each superstep iteration
             await self.create_checkpoint_if_enabled()
@@ -224,11 +230,12 @@ class RunnerImpl:
             await gather_cancelling_siblings_on_error(*tasks)
 
         message_batches = await self._ctx.drain_messages()
-        tasks = [
-            _deliver_messages(source_executor_id, source_messages)
-            for source_executor_id, source_messages in message_batches.items()
-        ]
-        await gather_cancelling_siblings_on_error(*tasks)
+        await gather_cancelling_siblings_on_error(
+            *(
+                _deliver_messages(source_executor_id, source_messages)
+                for source_executor_id, source_messages in message_batches.items()
+            )
+        )
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
