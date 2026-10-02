@@ -6,6 +6,7 @@ import asyncio
 import json
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
+from contextlib import nullcontext
 from datetime import timedelta
 from enum import Enum
 from pathlib import Path
@@ -1119,12 +1120,17 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
     assert "function_approval_response" not in replayed_types
 
 
+@pytest.mark.parametrize("legacy_request_id", [False, True], ids=["occurrence-id", "legacy-id"])
+@pytest.mark.parametrize("conflicting_duplicate", [False, True], ids=["single-response", "conflicting-duplicate"])
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 async def test_approval_resume_returns_result_without_mutating_inputs(
     chat_client_base: MockBaseChatClient,
+    caplog: pytest.LogCaptureFixture,
     approved: bool,
     streaming: bool,
+    legacy_request_id: bool,
+    conflicting_duplicate: bool,
 ) -> None:
     """Approval resume should return its terminal result without changing caller-owned messages."""
     calls = 0
@@ -1150,23 +1156,49 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
         first_response = await agent.run("run guarded", session=session)
         approval_request = first_response.user_input_requests[0]
 
-    approval_response = approval_request.to_function_approval_response(approved=approved)
-    approval_message = Message(role="user", contents=[approval_response])
+    if legacy_request_id:
+        from agent_framework._tools import _store_already_approved_approval_requests, _store_pending_approval_requests
 
-    if streaming:
-        chat_client_base.streaming_responses = [
-            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])]
-        ]
-        second_stream = agent.run(approval_message, stream=True, session=session)
-        second_updates = [update async for update in second_stream]
-        second_response = await second_stream.get_final_response()
-        assert [[content.type for content in update.contents] for update in second_updates] == [
-            ["function_result"],
-            ["text"],
-        ]
-    else:
-        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
-        second_response = await agent.run(approval_message, session=session)
+        approval_request = Content.from_dict(approval_request.to_dict())
+        approval_request.id = "call_guarded"
+        assert approval_request.id != _function_call(approval_request).id
+        _store_pending_approval_requests(session, [approval_request])
+        _store_already_approved_approval_requests(session, [approval_request], [])
+
+    approval_response = approval_request.to_function_approval_response(approved=approved)
+    approval_contents = [approval_response]
+    if conflicting_duplicate:
+        conflicting_call = Content.from_dict(_function_call(approval_request).to_dict())
+        conflicting_call.id = "af-call-conflicting-duplicate"
+        assert approval_response.id is not None
+        approval_contents.append(
+            Content.from_function_approval_response(
+                approved=not approved,
+                id=approval_response.id,
+                function_call=conflicting_call,
+            )
+        )
+    approval_message = Message(role="user", contents=approval_contents.copy())
+
+    with (
+        pytest.warns(FutureWarning, match="legacy provider call_id request binding")
+        if legacy_request_id
+        else nullcontext[None]()
+    ):
+        if streaming:
+            chat_client_base.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])]
+            ]
+            second_stream = agent.run(approval_message, stream=True, session=session)
+            second_updates = [update async for update in second_stream]
+            second_response = await second_stream.get_final_response()
+            assert [[content.type for content in update.contents] for update in second_updates] == [
+                ["function_result"],
+                ["text"],
+            ]
+        else:
+            chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+            second_response = await agent.run(approval_message, session=session)
 
     assert [[content.type for content in message.contents] for message in second_response.messages] == [
         ["function_result"],
@@ -1176,11 +1208,27 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
     assert result.call_id == "call_guarded"
     assert result.result == ("approved result" if approved else "Error: Tool call invocation was rejected by user.")
     assert calls == int(approved)
+    if conflicting_duplicate:
+        assert len(caplog.records) == 1
+        assert "occurrence identity" in caplog.text
+    else:
+        assert caplog.records == []
     assert approval_message.role == "user"
-    assert approval_message.contents == [approval_response]
+    assert approval_message.contents == approval_contents
     assert [[content.type for content in message.contents] for message in first_response.messages] == [
         ["function_call", "function_approval_request"]
     ]
+
+    caplog.clear()
+    replay_response = approval_request.to_function_approval_response(approved=True)
+    if streaming:
+        replay_stream = agent.run(replay_response, stream=True, session=session)
+        _ = [update async for update in replay_stream]
+        await replay_stream.get_final_response()
+    else:
+        await agent.run(replay_response, session=session)
+    assert calls == int(approved)
+    assert "occurrence identity" in caplog.text
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
@@ -1350,7 +1398,7 @@ async def test_approval_resume_filters_resolved_control_items_from_file_history(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        captured_types.extend([[content.type for content in message.contents] for message in messages])
+        captured_types.extend([[str(content.type) for content in message.contents] for message in messages])
         return await original_get_response(messages=messages, options=options, **kwargs)
 
     chat_client_base._get_non_streaming_response = capture_messages  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]

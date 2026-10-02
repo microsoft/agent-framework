@@ -42,7 +42,8 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 > request and forwards the platform's per-request `x-agent-foundry-call-id`. See
 > [`04-hosting/foundry-hosted-agents/responses/foundry_toolbox_mcp_skills`](../../../../04-hosting/foundry-hosted-agents/responses/foundry_toolbox_mcp_skills)
 > for the minimal version of this pattern. Hosted runs connect the toolbox because
-> `ResponsesHostServer` enters the agent; `console_app.py` and `evals.py` do it explicitly with
+> `ResponsesHostServer` enters a **new factory-created agent per request**;
+> `console_app.py` and `evals.py` do it explicitly with
 > `async with agent:`.
 
 > **The hosted agent's managed identity needs the `Foundry User` role.** This is the single most
@@ -53,16 +54,14 @@ export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 > dereferences the project-level skill resource, which does require the role. The toolbox answers
 > with a bare JSON-RPC `-32603` and no `data`, so nothing in the error names the cause.
 >
-> The container logs the identity to grant it to at startup:
->
-> ```
-> Agent managed identity (grant it the Foundry User role): <client-id>
-> ```
+> Obtain the hosted managed identity's principal ID from the platform/resource
+> configuration when granting the role. Startup diagnostics log only which
+> variables are present, not identity/session/call values or tokens.
 >
 > ```bash
 > az role assignment create --assignee-object-id <agent-identity-object-id> \
 >   --assignee-principal-type ServicePrincipal --role "Foundry User" \
->   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>
+>   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>
 > ```
 >
 > Resolve the object id with `az ad sp list --filter "startswith(displayName,'<account>')" -o table`
@@ -89,12 +88,51 @@ uv run --prerelease=allow python/samples/02-agents/harness/build_your_own_claw/c
 uv run --prerelease=allow python/samples/02-agents/harness/build_your_own_claw/claw_step04_production_ready/hosted.py
 ```
 
-The hosted version **disables file access and shell** on the container. In a shared, hosted environment, giving the model arbitrary read/write access to the container filesystem or letting it run shell commands is a serious security risk (data exfiltration, tampering, persistence), and the local confirmations vault the shell operates on doesn't exist there. Background agents and Monty CodeAct (alpha) remain enabled. If you need file access when hosted, pass an external `file_access_store` (for example, one backed by Azure Blob Storage) instead of the container disk.
+The hosted version **disables file access and shell** on the container. In a
+shared, hosted environment, arbitrary filesystem/shell access is a
+data-exfiltration and tampering risk, and the local confirmations vault does not
+exist there. Background research and Monty CodeAct remain enabled. An external
+`file_access_store` must enforce trusted user/sandbox access before it can be
+enabled; using a Blob Storage backend alone is not an authorization boundary.
 
 File memory **stays enabled** when hosted, but its store has to move. The harness writes file memory
 to `{cwd}/agent-file-memory` by default, and the deployed code directory (`/app`) is mounted
 **read-only** on Foundry hosted agents, so the default directory fails. `hosted.py` therefore passes a
-`FileSystemAgentFileStore` rooted at `~/.claw/agent-file-memory`, which is writable.
+`FileSystemAgentFileStore` rooted at
+`$HOME/.claw/agent-file-memory/<trusted-user-and-sandbox-hash>`, which is writable.
+The hash comes from `FoundryRequestScope.storage_key`; hosted scope validation
+uses the configured sandbox plus trusted user/call IDs, never a caller-selected
+conversation or MAF session ID. File memory is **sandbox-specific**, unlike the
+intentional user-wide sharing in the
+[Foundry Memory sample](../../../../04-hosting/foundry-hosted-agents/responses/foundry_memory/).
+
+`ResponsesHostServer(agent=create_agent, history_source="agent_server")` builds
+new clients, Toolbox/skills providers, CodeAct and harness providers for each
+request. The sample injects its own context-managed client into
+`build_claw_agent`, leaving ownership of supplied/shared clients elsewhere
+unchanged. That client closes only its own model/project transports and
+credential; it captures the current platform call ID, not an earlier caller's.
+History/approval state is persisted by the host, not retained on provider
+instances. Local hosts keep their original builder defaults.
+
+Request-lifetime middleware releases only this agent's background-provider
+tasks for the active MAF session, in a `finally` path on success, failure or
+cancellation. An idempotent cleanup hook on the outer stream also handles a
+stream closed **before its first update**, while the iterator's `finally`
+handles partial consumption and run errors. Outstanding research is cancelled
+and joined before the request's transports close, using the provider's finite
+**30-second** default. A child that ignores
+cancellation is abandoned and logged when that bound expires, so it cannot
+hold transport teardown open indefinitely. Complete/collect research within a
+turn; unfinished runtime tasks cannot be resumed by a later factory-created
+agent. Cleanup failure is logged without identity values and does not replace
+an existing run failure.
+
+Local runs use `AzureCliCredential` and are single-user development only.
+Hosted runs use managed identity; project/Toolbox/Purview permissions and
+resources require separate configuration. The unrelated Telegram sample also
+requires externally configured Telegram/Key Vault credentials. None of those
+credential-gated behaviors or deployments is proven by an offline smoke check.
 
 ### Deploy to Foundry
 

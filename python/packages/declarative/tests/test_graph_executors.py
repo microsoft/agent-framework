@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import WorkflowInvocationKwargs
+from agent_framework._workflows._state import State
 
 try:
     import powerfx  # noqa: F401
@@ -17,11 +18,13 @@ except (ImportError, RuntimeError):
 
 _requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
 
+from agent_framework_declarative import WorkflowFactory, WorkflowState  # noqa: E402
 from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
     DECLARATIVE_STATE_KEY,
     ActionComplete,
     ActionTrigger,
+    DeclarativeActionExecutor,
     DeclarativeWorkflowBuilder,
     DeclarativeWorkflowState,
     ForeachInitExecutor,
@@ -29,6 +32,53 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     SendActivityExecutor,
     SetValueExecutor,
 )
+
+
+class TestFactoryStateMemberRoutes:
+    """Factory-created workflows use modern state for expressions and templates."""
+
+    @_requires_powerfx
+    async def test_factory_uses_modern_member_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Record:
+            _private = "private-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "public-marker"
+
+        forbidden = MagicMock(side_effect=AssertionError("Standalone state used by factory"))
+        monkeypatch.setattr(WorkflowState, "get", forbidden)
+        monkeypatch.setattr(WorkflowState, "eval", forbidden)
+        seen: list[type[DeclarativeWorkflowState]] = []
+        original = DeclarativeActionExecutor._get_state
+
+        def track(executor: DeclarativeActionExecutor, store: State) -> DeclarativeWorkflowState:
+            state = original(executor, store)
+            seen.append(type(state))
+            return state
+
+        monkeypatch.setattr(DeclarativeActionExecutor, "_get_state", track)
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: member_routes
+  actions:
+    - kind: SendActivity
+      id: public_expression
+      activity: =Workflow.Inputs.record.public_value
+    - kind: SendActivity
+      id: private_expression
+      activity: =Workflow.Inputs.record._private
+    - kind: SendActivity
+      id: private_template
+      activity: "template:{Workflow.Inputs.record._private}"
+""")
+
+        result = await workflow.run({"record": Record()})
+
+        assert result.get_outputs() == ["public-marker", "template:"]
+        assert seen and all(kind is DeclarativeWorkflowState for kind in seen)
+        forbidden.assert_not_called()
 
 
 class TestDeclarativeWorkflowState:
@@ -1771,7 +1821,7 @@ class TestPowerFxConditionalImport:
         engine = base_mod.Engine
         assert engine is None or callable(engine)
 
-    def test_eval_raises_when_engine_unavailable(self):
+    def test_eval_raises_when_engine_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """eval() should raise RuntimeError when Engine is None."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1784,15 +1834,11 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize({"name": "test"})
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            with pytest.raises(RuntimeError, match="PowerFx is not available"):
-                state.eval("=Local.counter + 1")
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        with pytest.raises(RuntimeError, match="PowerFx is not available"):
+            state.eval("=Local.counter + 1")
 
-    def test_eval_passes_through_plain_strings_without_engine(self):
+    def test_eval_passes_through_plain_strings_without_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-PowerFx strings (no leading '=') should work without Engine."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1805,14 +1851,10 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            assert state.eval("hello world") == "hello world"
-            assert state.eval("") == ""
-            assert state.eval(cast("str", 42)) == 42
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        assert state.eval("hello world") == "hello world"
+        assert state.eval("") == ""
+        assert state.eval(cast("str", 42)) == 42
 
 
 class TestExecutorKwargsForwarding:

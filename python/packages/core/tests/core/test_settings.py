@@ -42,6 +42,45 @@ class ExclusiveSettings(TypedDict, total=False):
 class TestLoadSettingsBasic:
     """Test basic load_settings functionality."""
 
+    @pytest.mark.parametrize("raw, expected", [("5", 5), ("2.5", 2.5)])
+    @pytest.mark.parametrize("source", ["environment", "dotenv"])
+    def test_non_optional_union_coercion(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raw: str, expected: int | float, source: str
+    ) -> None:
+        class NumericSettings(TypedDict):
+            value: int | float
+
+        env_file = tmp_path / ".env"
+        monkeypatch.delenv("UNION_VALUE", raising=False)
+        env_file.write_text(f"UNION_VALUE={raw}\n" if source == "dotenv" else "", encoding="utf-8")
+        if source == "environment":
+            monkeypatch.setenv("UNION_VALUE", raw)
+
+        value = load_settings(NumericSettings, env_prefix="UNION_", env_file_path=str(env_file))["value"]
+
+        assert value == expected
+        assert type(value) is type(expected)
+
+    @pytest.mark.parametrize("source", ["environment", "dotenv"])
+    def test_invalid_non_optional_union_reports_source(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
+    ) -> None:
+        class NumericSettings(TypedDict):
+            value: int | float
+
+        invalid = "private-invalid-value"
+        env_file = tmp_path / ".env"
+        monkeypatch.delenv("UNION_VALUE", raising=False)
+        env_file.write_text(f"UNION_VALUE={invalid}\n" if source == "dotenv" else "", encoding="utf-8")
+        if source == "environment":
+            monkeypatch.setenv("UNION_VALUE", invalid)
+
+        with pytest.raises(ValueError, match="setting 'value' from") as exc_info:
+            load_settings(NumericSettings, env_prefix="UNION_", env_file_path=str(env_file))
+
+        assert ("environment variable" if source == "environment" else str(env_file)) in str(exc_info.value)
+        assert invalid not in str(exc_info.value)
+
     def test_fields_are_none_when_unset(self) -> None:
         settings = load_settings(SimpleSettings, env_prefix="TEST_APP_")
 

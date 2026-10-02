@@ -151,8 +151,12 @@ async def handle_update(bot: Bot, update: Mapping[str, Any]) -> None:
     if callback_query_id is not None:
         await bot.answer_callback_query(callback_query_id=callback_query_id)
 
-    if (command := telegram_command(update)) is not None and await handle_command(bot, update, command):
-        return
+    if (command := telegram_command(update)) is not None:
+        username = (await bot.me()).username
+        if not username or telegram_command(update, bot_username=username) is None:
+            return
+        if await handle_command(bot, update, command):
+            return
 
     chat_id = telegram_chat_id(update)
     session_id = telegram_session_id(update, bot_id=bot.id)
