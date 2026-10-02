@@ -150,6 +150,11 @@ _BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
     }
 )
 
+# str.format and str.format_map evaluate attribute and item traversal from string
+# contents at runtime, where the Python AST validator cannot inspect it. Receiver
+# types are not statically knowable, so access to either method name is blocked.
+_BLOCKED_RUNTIME_TRAVERSAL_ATTRS: frozenset[str] = frozenset({"format", "format_map"})
+
 _OS_ROOT_CHAIN: tuple[str, ...] = ("os",)
 _OS_PATH_CHAIN: tuple[str, ...] = ("os", "path")
 _OS_ENVIRON_CHAIN: tuple[str, ...] = ("os", "environ")
@@ -785,6 +790,8 @@ class _CodeValidator(ast.NodeVisitor):
         """Validate attribute access."""
         if node.attr in _BLOCKED_CAPABILITY_ATTRS:
             self._errors.append(f"Access to capability attribute '{node.attr}' is not allowed")
+        if node.attr in _BLOCKED_RUNTIME_TRAVERSAL_ATTRS:
+            self._errors.append(f"Access to runtime traversal attribute '{node.attr}' is not allowed")
 
         direct, _ = self._get_os_provenance(node)
         _, base_contained = self._get_os_provenance(node.value)

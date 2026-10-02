@@ -49,6 +49,27 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     }
 
     [Fact]
+    public async Task ExecuteCode_AllowsAstValidatedFormattingAsync()
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var function = new LocalExecuteCodeFunction(s_python!);
+        var args = new AIFunctionArguments
+        {
+            ["code"] = "value = 42\nprint(format(value, '04d'))\nf'{value:x}'",
+        };
+
+        // Act
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+
+        // Assert
+        var combined = GetResultText(result);
+        Assert.Contains("0042", combined, StringComparison.Ordinal);
+        Assert.Contains("2a", combined, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExecuteCode_ValidationBlocksDisallowedImportAsync()
     {
         SkipIfNoPython();
@@ -75,6 +96,21 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("__loader__.load_module('builtins').open('example.txt', 'w')")]
     [InlineData("__spec__.loader.load_module('builtins').eval('40 + 2')")]
     public async Task ExecuteCode_ValidationBlocksLoaderAccessBeforeRunnerStartsAsync(string code)
+    {
+        SkipIfNoPython();
+
+        await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+    }
+
+    [Theory]
+    [InlineData("\"{0.__class__.__bases__}\".format(())")]
+    [InlineData("def inner():\n    return 1\n\"{0.__globals__!r}\".format(inner)")]
+    [InlineData("def inner():\n    return 1\n\"{0.__globals__[__builtins__]}\".format(inner)")]
+    [InlineData("\"{value.__class__}\".format_map({'value': ()})")]
+    [InlineData("formatter = \"{0.__class__}\".format\nformatter(())")]
+    [InlineData("str.format(\"{0.__class__}\", ())")]
+    [InlineData("\"{0:{1.__class__}}\".format('value', ())")]
+    public async Task ExecuteCode_ValidationBlocksStringFormatTraversalBeforeRunnerStartsAsync(string code)
     {
         SkipIfNoPython();
 
