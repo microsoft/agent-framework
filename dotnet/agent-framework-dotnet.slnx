@@ -169,6 +169,7 @@
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step24_CodeInterpreterFileDownload/Agent_Step24_CodeInterpreterFileDownload.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Agent_Step25_FoundryToolboxMcp.csproj" />
     <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step26_FoundryToolboxMcpSkills/Agent_Step26_FoundryToolboxMcpSkills.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/foundry/Agent_Step27_AgentSkills/Agent_Step27_AgentSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/Evaluation/">
     <Project Path="samples/02-agents/Evaluation/Evaluation_CustomEvals/Evaluation_CustomEvals.csproj" />
