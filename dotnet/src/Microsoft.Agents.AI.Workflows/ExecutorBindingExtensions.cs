@@ -119,7 +119,10 @@ public static class ExecutorBindingExtensions
     {
         Configured<TExecutor, TOptions> configured = new(factoryAsync, id, options);
 
-        return new ConfiguredExecutorBinding(configured.Super<TExecutor, Executor, TOptions>(), typeof(TExecutor));
+        return new ConfiguredExecutorBinding(
+            configured.Super<TExecutor, Executor, TOptions>(),
+            typeof(TExecutor),
+            SupportsConcurrentRuns: true);
     }
 
     /// <summary>
@@ -147,12 +150,14 @@ public static class ExecutorBindingExtensions
     private static ConfiguredExecutorBinding ToBinding<TInput>(this FunctionExecutor<TInput> executor, Delegate raw)
         => new(Configured.FromInstance(executor, raw: raw)
                          .Super<FunctionExecutor<TInput>, Executor>(),
-            typeof(FunctionExecutor<TInput>));
+            typeof(FunctionExecutor<TInput>),
+            SupportsConcurrentRuns: executor.IsCrossRunShareable);
 
     private static ConfiguredExecutorBinding ToBinding<TInput, TOutput>(this FunctionExecutor<TInput, TOutput> executor, Delegate raw)
         => new(Configured.FromInstance(executor, raw: raw)
                          .Super<FunctionExecutor<TInput, TOutput>, Executor>(),
-            typeof(FunctionExecutor<TInput, TOutput>));
+            typeof(FunctionExecutor<TInput, TOutput>),
+            SupportsConcurrentRuns: executor.IsCrossRunShareable);
 
     /// <summary>
     /// Configures a sub-workflow executor for the specified workflow, using the provided identifier and options.
