@@ -2006,6 +2006,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert update.raw_representation is mock_event
 
 
+async def test_run_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming agent run surfaces an oauth_consent_request output item instead of an empty answer."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "gpt-5.4",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+        max_retries=0,
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        agent = FoundryAgent(project_client=project_client, agent_name="toolbox-agent")
+        response = await agent.run("List my repos")
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+
+
 def test_client_model_not_set_from_openai_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """client.model must be empty when OPENAI_CHAT_MODEL is set."""
     monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
