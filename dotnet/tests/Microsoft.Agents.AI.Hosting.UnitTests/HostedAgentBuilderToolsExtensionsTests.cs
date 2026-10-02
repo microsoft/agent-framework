@@ -486,35 +486,4 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
     private sealed class TestDelegatingAgentSessionStore(AgentSessionStore innerStore) : DelegatingAgentSessionStore(innerStore);
 
     private sealed class TestAgentSession : AgentSession;
-
-    /// <summary>
-    /// Dummy AITool implementation for testing.
-    /// </summary>
-    private sealed class DummyAITool : AITool;
-
-    /// <summary>
-    /// Mock chat client for testing.
-    /// </summary>
-    private sealed class MockChatClient : IChatClient
-    {
-        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null)
-        {
-            return null;
-        }
-
-        public void Dispose()
-        {
-            throw new NotImplementedException();
-        }
-    }
 }
