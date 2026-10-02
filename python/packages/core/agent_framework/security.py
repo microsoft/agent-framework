@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field
 
@@ -1341,7 +1342,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.default_confidentiality = default_confidentiality
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
-        self._standing_guidance_cache: dict[int, tuple[str, ...]] = {}
+        self._standing_guidance_cache: "WeakKeyDictionary[Any, tuple[str, ...]]" = WeakKeyDictionary()
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -2051,17 +2052,27 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         ``additional_properties["standing_guidance"]`` at runtime cannot influence
         this or any future invocation — the cached declaration-time value is reused.
 
-        The cache dict is shared across scope clones via the shallow ``copy()``
-        in ``_clone_for_scope()``, so scoped middleware instances reuse the same
-        frozen snapshot.
+        The cache is a WeakKeyDictionary keyed by the live tool object, not by
+        id(function). CPython may reuse an id after the original object is
+        garbage collected; a plain dict would then hand a new, unrelated tool
+        the prior tool's frozen guidance, which _standing_guidance_items()
+        would stamp TRUSTED. WeakKeyDictionary removes entries automatically
+        when the tool object is collected, so stale entries cannot survive.
+
+        Falls back to recomputing on every call if the tool object does not
+        support weak references. The cache is shared across scope clones via the
+        shallow copy() in _clone_for_scope(), so scoped middleware instances
+        reuse the same frozen snapshot.
         """
-        key = id(function)
-        cached = self._standing_guidance_cache.get(key)
+        cached = self._standing_guidance_cache.get(function)
         if cached is not None:
             return cached
         raw = _get_additional_properties(function).get("standing_guidance")
         frozen = self._validate_and_freeze_standing_guidance(raw)
-        self._standing_guidance_cache[key] = frozen
+        try:
+            self._standing_guidance_cache[function] = frozen
+        except TypeError:
+            return frozen
         return frozen
 
     @staticmethod

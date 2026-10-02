@@ -679,6 +679,62 @@ class TestLabelTrackingMiddleware:
         assert "INJECTED" not in ctx2.result[1].text
 
     @pytest.mark.asyncio
+    async def test_standing_guidance_cache_does_not_leak_across_tools(self, middleware):
+        """A short lived tool cached guidance must not be inherited by a later tool
+        whose id() happens to be reused. WeakKeyDictionary keys by object identity,
+        so collection removed the entry before any id reuse."""
+        import gc
+
+        class A(BaseModel):
+            pass
+
+        async def a_tool() -> str:
+            return "a"
+
+        tool_a = FunctionTool(
+            fn=a_tool,
+            name="tool_a",
+            description="A",
+            args_schema=A,
+            additional_properties={"source_integrity": "trusted", "standing_guidance": ["Guidance from A."]},
+        )
+
+        ctx = FunctionInvocationContext(function=tool_a, arguments={})
+
+        async def next_a():
+            ctx.result = [Content.from_text("a")]
+
+        await middleware.process(ctx, next_a)
+        assert ctx.result[1].text == "Guidance from A."
+
+        del tool_a
+        gc.collect()
+
+        class B(BaseModel):
+            pass
+
+        async def b_tool() -> str:
+            return "b"
+
+        tool_b = FunctionTool(
+            fn=b_tool,
+            name="tool_b",
+            description="B",
+            args_schema=B,
+            additional_properties={"source_integrity": "trusted"},
+        )
+
+        ctx_b = FunctionInvocationContext(function=tool_b, arguments={})
+
+        async def next_b():
+            ctx_b.result = [Content.from_text("b")]
+
+        await middleware.process(ctx_b, next_b)
+        assert isinstance(ctx_b.result, list)
+        assert len(ctx_b.result) == 1
+        assert ctx_b.result[0].text == "b"
+
+    @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
         """Test that source_integrity overrides input labels (tier 2 > tier 3).
 
