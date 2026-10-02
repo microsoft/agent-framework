@@ -42,7 +42,6 @@ per-invocation :class:`~agent_framework.SessionContext` in
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Annotated, Any
 
@@ -60,6 +59,7 @@ from ._file_access import (
     _line_edits,  # pyright: ignore[reportPrivateUsage]
     _matches_glob,  # pyright: ignore[reportPrivateUsage]
     _normalize_relative_path,  # pyright: ignore[reportPrivateUsage]
+    _store_write_lock,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = logging.getLogger(__name__)
@@ -297,10 +297,6 @@ class FileMemoryProvider(ContextProvider):
         self.store = store
         self.scope = scope
         self.instructions = instructions or DEFAULT_FILE_MEMORY_INSTRUCTIONS
-        # Serializes write/delete operations (and their index rebuilds) so the
-        # ``memories.md`` index stays consistent. A single per-instance lock is
-        # sufficient for v1; concurrent writes across scopes are rare in practice.
-        self._write_lock = asyncio.Lock()
 
     def _resolve_working_folder(self, context: SessionContext) -> str:
         """Resolve the working folder for the current invocation.
@@ -382,7 +378,10 @@ class FileMemoryProvider(ContextProvider):
 
             path = _combine_paths(working_folder, normalized)
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
-            async with self._write_lock:
+            # Every mutating tool locks the whole working folder, not just the file, because each
+            # write and delete rebuilds the folder's memories.md index. The lock is shared by all
+            # providers on the store, so they cannot interleave edits or index rebuilds.
+            async with _store_write_lock(self.store, working_folder):
                 try:
                     await self.store.write(path, content)
                     if description and description.strip():
@@ -427,7 +426,7 @@ class FileMemoryProvider(ContextProvider):
 
             path = _combine_paths(working_folder, normalized)
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
-            async with self._write_lock:
+            async with _store_write_lock(self.store, working_folder):
                 try:
                     deleted = await self.store.delete(path)
                     await self.store.delete(desc_path)
@@ -478,7 +477,7 @@ class FileMemoryProvider(ContextProvider):
                     "Please choose a different file name."
                 )
             path = _combine_paths(working_folder, normalized)
-            async with self._write_lock:
+            async with _store_write_lock(self.store, working_folder):
                 try:
                     content = await self.store.read(path)
                     if content is None:
@@ -506,7 +505,7 @@ class FileMemoryProvider(ContextProvider):
                     "Please choose a different file name."
                 )
             path = _combine_paths(working_folder, normalized)
-            async with self._write_lock:
+            async with _store_write_lock(self.store, working_folder):
                 try:
                     content = await self.store.read(path)
                     if content is None:

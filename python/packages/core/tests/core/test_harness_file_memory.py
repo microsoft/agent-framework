@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -481,6 +482,42 @@ async def test_memory_replace_lines() -> None:
         }
     )
     assert "Duplicate" in _text(dup)
+
+
+async def test_providers_sharing_a_store_keep_concurrent_edits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two providers on one store and session must not interleave edits of one memory file.
+
+    Each provider used to hold only its own lock, so both could read the file before
+    either wrote it back, and the later write dropped the other edit while both tools
+    reported success.
+    """
+    store = InMemoryAgentFileStore()
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    _, first = await _prepare(FileMemoryProvider(store=store))
+    _, second = await _prepare(FileMemoryProvider(store=store))
+    await first["file_memory_write"].invoke(arguments={"file_name": "notes.md", "content": "A=0\nB=0\n"})
+
+    results = await asyncio.gather(
+        first["file_memory_replace"].invoke(
+            arguments={"file_name": "notes.md", "old_string": "A=0", "new_string": "A=1"}
+        ),
+        second["file_memory_replace_lines"].invoke(
+            arguments={"file_name": "notes.md", "edits": [{"line_number": 2, "new_line": "B=1\n"}]}
+        ),
+    )
+
+    assert [_text(result) for result in results] == [
+        "Replaced 1 occurrence(s) in 'notes.md'.",
+        "Replaced 1 line(s) in 'notes.md'.",
+    ]
+    assert await store.read("session-1/notes.md") == "A=1\nB=1\n"
 
 
 # region Session isolation (MSRC): the working folder derivation must be injective
