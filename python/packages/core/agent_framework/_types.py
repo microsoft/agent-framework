@@ -4814,11 +4814,19 @@ def merge_chat_options(
             # Merge tools lists
             base_tools = result.get("tools")
             if base_tools and value:
-                # Add tools that aren't already present
-                merged_tools = list(base_tools)
-                for tool in value if isinstance(value, Iterable) else [value]:  # type: ignore[reportUnknownVariableType]
-                    if tool not in merged_tools:
-                        merged_tools.append(tool)
+                # Add tools that aren't already present, matching by name so the same
+                # plain callable wrapped on both sides is not added twice.
+                from ._tools import _get_tool_name  # pyright: ignore[reportPrivateUsage]
+
+                merged_tools = normalize_tools(base_tools)
+                names = {name for t in merged_tools if (name := _get_tool_name(t))}
+                for tool in normalize_tools(value):
+                    name = _get_tool_name(tool)
+                    if tool in merged_tools or (name is not None and name in names):
+                        continue
+                    merged_tools.append(tool)
+                    if name is not None:
+                        names.add(name)
                 result["tools"] = merged_tools
             elif value:
                 result["tools"] = value if isinstance(value, list) else [value]

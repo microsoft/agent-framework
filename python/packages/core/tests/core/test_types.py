@@ -6207,3 +6207,56 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
 
 
 # endregion
+
+
+def test_merge_chat_options_single_mapping_tool_is_not_spread_into_keys():
+    """A single tool given as a mapping is one tool, on either side of the merge."""
+
+    @tool
+    def my_tool() -> None:
+        pass
+
+    hosted = {"type": "web_search", "name": "ws"}
+
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": hosted})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, hosted]
+
+    merged = merge_chat_options({"tools": hosted}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [hosted, my_tool]
+
+
+def test_merge_chat_options_same_plain_callable_on_both_sides():
+    """The same undecorated function on both sides is merged into one tool."""
+
+    def my_func() -> None:
+        pass
+
+    merged = merge_chat_options({"tools": [my_func]}, {"tools": [my_func]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["my_func"]
+
+
+def test_merge_chat_options_keeps_pydantic_provider_tool_whole():
+    """A Pydantic provider-native tool spec is one tool, not spread into its fields."""
+
+    class ProviderTool(BaseModel):
+        type: str = "code_interpreter"
+        container: str = "auto"
+
+    @tool
+    def my_tool() -> None:
+        pass
+
+    provider_tool = ProviderTool()
+
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": [provider_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, provider_tool]
+
+    merged = merge_chat_options({"tools": [provider_tool]}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [provider_tool, my_tool]
+
+    # A single, unwrapped provider tool on either side.
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": provider_tool})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, provider_tool]
+
+    merged = merge_chat_options({"tools": provider_tool}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [provider_tool, my_tool]
