@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from agent_framework import ChatResponse
 
-from agent_framework_ag_ui._event_converters import AGUIEventConverter
+from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response
 
 
 class TestAGUIEventConverter:
@@ -420,6 +420,39 @@ class TestAGUIEventConverter:
         assert update.contents[0].annotations == annotations
         assert update.additional_properties is not None
         assert update.additional_properties["ag_ui_custom_event"]["value"] == event["value"]
+
+    def test_annotation_finalizer_targets_an_existing_message_after_later_events(self) -> None:
+        """Late annotations attach by message ID without creating a duplicate message."""
+        converter = AGUIEventConverter()
+        annotations = [
+            {
+                "type": "citation",
+                "url": "https://example.com/first",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+            }
+        ]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+            {"type": "TEXT_MESSAGE_START", "messageId": "m2"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+            {"type": "TOOL_CALL_RESULT", "toolCallId": "call-1", "result": "done"},
+            {
+                "type": "CUSTOM",
+                "name": "annotations",
+                "value": {"messageId": "m1", "annotations": annotations},
+            },
+        ]
+        updates = [update for event in events if (update := converter.convert_event(event)) is not None]
+
+        response = _finalize_agui_response(updates)
+
+        assert [message.message_id for message in response.messages].count("m1") == 1
+        first_message = next(message for message in response.messages if message.message_id == "m1")
+        first_text = next(content for content in first_message.contents if content.type == "text")
+        assert first_text.text == "First"
+        assert first_text.annotations == annotations
+        assert [message.message_id for message in response.messages].count(None) == 1
 
     @pytest.mark.parametrize(
         "value",

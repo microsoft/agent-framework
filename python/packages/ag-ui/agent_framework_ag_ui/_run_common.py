@@ -609,6 +609,25 @@ def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
     flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
+def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int) -> None:
+    """Rebase text spans from a delta to the accumulated message."""
+    if offset == 0:
+        return
+    for annotation in annotations:
+        regions = annotation.get("annotated_regions")
+        if not isinstance(regions, list):
+            continue
+        for region in regions:
+            if not isinstance(region, dict) or region.get("type") != "text_span":
+                continue
+            start_index = region.get("start_index")
+            end_index = region.get("end_index")
+            if isinstance(start_index, int):
+                region["start_index"] = start_index + offset
+            if isinstance(end_index, int):
+                region["end_index"] = end_index + offset
+
+
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
     """Emit text deltas and message-linked annotation batches."""
     if not content.text and not content.annotations:
@@ -651,6 +670,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if segment is None:
         segment = _open_text_segment(flow, flow.message_id)
 
+    annotation_offset = len(flow.accumulated_text)
     if content.text and not duplicate_text:
         events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
         flow.accumulated_text += content.text
@@ -665,6 +685,8 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
                 ]
             ),
         )
+        if content.text and not duplicate_text:
+            _offset_annotation_text_spans(annotations, annotation_offset)
         new_annotations = annotations
         if duplicate_text:
             # Reconcile replay by occurrence count, not source URL or dictionary uniqueness.

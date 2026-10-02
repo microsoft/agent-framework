@@ -670,6 +670,55 @@ def test_emit_text_annotations_are_json_safe_and_message_linked() -> None:
     assert annotation["raw_representation"] is content.annotations[0]["raw_representation"]
 
 
+def test_emit_text_rebases_delta_annotation_spans_and_deduplicates_full_replay() -> None:
+    """Chunk-relative spans become message-relative and match completed replay spans."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+    )
+    _emit_text(Content.from_text("Prefix "), flow)
+
+    events = _emit_text(Content.from_text("target", annotations=[annotation]), flow)
+    replay_events = _emit_text(
+        Content.from_text(
+            "Prefix target",
+            annotations=[
+                Annotation(
+                    type="citation",
+                    url="https://example.com/target",
+                    annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+                )
+            ],
+        ),
+        flow,
+    )
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == [
+        {"type": "text_span", "start_index": 7, "end_index": 13}
+    ]
+    assert annotation["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 6}]
+    assert replay_events == []
+
+
+def test_emit_text_preserves_annotation_only_spans() -> None:
+    """Annotation-only updates already use complete-message span indices."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+    )
+    _emit_text(Content.from_text("Prefix target"), flow)
+
+    events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == annotation["annotated_regions"]
+
+
 def test_emit_text_annotation_only_update_starts_a_message_without_an_empty_delta() -> None:
     """Citations received before text still reference an announced message."""
     flow = FlowState()

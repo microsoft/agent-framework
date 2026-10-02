@@ -36,9 +36,6 @@ without repeating text that was already streamed. Annotation-added and completio
 by item, content part, and annotation position, so separate references to the same source remain distinct.
 Foundry clients that inherit the Responses parser receive the same behavior.
 
-The AG-UI integration surfaces these annotations as message-linked `CUSTOM` events named `annotations`;
-see [AG-UI citation support](../ag-ui/README.md#citations-and-annotations). No logging handler is needed.
-
 ## Hosted function results
 
 `OpenAIChatClient` parses hosted `function_call_output` items in both streaming and non-streaming responses.
