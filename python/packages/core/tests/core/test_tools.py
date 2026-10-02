@@ -709,6 +709,41 @@ def test_tool_decorator_in_class():
     assert test_tool(1, 2) == 3
 
 
+async def test_method_tool_max_invocations_persists_across_attribute_access() -> None:
+    """Method tool invocation limits apply across repeated attribute access."""
+    from agent_framework.exceptions import ToolException
+
+    class Tools:
+        @tool(max_invocations=1)
+        def ping(self) -> str:
+            return "pong"
+
+    tools = Tools()
+
+    assert await tools.ping.invoke(skip_parsing=True) == "pong"
+    assert tools.ping.invocation_count == 1
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await tools.ping.invoke(skip_parsing=True)
+
+
+async def test_method_tool_max_invocation_exceptions_persists_across_attribute_access() -> None:
+    """Method tool exception limits apply across repeated attribute access."""
+    from agent_framework.exceptions import ToolException
+
+    class Tools:
+        @tool(max_invocation_exceptions=1)
+        def fail(self) -> None:
+            raise RuntimeError("boom")
+
+    tools = Tools()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await tools.fail.invoke(skip_parsing=True)
+    assert tools.fail.invocation_exception_count == 1
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await tools.fail.invoke(skip_parsing=True)
+
+
 def test_tool_with_literal_type_parameter():
     """Test tool decorator with Literal type parameter (issue #2891)."""
 
