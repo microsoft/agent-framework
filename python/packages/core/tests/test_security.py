@@ -6,10 +6,11 @@ import asyncio
 import json
 import logging
 import math
+import warnings
 from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -6090,6 +6091,59 @@ def _make_connected_mcp_tool_for_ifc(
     return mcp_tool, function
 
 
+def _make_mcp_tool_definition(name: str, *, open_world: bool = False) -> Any:
+    from mcp import types as mcp_types
+
+    return mcp_types.Tool(
+        name=name,
+        description=f"{name} description",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=mcp_types.ToolAnnotations(readOnlyHint=False, openWorldHint=open_world),
+    )
+
+
+def _make_connected_mcp_discovery_tool(
+    *,
+    progressive: bool = False,
+    always_load: list[str] | None = None,
+    result_meta: dict[str, Any] | None = None,
+) -> Any:
+    from mcp import types as mcp_types
+
+    from agent_framework._mcp import MCPTool
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mcp_tool = MCPTool(  # type: ignore[abstract]
+            name="helper",
+            load_prompts=False,
+            use_progressive_disclosure=progressive,
+            always_load=always_load,
+        )
+    mcp_tool.is_connected = True
+    mcp_tool.session = AsyncMock()
+    mcp_tool.session.call_tool = AsyncMock(
+        return_value=mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="payload")],
+            _meta=result_meta or {"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+        )
+    )
+    return mcp_tool
+
+
+def _find_mcp_function(mcp_tool: Any, remote_name: str) -> FunctionTool:
+    return next(
+        function
+        for function in mcp_tool._functions
+        if (function.additional_properties or {}).get("_mcp_remote_name") == remote_name
+    )
+
+
+async def _invoke_mcp_function(function: FunctionTool) -> Any:
+    context = FunctionInvocationContext(function=function, arguments={})
+    return await function.invoke(arguments={}, context=context, skip_parsing=True)
+
+
 # ---------------------------------------------------------------------------
 # IFC labels from MCP _meta payload
 # ---------------------------------------------------------------------------
@@ -6667,6 +6721,172 @@ class TestMCPIFCMetaLabels:
             else {"integrity": "untrusted", "confidentiality": "private"}
         )
         assert result[0].additional_properties["security_label"] == expected_label
+
+    async def test_secure_mcp_proxy_labels_notification_reload_before_publication(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink", open_world=False)
+        late_tool = _make_mcp_tool_definition("late_sink", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[initial_tool]))
+        await mcp_tool.load_tools()
+
+        proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
+        await proxy.refresh_labels()
+        initial_function = _find_mcp_function(mcp_tool, "initial_sink")
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "trusted"
+
+        reloaded_initial_tool = _make_mcp_tool_definition("initial_sink", open_world=True)
+        mcp_tool.session.list_tools.return_value = mcp_types.ListToolsResult(tools=[reloaded_initial_tool, late_tool])
+        notification = Mock(spec=mcp_types.ServerNotification)
+        notification.root = Mock()
+        notification.root.method = "notifications/tools/list_changed"
+
+        await mcp_tool.message_handler(notification)
+        pending_reloads = list(mcp_tool._pending_reload_tasks)
+        assert pending_reloads
+        await asyncio.gather(*pending_reloads)
+
+        assert _find_mcp_function(mcp_tool, "initial_sink") is initial_function
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "untrusted"
+        late_function = _find_mcp_function(mcp_tool, "late_sink")
+        assert late_function.additional_properties is not None
+        assert late_function.additional_properties["source_integrity"] == "untrusted"
+        assert late_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert late_function.additional_properties["accepts_untrusted"] is False
+        assert late_function.additional_properties["_mcp_trust_server_ifc"] is False
+        assert getattr(late_function.func, "_ifc_wrapped", False) is True
+
+        context = FunctionInvocationContext(function=late_function, arguments={})
+        context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(context, execute)
+
+        assert "exfiltration" in context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(late_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_labels_progressive_hidden_function_before_exposure(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink")
+        hidden_tool = _make_mcp_tool_definition("hidden_sink")
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            progressive=True,
+            always_load=["initial_sink"],
+        )
+        mcp_tool.session.list_tools = AsyncMock(
+            return_value=mcp_types.ListToolsResult(tools=[initial_tool, hidden_tool])
+        )
+        proxy = SecureMCPToolProxy(mcp_tool)
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        hidden_function = _find_mcp_function(mcp_tool, "hidden_sink")
+        assert hidden_function not in mcp_tool.functions
+        assert hidden_function.additional_properties is not None
+        assert hidden_function.additional_properties["source_integrity"] == "untrusted"
+        assert hidden_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert getattr(hidden_function.func, "_ifc_wrapped", False) is True
+
+        load_function = next(function for function in mcp_tool.functions if function.name == "load_tool")
+        context = FunctionInvocationContext(
+            function=load_function,
+            arguments={"tool": "hidden_sink"},
+            tools=list(mcp_tool.functions),
+        )
+        await load_function.invoke(arguments={"tool": "hidden_sink"}, context=context)
+
+        assert context.tools is not None
+        assert hidden_function in context.tools
+        policy_context = FunctionInvocationContext(function=hidden_function, arguments={})
+        policy_context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(policy_context, execute)
+
+        assert "exfiltration" in policy_context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(hidden_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_applies_local_policy_to_later_tool(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        later_tool = _make_mcp_tool_definition("later_tool", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            result_meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        )
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[later_tool]))
+        proxy = SecureMCPToolProxy(
+            mcp_tool,
+            annotation_overrides={"later_tool": (IntegrityLabel.TRUSTED, ConfidentialityLabel.PRIVATE)},
+            trust_server_ifc=True,
+        )
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "later_tool")
+        assert function.additional_properties is not None
+        assert function.additional_properties["source_integrity"] == "trusted"
+        assert function.additional_properties["max_allowed_confidentiality"] == "private"
+        assert function.additional_properties["_mcp_trust_server_ifc"] is True
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+
+        await proxy.disconnect()
+        assert mcp_tool._function_load_callback is None
+
+    async def test_plain_mcp_tool_remains_unlabeled(self):
+        from mcp import types as mcp_types
+
+        plain_tool = _make_mcp_tool_definition("plain_tool")
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[plain_tool]))
+
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "plain_tool")
+        assert function.additional_properties == {
+            "_mcp_remote_name": "plain_tool",
+            "_mcp_normalized_name": "plain_tool",
+            "_mcp_is_tool": True,
+        }
+        assert getattr(function.func, "_ifc_wrapped", False) is False
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["_meta"] == {
+            "ifc": {"integrity": "trusted", "confidentiality": "private"}
+        }
+        assert "security_label" not in result[0].additional_properties
 
     async def test_wrap_mcp_function_str_result_passes_through(self):
         """``str`` results (no per-item containers) are not modified by the wrapper."""
