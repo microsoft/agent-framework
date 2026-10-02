@@ -6,7 +6,7 @@ import contextlib
 import json
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -2548,6 +2548,13 @@ def test_coalesce_matches_repeated_add(type_str: Literal["text", "text_reasoning
             make(2),
             make(3, raw_representation={"n": 3}),
         ],
+        # annotations on the head, on a later chunk, and on both
+        [
+            make(0, annotations=[{"type": "citation", "url": "https://a"}]),
+            make(1),
+            make(2, annotations=[{"type": "citation", "url": "https://b"}]),
+        ],
+        [make(0), make(1, annotations=[{"type": "citation", "url": "https://b"}]), make(2)],
         # split by an unrelated content type, then resume
         [make(0), Content.from_data(b"\x00", media_type="application/octet-stream"), make(1), make(2)],
         # single chunk stays a plain copy
@@ -2565,11 +2572,15 @@ def test_coalesce_matches_repeated_add(type_str: Literal["text", "text_reasoning
         ])
 
     for stream in streams:
-        expected = [deepcopy(c) for c in stream]
+        # Shallow copies: deepcopy would strip raw_representation up front and make
+        # the explicit raw comparison below vacuous.
+        expected = [copy(c) for c in stream]
         _reference_coalesce(expected, type_str)
         actual = list(stream)
         _coalesce_text_content(actual, type_str)
         assert actual == expected, type_str
+        # Content.__eq__ excludes raw_representation, so compare it explicitly.
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected], type_str
 
 
 def test_coalesce_fold_does_not_readd_chunks() -> None:
@@ -2619,6 +2630,80 @@ def test_coalesce_text_reasoning_one_pass_semantics() -> None:
     _coalesce_text_content(none_run, "text_reasoning")
     assert len(none_run) == 1
     assert none_run[0].text is None
+
+
+def test_coalesce_text_reasoning_empty_id_matches_repeated_add() -> None:
+    """An empty-string id survives the fold exactly like repeated += (``None or ""`` yields ``""``)."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [Content.from_text_reasoning(text="a"), Content.from_text_reasoning(id="", text="b")]
+    _coalesce_text_content(contents, "text_reasoning")
+    assert len(contents) == 1
+    assert contents[0].id == ""
+
+
+def test_coalesce_detaches_run_head_nested_values() -> None:
+    """Mutating the source head's nested values after the fold must not leak into the aggregate."""
+    from agent_framework._types import _coalesce_text_content
+
+    head = Content.from_text(
+        "h ",
+        additional_properties={"k": {"nested": 1}},
+        annotations=[{"type": "citation", "url": "https://a"}],
+    )
+    contents = [head, Content.from_text("t")]
+    _coalesce_text_content(contents, "text")
+    head.additional_properties["k"]["nested"] = 99
+    head.annotations[0]["url"] = "https://mutated"
+    assert contents[0].additional_properties["k"]["nested"] == 1
+    assert contents[0].annotations[0]["url"] == "https://a"
+
+
+@pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
+def test_coalesce_matches_repeated_add_fuzz(type_str: Literal["text", "text_reasoning"]) -> None:
+    """Seeded random streams: the one-pass fold must match repeated += exactly.
+
+    The oracle folds through the live ``__add__``, so any future drift between
+    the add-path and the one-pass fold fails here.
+    """
+    import random
+
+    from agent_framework._types import _coalesce_text_content
+
+    rng = random.Random(20261002)
+
+    def rand_chunk() -> Content:
+        kwargs: dict[str, Any] = {}
+        if rng.random() < 0.5:
+            props: dict[str, Any] = {rng.choice(["a", "b"]): rng.randint(0, 3)}
+            if type_str == "text" and rng.random() < 0.2:
+                props[_MODEL_OUTPUT_KIND_KEY] = rng.choice(["refusal", "regular"])
+            if type_str == "text_reasoning" and rng.random() < 0.3:
+                props["reasoning_text"] = True
+            kwargs["additional_properties"] = props
+        if rng.random() < 0.3:
+            annotation: Annotation = {"type": "citation", "url": f"https://x/{rng.randint(0, 9)}"}
+            kwargs["annotations"] = [annotation]
+        if rng.random() < 0.4:
+            kwargs["raw_representation"] = (
+                {"n": rng.randint(0, 5)} if rng.random() < 0.5 else [{"n": rng.randint(0, 5)}]
+            )
+        if type_str == "text":
+            return Content.from_text(rng.choice(["", "x", "y "]), **kwargs)
+        return Content.from_text_reasoning(
+            id=rng.choice([None, "", "rs_a", "rs_b"]), text=rng.choice([None, "", "t "]), **kwargs
+        )
+
+    for _ in range(300):
+        stream = [rand_chunk() for _ in range(rng.randint(0, 8))]
+        if stream and rng.random() < 0.3:
+            stream.insert(rng.randrange(len(stream)), Content.from_data(b"\x00", media_type="application/octet-stream"))
+        expected = [copy(c) for c in stream]
+        _reference_coalesce(expected, type_str)
+        actual = list(stream)
+        _coalesce_text_content(actual, type_str)
+        assert actual == expected
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected]
 
 
 def test_agent_response_from_updates_preserves_refusal_marker() -> None:

@@ -1693,7 +1693,11 @@ class Content:
         raise ContentError(f"Addition not supported for content type: {self.type}")
 
     def _add_text_content(self, other: Content) -> Content:
-        """Add two TextContent instances."""
+        """Add two TextContent instances.
+
+        Keep the merge rules here in sync with ``_merge_content_run``, which
+        folds a run of chunks in one pass without calling ``__add__``.
+        """
         return Content(
             "text",
             text=self.text + other.text,  # type: ignore[attr-defined, operator]
@@ -1703,7 +1707,12 @@ class Content:
         )
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
-        """Add two TextReasoningContent instances."""
+        """Add two TextReasoningContent instances.
+
+        Keep the mismatch checks and merge rules here in sync with
+        ``_coalesce_text_content`` / ``_merge_content_run``, which fold a run of
+        chunks in one pass without calling ``__add__``.
+        """
         # Ensure we do not silently merge contents with conflicting ids
         if self.id and other.id and self.id != other.id:
             raise AdditionItemMismatch(
@@ -2288,12 +2297,18 @@ def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reaso
     representations flatten into one list (left untouched when a single chunk
     carries the only value). The run head's own raw representation is dropped,
     matching the old path whose initial ``deepcopy`` discards it
-    (``_SHALLOW_COPY_FIELDS``).
+    (``_SHALLOW_COPY_FIELDS``). The head's nested values are deep-copied for the
+    same reason, so mutating the source head after the fold cannot leak into
+    the aggregate.
     """
+    head = run[0]
     merged_props: dict[str, Any] = {}
-    for content in reversed(run):
+    for content in reversed(run[1:]):
         merged_props.update(content.additional_properties)
-    annotation_seqs = [c.annotations for c in run if c.annotations is not None]
+    merged_props.update(deepcopy(head.additional_properties))
+    annotation_seqs = [
+        deepcopy(c.annotations) if c is head else c.annotations for c in run if c.annotations is not None
+    ]
     annotations = [a for seq in annotation_seqs for a in seq] if annotation_seqs else None
     non_null_raws = [c.raw_representation for c in run[1:] if c.raw_representation is not None]
     raw_representation: Any
@@ -2315,7 +2330,7 @@ def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reaso
         )
     return Content(
         "text_reasoning",
-        id=next((c.id for c in run if c.id), None),
+        id=next((c.id for c in run if c.id), run[-1].id),
         text=None if all(c.text is None for c in run) else "".join(c.text or "" for c in run),
         protected_data=next((c.protected_data for c in reversed(run) if c.protected_data is not None), None),
         annotations=annotations,
