@@ -36,6 +36,8 @@
     <Project Path="samples/02-agents/AgentProviders/onnx/Agent_With_ONNX/Agent_With_ONNX.csproj" />
     <Project Path="samples/02-agents/AgentProviders/openai/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/openai/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/typesafe/Agent_TypeSafe_Step01_LoopJudge/Agent_TypeSafe_Step01_LoopJudge.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/typesafe/Agent_With_TypeSafe/Agent_With_TypeSafe.csproj" />
   </Folder>
   <Folder Name="/Samples/05-end-to-end/DevUIAspireIntegration/">
     <Project Path="samples/05-end-to-end/DevUIAspireIntegration/DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj" />
@@ -69,6 +71,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step22_AgentMode/Agent_Step22_AgentMode.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step23_TodoList/Agent_Step23_TodoList.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step24_MultiModelRouting/Agent_Step24_MultiModelRouting.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step25_ClassificationWithJev/Agent_Step25_ClassificationWithJev.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -631,6 +634,7 @@
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Tools.Shell/Microsoft.Agents.AI.Tools.Shell.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.TypeSafe/Microsoft.Agents.AI.TypeSafe.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/Microsoft.Agents.AI.Workflows.Declarative.Mcp.csproj" />
@@ -689,6 +693,7 @@
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Tools.Shell.UnitTests/Microsoft.Agents.AI.Tools.Shell.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.TypeSafe.UnitTests/Microsoft.Agents.AI.TypeSafe.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Valkey.UnitTests/Microsoft.Agents.AI.Valkey.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests.csproj" />
