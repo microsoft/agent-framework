@@ -7,11 +7,15 @@ import math
 import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as datetime_time
+from decimal import Decimal
 from typing import Any, Literal
 from unittest.mock import Mock
+from uuid import UUID, SafeUUID
 
 import pytest
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, TypeAdapter, field_validator
 
 from agent_framework import (
     Agent,
@@ -5770,6 +5774,424 @@ async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
     assert result.result == "nan"
     assert len(received) == 1 and math.isnan(received[0])
     assert validation_count == 1
+
+
+class _PassthroughFunctionMiddleware(FunctionMiddleware):
+    """Routes an invocation through the middleware path, which binds approved arguments."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        await call_next()
+
+
+def _approved_function_call(tool_name: str, arguments: dict[str, Any]) -> Content:
+    function_call = Content.from_function_call(
+        call_id=f"{tool_name}-call",
+        id=f"{tool_name}-occurrence",
+        name=tool_name,
+        arguments=arguments,
+    )
+    return Content.from_function_approval_request(
+        id=f"{tool_name}-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (datetime, "2026-01-02T03:04:05+01:00", datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=1)))),
+        (date, "2026-01-02", date(2026, 1, 2)),
+        (timedelta, "PT90S", timedelta(seconds=90)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (frozenset[int], [2, 1], frozenset({1, 2})),
+        (tuple[int, int], [1, 2], (1, 2)),
+        (Decimal, "1.50", Decimal("1.50")),
+        (UUID, "12345678-1234-5678-1234-567812345678", UUID("12345678-1234-5678-1234-567812345678")),
+    ],
+    ids=["datetime", "aware_datetime", "date", "timedelta", "set", "frozenset", "tuple", "decimal", "uuid"],
+)
+async def test_approval_binds_values_converted_by_input_model(annotation: Any, raw_value: Any, expected: Any) -> None:
+    """An approved tool receives values its input model converts from JSON (#8661).
+
+    Approval binds the arguments with a stable snapshot token, so every converted type needs one;
+    otherwise the approved call fails as if the arguments were opaque mutable objects.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    result = await _auto_invoke_function(
+        _approved_function_call(capture_tool.name, {"value": raw_value}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={capture_tool.name: capture_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "ok"
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+def _change_value_middleware(change: Callable[[Any], Any]) -> FunctionMiddleware:
+    """Return middleware that applies ``change`` to the ``value`` argument after approval."""
+
+    class ChangeValueMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            changed = change(context.arguments["value"])
+            if changed is not None:
+                context.arguments["value"] = changed
+            await call_next()
+
+    return ChangeValueMiddleware()
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "change"),
+    [
+        (set[str], ["read"], lambda value: value.add("delete")),
+        (set[float], ["NaN", "NaN"], lambda value: value.discard(next(iter(value)))),
+        (
+            datetime,
+            "2026-01-02T03:04:05+01:00",
+            lambda value: TypeAdapter(datetime).validate_python("2026-01-02T04:04:05+02:00"),
+        ),
+        (Decimal, "1.0", lambda value: Decimal("1.00")),
+    ],
+    ids=[
+        "set_mutated_in_place",
+        "set_with_one_of_two_nans_removed",
+        "datetime_moved_to_other_time_zone",
+        "decimal_with_other_precision",
+    ],
+)
+async def test_approval_detects_changes_to_converted_values(
+    annotation: Any, raw_value: Any, change: Callable[[Any], Any]
+) -> None:
+    """Middleware changes to a converted value require a replacement approval.
+
+    This covers changes that ``==`` misses: the set still holds a NaN, the moved datetime is the
+    same instant, and the Decimals compare equal, but the tool would receive a different value.
+    The replacement request is persisted with the session, so its arguments must be JSON-native.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareTermination, match="Function arguments changed after approval") as exc_info:
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": raw_value}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_change_value_middleware(change)),
+        )
+
+    assert received == []
+    replacement = exc_info.value.result
+    assert isinstance(replacement, Content)
+    assert replacement.type == "function_approval_request"
+    json.dumps(replacement.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "change"),
+    [
+        (datetime, "2026-01-02T03:04:05+01:00", lambda value: value.astimezone(timezone.utc)),
+        (datetime, "2026-11-01T01:30:00", lambda value: value.replace(fold=1)),
+        (datetime_time, "01:30:00", lambda value: value.replace(fold=1)),
+        (
+            UUID,
+            "12345678-1234-5678-1234-567812345678",
+            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+        ),
+    ],
+    ids=[
+        "datetime_with_standard_library_time_zone",
+        "datetime_with_other_fold",
+        "time_with_other_fold",
+        "uuid_with_other_is_safe",
+    ],
+)
+async def test_approval_change_that_json_cannot_represent_fails_closed(
+    annotation: Any, raw_value: Any, change: Callable[[Any], Any]
+) -> None:
+    """A change JSON cannot carry exactly fails closed instead of asking for approval again (#8661).
+
+    Approving a replacement validates its JSON arguments again, which drops ``fold`` and
+    ``is_safe`` and parses offsets into pydantic's own time zone type. The approved value would then
+    differ from the one the middleware produces, so every approval would need another one.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareFailure, match="cannot represent exactly"):
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": raw_value}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_change_value_middleware(change)),
+        )
+
+    assert received == []
+
+
+@pytest.mark.parametrize(
+    ("value", "other"),
+    [
+        (datetime(2026, 11, 1, 1, 30), datetime(2026, 11, 1, 1, 30, fold=1)),
+        (datetime_time(1, 30), datetime_time(1, 30, fold=1)),
+        (
+            UUID("12345678-1234-5678-1234-567812345678"),
+            UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe),
+        ),
+        (
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1))),
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1), "CET")),
+        ),
+    ],
+    ids=["datetime_fold", "time_fold", "uuid_is_safe", "time_zone_name"],
+)
+def test_argument_tokens_distinguish_values_with_the_same_string_form(value: Any, other: Any) -> None:
+    """Values a tool can tell apart get different authority tokens, even when ``str()`` is equal."""
+    from agent_framework._tools import _argument_authority_token
+
+    assert str(value) == str(other)
+    token = _argument_authority_token(value, boundary="approval")
+    assert token == _argument_authority_token(value, boundary="approval")
+    assert token != _argument_authority_token(other, boundary="approval")
+
+
+@pytest.mark.parametrize(
+    ("value", "other"),
+    [
+        ({float("nan"), float("nan")}, {float("nan")}),
+        ({Decimal("NaN"), Decimal("NaN")}, {Decimal("NaN")}),
+        (frozenset({float("nan"), float("nan")}), frozenset({float("nan")})),
+        ({float("nan"): 1, float("nan"): 1}, {float("nan"): 1}),
+        ({(float("nan"),), (float("nan"),)}, {(float("nan"),)}),
+    ],
+    ids=["set_of_floats", "set_of_decimals", "frozenset", "dict_keys", "set_of_tuples"],
+)
+def test_argument_tokens_count_items_that_share_a_token(value: Any, other: Any) -> None:
+    """Items with the same token are counted, so removing one changes the token (#8661).
+
+    NaN is not equal to itself, so a set or dict can hold several NaNs, and they all get the same
+    token. Without a count, removing one would leave the token unchanged.
+    """
+    from agent_framework._tools import _argument_authority_token
+
+    assert len(value) == 2
+    assert len(other) == 1
+    token = _argument_authority_token(value, boundary="approval")
+    assert token == _argument_authority_token(value, boundary="approval")
+    assert token != _argument_authority_token(other, boundary="approval")
+
+
+async def test_approval_rejects_subclass_of_converted_value_type() -> None:
+    """Only the exact immutable types get value tokens; a subclass may carry mutable state."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class MutableDatetime(datetime):
+        pass
+
+    class SubclassArgs(BaseModel):
+        moment: datetime
+
+        @field_validator("moment")
+        @classmethod
+        def to_subclass(cls, value: datetime) -> datetime:
+            return MutableDatetime.fromisoformat(value.isoformat())
+
+    @tool(name="subclass_tool", schema=SubclassArgs, approval_mode="always_require")
+    def subclass_tool(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(MiddlewareFailure, match="Cannot safely bind approval to opaque mutable function arguments"):
+        await _auto_invoke_function(
+            _approved_function_call(subclass_tool.name, {"moment": "2026-01-02T03:04:05"}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={subclass_tool.name: subclass_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+        )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_agent_runs_approved_tool_with_converted_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """End to end: an approved tool with datetime and set parameters runs after approval (#8661)."""
+    received: list[tuple[datetime, set[str]]] = []
+
+    @tool(name="schedule", approval_mode="always_require")
+    def schedule(moment: datetime, tags: set[str]) -> str:
+        received.append((moment, tags))
+        return "scheduled"
+
+    function_call = Content.from_function_call(
+        call_id="schedule-1",
+        name="schedule",
+        arguments='{"moment": "2026-01-02T03:04:05Z", "tags": ["b", "a"]}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[schedule], middleware=[_PassthroughFunctionMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("schedule it")
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    final_response = await run(
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    )
+
+    assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"a", "b"})]
+    assert final_response.text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_approved_repair_replacement_round_trips_through_json(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A replacement for repaired converted arguments can be stored as JSON and then runs once (#8661).
+
+    Middleware repairs one argument after approval while the others keep their converted values
+    (datetime, set). The replacement request holds the arguments in JSON form, so the session and
+    the approval message survive a JSON round trip, and approving the stored request runs the call.
+    """
+    received: list[tuple[datetime, set[str], int]] = []
+
+    class LimitSeatsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if context.arguments["seats"] > 4:
+                context.arguments = {**context.arguments, "seats": 4}
+            await call_next()
+
+    @tool(name="book", approval_mode="always_require")
+    def book(when: datetime, tags: set[str], seats: int) -> str:
+        received.append((when, tags, seats))
+        return "booked"
+
+    function_call = Content.from_function_call(
+        call_id="book-1",
+        name="book",
+        arguments='{"when": "2026-01-02T03:04:05Z", "tags": ["window"], "seats": 6}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[book], middleware=[LimitSeatsMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("book it")
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)])
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert received == []
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert replacement_request.function_call is not None
+    assert replacement_request.function_call.parse_arguments() == {
+        "when": "2026-01-02T03:04:05Z",
+        "tags": ["window"],
+        "seats": 4,
+    }
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    approval_message = Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)])
+    final_response = await run(Message.from_dict(json.loads(approval_message.to_json())))
+
+    assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"window"}, 4)]
+    assert type(received[0][0]) is datetime
+    assert type(received[0][1]) is set
+    assert final_response.text == "done"
 
 
 async def test_function_middleware_can_short_circuit_before_argument_validation(
