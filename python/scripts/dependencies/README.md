@@ -19,6 +19,8 @@ Run the commands below from the `python/` directory.
 
 - `_dependency_bounds_release_impl.py`
   - Discovers package metadata changed from the selected release base.
+  - Verifies that every Agent Framework integration in `agent-framework-core[all]` has lower and upper bounds, and
+    that workspace integrations use their current release version as the lower bound.
   - Resolves published runtime dependencies and non-development extras independently of `uv.lock` with both
     `lowest-direct` and `highest` strategies.
   - Derives the minimum supported Python minor from each changed package's internal editable dependency closure.
