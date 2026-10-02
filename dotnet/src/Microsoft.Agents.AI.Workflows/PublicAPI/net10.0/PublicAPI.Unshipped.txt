@@ -1,1 +1,20 @@
 ﻿#nullable enable
+*REMOVED*static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.AsAIAgent(this Microsoft.Agents.AI.Workflows.Workflow! workflow, string? id = null, string? name = null, string? description = null, Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false) -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.ChatHistoryProvider.get -> Microsoft.Agents.AI.ChatHistoryProvider?
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.ChatHistoryProvider.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Description.get -> string?
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Description.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.ExecutionEnvironment.get -> Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment?
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.ExecutionEnvironment.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Id.get -> string?
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Id.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.IncludeExceptionDetails.get -> bool
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.IncludeExceptionDetails.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.IncludeWorkflowOutputsInResponse.get -> bool
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.IncludeWorkflowOutputsInResponse.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Name.get -> string?
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.Name.set -> void
+Microsoft.Agents.AI.Workflows.WorkflowAgentOptions.WorkflowAgentOptions() -> void
+static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.AsAIAgent(this Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.WorkflowAgentOptions! options) -> Microsoft.Agents.AI.AIAgent!
+static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.AsAIAgent(this Microsoft.Agents.AI.Workflows.Workflow! workflow, string? id = null, string? name = null, string? description = null, Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, Microsoft.Agents.AI.ChatHistoryProvider? chatHistoryProvider = null) -> Microsoft.Agents.AI.AIAgent!
