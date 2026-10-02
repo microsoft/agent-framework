@@ -433,6 +433,13 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 # delta of "(" followed by a delta of "()" is two chunks that combine into "(()", not a
 # resend of "()" - so providers must set this explicitly on a full resend.
 _CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
+# Recognize the OpenAI Responses API's code interpreter "done" event from its raw event
+# shape as a secondary snapshot signal, alongside the marker above. Older
+# agent-framework-openai releases stream this event without setting the marker, and
+# their agent-framework-core floor allows installing this version of core, so without
+# this fallback upgrading core alone would turn a streamed delta followed by that
+# provider's done event into duplicated code instead of a correct replace.
+_OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE = "response.code_interpreter_call_code.done"
 
 # endregion
 
@@ -2344,7 +2351,11 @@ def _is_content_item_snapshot(items: Any) -> bool:
     if not isinstance(items, list):
         return False
     return any(
-        isinstance(item, Content) and item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
+        isinstance(item, Content)
+        and (
+            item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
+            or getattr(item.raw_representation, "type", None) == _OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE
+        )
         for item in cast("list[object]", items)
     )
 
@@ -2357,7 +2368,14 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
         return deepcopy(incoming)
 
     if _is_content_item_snapshot(incoming):
-        return deepcopy(incoming)
+        snapshot = deepcopy(incoming)
+        # The marker is only an instruction for this merge step; strip it so it doesn't
+        # persist into the finalized content that gets serialized into history or passed
+        # to middleware.
+        for item in cast("list[object]", snapshot):
+            if isinstance(item, Content):
+                item.additional_properties.pop(_CONTENT_ITEM_SNAPSHOT_KEY, None)
+        return snapshot
 
     # An empty list has no item to fold a delta into (and nothing to add from one),
     # so hand back whichever side actually has content before indexing into it below.
