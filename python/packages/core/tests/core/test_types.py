@@ -4447,6 +4447,31 @@ class TestResponseStreamTransformHooks:
 
         assert collected == ["async_update_0", "async_update_1"]
 
+    async def test_transform_added_while_async_transform_waits_applies_to_current_update(self) -> None:
+        """A transform registered during an awaited transform applies before the current update is released."""
+        transform_started = asyncio.Event()
+        release_transform = asyncio.Event()
+
+        async def waiting_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            transform_started.set()
+            await release_transform.wait()
+            return update
+
+        def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=cast(Any, update.role),
+            )
+
+        stream = ResponseStream(_generate_updates(1), finalizer=_combine_updates).with_transform_hook(waiting_transform)
+        pending_update = asyncio.create_task(anext(stream))
+
+        await transform_started.wait()
+        stream.with_transform_hook(uppercase_transform)
+        release_transform.set()
+
+        assert (await pending_update).text == "UPDATE_0"
+
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""

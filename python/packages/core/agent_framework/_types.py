@@ -3782,17 +3782,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 target="update",
             )
         self._updates.append(update)
-        if len(self._transform_hooks) == 1:
-            transformed_update = self._transform_hooks[0](update)
+        for transform in self._transform_hooks:
+            transformed_update = transform(update)
             if isawaitable(transformed_update):
                 transformed_update = await transformed_update
             if transformed_update is not None:
                 update = cast(UpdateT, transformed_update)
-        elif self._transform_hooks:
-            update, _ = await self._apply_transforms(
-                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._transform_hooks),
-                update,
-            )
         if run_after_gates and self._update_gates_after:
             await self._run_gates(
                 cast(Sequence[Callable[[Any], object]], self._update_gates_after),
