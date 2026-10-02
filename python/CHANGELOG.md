@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **agent-framework-core**: Add `AgentBudget` with `max_tokens` and `max_duration` constraints for `AgentLoopMiddleware` autonomous loops; budget stops stamp `loop_exit_reason` in `AgentResponse.additional_properties`. Add `LoopExitReason.token_budget_exceeded` and `LoopExitReason.time_budget_exceeded`.
+
 ## [1.19.0] - 2026-09-18
 
 ### Added

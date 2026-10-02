@@ -114,4 +114,21 @@ public sealed class LoopAgentOptions
     /// it fires multiple times, the most recent invocation carries the session the loop is currently using.
     /// </remarks>
     public Func<AgentSession, CancellationToken, ValueTask>? SessionCreatedCallback { get; set; }
+
+    /// <summary>Gets or sets the maximum total LLM token spend across all iterations, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// Counts <c>TotalTokenCount</c> from each iteration's <c>AgentResponse.Usage</c>, falling back to
+    /// <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c> is absent.
+    /// When exceeded, the loop stamps <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "token_budget_exceeded"</c>
+    /// (non-streaming only) and returns the last response.
+    /// </remarks>
+    public long? MaxTokens { get; set; }
+
+    /// <summary>Gets or sets the maximum wall-clock duration for the entire loop run, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// Checked after each iteration. Catches agents blocked on slow tools that token budgets cannot detect.
+    /// When exceeded, stamps <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "time_budget_exceeded"</c>
+    /// (non-streaming only).
+    /// </remarks>
+    public TimeSpan? MaxDuration { get; set; }
 }
