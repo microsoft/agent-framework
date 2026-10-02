@@ -6112,9 +6112,13 @@ def _make_connected_mcp_discovery_tool(
 
     from agent_framework._mcp import MCPTool
 
+    class _ConcreteMCPTool(MCPTool):
+        def get_mcp_client(self):
+            raise NotImplementedError
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        mcp_tool = MCPTool(  # type: ignore[abstract]
+        mcp_tool = _ConcreteMCPTool(
             name="helper",
             load_prompts=False,
             use_progressive_disclosure=progressive,
@@ -6895,15 +6899,16 @@ class TestMCPIFCMetaLabels:
         if entrypoint == "connect":
             mcp_tool.connect = open_mock  # type: ignore[method-assign]
             mcp_tool.close = close_mock  # type: ignore[method-assign]
-            operation = proxy.connect
         else:
             mcp_tool.__aenter__ = open_mock  # type: ignore[method-assign]
             mcp_tool.__aexit__ = close_mock  # type: ignore[method-assign]
-            operation = proxy.__aenter__
         proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
 
         with pytest.raises(failure_type):
-            await operation()
+            if entrypoint == "connect":
+                await proxy.connect()
+            else:
+                await proxy.__aenter__()
 
         if already_connected:
             assert mcp_tool.is_connected is True
