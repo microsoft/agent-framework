@@ -47,6 +47,7 @@ from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
+from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -65,9 +66,6 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
-
-# Allowed identifier shape for object-attribute steps in declarative state paths
-_SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
@@ -500,7 +498,7 @@ class DeclarativeWorkflowState:
                     return default
             else:
                 # Attribute access is only allowed for safe declarative identifiers.
-                if not _SAFE_PATH_SEGMENT_RE.match(part):
+                if not _is_safe_path_segment(part):
                     logger.warning(
                         "DeclarativeWorkflowState.get: rejecting attribute segment %r in path %r",
                         part,

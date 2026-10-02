@@ -10,6 +10,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def disable_agentserver_external_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep package regressions offline, including SDK resource detection and exporters."""
+    monkeypatch.setattr("azure.ai.agentserver.core._tracing._configure_tracing", lambda **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
 def isolate_local_agentserver_state_root(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Give each test attempt an independent local AgentServer state root."""
     # pytest-retry bypasses the report hooks needed by tmp_path's teardown bookkeeping.

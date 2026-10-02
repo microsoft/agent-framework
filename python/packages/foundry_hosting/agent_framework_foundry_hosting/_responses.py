@@ -9,6 +9,8 @@ import json
 import logging
 import os
 import re
+import uuid
+import warnings
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -20,17 +22,21 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
+from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Generic, Literal, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
+    AgentResponse,
     AgentResponseUpdate,
+    AgentSession,
     ChatOptions,
     CheckpointStorage,
     ComputerSafetyCheck,
     Content,
     ContextProvider,
+    FinishReason,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -39,6 +45,7 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     UsageDetails,
+    Workflow,
     WorkflowAgent,
     add_usage_details,
 )
@@ -61,6 +68,7 @@ from azure.ai.agentserver.responses.models import (
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
+    FunctionShellCallOutputTimeoutOutcome,
     Item,
     ItemReasoningItem,
     LocalEnvironmentResource,
@@ -92,6 +100,17 @@ from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._request import (
+    HostedResponseRequest,
+    OptionsHook,
+    UnsupportedOptions,
+    WorkflowTurn,
+    prepare_response_options,
+    response_run_options,
+    validate_default_transport_options,
+    validate_request_options,
+    validate_unsupported_options,
+)
 from ._scope import FoundryRequestScope
 from ._state_store import (
     AgentSessionStoreProvider,
@@ -101,12 +120,26 @@ from ._state_store import (
     FunctionApprovalStoreProvider,
     StoreProvider,
 )
+from ._workflow_source import WorkflowSource, validate_workflow_source
+
+if TYPE_CHECKING:
+    from ._workflow_responses import NativeResponsesWorkflow
 
 logger = logging.getLogger(__name__)
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+_HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
+_HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
+_HOSTED_SERVICE_CHILD_KEY = "_foundry_service_child"
+_HOSTED_CONVERSATION_CLAIM_KEY = "_foundry_conversation_claim"
+_HOSTED_CONVERSATION_COMMITTED_KEY = "_foundry_conversation_committed"
+_HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
+_HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
+
+_HistorySource = Literal["agent_server", "agent", "service"]
+_AGENT_SOURCE_UNSET = object()
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -139,6 +172,15 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
     )
 
 
+def _reject_busy_conversation(session: AgentSession) -> None:
+    if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
+        raise RuntimeError(
+            "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
+            "if it failed or was cancelled after dispatch, start a new conversation rather than "
+            "reusing a possibly changed provider thread."
+        )
+
+
 def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
     """Create a response stream seeded from recovery state when available."""
     if context.is_recovery:
@@ -148,7 +190,52 @@ def _create_response_event_stream(context: ResponseContext) -> ResponseEventStre
     return ResponseEventStream(response_id=context.response_id)
 
 
+def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> list[AgentResponseUpdate]:
+    """Project a completed inner response without exposing its private provider token or ID."""
+    updates = [
+        AgentResponseUpdate(
+            contents=list(message.contents),
+            role=message.role,
+            author_name=message.author_name,
+            response_id=response_id,
+            message_id=message.message_id or uuid.uuid4().hex,
+        )
+        for message in response.messages
+    ]
+    if response.usage_details is not None:
+        updates.append(AgentResponseUpdate(contents=[Content.from_usage(response.usage_details)]))
+    if response.finish_reason is not None:
+        if not updates:
+            updates.append(AgentResponseUpdate())
+        updates[-1].finish_reason = FinishReason(response.finish_reason)
+    return updates
+
+
 _T = TypeVar("_T")
+
+
+async def _await_before_signal(
+    operation: Callable[[], Awaitable[_T]], *signals: asyncio.Event
+) -> tuple[bool, _T | None]:
+    """Race a provider await against lifecycle signals without discarding a completed continuation token."""
+    if any(signal.is_set() for signal in signals):
+        return False, None
+    task = asyncio.ensure_future(operation())
+    waiters = [asyncio.ensure_future(signal.wait()) for signal in signals]
+    try:
+        finished, _ = await asyncio.wait([task, *waiters], return_when=asyncio.FIRST_COMPLETED)
+        if task in finished:
+            return True, await task
+        return False, None
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        for waiter in waiters:
+            waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+
 
 # Sentinel put on the internal queue by _SignalledIterator's driver task to signal that the
 # wrapped iterator is exhausted (distinct from `None`, which is a valid item value).
@@ -357,6 +444,43 @@ def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
     return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
+def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
+    """Normalize an HTTPS consent URL or configured origin for exact matching."""
+    if not _is_safe_oauth_consent_link(value):
+        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
+
+    parsed = urlparse(value)
+    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
+        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
+
+    hostname = parsed.hostname
+    if hostname is None:  # pragma: no cover - _is_safe_oauth_consent_link already proved this.
+        raise ValueError("OAuth consent origin must include a hostname.")
+    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    port = parsed.port
+    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
+
+
+def _normalize_allowed_oauth_consent_origins(allowed_origins: Sequence[str] | None) -> frozenset[str] | None:
+    """Normalize the host-configured consent origin allowlist, or return ``None`` when none is configured."""
+    if allowed_origins is None:
+        return None
+    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
+
+
+def _is_allowed_oauth_consent_link(consent_link: object, allowed_origins: frozenset[str] | None) -> TypeGuard[str]:
+    """Return whether the link is safe and, when an allowlist is configured, has an allowed origin.
+
+    ``allowed_origins`` must come from ``_normalize_allowed_oauth_consent_origins``. ``None`` keeps the
+    safe-HTTPS check without restricting the origin; an empty set rejects every link.
+    """
+    if not _is_safe_oauth_consent_link(consent_link):
+        return False
+    if allowed_origins is None:
+        return True
+    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
+
+
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
 
@@ -431,8 +555,10 @@ class _AgentConfiguration:
 
 def _validate_agent_configuration(
     agent: SupportsAgentRun,
-    history_source: Literal["agent_server", "agent"],
+    history_source: _HistorySource,
     options: ResponsesServerOptions | None,
+    *,
+    background_source: Literal["agent_server", "provider"] = "agent_server",
 ) -> _AgentConfiguration:
     is_workflow_agent = isinstance(agent, WorkflowAgent)
     if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -442,53 +568,77 @@ def _validate_agent_configuration(
         )
 
     resilient_background = bool(options and options.resilient_background)
-    if resilient_background and not is_workflow_agent:
+    if resilient_background and not is_workflow_agent and background_source != "provider":
         raise RuntimeError(
             "resilient_background=True is only supported for workflow agents. "
             "Crash recovery cannot be provided for non-workflow agents."
         )
+    if background_source == "provider" and (
+        not isinstance(agent, RawAgent) or getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None) is not True
+    ):
+        raise RuntimeError("Provider background requires a RawAgent with a storing, resumable Responses client.")
     if options and options.steerable_conversations and is_workflow_agent:
         raise RuntimeError(
             "steerable_conversations=True is only supported for non-workflow agents. "
             "Steering cannot be provided reliably for workflow agents."
         )
 
+    if is_workflow_agent and history_source == "service":
+        raise ValueError("history_source='service' is only supported for regular agents.")
+
+    if not is_workflow_agent and isinstance(agent, RawAgent):
+        identity_defaults = ("session_id", "agent_session_id", "user_id", "call_id", "service_session_id")
+        if conflicting := [name for name in identity_defaults if agent.default_options.get(name) is not None]:
+            raise RuntimeError(f"Model defaults cannot supply Foundry platform identity: {', '.join(conflicting)}.")
+
     uses_agent_server_history = history_source == "agent_server"
     client_stores_by_default = False
-    if uses_agent_server_history and not is_workflow_agent:
+    if not is_workflow_agent and history_source != "agent":
         if not isinstance(agent, RawAgent):
             raise RuntimeError(
-                "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
-                "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
-                "SupportsAgentRun implementation."
+                "history_source='agent_server' and 'service' require a RawAgent so hosting can enforce downstream "
+                "storage. Use history_source='agent' for a custom SupportsAgentRun implementation on stored requests."
             )
-        for provider in agent.context_providers:
-            if isinstance(provider, HistoryProvider) and provider.load_messages:
-                if _is_hosted_responses_history_sentinel(provider):
-                    continue
-                raise RuntimeError(
-                    "AgentServer response history is enabled, but the agent has a HistoryProvider "
-                    "with load_messages=True. Remove that provider or construct ResponsesHostServer "
-                    "with history_source='agent' to use the agent's regular history setup."
-                )
+
+        stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+        if not isinstance(stores_by_default, bool):
+            raise RuntimeError(
+                "history_source='agent_server' or 'service' requires the chat client to declare STORES_BY_DEFAULT "
+                "so hosting can enforce downstream storage behavior."
+            )
+        client_stores_by_default = stores_by_default
+
+        if history_source == "service" and not stores_by_default:
+            raise RuntimeError(
+                "history_source='service' requires a storing client that declares STORES_BY_DEFAULT=True."
+            )
+
         service_continuation_options = [
             name
-            for name in ("conversation_id", "previous_response_id", "conversation")
+            for name in ("conversation_id", "previous_response_id", "conversation", "continuation_token", "response_id")
             if agent.default_options.get(name) is not None
         ]
         if service_continuation_options:
             raise RuntimeError(
-                "AgentServer response history is enabled, but the agent has downstream service continuation "
-                f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
-                "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
+                f"history_source='agent_server' or 'service' cannot use developer defaults for downstream "
+                f"continuation: {', '.join(service_continuation_options)}. "
+                "Use history_source='agent' to retain developer-controlled continuation."
             )
-        stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
-        if not isinstance(stores_by_default, bool):
+
+        if history_source in ("agent_server", "service"):
+            for provider in agent.context_providers:
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    if history_source == "agent_server" and _is_hosted_responses_history_sentinel(provider):
+                        continue
+                    raise RuntimeError(
+                        "The selected history_source conflicts with a load-enabled HistoryProvider. "
+                        "Remove that provider or select history_source='agent'."
+                    )
+        if history_source == "agent_server" and not stores_by_default and agent.default_options.get("store") is True:
             raise RuntimeError(
-                "history_source='agent_server' requires the agent's chat client to declare "
-                "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
+                "The chat client does not store by default, but the agent sets a downstream store option. "
+                "Remove that developer-owned default rather than letting hosting change it."
             )
-        client_stores_by_default = stores_by_default
 
     return _AgentConfiguration(
         workflow=is_workflow_agent,
@@ -501,8 +651,6 @@ def _validate_agent_configuration(
 def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConfiguration) -> None:
     if not configuration.hosted_history or not isinstance(agent, RawAgent):
         return
-    if not configuration.client_stores_by_default:
-        agent.default_options.pop("store", None)
     if not any(
         _is_hosted_responses_history_sentinel(provider)
         for provider in cast(Sequence[ContextProvider], agent.context_providers)
@@ -512,19 +660,29 @@ def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConf
 
 # region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
-    """A responses server host for an agent."""
+    """A Responses server host for an agent or a native, typed workflow."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
+        agent: SupportsAgentRun
+        | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]]
+        | object = _AGENT_SOURCE_UNSET,
         *,
+        workflow: WorkflowSource[HostedResponseRequest] | None = None,
+        parse_response: Callable[[HostedResponseRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]]
+        | None = None,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        response_store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
-        history_source: Literal["agent_server", "agent"] = "agent_server",
+        allowed_oauth_consent_origins: Sequence[str] | None = None,
+        history_source: Literal["agent_server", "agent", "service"] = "agent_server",
+        background_source: Literal["agent_server", "provider"] = "agent_server",
+        prepare_options: OptionsHook | None = None,
+        unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -532,27 +690,69 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+            workflow: A built, unrun native workflow for one-shot execution, or a request-aware
+                sync/async factory returning fresh built graphs, executors, agents, clients, tools,
+                and providers with stable graph/executor IDs. Cannot be combined with ``agent``.
+                Use a factory for continuation, pauses, or background recovery.
+            parse_response: Required for ``workflow``. Maps this turn's ``HostedResponseRequest``
+                to a typed ``WorkflowTurn(input=...)`` or validated pending ``responses``.
+                Native workflows use checkpoints, not the agent's history-source policy.
             prefix: The URL prefix for the server.
             options: Optional server options.
-            store: Optional response store for input and history look up.
+            store: Deprecated alias for `response_store`.
+            response_store: Optional response store for caller-facing persistence and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
                 If not provided, a default `AgentSessionStoreProvider` will be used.
             checkpoint_store_provider: Optional provider for workflow checkpoint storage.
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
-            history_source: Source of conversation history supplied to the model for regular agents.
-                `"agent_server"` (default) uses the transcript from the configured response store,
-                requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
-                agent history providers, and disables downstream service storage.
-                `"agent"` passes only the current request input and preserves the agent's normal
-                history-provider or service-storage behavior. AgentServer still manages Responses
-                API persistence through `store` in both modes.
+            allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
+                When omitted, hosting retains its existing safe-HTTPS validation without restricting the
+                destination origin. When provided, every link must match an entry; an empty sequence rejects
+                every link. Entries must be origins such as `"https://auth.example.com"` and must not include
+                a path, query, or fragment.
+            history_source: Who supplies prior messages to the *model*, independently of the caller's
+                Responses `store` flag. Defaults to `"agent_server"`:
+
+                - `"agent_server"`: Send the prior outer Responses transcript followed by this request's input.
+                  For a storing chat client, force its per-run `store=False` and clear any restored
+                  `service_session_id` to avoid replaying that transcript twice. A load-enabled
+                  `HistoryProvider` or fixed downstream continuation default conflicts with this mode.
+                - `"service"`: Send only this request's input. On caller `store=True`, run the inner
+                  client with `store=True` and save its issued `service_session_id` in the host's
+                  private MAF session store. The next stored request resumes that provider thread;
+                  it must not branch an already-used provider conversation.
+                - `"agent"`: Send only this request's input and preserve the agent's developer-owned
+                  storage choice on stored requests. With an `InMemoryHistoryProvider` and
+                  `default_options={"store": False}`, the provider loads prior messages from
+                  the host-persisted MAF `AgentSession`. With `default_options={"store": True}`,
+                  the downstream service retains history instead (the previous meaning of `"agent"`).
+
+                For example, after a stored response to "My name is Ada", a stored follow-up
+                "What is my name?" sends both turns to the model with `"agent_server"`, but
+                sends only the follow-up with `"service"` (plus a private service continuation).
+                With `"agent"`, the developer chooses either of those agent-owned history sources.
+            background_source: `"agent_server"` (default) runs background work in the Responses host
+                without invoking provider-native background APIs; `"provider"` opts a storing, resumable
+                client into provider background polling and requires `history_source="service"`.
+                Each poll retains the caller's run options and `background=True`; local tools must be
+                idempotent because a crash before the next private token is saved can replay them.
+            prepare_options: Developer hook to remove or replace caller model options for an agent.
+            unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
+                cannot accept runtime model options.
             **kwargs: Additional keyword arguments.
 
         Note:
-            1. When `history_source="agent_server"`, the agent must not have a history provider
-               with `load_messages=True`, because history is managed by the hosting infrastructure.
+            The *caller* controls outer persistence with `POST /responses` `store=True/False`.
+            `store=False` writes no host-managed session or approval state and forces supported
+            inner clients not to store, regardless of `history_source`. The constructor's
+            deprecated `store=` argument instead selects the outer response-store backend
+            (use `response_store=`). Outer `response.id` is the polling/continuation handle;
+            any inner `service_session_id` is private and never replaces it.
+
+            1. With `history_source="agent_server"`,
+               the agent must not have a load-enabled history provider: the host supplies the transcript.
             2. Context providers must not keep required state only on their Python instances,
                because the hosting environment may get deactivated between requests. Provider
                state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
@@ -560,51 +760,106 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             3. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
-            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
-               server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
-               When resiliency is enabled, and the server crashes mid-response:
-               - Background responses are automatically re-invoked on server restart (client won't see the crash).
-               - Stream events are preserved for client reconnection.
-               - State is maintained across crashes.
-            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
-               this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
-               Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
-               branches with no single well-defined "current point" to cancel and resume from, unlike an
-               agent's strictly linear execution. It's also not currently practical to implement: a workflow
-               instance cannot start a new run until its previous (steered-past) run has been garbage
-               collected, and that isn't guaranteed to have happened in time.
+            4. `resilient_background=True` supports legacy workflows and regular agents configured with
+               `history_source="service", background_source="provider"`. For provider background, only
+               a saved private continuation token can be polled after a crash; a crash before the token
+               is saved cannot be replayed safely. Other regular-agent runs are not crash-recoverable.
+               Legacy workflow background responses retain their checkpoint-based recovery behavior.
+            5. Steering is temporarily unavailable for all agents. `steerable_conversations=True` fails
+               at construction, before starting a host or enabling the process-wide TaskManager. The current
+               AgentServer SDK retains futures for rejected turns after the steering queue fills.
+            6. A stored, named `"service"` or `"agent"` conversation is claimed in the scoped session store
+               before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
+               provider thread. If the turn fails or is cancelled, start a new conversation instead of
+               reusing a potentially changed downstream thread.
 
         Raises:
-            ValueError: If `history_source` is not supported.
+            ValueError: If the history, background, or unsupported-options policy is invalid.
             RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a non-workflow agent, or
-                `steerable_conversations=True` is requested for a workflow agent.
+                `resilient_background=True` is requested for a regular agent without provider background, or
+                `steerable_conversations=True` is requested while steering is unavailable.
         """
-        if history_source not in ("agent_server", "agent"):
-            raise ValueError("history_source must be either 'agent_server' or 'agent'.")
-        validate_agent_source(agent)
+        if options and options.steerable_conversations:
+            # TODO(foundry-hosting): Remove this guard after Azure/azure-sdk-for-python#49233 ships in an official
+            # azure-ai-agentserver-core wheel, the minimum and uv.lock are updated, and a concurrent
+            # queue-overflow regression proves rejected turns leave no pending futures.
+            raise RuntimeError(
+                "steerable_conversations=True is temporarily unavailable: the current AgentServer SDK "
+                "retains futures for rejected steering turns. Wait for the official fix in "
+                "Azure/azure-sdk-for-python#49233, then update the dependency and verify queue overflow."
+            )
+        if history_source not in ("agent_server", "agent", "service"):
+            raise ValueError("history_source must be 'agent_server', 'agent', or 'service'.")
+        if background_source not in ("agent_server", "provider"):
+            raise ValueError("background_source must be 'agent_server' or 'provider'.")
+        if store is not None and response_store is not None:
+            raise ValueError("Pass response_store instead of store; they cannot be combined.")
+
+        if background_source == "provider" and history_source != "service":
+            raise ValueError("Provider background requires history_source='service'.")
+        if background_source == "provider" and options and options.steerable_conversations:
+            raise ValueError("Provider background and steerable_conversations cannot be combined.")
+        agent_supplied = agent is not _AGENT_SOURCE_UNSET
+        if not agent_supplied and workflow is None:
+            raise ValueError("Pass exactly one of agent or workflow.")
+        if agent_supplied and workflow is not None:
+            raise ValueError("Pass exactly one of agent or workflow.")
+        if workflow is not None:
+            validate_workflow_source(workflow)
+            if parse_response is None or not callable(parse_response):
+                raise TypeError("parse_response is required for native workflow hosting.")
+            if history_source != "agent_server" or background_source != "agent_server":
+                raise ValueError(
+                    "Native workflows use checkpoint history and AgentServer background, not agent policies."
+                )
+            if isinstance(workflow, Workflow) and options and options.resilient_background:
+                raise ValueError("Native workflow background recovery requires a request-aware factory.")
+        else:
+            if parse_response is not None:
+                raise ValueError("parse_response is only supported with workflow.")
+            validate_agent_source(agent)
 
         resolved_agent = agent if is_agent(agent) else None
         configuration = (
-            _validate_agent_configuration(resolved_agent, history_source, options)
+            _validate_agent_configuration(resolved_agent, history_source, options, background_source=background_source)
             if resolved_agent is not None
             else None
         )
 
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
-        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+        self._allowed_oauth_consent_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
+        super().__init__(
+            prefix=prefix,
+            options=options,
+            store=response_store if response_store is not None else store,
+            **kwargs,
+        )
+        if options and options.steerable_conversations:
+            from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
 
-        self._agent_source = agent
+            set_resilient_tasks_enabled(True)
+
+        self._agent_source = cast(
+            SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]] | None,
+            None if not agent_supplied else agent,
+        )
         self._agent = resolved_agent
         self._configuration = configuration
-        self._history_source: Literal["agent_server", "agent"] = history_source
+        self._history_source: _HistorySource = history_source
+        self._background_source: Literal["agent_server", "provider"] = background_source
+        self._prepare_options = prepare_options
+        self._unsupported_options = validate_unsupported_options(unsupported_options)
         self._host_options = options
         self._uses_agent_server_history = (
             configuration.agent_server_history if configuration is not None else history_source == "agent_server"
         )
         self._resilient_background = bool(options and options.resilient_background)
+        self._warned_workflow_agent = False
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
+
+        if store is not None:
+            warnings.warn("store= is deprecated; use response_store=.", DeprecationWarning, stacklevel=2)
 
         # Storage providers
         self._checkpoint_storage_provider = (
@@ -618,6 +873,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
+        self._native_workflow: NativeResponsesWorkflow | None = None
+        if workflow is not None and parse_response is not None:
+            from ._workflow_responses import NativeResponsesWorkflow
+
+            self._native_workflow = NativeResponsesWorkflow(
+                workflow,
+                parse_response,
+                config=self.config,
+                checkpoint_store_provider=self._checkpoint_storage_provider,
+                prepare_options=prepare_options,
+                resilient_background=self._resilient_background,
+                allowed_oauth_consent_origins=self._allowed_oauth_consent_origins,
+            )
+            self._native_workflow.bind_streaming_route(
+                self.router,
+                prefix=prefix,
+                keep_alive=bool(
+                    (options and options.sse_keep_alive_interval_seconds) or self.config.sse_keepalive_interval
+                ),
+            )
+        if isinstance(resolved_agent, WorkflowAgent):
+            self._warn_legacy_workflow()
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -630,6 +907,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self.response_handler(self._handle_response)
 
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
+
+    def _warn_legacy_workflow(self) -> None:
+        if not self._warned_workflow_agent:
+            self._warned_workflow_agent = True
+            warnings.warn(
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release. "
+                "Use workflow=a_request_aware_factory with an explicit parse_response. "
+                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -669,28 +957,45 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
+        if self._native_workflow is not None:
+            async with aclosing(self._native_workflow.response_events(request, context, cancellation_signal)) as events:
+                async for event in events:
+                    yield event
+            return
         response_event_stream = _create_response_event_stream(context)
         if context.is_steered_turn:
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
-        if self.config.is_hosted:
-            try:
-                FoundryRequestScope.from_context(self.config, get_request_context())
-            except RuntimeError as exc:
-                logger.error("Invalid Foundry hosted request context: %s", exc)
-                for event in self._emit_failure(response_event_stream, None, exc):
-                    yield event
-                return
-
         terminal_event: ResponseStreamEvent | None = None
-        agent = await resolve_agent(self._agent_source)
-        configuration = self._configuration or _validate_agent_configuration(
-            agent, self._history_source, self._host_options
-        )
-        if self._configuration is None:
-            _initialize_agent_history(agent, configuration)
+        try:
+            scope = FoundryRequestScope.from_context(
+                self.config, get_request_context(), local_session_id=context.response_id
+            )
+            if self._agent_source is None:
+                raise RuntimeError("The hosted agent source is not configured.")
+            agent = await resolve_agent(self._agent_source)
+            configuration = self._configuration or _validate_agent_configuration(
+                agent, self._history_source, self._host_options, background_source=self._background_source
+            )
+            if self._configuration is None:
+                _initialize_agent_history(agent, configuration)
+            if configuration.workflow:
+                self._warn_legacy_workflow()
+            hosted_request: HostedResponseRequest | None = None
+            if configuration.workflow:
+                if self._prepare_options is not None:
+                    raise ValueError("prepare_options is only supported for regular agents.")
+            else:
+                hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                await prepare_response_options(hosted_request, self._prepare_options)
+                validate_request_options(hosted_request.options)
+        except Exception as exc:
+            logger.error("Failed to prepare hosted Responses request", exc_info=(type(exc), exc, exc.__traceback__))
+            for event in self._emit_failure(response_event_stream, None, exc):
+                yield event
+            return
 
         async with AsyncExitStack() as resources:
             inner = self._handle_prepared_response(
@@ -701,6 +1006,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 agent,
                 configuration,
                 resources,
+                hosted_request,
             )
             try:
                 async for event in inner:
@@ -726,6 +1032,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         resources: AsyncExitStack,
+        hosted_request: HostedResponseRequest | None,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
         # consent failures (and other connection-time errors) in AgentFrameworkException; if
@@ -749,16 +1056,26 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 (
                     consent_error
                     for consent_error in consent_errors_to_emit
-                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                    if not _is_allowed_oauth_consent_link(
+                        consent_error.consent_url, self._allowed_oauth_consent_origins
+                    )
                 ),
                 None,
             )
             if invalid_consent is not None:
                 validation_error = ValueError(
-                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
+                    "consent link."
                 )
                 logger.error("%s", validation_error)
                 for event in self._emit_failure(response_event_stream, None, validation_error):
+                    yield event
+                return
+
+            if request.get("store") is False:
+                for event in self._emit_failure(
+                    response_event_stream, None, ValueError("OAuth consent continuation requires store=true.")
+                ):
                     yield event
                 return
 
@@ -778,7 +1095,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 f"previous_response_id={previous_response_id}."
                             )
                         session = agent.create_session()
-                    await session_storage.set(context.conversation_id or context.response_id, session)
+                    if context.conversation_id is not None:
+                        _reject_busy_conversation(session)
+                    if previous_response_id is not None and context.conversation_id is None:
+                        if session.service_session_id is not None and session.state.get(
+                            _HOSTED_SOURCE_CONVERSATION_KEY
+                        ):
+                            raise ValueError("A service-managed downstream conversation cannot be forked.")
+                        session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
+                    if context.conversation_id is not None:
+                        session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
+                    await session_storage.set(context.response_id, session)
+                    if context.conversation_id is not None:
+                        await session_storage.set(context.conversation_id, session)
                 except Exception as save_error:
                     logger.error(
                         "Failed to persist the Agent Framework session for OAuth consent",
@@ -804,7 +1133,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_incomplete()
             return
 
-        tracker = _OutputItemTracker(response_event_stream)
+        tracker = _OutputItemTracker(response_event_stream, self._allowed_oauth_consent_origins)
         try:
             if configuration.workflow:
                 inner = self._handle_inner_workflow(
@@ -816,6 +1145,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     cast(WorkflowAgent, agent),
                 )
             else:
+                if hosted_request is None:
+                    raise RuntimeError("A regular agent requires a prepared Responses request.")
                 inner = self._handle_inner_agent(
                     request,
                     context,
@@ -824,6 +1155,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     cancellation_signal,
                     agent,
                     configuration,
+                    hosted_request,
                 )
 
             try:
@@ -927,7 +1259,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
-    ) -> AsyncGenerator[ResponseStreamEvent]:
+        hosted_request: HostedResponseRequest,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle a regular (non-workflow) agent.
 
         The response stream, tracker, and opening lifecycle events are produced
@@ -935,20 +1268,86 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         into a terminal ``response.failed`` event (draining the tracker so the
         SSE stream stays well-formed).
         """
-        if context.is_recovery:
-            logger.warning(
-                "Recovery mode is not supported for non-workflow agents. "
-                "The agent will restart from the original input."
-            )
+        provider_background = self._background_source == "provider" and request.get("background") is True
+        if context.is_recovery and not provider_background:
+            raise RuntimeError("A non-resumable agent cannot be replayed after a process crash.")
+
+        stored = request.get("store") is not False
 
         request_messages_task: asyncio.Task[list[Message]] | None = None
+        conversation_already_committed = False
         try:
+            if isinstance(agent, RawAgent):
+                validate_default_transport_options(
+                    agent.default_options,
+                    allow_agent_store=self._history_source == "agent" and stored,
+                )
+            if not stored:
+                if not isinstance(agent, RawAgent):
+                    raise RuntimeError(
+                        "store=false cannot guarantee that a custom agent will disable inner storage; "
+                        "use a RawAgent or store=true."
+                    )
+                continuation_defaults = [
+                    name
+                    for name in (
+                        "conversation_id",
+                        "previous_response_id",
+                        "conversation",
+                        "continuation_token",
+                        "response_id",
+                    )
+                    if agent.default_options.get(name) is not None
+                ]
+                if continuation_defaults:
+                    raise RuntimeError(
+                        "store=false cannot use developer defaults for downstream service continuation: "
+                        + ", ".join(continuation_defaults)
+                    )
+                if any(
+                    isinstance(provider, HistoryProvider)
+                    and not isinstance(provider, InMemoryHistoryProvider)
+                    and (provider.store_inputs or provider.store_context_messages or provider.store_outputs)
+                    for provider in agent.context_providers
+                ):
+                    raise RuntimeError(
+                        "store=false cannot prevent an external HistoryProvider from persisting responses. "
+                        "Use an InMemoryHistoryProvider or store=true."
+                    )
+                if self._history_source == "agent":
+                    stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+                    if not isinstance(stores_by_default, bool):
+                        raise RuntimeError(
+                            "store=false with history_source='agent' requires a client declaring STORES_BY_DEFAULT; "
+                            "select history_source='agent_server' or 'service', or use store=true."
+                        )
+                    if not stores_by_default and agent.default_options.get("store") is True:
+                        raise RuntimeError(
+                            "store=false with history_source='agent' cannot safely override a storing "
+                            "default on a client that does not declare storage support."
+                        )
+
             request_context = get_request_context()
-            approval_storage = self._function_approval_storage_provider.get_store(
-                config=self.config, platform_context=request_context
+            approval_storage = (
+                self._function_approval_storage_provider.get_store(config=self.config, platform_context=request_context)
+                if stored
+                else None
             )
-            session_storage = self._session_storage_provider.get_store(
-                config=self.config, platform_context=request_context
+            previous_response_id = request.get("previous_response_id")
+            session_load_id = (
+                context.response_id
+                if context.is_recovery and provider_background
+                else context.conversation_id or previous_response_id
+            )
+            if not stored and session_load_id is not None and self._history_source == "service":
+                raise ValueError(
+                    "store=false cannot resume service-managed history; start a new one-shot request "
+                    "or use history_source='agent_server' or 'agent'."
+                )
+            session_storage = (
+                self._session_storage_provider.get_store(config=self.config, platform_context=request_context)
+                if stored or (session_load_id is not None and self._history_source == "agent")
+                else None
             )
 
             # Load the caller's input items and prior conversation history concurrently with the
@@ -962,16 +1361,65 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             )
 
-            previous_response_id = request.get("previous_response_id")
-            session_load_id = context.conversation_id or previous_response_id
-            session = await session_storage.get(session_load_id) if session_load_id is not None else None
+            session = (
+                await session_storage.get(session_load_id)
+                if session_storage is not None and session_load_id is not None
+                else None
+            )
             if session is None:
-                if previous_response_id is not None and context.conversation_id is None:
+                if context.is_recovery and provider_background:
+                    raise RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                if stored and previous_response_id is not None and context.conversation_id is None:
                     raise RuntimeError(
                         f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
                 session = agent.create_session()
-            session_save_id = context.conversation_id or context.response_id
+            provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
+            if context.conversation_id is not None:
+                if context.is_recovery and provider_background:
+                    if session_storage is None:
+                        raise RuntimeError("Provider background recovery requires agent session storage.")
+                    head = await session_storage.get(context.conversation_id)
+                    conversation_already_committed = (
+                        head is not None
+                        and head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is None
+                        and head.state.get(_HOSTED_CONVERSATION_COMMITTED_KEY) == context.response_id
+                        and isinstance(provider_state, Mapping)
+                        and cast(Mapping[str, Any], provider_state).get("completed") is True
+                    )
+                    if not conversation_already_committed and (
+                        head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id
+                    ):
+                        raise RuntimeError(
+                            "Cannot recover provider background: the service-backed conversation claim "
+                            "is no longer held by this response."
+                        )
+                else:
+                    _reject_busy_conversation(session)
+            if not stored and self._history_source == "agent" and session.service_session_id is not None:
+                raise ValueError(
+                    "store=false cannot continue agent-managed downstream service history; "
+                    "start a new one-shot request or use store=true."
+                )
+            if (
+                not context.is_recovery
+                and provider_state is not None
+                and (
+                    not isinstance(provider_state, Mapping)
+                    or cast(Mapping[str, Any], provider_state).get("completed") is not True
+                )
+            ):
+                raise ValueError("A provider background response must complete before the next turn.")
+            if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
+                if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
+                    raise ValueError("A service-managed downstream conversation cannot be forked.")
+                if (
+                    stored
+                    and self._history_source in ("service", "agent")
+                    and session.service_session_id is not None
+                    and session.state.get(_HOSTED_SERVICE_CHILD_KEY)
+                ):
+                    raise ValueError("A service-managed downstream response cannot be forked.")
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1001,7 +1449,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": messages,
                 "session": session,
             }
-            chat_options, are_options_set = _to_chat_options(request)
+            chat_options = cast(ChatOptions[Any], dict(hosted_request.options))
+            are_options_set = bool(chat_options)
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
@@ -1010,23 +1459,112 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else:
                     # Do not pass a storage option to clients that do not advertise support for it.
                     chat_options.pop("store", None)
+            elif self._history_source == "service":
+                chat_options["store"] = stored
+                if not stored:
+                    session.service_session_id = None
+            elif (
+                not stored
+                and isinstance(agent, RawAgent)
+                and (
+                    getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", False)
+                    or agent.default_options.get("store") is not None
+                )
+            ):
+                chat_options["store"] = False
 
             if isinstance(agent, RawAgent):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
+                if self._unsupported_options == "error":
+                    raise TypeError("The hosted agent does not accept caller runtime options.")
+                if self._unsupported_options == "warn":
+                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
-            # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
-            # both shutdown and steering/cancel just wind the turn down once observed.
-            agent_stream = _SignalledIterator(
-                agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
-                context.shutdown,
-                cancellation_signal,
-            )
-            async with aclosing(agent_stream):
-                async for update in agent_stream:
-                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
-                        yield event
+            if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
+                if stored and self._history_source in ("service", "agent") and session.service_session_id is not None:
+                    if session_storage is None:
+                        raise RuntimeError("Service history requires agent session storage.")
+                    session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
+                    try:
+                        await session_storage.set(previous_response_id, session)
+                    finally:
+                        session.state.pop(_HOSTED_SERVICE_CHILD_KEY, None)
+                session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
+
+            if not context.is_recovery:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                session.state.pop(_HOSTED_CONVERSATION_COMMITTED_KEY, None)
+
+            if (
+                stored
+                and context.conversation_id is not None
+                and not configuration.agent_server_history
+                and not conversation_already_committed
+            ):
+                if session_storage is None:
+                    raise RuntimeError("Service history requires agent session storage.")
+                # The scoped store's conditional write must succeed before the provider can
+                # mutate its linear thread; a losing turn never reaches agent.run().
+                session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
+                try:
+                    await session_storage.set(context.conversation_id, session)
+                finally:
+                    session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
+
+            inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
+            updates: _SignalledIterator[AgentResponseUpdate] | None = None
+            if provider_background:
+                if session_storage is None or not isinstance(agent, RawAgent):
+                    raise RuntimeError("Provider background requires a stored MAF agent session.")
+                output_count = response_event_stream.internal_metadata.get(_HOSTED_PROVIDER_OUTPUT_COUNT_KEY, 0)
+                if type(output_count) is not int or output_count < 0:
+                    raise RuntimeError("The persisted provider output cursor is invalid.")
+                responses = self._provider_background_responses(
+                    agent=cast(RawAgent[ChatOptions[Any]], agent),
+                    messages=messages,
+                    session=session,
+                    session_storage=session_storage,
+                    options=chat_options,
+                    context=context,
+                    cancellation_signal=cancellation_signal,
+                    emitted_output_count=output_count,
+                )
+                async with aclosing(responses):
+                    async for response, output_count in responses:
+                        for update in _agent_response_updates(response, context.response_id):
+                            if context.shutdown.is_set() or cancellation_signal.is_set():
+                                break
+                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                                yield event
+                        if context.shutdown.is_set() or cancellation_signal.is_set():
+                            continue
+                        for event in tracker.close():
+                            yield event
+                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
+                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
+                        if self._resilient_background:
+                            yield response_event_stream.checkpoint()
+            else:
+                inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+                updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
+                async with aclosing(updates):
+                    async for update in updates:
+                        if not stored and any(
+                            content.type in ("function_approval_request", "oauth_consent_request")
+                            or content.user_input_request
+                            for content in update.contents
+                        ):
+                            raise ValueError("Approval and user-input continuation requires store=true.")
+                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            yield event
+            if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
+                final = await inner_stream.get_final_response()
+                if final.continuation_token is not None and final.finish_reason is None:
+                    raise RuntimeError(
+                        "The inner agent returned an unfinished provider response; "
+                        "configure background_source='provider' with history_source='service' to resume it."
+                    )
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -1039,22 +1577,70 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+            if not provider_background and not context.is_recovery:
+                session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
 
-            # A service ID here means the client stored the turn despite the forced `store=False`.
-            # Do not persist a session that could resume that unreconciled history on a later turn.
-            stored_output_violation = configuration.agent_server_history and session.service_session_id is not None
+            # Never persist a session that could resume an inner response contrary to the
+            # history mode or the caller's explicit storage decision.
+            stored_output_violation = (
+                self._history_source == "agent_server" or not stored
+            ) and session.service_session_id is not None
             if stored_output_violation:
                 misconfigured = RuntimeError(
-                    "The agent's chat client stored this turn server-side while AgentServer response history "
-                    "is supplying the conversation. Configure the client to honor store=False, or construct "
-                    "ResponsesHostServer with history_source='agent' to use the agent's regular history setup."
+                    "The agent's chat client stored this turn server-side despite store=False for the inner model. "
+                    "Configure the client to honor store=False, or use history_source='service' with store=true."
                 )
                 logger.error("%s", misconfigured)
                 if request_failure is None and not request_interrupted:
                     request_failure = misconfigured
+            if (
+                self._history_source == "service"
+                and stored
+                and _HOSTED_PROVIDER_STATE_KEY not in session.state
+                and session.service_session_id is None
+                and request_failure is None
+                and not request_interrupted
+                and not (cancellation_signal.is_set() and context.client_cancelled)
+            ):
+                request_failure = RuntimeError(
+                    "history_source='service' requires the chat client to return a service continuation ID."
+                )
             try:
-                if not stored_output_violation:
-                    await session_storage.set(session_save_id, session)
+                provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
+                final_provider_state = not provider_background or (
+                    request_failure is None
+                    and not request_interrupted
+                    and not (cancellation_signal.is_set() and context.client_cancelled)
+                    and (
+                        provider_state is None
+                        or (
+                            isinstance(provider_state, Mapping)
+                            and cast(Mapping[str, Any], provider_state).get("completed") is True
+                        )
+                    )
+                )
+                superseded_by_steering = bool(self._host_options and self._host_options.steerable_conversations) and (
+                    cancellation_signal.is_set() and not context.client_cancelled and not context.shutdown.is_set()
+                )
+                if stored and session_storage is not None and not stored_output_violation and final_provider_state:
+                    if context.conversation_id is not None:
+                        session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
+                    await session_storage.set(context.response_id, session)
+                    if (
+                        context.conversation_id is not None
+                        and not conversation_already_committed
+                        and not superseded_by_steering
+                        and not request_interrupted
+                        and request_failure is None
+                        and (
+                            configuration.agent_server_history
+                            or (not cancellation_signal.is_set() and not context.shutdown.is_set())
+                        )
+                    ):
+                        if provider_background:
+                            session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
+                        session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
+                        await session_storage.set(context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1074,6 +1660,218 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise request_failure
         elif save_failure is not None:
             raise save_failure
+
+    async def _provider_background_responses(
+        self,
+        *,
+        agent: RawAgent[ChatOptions[Any]],
+        messages: list[Message],
+        session: AgentSession,
+        session_storage: SessionStore,
+        options: ChatOptions[Any],
+        context: ResponseContext,
+        cancellation_signal: asyncio.Event,
+        emitted_output_count: int,
+    ) -> AsyncGenerator[tuple[AgentResponse[Any], int]]:
+        """Persist polling output with its private token and replay uncheckpointed output on recovery."""
+        outputs: list[dict[str, Any]] = []
+
+        async def proceed(*, has_token: bool) -> bool:
+            if cancellation_signal.is_set() and context.client_cancelled:
+                if not has_token:
+                    logger.warning(
+                        "Provider background submission was cancelled before a token was saved; "
+                        "remote work may continue."
+                    )
+                return False
+            if context.shutdown.is_set():
+                if has_token and self._resilient_background:
+                    await context.exit_for_recovery()
+                if has_token:
+                    raise RuntimeError("Provider background recovery requires resilient_background=True.")
+                raise RuntimeError(
+                    "Provider background submission stopped before its token was saved; cannot safely retry it."
+                )
+            if cancellation_signal.is_set():
+                raise RuntimeError("Provider background was interrupted without a client cancellation.")
+            return True
+
+        async def run_provider(
+            options: ChatOptions[Any], *, input_messages: list[Message] | None, phase: Literal["submit", "poll"]
+        ) -> AgentResponse[Any]:
+            try:
+                return await agent.run(input_messages, session=session, options=options)
+            except Exception as exc:
+                logger.warning("Inner provider background %s failed (%s).", phase, type(exc).__name__)
+            raise RuntimeError(f"Inner provider background {phase} failed; inspect the host logs.")
+
+        async def save_private_state() -> None:
+            try:
+                await session_storage.set(context.response_id, session)
+            except Exception as exc:
+                logger.warning("Private provider background state save failed (%s).", type(exc).__name__)
+            else:
+                return
+            raise RuntimeError("Could not save private provider background state; inspect the host logs.")
+
+        def record_output(response: AgentResponse[Any]) -> None:
+            messages = response.messages
+            if response.continuation_token is not None:
+                # A tool loop prefixes completed calls/results to the unfinished model
+                # response. Retain that prefix, not partial output that polling will repeat.
+                for index in range(len(messages) - 1, -1, -1):
+                    message = messages[index]
+                    last_result = next(
+                        (
+                            offset
+                            for offset in range(len(message.contents) - 1, -1, -1)
+                            if message.contents[offset].type == "function_result"
+                        ),
+                        None,
+                    )
+                    if last_result is not None:
+                        completed_message = copy(message)
+                        completed_message.contents = message.contents[: last_result + 1]
+                        messages = [*messages[:index], completed_message]
+                        break
+                else:
+                    return
+            outputs.append(
+                AgentResponse(
+                    messages=messages,
+                    usage_details=response.usage_details,
+                    finish_reason=FinishReason(response.finish_reason) if response.finish_reason is not None else None,
+                ).to_dict()
+            )
+
+        async def pending_outputs() -> AsyncGenerator[tuple[AgentResponse[Any], int]]:
+            nonlocal emitted_output_count
+            while emitted_output_count < len(outputs):
+                if not await proceed(has_token=True):
+                    return
+                yield AgentResponse.from_dict(outputs[emitted_output_count]), emitted_output_count + 1
+                if not await proceed(has_token=True):
+                    return
+                emitted_output_count += 1
+
+        if context.is_recovery:
+            saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
+            if not isinstance(saved, Mapping):
+                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+            saved_payload = cast(Mapping[str, Any], saved)
+            if saved_payload.get("outer_response_id") != context.response_id:
+                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+            token = saved_payload.get("continuation_token")
+            if not isinstance(token, Mapping):
+                raise RuntimeError("The stored provider continuation token is invalid.")
+            continuation_token: Mapping[str, Any] = cast(Mapping[str, Any], token)
+            saved_outputs = saved_payload.get("outputs", [])
+            if not isinstance(saved_outputs, list) or any(
+                not isinstance(output, dict) for output in cast(list[object], saved_outputs)
+            ):
+                raise RuntimeError("The stored provider output is invalid.")
+            outputs = cast(list[dict[str, Any]], saved_outputs)
+            if emitted_output_count > len(outputs):
+                raise RuntimeError("The persisted provider output cursor exceeds its private snapshot.")
+            async for output in pending_outputs():
+                yield output
+            if saved_payload.get("completed") is True and outputs:
+                await proceed(has_token=True)
+                return
+        else:
+            if not await proceed(has_token=False):
+                return
+            completed, first = await _await_before_signal(
+                lambda: run_provider(
+                    cast(ChatOptions[Any], {**options, "background": True}),
+                    input_messages=messages,
+                    phase="submit",
+                ),
+                context.shutdown,
+                cancellation_signal,
+            )
+            if not completed:
+                if not await proceed(has_token=False):
+                    return
+                raise RuntimeError("Provider background submission was interrupted before its token was saved.")
+            if first is None:
+                raise RuntimeError("The provider did not return a background response.")
+            if first.continuation_token is None:
+                if not await proceed(has_token=False):
+                    return
+                yield first, 1
+                return
+            if not isinstance(first.continuation_token, Mapping):
+                raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
+            continuation_token = cast(Mapping[str, Any], first.continuation_token)
+            if any(message.contents for message in first.messages) or first.usage_details:
+                record_output(first)
+            session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                "outer_response_id": context.response_id,
+                "continuation_token": dict(continuation_token),
+                "outputs": outputs,
+            }
+            await save_private_state()
+            async for output in pending_outputs():
+                yield output
+
+        while True:
+            if not await proceed(has_token=True):
+                return
+            slept, _ = await _await_before_signal(lambda: asyncio.sleep(2), context.shutdown, cancellation_signal)
+            if not slept:
+                if not await proceed(has_token=True):
+                    return
+                raise RuntimeError("Provider background polling was interrupted.")
+            if not await proceed(has_token=True):
+                return
+            completed, current = await _await_before_signal(
+                lambda token=continuation_token: run_provider(
+                    cast(
+                        ChatOptions[Any],
+                        {**options, "background": True, "store": True, "continuation_token": token},
+                    ),
+                    input_messages=None,
+                    phase="poll",
+                ),
+                context.shutdown,
+                cancellation_signal,
+            )
+            if not completed:
+                if not await proceed(has_token=True):
+                    return
+                raise RuntimeError("Provider background polling was interrupted.")
+            if current is None:
+                raise RuntimeError("The provider did not return a background response.")
+            if current.continuation_token is None:
+                # Save the completed output with its token before publishing it; recovery
+                # replays the uncheckpointed output without invoking the agent again.
+                record_output(current)
+                session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                    "outer_response_id": context.response_id,
+                    "continuation_token": dict(continuation_token),
+                    "completed": True,
+                    "outputs": outputs,
+                }
+                await save_private_state()
+                async for output in pending_outputs():
+                    yield output
+                return
+            if not isinstance(current.continuation_token, Mapping):
+                raise RuntimeError("The provider returned a continuation token that cannot be persisted.")
+            if current.continuation_token == continuation_token:
+                continue
+            if any(message.contents for message in current.messages) or current.usage_details:
+                record_output(current)
+            continuation_token = cast(Mapping[str, Any], current.continuation_token)
+            session.state[_HOSTED_PROVIDER_STATE_KEY] = {
+                "outer_response_id": context.response_id,
+                "continuation_token": dict(continuation_token),
+                "outputs": outputs,
+            }
+            await save_private_state()
+            async for output in pending_outputs():
+                yield output
 
     async def _handle_inner_workflow(
         self,
@@ -1343,9 +2141,22 @@ class _OutputItemTracker:
     approval requests, etc.) are emitted in one shot, closing any still-open streaming item first.
     """
 
-    def __init__(self, stream: ResponseEventStream) -> None:
+    def __init__(
+        self,
+        stream: ResponseEventStream,
+        allowed_oauth_consent_origins: frozenset[str] | None = None,
+    ) -> None:
         self._stream = stream
+        self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
+        persisted_usage = stream.internal_metadata.get(_HOSTED_PROVIDER_USAGE_KEY)
+        if persisted_usage is not None:
+            if not isinstance(persisted_usage, Mapping) or any(
+                not isinstance(key, str) or (value is not None and type(value) is not int)
+                for key, value in cast(Mapping[object, object], persisted_usage).items()
+            ):
+                raise RuntimeError("The persisted provider usage is invalid.")
+            self._usage_details = cast(UsageDetails, dict(cast(Mapping[str, int | None], persisted_usage)))
         self._active_type: str | None = None
         self._active_id: str | None = None
         # message_id of the update that opened the active text item, used to detect a new
@@ -1393,6 +2204,11 @@ class _OutputItemTracker:
             server_label = persisted_item.get("server_label")
             if isinstance(consent_link, str) and isinstance(server_label, str):
                 self._oauth_consent_requests.add((consent_link, server_label))
+
+    @property
+    def usage_details(self) -> UsageDetails | None:
+        """Return usage retained with the provider output checkpoint."""
+        return self._usage_details
 
     @property
     def usage(self) -> ResponseUsage | None:
@@ -1617,14 +2433,19 @@ class _OutputItemTracker:
             if content.outputs:
                 for out in content.outputs:
                     exit_code = getattr(out, "exit_code", None)
+                    outcome = (
+                        FunctionShellCallOutputTimeoutOutcome(type="timeout")
+                        if getattr(out, "timed_out", False)
+                        else FunctionShellCallOutputExitOutcome(
+                            type="exit",
+                            exit_code=exit_code if exit_code is not None else 0,
+                        )
+                    )
                     output_items.append(
                         FunctionShellCallOutputContent(
                             stdout=getattr(out, "stdout", "") or "",
                             stderr=getattr(out, "stderr", "") or "",
-                            outcome=FunctionShellCallOutputExitOutcome(
-                                type="exit",
-                                exit_code=exit_code if exit_code is not None else 0,
-                            ),
+                            outcome=outcome,
                         )
                     )
             async for event in self._stream.output_item_function_shell_call_output(
@@ -1732,8 +2553,8 @@ class _OutputItemTracker:
                 yield event
 
             consent_link = content.consent_link
-            if not _is_safe_oauth_consent_link(consent_link):
-                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+            if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
+                raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
             server_label = content.additional_properties.get("server_label")
             if not isinstance(server_label, str) or not server_label:
@@ -2038,6 +2859,17 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     return output
 
 
+def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
+    outcome = output["outcome"]
+    outcome_type = outcome.get("type")
+    return Content.from_shell_command_output(
+        stdout=output.get("stdout") or "",
+        stderr=output.get("stderr") or "",
+        exit_code=outcome.get("exit_code") if outcome_type == "exit" else None,
+        timed_out=True if outcome_type == "timeout" else False if outcome_type == "exit" else None,
+    )
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -2155,14 +2987,7 @@ async def _item_to_message(
         )
 
     if item["type"] == "shell_call_output":
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out["stdout"] or "",
-                stderr=out["stderr"] or "",
-                exit_code=out["outcome"].get("exit_code"),
-            )
-            for out in (item["output"] or [])
-        ]
+        outputs = [_shell_command_output_to_content(out) for out in (item["output"] or [])]
         return Message(
             role="tool",
             contents=[

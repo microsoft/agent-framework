@@ -105,9 +105,12 @@ _DELEGATED_STATE_MISSING = object()
 
 def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
     """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
     from ._harness._tool_approval import ToolApprovalMiddleware
 
-    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
 
 
 def _merge_delegated_session_state(
@@ -787,7 +790,7 @@ class BaseAgent(SerializationMixin):
                     # The callback is a host-facing observer: feed it the *released*
                     # updates by consuming the stream, never by registering a transform
                     # hook on it. Hooks can end up applied to buffered content ahead of an
-                    # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
+                    # egress gate's verdict, so a
                     # hook-registered observer could see denied or unredacted content.
                     async for update in stream:
                         callback_result = stream_callback(update)

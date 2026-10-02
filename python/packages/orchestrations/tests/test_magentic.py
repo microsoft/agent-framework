@@ -1440,4 +1440,20 @@ def test_standard_manager_checkpoint_restore_empty_state():
     assert mgr.task_ledger is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Ledger:\n```json\n{"is_request_satisfied": true}\n```',
+        '```application/json\n{"is_request_satisfied": true}\n```',
+        '```py\nprint(1)\n```\n```json\n{"is_request_satisfied": true}\n```',
+        '```json\n{"is_request_satisfied": true, "note": "use ```py``` here"}\n```',
+        'No fence: {"is_request_satisfied": true} trailing',
+    ],
+)
+def test_extract_json_reads_first_fenced_object(text: str) -> None:
+    from agent_framework_orchestrations._magentic import _extract_json  # type: ignore
+
+    assert _extract_json(text)["is_request_satisfied"] is True
+
+
 # endregion

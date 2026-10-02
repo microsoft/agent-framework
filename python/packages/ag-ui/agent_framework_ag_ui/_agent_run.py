@@ -103,6 +103,7 @@ from ._run_common import (
     _extract_resume_payload,  # type: ignore
     _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
+    _is_snapshot_hydration_request,  # type: ignore
     _iterate_with_context,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _new_tool_call_segment_id,  # type: ignore
@@ -2390,6 +2391,97 @@ def _build_messages_snapshot(
     return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
 
+def _safe_point_tool_call_ids(flow: FlowState) -> set[str]:
+    """Return tool calls whose snapshot content is safe before stream finalization."""
+    safe_ids = {str(result["toolCallId"]) for result in flow.tool_results if result.get("toolCallId") is not None}
+    interrupt_call_ids = {
+        str(tool_call_id)
+        for interrupt in flow.interrupts
+        if (tool_call_id := interrupt.get("toolCallId") or interrupt.get("id")) is not None
+    }
+    safe_ids.update(interrupt_call_ids)
+    for call in flow.pending_tool_calls:
+        call_id = call.get("id")
+        function = call.get("function")
+        if call_id is None or not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+            continue
+        arguments = function.get("arguments")
+        try:
+            parsed_arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+        except json.JSONDecodeError:
+            parsed_arguments = None
+        if not isinstance(parsed_arguments, Mapping):
+            continue
+        original_call_id = parsed_arguments.get("function_call_id")
+        if original_call_id is None or str(original_call_id) in interrupt_call_ids:
+            safe_ids.add(str(call_id))
+    return safe_ids
+
+
+def _build_safe_point_messages_snapshot(
+    flow: FlowState,
+    snapshot_messages: list[dict[str, Any]],
+) -> MessagesSnapshotEvent:
+    """Build an intermediate snapshot without unfinalized text or reasoning."""
+    all_messages = list(snapshot_messages)
+    safe_call_ids = _safe_point_tool_call_ids(flow)
+    results_by_call_id: dict[str, list[dict[str, Any]]] = {}
+    for result in flow.tool_results:
+        call_id = result.get("toolCallId")
+        if call_id is not None:
+            results_by_call_id.setdefault(str(call_id), []).append(result)
+
+    emitted_call_ids: set[str] = set()
+    for segment in flow.snapshot_segments:
+        if segment.get("kind") != "tool_calls":
+            continue
+        calls = [
+            flow.tool_calls_by_id[call_id]
+            for call_id in segment.get("call_ids", [])
+            if call_id in safe_call_ids and call_id in flow.tool_calls_by_id
+        ]
+        if not calls:
+            continue
+        all_messages.append(
+            {
+                "id": str(segment.get("id") or generate_event_id()),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in calls],
+            }
+        )
+        for call in calls:
+            call_id = str(call["id"])
+            emitted_call_ids.add(call_id)
+            all_messages.extend(results_by_call_id.get(call_id, []))
+
+    leftover_calls = [
+        call
+        for call in flow.pending_tool_calls
+        if (call_id := call.get("id")) is not None
+        and str(call_id) in safe_call_ids
+        and str(call_id) not in emitted_call_ids
+    ]
+    if leftover_calls:
+        all_messages.append(
+            {
+                "id": generate_event_id(),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in leftover_calls],
+            }
+        )
+        for call in leftover_calls:
+            call_id = str(call["id"])
+            emitted_call_ids.add(call_id)
+            all_messages.extend(results_by_call_id.get(call_id, []))
+
+    for call_id, results in results_by_call_id.items():
+        if call_id not in emitted_call_ids:
+            all_messages.extend(results)
+
+    bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
+
+
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
     """Convert streamed text-message events into snapshot message dictionaries."""
     messages: list[dict[str, Any]] = []
@@ -2802,7 +2894,11 @@ async def _run_agent_stream(
                 await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids)
                 stored_snapshot = snapshot_session.stored
                 stored_pending_approval_interrupt_ids.difference_update(retired_interrupt_ids)
-    if snapshot_session.enabled and not raw_messages and resume_payload is None:
+    if _is_snapshot_hydration_request(
+        input_data,
+        snapshot_enabled=snapshot_session.enabled,
+        supports_checkpoint_resume=False,
+    ):
         async for event in snapshot_session.hydrate_events(run_id=run_id):
             yield event
         return
@@ -3099,6 +3195,25 @@ async def _run_agent_stream(
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
     approval_middleware_pipeline = _approval_observer_middleware_pipeline(agent, session)
 
+    async def save_thread_snapshot(
+        *,
+        persisted_messages: list[dict[str, Any]],
+        state: dict[str, Any] | None,
+        interrupt: list[dict[str, Any]] | None,
+    ) -> None:
+        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
+        await snapshot_session.save(
+            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+            state=state,
+            interrupt=interrupt,
+            session_state=_safe_serialize_session_continuation_state(
+                session,
+                agent,
+                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+                include_service_session_id=config.use_service_session,
+            ),
+        )
+
     authenticated_cancellations = [
         _approval_observer_response(occurrence, cancelled=True)
         for interrupt_id in cancelled_resume_ids
@@ -3297,6 +3412,46 @@ async def _run_agent_stream(
     if resolved_approval_results or any(message.get("function_approvals") for message in snapshot_messages):
         _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
 
+    retired_approval_interrupt_ids = {
+        *handled_resume_ids,
+        *(
+            str(interrupt["id"])
+            for interrupt in _normalize_resume_interrupts(resume_payload)
+            if resolved_approval_results or validated_approved_responses or approval_snapshot_reconciliations
+        ),
+        *(
+            reconciliation.interrupt_id
+            for reconciliation in approval_snapshot_reconciliations
+            if reconciliation.retire_interrupt
+        ),
+    }
+
+    def remaining_stored_interrupts(retired_interrupt_ids: set[str]) -> list[dict[str, Any]] | None:
+        stored_interrupts = snapshot_session.stored.interrupt if snapshot_session.stored is not None else None
+        if not stored_interrupts:
+            return None
+        remaining = [
+            interrupt
+            for interrupt in stored_interrupts
+            if str(interrupt.get("id") or interrupt.get("interruptId")) not in retired_interrupt_ids
+        ]
+        return remaining or None
+
+    def merge_snapshot_interrupts(
+        stored_interrupts: list[dict[str, Any]] | None,
+        current_interrupts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        combined_by_id: dict[str, dict[str, Any]] = {}
+        anonymous: list[dict[str, Any]] = []
+        for interrupt in [*(stored_interrupts or []), *current_interrupts]:
+            interrupt_id = interrupt.get("id") or interrupt.get("interruptId")
+            if interrupt_id is None:
+                anonymous.append(interrupt)
+            else:
+                combined_by_id[str(interrupt_id)] = interrupt
+        combined = [*combined_by_id.values(), *anonymous]
+        return combined or None
+
     if replacement_approval_requests:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for request in replacement_approval_requests:
@@ -3311,18 +3466,14 @@ async def _run_agent_stream(
         persisted_messages = snapshot_messages
         if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-        await snapshot_session.save(
-            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+        await save_thread_snapshot(
+            persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
-            interrupt=flow.interrupts or None,
-            session_state=_safe_serialize_session_continuation_state(
-                session,
-                agent,
-                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-                include_service_session_id=config.use_service_session,
+            interrupt=merge_snapshot_interrupts(
+                remaining_stored_interrupts(retired_approval_interrupt_ids),
+                flow.interrupts,
             ),
         )
-        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
         return
 
@@ -3336,8 +3487,31 @@ async def _run_agent_stream(
         flow.current_state.update(approved_state_updates)
         approved_state_snapshot_emitted = True
 
+    is_confirm_changes_response = _is_confirm_changes_response(messages)
+    preserved_interrupts: list[dict[str, Any]] | None = None
+    if (
+        (resolved_approval_results or retired_approval_interrupt_ids)
+        and snapshot_session.enabled
+        and not config.use_service_session
+        and not is_confirm_changes_response
+    ):
+        persisted_messages = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        preserved_interrupts = remaining_stored_interrupts(retired_approval_interrupt_ids)
+        await save_thread_snapshot(
+            persisted_messages=persisted_messages,
+            state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
+            interrupt=preserved_interrupts,
+        )
+
     # Handle confirm_changes response (state confirmation flow - emit confirmation and stop)
-    if _is_confirm_changes_response(messages):
+    if is_confirm_changes_response:
+        confirm_additional_properties = cast(dict[str, Any], messages[-1].additional_properties or {})
+        confirm_interrupt_id = confirm_additional_properties.get("tool_call_id")
+        confirm_remaining_interrupts = remaining_stored_interrupts(
+            {str(confirm_interrupt_id)} if confirm_interrupt_id else set()
+        )
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         # Emit approved state snapshot before confirmation message
         if approved_state_snapshot_emitted:
@@ -3352,18 +3526,11 @@ async def _run_agent_stream(
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-        await snapshot_session.save(
-            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+        await save_thread_snapshot(
+            persisted_messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
-            interrupt=None,
-            session_state=_safe_serialize_session_continuation_state(
-                session,
-                agent,
-                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-                include_service_session_id=config.use_service_session,
-            ),
+            interrupt=confirm_remaining_interrupts,
         )
-        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
         return
 
@@ -3381,6 +3548,21 @@ async def _run_agent_stream(
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
+
+    def snapshot_interrupts() -> list[dict[str, Any]] | None:
+        return merge_snapshot_interrupts(preserved_interrupts, flow.interrupts)
+
+    async def save_safe_point_snapshot() -> None:
+        safe_point_event = _build_safe_point_messages_snapshot(flow, snapshot_messages)
+        safe_point_messages = _event_messages_to_snapshot_dicts(list(safe_point_event.messages))
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            safe_point_messages = snapshot_session.resume_seeded_messages(safe_point_messages)
+        await save_thread_snapshot(
+            persisted_messages=safe_point_messages,
+            state=latest_state_snapshot,
+            interrupt=snapshot_interrupts(),
+        )
+
     initial_state_snapshot = flow.current_state if state_schema and flow.current_state else None
 
     # With both IDs supplied there is nothing to wait for, so start the run before
@@ -3417,6 +3599,8 @@ async def _run_agent_stream(
             stream = await _normalize_response_stream(response_stream)
 
         async for update in _iterate_with_context(stream, telemetry_context):
+            result_safe_point = False
+
             # Collect updates for structured output processing
             if response_format is not None:
                 all_updates.append(update)
@@ -3457,6 +3641,12 @@ async def _run_agent_stream(
             # Emit events for each content item
             for content in update.contents:
                 content_type = getattr(content, "type", None)
+                if content_type in {
+                    "function_result",
+                    "function_approval_request",
+                    "mcp_server_tool_result",
+                }:
+                    result_safe_point = True
                 logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
                 forwarded_reapproval_handled = False
                 native_approval_result = False
@@ -3566,6 +3756,14 @@ async def _run_agent_stream(
                 if native_approval_result:
                     native_approval_flow_result_ids.update(id(result) for result in flow.tool_results[result_offset:])
 
+            if (
+                snapshot_session.enabled
+                and result_safe_point
+                and not flow.waiting_for_approval
+                and not config.use_service_session
+            ):
+                await save_safe_point_snapshot()
+
             # Stop if waiting for approval
             if flow.waiting_for_approval:
                 break
@@ -3596,8 +3794,11 @@ async def _run_agent_stream(
                         approval_state_store.lifecycle.recover_unfinished(intent)
             forwarded_executions.clear()
 
-    if flow.waiting_for_approval and isinstance(stream, ResponseStream):
-        await stream.get_final_response()
+    if flow.waiting_for_approval:
+        if isinstance(stream, ResponseStream):
+            await stream.get_final_response()
+        if snapshot_session.enabled and not config.use_service_session:
+            await save_safe_point_snapshot()
 
     # If no updates at all, still emit RunStarted
     if not run_started_emitted:
@@ -3791,16 +3992,9 @@ async def _run_agent_stream(
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
-    await snapshot_session.save(
-        messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+    await save_thread_snapshot(
+        persisted_messages=persisted_messages,
         state=latest_state_snapshot,
-        interrupt=flow.interrupts or None,
-        session_state=_safe_serialize_session_continuation_state(
-            session,
-            agent,
-            shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
-            include_service_session_id=config.use_service_session,
-        ),
+        interrupt=snapshot_interrupts(),
     )
-    _save_tool_approval_state(session, approval_state_store, approval_thread_id)
     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
