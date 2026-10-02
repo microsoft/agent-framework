@@ -584,11 +584,6 @@ def run_release_mode(
     """Run fast lower/upper release probes for changed package metadata."""
     deadline = time.monotonic() + deadline_seconds
     projects = _build_release_project_map(workspace_root)
-    try:
-        _validate_core_all_dependency_bounds(projects)
-    except RuntimeError as exc:
-        print(f"[red]{exc}[/red]")
-        return 1
     selected = _selected_release_projects(
         workspace_root=workspace_root,
         projects=projects,
@@ -598,6 +593,12 @@ def run_release_mode(
     if not selected:
         print(f"[red]No changed package pyproject.toml files found relative to {base_ref}.[/red]")
         return 1
+    if any(project.package_name == "agent-framework-core" for project in selected):
+        try:
+            _validate_core_all_dependency_bounds(projects)
+        except RuntimeError as exc:
+            print(f"[red]{exc}[/red]")
+            return 1
 
     lock_result = _refresh_lockfile(workspace_root=workspace_root, deadline=deadline, dry_run=dry_run)
     if lock_result["status"] == "failed":

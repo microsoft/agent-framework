@@ -380,6 +380,21 @@ name = "agent_framework_meta"
 """,
     )
     _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+all = []
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
         tmp_path / "packages/provider",
         """
 [project]

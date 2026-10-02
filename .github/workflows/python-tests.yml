@@ -25,7 +25,7 @@ jobs:
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
         # Full workspace setup still builds excluded native packages slowly on 3.15.
-        # The dedicated meta-package job below covers the supported Windows install path.
+        # The dedicated meta-package job below covers the reported Windows 3.14 install path.
         exclude:
           - python-version: "3.15"
             os: windows-latest
@@ -72,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.14", "3.15"]
+        python-version: ["3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up uv
