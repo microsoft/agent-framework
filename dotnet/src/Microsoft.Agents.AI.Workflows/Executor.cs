@@ -250,6 +250,8 @@ public abstract class Executor : IIdentified
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation, wrapping the output from the executor.</returns>
     /// <exception cref="NotSupportedException">No handler found for the message type.</exception>
+    /// <exception cref="OperationCanceledException">The handler observes cancellation of the supplied
+    /// <paramref name="cancellationToken"/> and throws a cancellation exception carrying that token.</exception>
     /// <exception cref="TargetInvocationException">An exception is generated while handling the message.</exception>
     public ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, CancellationToken cancellationToken = default)
         => this.ExecuteCoreAsync(message, messageType, context, WorkflowTelemetryContext.Disabled, cancellationToken);
@@ -265,6 +267,12 @@ public abstract class Executor : IIdentified
                                               .ConfigureAwait(false);
 
         ExecutorEvent executionResult;
+        OperationCanceledException? cancellation = result?.CancellationException ?? result?.Exception as OperationCanceledException;
+        if (cancellationToken.IsCancellationRequested && cancellation?.CancellationToken == cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         if (result?.IsSuccess is not false)
         {
             executionResult = new ExecutorCompletedEvent(this.Id, result?.Result);
