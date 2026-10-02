@@ -10178,3 +10178,35 @@ async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
 
 
 # endregion
+
+
+async def test_load_tools_sorts_input_schema_properties_deterministically() -> None:
+    """Verify that inputSchema properties are sorted deterministically for prompt caching."""
+    tool = MCPTool(name="test")  # type: ignore[abstract]
+    tool.session = AsyncMock()
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="demo_tool",
+            description="A test tool with unsorted schema properties",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "z_param": {"type": "string"},
+                    "a_param": {"type": "number"},
+                    "m_param": {"type": "boolean"},
+                },
+            },
+        ),
+    ]
+    page.nextCursor = None
+    tool.session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    func = next(f for f in tool.functions if f.name == "demo_tool")
+    schema = func.parameters()
+    assert isinstance(schema, dict)
+    assert list(schema["properties"].keys()) == ["a_param", "m_param", "z_param"]
