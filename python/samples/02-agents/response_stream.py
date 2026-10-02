@@ -118,22 +118,20 @@ final = await response_stream.get_final_response()
 - You get the complete response without ever seeing individual updates
 
 ** Pattern 3: Combined Usage **
-
+```python
+async for update in response_stream:
+    print(update.text)  # See each update
+final = await response_stream.get_final_response()  # Get the aggregated result
+```
 When you first iterate the stream and then call `get_final_response()`, the following occurs:
 - Iteration yields updates with transform hooks applied
 - Cleanup hooks run after iteration completes
 - Calling `get_final_response()` uses the already collected updates to produce the final response
 - Note that it does not re-iterate the stream since it's already been consumed
 
-```python
-async for update in response_stream:
-    print(update.text)  # See each update
-final = await response_stream.get_final_response()  # Get the aggregated result
-```
-
 === Chaining with .map(), .flat_map(), and .with_finalizer() ===
 
-When building a Agent on top of a ChatClient, we face a challenge:
+When building an Agent on top of a ChatClient, we face a challenge:
 - The ChatClient returns a ResponseStream[ChatResponseUpdate, ChatResponse]
 - The Agent needs to return a ResponseStream[AgentResponseUpdate, AgentResponse]
 - We can't iterate the ChatClient's stream twice!
@@ -275,8 +273,8 @@ async def main() -> None:
     )
 
     print("Starting iteration (cleanup happens after):")
-    async for _update in stream4:
-        pass  # Just consume the stream
+    async for update in stream4:
+        print(f"  Received: '{update.text}'")
     print(f"Cleanup was performed: {cleanup_performed['value']}")
 
     # =========================================================================
@@ -488,6 +486,7 @@ if __name__ == "__main__":
 
 # Expected output includes:
 # === Example 6: Gates Around Transforms ===
+# Released updates:
 #   [Before gate] Saw: 'Public content. '
 #   -> 'Public content. '
 #   [Before gate] Saw: 'Internal secret.'
@@ -495,6 +494,7 @@ if __name__ == "__main__":
 # Final result: 'Public content. [redacted].'
 #
 # === Example 7: Buffered Final Replacement ===
+# The source is fully consumed and the replacement is approved before the first update is released:
 #   [Before result gate] Original: 'Public content. Internal secret.'
 #   -> 'Approved replacement response.'
 # Final replacement: 'Approved replacement response.'
