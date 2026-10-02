@@ -146,6 +146,9 @@ emitted only after the exact workflow cursor has been conditionally saved.
 Live output is provisional until `done`. Authority-bearing `request_info`
 frames and any following frames are buffered until the cursor is committed,
 so emitted request IDs refer to durable pending state.
+If the connection drops after commit, retry the request with the same trusted
+user, sandbox and platform call ID to replay the complete stored response
+without executing the ticket workflow again.
 Failures produce `error`, not `done`. Non-streaming pauses expose the same
 `request_info` data in the JSON event list. Native workflows do not support
 `legacy_wire_format=True`; the old plain-text/raw-chunk opt-in applies only

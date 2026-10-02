@@ -402,6 +402,33 @@ async def test_exact_pairs_restore_state_and_reject_old_lineage() -> None:
     assert head is not None and head.binding == second.binding
 
 
+async def test_completed_response_replay_is_explicit_and_does_not_advance_the_head() -> None:
+    first = await _prepare("one", workflow=_workflow(_Review()))
+    await _finish(first, WorkflowTurn(input="review"))
+    store = FoundryWorkflowBindingStore(_scope())
+    before, before_etag = await store.get_head("one", None)
+    with pytest.raises(WorkflowConflictError, match="already exists"):
+        await _prepare("one", workflow=_workflow(_Review()))
+
+    replay = await _prepare("one", workflow=_workflow(_Review()), replay_completed=True)
+    assert replay.has_completed_output
+    assert replay.snapshot is not None
+    assert replay.snapshot["output"] == []
+    after, after_etag = await store.get_head("one", None)
+    assert (after, after_etag) == (before, before_etag)
+
+
+async def test_default_store_integrity_hashes_the_persisted_encoding_without_repickling() -> None:
+    first = await _prepare("one", workflow=_workflow(_Approval()))
+    with patch(
+        "agent_framework_foundry_hosting._workflow_state._checkpoint_hash",
+        side_effect=AssertionError("default storage must not re-pickle checkpoints for integrity"),
+    ):
+        await _finish(first, WorkflowTurn(input="/safe"))
+        second = await _prepare("two", workflow=_workflow(_Approval()), previous_response_id="one")
+    assert set(second.pending_requests) == {"approval-1"}
+
+
 @pytest.mark.parametrize("scope", [_scope(user="other"), _scope(sandbox="other")])
 async def test_checkpoint_and_reply_scope_isolation(scope: FoundryRequestScope) -> None:
     first = await _prepare("one", workflow=_workflow(_Review()))

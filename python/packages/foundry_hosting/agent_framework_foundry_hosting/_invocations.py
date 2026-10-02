@@ -6,11 +6,12 @@ import asyncio
 import inspect
 import json
 import logging
+import math
 import sys
 import uuid
 import warnings
 import weakref
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from contextvars import Token
 from copy import deepcopy
@@ -90,25 +91,105 @@ class _WorkflowRequestError(ValueError):
     """A validated application request cannot be dispatched to the workflow."""
 
 
-def _workflow_json_default(value: Any) -> Any:
+def _validate_workflow_mapping_keys(value: Any, path: str, active: set[int]) -> None:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, Any], value)
+        identifier = id(mapping)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular mapping.")
+        active.add(identifier)
+        try:
+            for index, (key, item) in enumerate(mapping.items()):
+                if not isinstance(key, str):
+                    raise _WorkflowOutputError(
+                        f"Workflow output at {path} is not JSON-serializable: "
+                        f"mapping keys must be strings, found {type(key).__name__}."
+                    )
+                _validate_workflow_mapping_keys(item, f"{path}.value[{index}]", active)
+        finally:
+            active.remove(identifier)
+    elif isinstance(value, (list, tuple)):
+        sequence = cast(Sequence[Any], value)
+        identifier = id(sequence)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular sequence.")
+        active.add(identifier)
+        try:
+            for index, item in enumerate(sequence):
+                _validate_workflow_mapping_keys(item, f"{path}[{index}]", active)
+        finally:
+            active.remove(identifier)
+
+
+def _workflow_serialized_value(value: Any, path: str) -> Any:
     if isinstance(value, (AgentResponse, AgentResponseUpdate, ChatResponse, ChatResponseUpdate)):
         return value.to_dict(exclude={"continuation_token"})
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        return to_dict()
     if isinstance(value, BaseModel):
+        _validate_workflow_mapping_keys(value.model_dump(mode="python"), f"{path}.model", set())
         return value.model_dump(mode="json")
     if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
-    raise TypeError(f"Unsupported workflow output type: {type(value).__name__}.")
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise _WorkflowOutputError(
+        f"Workflow output at {path} is not JSON-serializable: unsupported type {type(value).__name__}."
+    )
+
+
+def _workflow_json_value(value: Any, path: str, active: set[int]) -> Any:
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: number must be finite.")
+        return value
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, Any], value)
+        identifier = id(mapping)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular mapping.")
+        active.add(identifier)
+        try:
+            result: dict[str, Any] = {}
+            for index, (key, item) in enumerate(mapping.items()):
+                if not isinstance(key, str):
+                    raise _WorkflowOutputError(
+                        f"Workflow output at {path} is not JSON-serializable: "
+                        f"mapping keys must be strings, found {type(key).__name__}."
+                    )
+                result[key] = _workflow_json_value(item, f"{path}.value[{index}]", active)
+            return result
+        finally:
+            active.remove(identifier)
+    if isinstance(value, (list, tuple)):
+        sequence = cast(Sequence[Any], value)
+        identifier = id(sequence)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular sequence.")
+        active.add(identifier)
+        try:
+            return [_workflow_json_value(item, f"{path}[{index}]", active) for index, item in enumerate(sequence)]
+        finally:
+            active.remove(identifier)
+    identifier = id(value)
+    if identifier in active:
+        raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular serialized value.")
+    active.add(identifier)
+    try:
+        serialized = _workflow_serialized_value(value, path)
+        return _workflow_json_value(serialized, f"{path}.serialized", active)
+    finally:
+        active.remove(identifier)
 
 
 def _workflow_output(value: Any) -> Any:
     """Normalize typed application data without text coercion or skipped values."""
     try:
-        return json.loads(
-            json.dumps(value, default=_workflow_json_default, allow_nan=False, ensure_ascii=False).encode("utf-8")
-        )
+        normalized = _workflow_json_value(value, "$", set())
+        return json.loads(json.dumps(normalized, allow_nan=False, ensure_ascii=False).encode("utf-8"))
+    except _WorkflowOutputError:
+        raise
     except (TypeError, ValueError, RecursionError) as exc:
         raise _WorkflowOutputError(f"Workflow output type {type(value).__name__} is not JSON-serializable.") from exc
 
@@ -123,6 +204,26 @@ def _workflow_frame(event: WorkflowEvent[Any]) -> dict[str, Any] | None:
     else:
         frame["executor_id"] = event.executor_id
     return cast(dict[str, Any], _workflow_output(frame))
+
+
+def _workflow_snapshot_frames(snapshot: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if snapshot is None or set(snapshot) != {"output"} or not isinstance(snapshot["output"], list):
+        raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+    frames: list[dict[str, Any]] = []
+    for item in cast(list[Any], snapshot["output"]):
+        if not isinstance(item, Mapping):
+            raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        frame = cast(dict[str, Any], _workflow_output(item))
+        if frame.get("type") == "output":
+            if set(frame) != {"type", "data", "executor_id"}:
+                raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        elif frame.get("type") == "request_info":
+            if set(frame) != {"type", "data", "request_id", "source_executor_id"}:
+                raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        else:
+            raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        frames.append(frame)
+    return frames
 
 
 def _sse(event: str, data: Mapping[str, Any]) -> str:
@@ -673,8 +774,13 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 platform_context=context,
                 checkpoint_store_provider=self._checkpoint_storage_provider,
                 lineage_id="invocations",
+                replay_completed=True,
                 fresh_factory=resolver.is_factory,
             )
+            if run.has_completed_output:
+                for frame in _workflow_snapshot_frames(run.snapshot):
+                    yield frame
+                return
             try:
                 turn = run.validate_turn(turn)
             except (TypeError, ValueError) as exc:
@@ -689,6 +795,19 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 except WorkflowCheckpointException as exc:
                     raise _WorkflowRequestError(
                         "Stored native workflow input uses an application type that is not checkpoint-allowlisted. "
+                        'Configure CheckpointStoreProvider(allowed_checkpoint_types=["module:qualname"]).'
+                    ) from exc
+            if (
+                run.stored
+                and turn.responses is not None
+                and isinstance(self._checkpoint_storage_provider, CheckpointStoreProvider)
+            ):
+                try:
+                    for reply in turn.responses.values():
+                        self._checkpoint_storage_provider.validate_checkpoint_value(reply)
+                except WorkflowCheckpointException as exc:
+                    raise _WorkflowRequestError(
+                        "Stored native workflow reply uses an application type that is not checkpoint-allowlisted. "
                         'Configure CheckpointStoreProvider(allowed_checkpoint_types=["module:qualname"]).'
                     ) from exc
             committed = False

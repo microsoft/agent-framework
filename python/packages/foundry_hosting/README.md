@@ -470,7 +470,8 @@ platform sandbox scope. Later turns restore the **exact** committed checkpoint,
 not a workflow name's unrelated latest checkpoint. Graph changes, stale writers,
 forged/cross-scope/replayed decisions and duplicate authority fail before
 executor/response-handler dispatch. Reply with the complete pending batch:
-partial or invalid batches do not consume any usable authority. Native factories
+partial, unallowlisted, or invalid batches do not claim or consume any usable
+authority, so the complete valid batch can be retried. Native factories
 and explicit `client_kwargs`/`function_invocation_kwargs` keep their existing
 purposes; they do not introduce arbitrary entry-state or per-executor run-option
 APIs. Host-controlled identity, storage and execution controls cannot be supplied
@@ -479,14 +480,21 @@ as caller generation settings.
 Non-streaming responses are JSON `{"output": [...]}` containing typed `output` and
 `request_info` event objects. JSON primitives, dataclasses, Pydantic models and
 framework `Message`, `Content` and response values retain their supported encoding.
-Private provider continuation tokens are omitted; unsupported/nonfinite/circular
-values fail explicitly. Streaming emits framed `output`/`request_info` SSE,
+All nested mappings, including mappings returned by model/dataclass/framework
+serializers, require string keys before JSON conversion so key coercion cannot
+silently collide. Private provider continuation tokens are omitted;
+unsupported/nonfinite/circular values fail explicitly. Streaming emits framed
+`output`/`request_info` SSE,
 then `done` with the **sandbox** `session_id`. Live output is provisional until
 `done`; pending authority and following frames are buffered until the exact cursor
 is conditionally committed. A conflict, encoding failure, execution failure or
 interruption cannot emit successful completion. Failed claimed turns are blocked
 to avoid replaying uncertain effects; start a new sandbox instead of blindly
 retrying non-idempotent work. Checkpoints do not provide exactly-once tool effects.
+If a connection drops after commit, retrying the same trusted user/sandbox/call ID
+replays that response's complete stored snapshot without executing the workflow or
+replacing its head. A different call ID starts normal turn validation and cannot
+retrieve that snapshot.
 
 The existing Invocations sandbox-routing and trusted user/call requirements apply,
 including the verified `agent_session_id` query alternative when the platform

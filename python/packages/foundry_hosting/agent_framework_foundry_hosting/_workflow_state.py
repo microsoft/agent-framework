@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, cast
 
@@ -298,6 +298,21 @@ class _CheckpointWrites:
             state[key] = fresh.get(key, {})
         return replace(checkpoint, state=state)
 
+    async def load_persisted(self, checkpoint_id: str) -> tuple[WorkflowCheckpoint, str]:
+        """Load a checkpoint with a process-stable integrity hash when supported."""
+        load_with_hash = getattr(cast(Any, self.storage), "load_with_hash", None)
+        if callable(load_with_hash):
+            loader = cast(
+                Callable[[str], Awaitable[tuple[WorkflowCheckpoint, str]]],
+                load_with_hash,
+            )
+            checkpoint, checkpoint_hash = await loader(checkpoint_id)
+            if not isinstance(checkpoint, WorkflowCheckpoint) or not isinstance(checkpoint_hash, str):
+                raise TypeError("Checkpoint storage returned an invalid checkpoint integrity pair.")
+            return checkpoint, checkpoint_hash
+        checkpoint = await self.storage.load(checkpoint_id)
+        return checkpoint, _checkpoint_hash(checkpoint)
+
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         return await self.storage.list_checkpoints(workflow_name=workflow_name)
 
@@ -364,6 +379,7 @@ class HostedWorkflowRun:
         lineage_id: str | None = None,
         stored: bool = True,
         recovery: bool = False,
+        replay_completed: bool = False,
         fresh_factory: bool = False,
     ) -> HostedWorkflowRun:
         """Read exact continuation state without claiming, consuming replies, or executing."""
@@ -388,6 +404,9 @@ class HostedWorkflowRun:
             return run
 
         own, own_etag = await run.store.get_response(response_id)
+        if not recovery and replay_completed and own is not None and own.status == "completed":
+            recovery = True
+            run.recovery = True
         if recovery and own is not None:
             run._record, run._record_etag = own, own_etag
             run.binding = own.binding
@@ -511,12 +530,12 @@ class HostedWorkflowRun:
                 )
             if previous.checkpoint_id is None:
                 raise ValueError("The workflow response has no acknowledged checkpoint.")
-            checkpoint = await storage.load(previous.checkpoint_id)
+            checkpoint, checkpoint_hash = await run._storage.load_persisted(previous.checkpoint_id)
             if (
                 checkpoint.checkpoint_id != previous.checkpoint_id
                 or checkpoint.workflow_name != workflow.name
                 or checkpoint.graph_signature_hash != workflow.graph_signature_hash
-                or _checkpoint_hash(checkpoint) != previous.checkpoint_hash
+                or checkpoint_hash != previous.checkpoint_hash
             ):
                 raise ValueError("The exact workflow checkpoint does not match its response binding.")
             run._checkpoint = checkpoint
@@ -755,7 +774,7 @@ class HostedWorkflowRun:
         if not self.stored:
             return
         snapshot_value = _json_object(snapshot)
-        checkpoint = await self.get_checkpoint(checkpoint_id or self.checkpoint_id)
+        checkpoint, checkpoint_hash = await self._get_checkpoint_with_hash(checkpoint_id or self.checkpoint_id)
         if checkpoint is None:
             raise RuntimeError("Output cannot be paired before a core checkpoint is acknowledged.")
         if approvals is not None and any(
@@ -765,9 +784,7 @@ class HostedWorkflowRun:
         await self.assert_claim()
         if self._record is None:
             raise RuntimeError("The workflow response pair has not been claimed.")
-        binding = replace(
-            self.binding, checkpoint_id=checkpoint.checkpoint_id, checkpoint_hash=_checkpoint_hash(checkpoint)
-        )
+        binding = replace(self.binding, checkpoint_id=checkpoint.checkpoint_id, checkpoint_hash=checkpoint_hash)
         pending_approvals = {
             wire_id: request_id
             for wire_id, request_id in (approvals if approvals is not None else self._record.approvals or {}).items()
@@ -785,14 +802,20 @@ class HostedWorkflowRun:
 
     async def get_checkpoint(self, checkpoint_id: str | None) -> WorkflowCheckpoint | None:
         """Read a checkpoint acknowledged in this run, including a producer-stamped stream boundary."""
+        checkpoint, _ = await self._get_checkpoint_with_hash(checkpoint_id)
+        return checkpoint
+
+    async def _get_checkpoint_with_hash(
+        self, checkpoint_id: str | None
+    ) -> tuple[WorkflowCheckpoint | None, str | None]:
         if checkpoint_id is None:
-            return None
+            return None, None
         if self._storage is None or (
             checkpoint_id not in self._storage.acknowledged_ids
             and (self._checkpoint is None or checkpoint_id != self._checkpoint.checkpoint_id)
         ):
             raise ValueError("Output pairing requires a checkpoint acknowledged by this exact workflow turn.")
-        checkpoint = await self._storage.storage.load(checkpoint_id)
+        checkpoint, checkpoint_hash = await self._storage.load_persisted(checkpoint_id)
         if (
             checkpoint.checkpoint_id != checkpoint_id
             or checkpoint.workflow_name != self.workflow.name
@@ -800,7 +823,7 @@ class HostedWorkflowRun:
         ):
             raise ValueError("The acknowledged workflow checkpoint identity changed.")
         validate_workflow_provider_state(self.workflow, checkpoint)
-        return checkpoint
+        return checkpoint, checkpoint_hash
 
     async def commit(self, snapshot: Mapping[str, Any] | None = None) -> None:
         """Commit only fully finalized, encoded output, before protocol success or done."""

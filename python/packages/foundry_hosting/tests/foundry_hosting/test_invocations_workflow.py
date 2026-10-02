@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequenc
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -76,6 +76,20 @@ class TicketModel(BaseModel):
 
 
 @dataclass(frozen=True)
+class MappingEnvelope:
+    payload: Mapping[Any, str]
+
+
+class MappingModel(BaseModel):
+    payload: dict[Any, str]
+
+
+class MappingSerializer:
+    def to_dict(self) -> dict[Any, str]:
+        return {1: "private-token", "1": "safe"}
+
+
+@dataclass(frozen=True)
 class TicketState:
     turns: int = 0
     last_ticket: str | None = None
@@ -90,6 +104,11 @@ class TicketReview:
 @dataclass(frozen=True)
 class TicketDecision:
     approved: bool
+
+
+@dataclass(frozen=True)
+class UnallowlistedReply:
+    value: str
 
 
 class _TicketExecutor(Executor):
@@ -108,12 +127,15 @@ class _TicketExecutor(Executor):
 
 
 class _ReviewExecutor(Executor):
-    def __init__(self, replies: list[tuple[str, bool]]) -> None:
+    def __init__(self, replies: list[tuple[str, bool]], starts: list[str] | None = None) -> None:
         super().__init__(id="ticket-review")
         self.replies = replies
+        self.starts = starts
 
     @handler
     async def handle(self, ticket: Ticket, ctx: WorkflowContext[None, dict[str, Any]]) -> None:
+        if self.starts is not None:
+            self.starts.append(ticket.ticket_id)
         for reviewer in ("support", "security"):
             await ctx.request_info(TicketReview(ticket.ticket_id, reviewer), response_type=TicketDecision)
 
@@ -127,6 +149,22 @@ class _ReviewExecutor(Executor):
             "reviewer": request.reviewer,
             "approved": response.approved,
         })
+
+
+class _AnyReplyExecutor(Executor):
+    def __init__(self, replies: list[object]) -> None:
+        super().__init__(id="any-reply")
+        self.replies = replies
+
+    @handler
+    async def handle(self, message: str, ctx: WorkflowContext[None, object]) -> None:
+        await ctx.request_info(f"{message}:first", response_type=object, request_id="first")
+        await ctx.request_info(f"{message}:second", response_type=object, request_id="second")
+
+    @response_handler
+    async def decide(self, request: str, response: object, ctx: WorkflowContext[None, object]) -> None:
+        self.replies.append(response)
+        await ctx.yield_output({"request": request, "accepted": True})
 
 
 class _ApprovalExecutor(Executor):
@@ -368,6 +406,25 @@ class TestWorkflowOutput:
         with pytest.raises(_WorkflowOutputError, match="not JSON-serializable"):
             _workflow_output(content)
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            {"nested": {1: "private-token", "1": "safe"}},
+            MappingEnvelope({1: "private-token", "1": "safe"}),
+            MappingModel(payload={1: "private-token", "1": "safe"}),
+            Content.from_text(
+                "typed content",
+                additional_properties=cast(Any, {1: "private-token", "1": "safe"}),
+            ),
+            MappingSerializer(),
+        ],
+    )
+    def test_rejects_non_string_mapping_keys_before_json_coercion_without_leaking_values(self, value: Any) -> None:
+        with pytest.raises(_WorkflowOutputError, match=r"at \$.*mapping keys must be strings") as raised:
+            _workflow_output(value)
+        assert "private-token" not in str(raised.value)
+        assert "'1'" not in str(raised.value)
+
     @pytest.mark.parametrize("response_type", [AgentResponse, AgentResponseUpdate, ChatResponse, ChatResponseUpdate])
     def test_does_not_expose_private_provider_continuation(self, response_type: Any) -> None:
         response = response_type(continuation_token={"private": "provider-token"})
@@ -522,8 +579,9 @@ class TestNativeWorkflowTurns:
             )
             assert response.status_code == 200
             assert events[0]["data"]["turn"] == number
-        response, _ = await _invoke(server, payload, session_id="sandbox", user_id="user", call_id="trusted-2")
-        assert response.status_code == 409
+        response, events = await _invoke(server, payload, session_id="sandbox", user_id="user", call_id="trusted-2")
+        assert response.status_code == 200
+        assert events[0]["data"]["turn"] == 2
         assert [call_id for _, call_id in calls] == ["trusted-1", "trusted-2"]
 
     @pytest.mark.parametrize("stream", [False, True])
@@ -690,6 +748,54 @@ class TestNativeWorkflowPendingReplies:
         assert response.status_code == (200 if stream else 400)
         assert [event["event"] for event in replayed] == ["error"]
         assert decisions == [True, True]
+
+    async def test_unallowlisted_reply_batch_is_rejected_before_claim_and_valid_retry_succeeds(self) -> None:
+        replies: list[object] = []
+        provider = CheckpointStoreProvider()
+
+        async def parser(request: Request) -> WorkflowTurn[str]:
+            payload = await request.json()
+            if "responses" not in payload:
+                return WorkflowTurn(input=payload["input"])
+            values = {
+                request_id: (
+                    UnallowlistedReply(value["value"])
+                    if isinstance(value, dict) and value.get("kind") == "custom"
+                    else value
+                )
+                for request_id, value in payload["responses"].items()
+            }
+            return WorkflowTurn(responses=values)
+
+        def factory(_request: Request) -> Workflow:
+            return WorkflowBuilder(name="any-reply", start_executor=_AnyReplyExecutor(replies)).build()
+
+        response, events = await _invoke(_host(factory, parser=parser, checkpoints=provider), {"input": "review"})
+        assert response.status_code == 200
+        request_ids = [event["request_id"] for event in events if event["event"] == "request_info"]
+        assert request_ids == ["first", "second"]
+        store = FoundryWorkflowBindingStore(FoundryRequestScope("session", None, None, False))
+        before, before_etag = await store.get_head("invocations", None)
+
+        invalid = {
+            "responses": {
+                "first": {"accepted": True},
+                "second": {"kind": "custom", "value": "private-token"},
+            }
+        }
+        response, rejected = await _invoke(_host(factory, parser=parser, checkpoints=provider), invalid)
+        assert response.status_code == 400
+        assert [event["event"] for event in rejected] == ["error"]
+        assert "checkpoint-allowlisted" in rejected[0]["error"]
+        assert "private-token" not in rejected[0]["error"]
+        after, after_etag = await store.get_head("invocations", None)
+        assert (after, after_etag) == (before, before_etag)
+        assert replies == []
+
+        valid = {"responses": {"first": {"accepted": True}, "second": {"accepted": False}}}
+        response, _ = await _invoke(_host(factory, parser=parser, checkpoints=provider), valid)
+        assert response.status_code == 200
+        assert replies == [{"accepted": True}, {"accepted": False}]
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_partial_replies_do_not_consume_authority_and_complete_replies_survive_restart(
@@ -1062,14 +1168,17 @@ class TestNativeWorkflowStreamingLifecycle:
         assert events[0]["status"] == 409
         assert replies == []
 
-    async def test_committed_pending_batch_remains_answerable_after_disconnect_before_done(self) -> None:
+    async def test_same_call_replays_complete_committed_pending_batch_after_first_frame_disconnect(self) -> None:
         replies: list[tuple[str, bool]] = []
+        starts: list[str] = []
         delivered: list[dict[str, Any]] = []
 
         def factory(_request: Request) -> Workflow:
-            return WorkflowBuilder(name="reviews", start_executor=_ReviewExecutor(replies)).build()
+            return WorkflowBuilder(name="reviews", start_executor=_ReviewExecutor(replies, starts)).build()
 
         server = _host(factory)
+        server.config.is_hosted = True
+        server.config.session_id = ""
         server.config.sse_keepalive_interval = 0
         received = False
         body = json.dumps({"ticket_id": "T-1", "stream": True}).encode()
@@ -1085,8 +1194,8 @@ class TestNativeWorkflowStreamingLifecycle:
         async def send(message: Any) -> None:
             if message["type"] == "http.response.body":
                 delivered.extend(_sse_events(message.get("body", b"").decode()))
-                if len(delivered) == 2:
-                    raise OSError("disconnected after the complete durable pending batch")
+                if len(delivered) == 1:
+                    raise OSError("disconnected after the first durable pending frame")
 
         scope = {
             "type": "http",
@@ -1099,18 +1208,86 @@ class TestNativeWorkflowStreamingLifecycle:
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"x-agent-foundry-call-id", b"pending-call"),
+                (b"x-agent-user-id", b"user-a"),
             ],
             "server": ("test", 80),
             "client": ("test", 1234),
         }
         with pytest.raises(ClientDisconnect):
             await asyncio.wait_for(server(scope, receive, send), timeout=5)
-        assert [item["event"] for item in delivered] == ["request_info", "request_info"]
-        response, _ = await _invoke(
-            _host(factory),
-            {"responses": {item["request_id"]: {"approved": True} for item in delivered}},
-            call_id="reply-call",
-        )
+        assert [item["event"] for item in delivered] == ["request_info"]
+        assert starts == ["T-1"]
+        trusted_scope = FoundryRequestScope("session", "user-a", "inspect", True)
+        store = FoundryWorkflowBindingStore(trusted_scope)
+        before, before_etag = await store.get_head("invocations", None)
+
+        def hosted() -> InvocationsHostServer:
+            replacement = _host(factory)
+            replacement.config.is_hosted = True
+            replacement.config.session_id = ""
+            return replacement
+
+        headers = {"x-agent-foundry-call-id": "pending-call", "x-agent-user-id": "user-a"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosted()), base_url="http://test") as client:
+            replay_json = await client.post(
+                "/invocations",
+                params={"agent_session_id": "session"},
+                headers=headers,
+                json={"ticket_id": "T-1", "stream": False},
+            )
+        assert replay_json.status_code == 200
+        complete = replay_json.json()["output"]
+        assert [item["type"] for item in complete] == ["request_info", "request_info"]
+        assert complete[0]["request_id"] == delivered[0]["request_id"]
+        assert [item["data"]["reviewer"] for item in complete] == ["support", "security"]
+        assert starts == ["T-1"]
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosted()), base_url="http://test") as client:
+            replay_sse = await client.post(
+                "/invocations",
+                params={"agent_session_id": "session"},
+                headers=headers,
+                json={"ticket_id": "T-1", "stream": True},
+            )
+        replay_events = _sse_events(replay_sse.text)
+        assert [item["event"] for item in replay_events] == ["request_info", "request_info", "done"]
+        assert [item["request_id"] for item in replay_events[:-1]] == [item["request_id"] for item in complete]
+        assert starts == ["T-1"]
+        after, after_etag = await store.get_head("invocations", None)
+        assert (after, after_etag) == (before, before_etag)
+
+        different_headers = {"x-agent-foundry-call-id": "different-call", "x-agent-user-id": "user-a"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosted()), base_url="http://test") as client:
+            different = await client.post(
+                "/invocations",
+                params={"agent_session_id": "session"},
+                headers=different_headers,
+                json={"ticket_id": "T-1"},
+            )
+        assert different.status_code == 400
+        assert starts == ["T-1"]
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosted()), base_url="http://test") as client:
+            cross_scope = await client.post(
+                "/invocations",
+                params={"agent_session_id": "other-session"},
+                headers=headers,
+                json={"ticket_id": "T-1"},
+            )
+        assert cross_scope.status_code == 200
+        assert [item["request_id"] for item in cross_scope.json()["output"]] != [
+            item["request_id"] for item in complete
+        ]
+        assert starts == ["T-1", "T-1"]
+
+        reply_headers = {"x-agent-foundry-call-id": "reply-call", "x-agent-user-id": "user-a"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosted()), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                params={"agent_session_id": "session"},
+                headers=reply_headers,
+                json={"responses": {item["request_id"]: {"approved": True} for item in complete}},
+            )
         assert response.status_code == 200
         assert sorted(replies) == [("security", True), ("support", True)]
 
