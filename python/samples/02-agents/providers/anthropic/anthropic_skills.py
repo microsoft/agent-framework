@@ -37,7 +37,7 @@ async def main() -> None:
     for skill in skills.data:
         print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
 
-    # Create a agent with the pptx skill enabled
+    # Create an agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
     agent = Agent(
         client=client,
