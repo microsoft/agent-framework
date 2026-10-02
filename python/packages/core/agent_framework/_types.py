@@ -424,6 +424,22 @@ class ComputerSafetyCheck(TypedDict, total=False):
 ContentT = TypeVar("ContentT", bound="Content")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+# Marks a streamed nested content item (e.g. a code interpreter call's `inputs`/`outputs`
+# text) as a full resend of everything streamed so far, rather than an incremental delta
+# to append. Some providers follow up a run of true deltas with one event that repeats the
+# complete value (e.g. the OpenAI Responses API's `code_interpreter_call_code.done`, sent
+# after a series of `.delta` events for the same call). Text content alone can't reliably
+# tell that apart from a delta that merely happens to start with what came before - e.g. a
+# delta of "(" followed by a delta of "()" is two chunks that combine into "(()", not a
+# resend of "()" - so providers must set this explicitly on a full resend.
+_CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
+# Recognize the OpenAI Responses API's code interpreter "done" event from its raw event
+# shape as a secondary snapshot signal, alongside the marker above. Older
+# agent-framework-openai releases stream this event without setting the marker, and
+# their agent-framework-core floor allows installing this version of core, so without
+# this fallback upgrading core alone would turn a streamed delta followed by that
+# provider's done event into duplicated code instead of a correct replace.
+_OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE = "response.code_interpreter_call_code.done"
 
 # endregion
 
@@ -2330,6 +2346,20 @@ def _content_items_text(items: Any) -> str | None:
     return "".join(text_parts)
 
 
+def _is_content_item_snapshot(items: Any) -> bool:
+    """Whether a nested content list is tagged as a full resend, see `_CONTENT_ITEM_SNAPSHOT_KEY`."""
+    if not isinstance(items, list):
+        return False
+    return any(
+        isinstance(item, Content)
+        and (
+            item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
+            or getattr(item.raw_representation, "type", None) == _OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE
+        )
+        for item in cast("list[object]", items)
+    )
+
+
 def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     """Merge streamed nested content lists, replacing deltas with a later full value when present."""
     if incoming is None:
@@ -2337,14 +2367,26 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     if existing is None:
         return deepcopy(incoming)
 
+    if _is_content_item_snapshot(incoming):
+        snapshot = deepcopy(incoming)
+        # The marker is only an instruction for this merge step; strip it so it doesn't
+        # persist into the finalized content that gets serialized into history or passed
+        # to middleware.
+        for item in cast("list[object]", snapshot):
+            if isinstance(item, Content):
+                item.additional_properties.pop(_CONTENT_ITEM_SNAPSHOT_KEY, None)
+        return snapshot
+
+    # An empty list has no item to fold a delta into (and nothing to add from one),
+    # so hand back whichever side actually has content before indexing into it below.
+    if not existing:
+        return deepcopy(incoming)
+    if not incoming:
+        return existing
+
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:
-        if incoming_text.startswith(existing_text):
-            return deepcopy(incoming)
-        if existing_text.startswith(incoming_text):
-            return existing
-
         existing_items = cast(list[Content], existing)
         merged = deepcopy(existing_items[0])
         merged.text = existing_text + incoming_text

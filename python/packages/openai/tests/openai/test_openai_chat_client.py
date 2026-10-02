@@ -69,7 +69,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework_openai._chat_client import _CONTENT_ITEM_SNAPSHOT_KEY, OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -7883,6 +7883,10 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].additional_properties["output_index"] == 0
     assert result.contents[0].additional_properties["sequence_number"] == 5
     assert result.contents[0].additional_properties["item_id"] == "ci_456"
+    # The done event repeats the full code rather than a further delta, so the merge
+    # layer needs it tagged as a snapshot to replace (not concatenate onto) accumulated
+    # `.delta` chunks for the same call.
+    assert result.contents[0].inputs[0].additional_properties[_CONTENT_ITEM_SNAPSHOT_KEY] is True
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
