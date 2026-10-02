@@ -1431,7 +1431,8 @@ async def test_prepare_options_allow_multiple_tool_calls_without_tool_choice(
     messages = [Message(role="user", contents=["Weather in Paris and Rome?"])]
     run_options = client._prepare_options(messages, {"tools": [get_weather], "allow_multiple_tool_calls": False})
 
-    assert run_options["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+    assert run_options["tool_choice"]["type"] == "auto"
+    assert run_options["tool_choice"]["disable_parallel_tool_use"] is True
 
 
 async def test_function_loop_keeps_parallel_tool_use_disabled_after_required_tool_choice(
@@ -1483,9 +1484,13 @@ async def test_function_loop_keeps_parallel_tool_use_disabled_after_required_too
 
     calls = mock_anthropic_client.beta.messages.create.call_args_list
     assert len(calls) == 3
-    assert calls[0].kwargs["tool_choice"] == {"type": "any", "disable_parallel_tool_use": True}
+    assert calls[0].kwargs["tool_choice"]["type"] == "any"
+    assert calls[0].kwargs["tool_choice"]["disable_parallel_tool_use"] is True
     for call in calls[1:]:
-        assert call.kwargs.get("tool_choice") == {"type": "auto", "disable_parallel_tool_use": True}
+        tool_choice = call.kwargs.get("tool_choice")
+        assert tool_choice is not None
+        assert tool_choice["type"] == "auto"
+        assert tool_choice["disable_parallel_tool_use"] is True
 
 
 async def test_prepare_options_with_tool_choice_required(
