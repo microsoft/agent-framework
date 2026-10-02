@@ -4230,7 +4230,8 @@ async def test_streaming_citations_delta_surfaces_annotations(mock_anthropic_cli
     client = create_test_anthropic_client(mock_anthropic_client)
     mock_anthropic_client.beta.messages.create.side_effect = create
     stream = client.get_response([Message(role="user", contents=["Weather in Paris?"])], stream=True)
-    _ = [update async for update in stream]
+    async for _ in stream:
+        pass
     response = await stream.get_final_response()
 
     assert response.text == "It is sunny in Paris."
