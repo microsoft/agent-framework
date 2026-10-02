@@ -1,1 +1,2 @@
 ﻿#nullable enable
+static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.AsAIAgent(this Microsoft.Agents.AI.Workflows.Workflow! workflow, bool filterToolCallMessages, string? id = null, string? name = null, string? description = null, Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false) -> Microsoft.Agents.AI.AIAgent!
