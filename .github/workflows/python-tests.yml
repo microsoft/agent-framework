@@ -75,15 +75,17 @@ jobs:
         python-version: ["3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Set up uv
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: windows-meta-${{ matrix.python-version }}
+      - name: Create the Python environment
+        shell: pwsh
+        run: |
+          uv venv --python "${{ matrix.python-version }}" --seed .meta-venv
+          & ".meta-venv\Scripts\python.exe" --version
       - name: Build release wheelhouse
         shell: bash
         run: |
@@ -95,23 +97,24 @@ jobs:
             --wheel \
             --no-build-logs \
             --no-create-gitignore \
-            --out-dir wheelhouse
+            --out-dir "${{ github.workspace }}/wheelhouse"
           uv build \
             --directory python \
             --wheel \
             --no-build-logs \
             --no-create-gitignore \
-            --out-dir wheelhouse
+            --out-dir "${{ github.workspace }}/wheelhouse"
       - name: Resolve the end-user install
         timeout-minutes: 6
         shell: pwsh
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          python -m pip install --upgrade pip
-          $version = python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
+          $python = ".meta-venv\Scripts\python.exe"
+          & $python -m pip install --upgrade pip
+          $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
           $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-          python -m pip install `
+          & $python -m pip install `
             --dry-run `
             --ignore-installed `
             --find-links wheelhouse `
@@ -133,6 +136,7 @@ jobs:
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
         run: |
-          $version = python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
-          python -m pip install --find-links wheelhouse "agent-framework==$version" azure-identity
-          python -c "import agent_framework; import azure.identity"
+          $python = ".meta-venv\Scripts\python.exe"
+          $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
+          & $python -m pip install --find-links wheelhouse "agent-framework==$version" azure-identity
+          & $python -c "import agent_framework; import azure.identity"
