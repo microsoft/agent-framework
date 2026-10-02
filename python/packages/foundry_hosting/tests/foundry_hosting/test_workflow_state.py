@@ -429,6 +429,32 @@ async def test_default_store_integrity_hashes_the_persisted_encoding_without_rep
     assert set(second.pending_requests) == {"approval-1"}
 
 
+async def test_superseded_cleanup_failure_is_retried_after_later_commit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = await _prepare("one", reclaim_superseded=True)
+    assert await _finish(first, WorkflowTurn(input=1)) == [1]
+    second = await _prepare("two", previous_response_id="one", reclaim_superseded=True)
+    with patch.object(
+        FoundryWorkflowBindingStore,
+        "delete_response",
+        AsyncMock(side_effect=RuntimeError("private cleanup detail")),
+    ):
+        assert await _finish(second, WorkflowTurn(input=1)) == [2]
+    store = FoundryWorkflowBindingStore(_scope())
+    old, _ = await store.get_response("one")
+    current, _ = await store.get_response("two")
+    assert old is not None and current is not None and current.status == "completed"
+    assert "Failed to reclaim superseded native workflow state" in caplog.text
+
+    third = await _prepare("three", previous_response_id="two", reclaim_superseded=True)
+    assert await _finish(third, WorkflowTurn(input=1)) == [3]
+    assert await store.get_response("one") == (None, None)
+    assert await store.get_response("two") == (None, None)
+    final, _ = await store.get_response("three")
+    assert final is not None and final.status == "completed"
+
+
 @pytest.mark.parametrize("scope", [_scope(user="other"), _scope(sandbox="other")])
 async def test_checkpoint_and_reply_scope_isolation(scope: FoundryRequestScope) -> None:
     first = await _prepare("one", workflow=_workflow(_Review()))

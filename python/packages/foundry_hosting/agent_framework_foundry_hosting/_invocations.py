@@ -28,8 +28,10 @@ from agent_framework import (
     ResponseStream,
     SessionStore,
     SupportsAgentRun,
+    Workflow,
     WorkflowCheckpointException,
     WorkflowEvent,
+    WorkflowExecutor,
 )
 from agent_framework._telemetry import mark_feature_used
 from anyio import CancelScope
@@ -77,6 +79,8 @@ _AGENT_CONTROLLED_FIELDS = frozenset({
     "tokenizer",
     "tools",
 })
+_MAX_WORKFLOW_SNAPSHOT_EVENTS = 4096
+_MAX_WORKFLOW_SNAPSHOT_BYTES = 4 * 1024 * 1024
 
 
 class _UnsupportedAgentOptions(TypeError):
@@ -224,6 +228,19 @@ def _workflow_snapshot_frames(snapshot: Mapping[str, Any] | None) -> list[dict[s
             raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
         frames.append(frame)
     return frames
+
+
+def _workflow_frame_size(frame: Mapping[str, Any]) -> int:
+    return len(json.dumps(frame, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _workflow_can_pause(workflow: Workflow) -> bool:
+    for executor in workflow.get_executors_list():
+        if getattr(executor, "is_request_response_capable", False) is True:
+            return True
+        if isinstance(executor, WorkflowExecutor) and _workflow_can_pause(executor.workflow):
+            return True
+    return False
 
 
 def _sse(event: str, data: Mapping[str, Any]) -> str:
@@ -761,11 +778,14 @@ class InvocationsHostServer(InvocationAgentServerHost):
         if resolver is None:
             raise RuntimeError("No native workflow is configured for Invocations.")
         frames: list[dict[str, Any]] = []
+        snapshot_bytes = 0
         deferred: list[dict[str, Any]] = []
         defer = False
         lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
         async with lock:
             workflow = await resolver.resolve(request)
+            if not resolver.is_factory and _workflow_can_pause(workflow):
+                raise _WorkflowRequestError("A pausing native workflow requires a fresh request-aware factory.")
             run = await HostedWorkflowRun.prepare(
                 workflow,
                 scope=scope,
@@ -774,8 +794,10 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 platform_context=context,
                 checkpoint_store_provider=self._checkpoint_storage_provider,
                 lineage_id="invocations",
+                stored=resolver.is_factory,
                 replay_completed=True,
                 fresh_factory=resolver.is_factory,
+                reclaim_superseded=True,
             )
             if run.has_completed_output:
                 for frame in _workflow_snapshot_frames(run.snapshot):
@@ -824,9 +846,22 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     events = run.events(turn)
                     resources.push_async_callback(events.aclose)
                     async for event in events:
+                        if event.type == "request_info" and not resolver.is_factory:
+                            raise _WorkflowRequestError(
+                                "Native workflow pauses require a request-aware factory that rebuilds the workflow."
+                            )
                         frame = _workflow_frame(event)
                         if frame is None:
                             continue
+                        frame_size = _workflow_frame_size(frame)
+                        if (
+                            len(frames) >= _MAX_WORKFLOW_SNAPSHOT_EVENTS
+                            or snapshot_bytes + frame_size > _MAX_WORKFLOW_SNAPSHOT_BYTES
+                        ):
+                            raise _WorkflowOutputError(
+                                "Workflow output exceeds the bounded Invocations snapshot limit."
+                            )
+                        snapshot_bytes += frame_size
                         frames.append(frame)
                         defer = defer or event.type == "request_info"
                         if defer:

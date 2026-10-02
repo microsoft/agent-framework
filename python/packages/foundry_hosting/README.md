@@ -487,7 +487,9 @@ unsupported/nonfinite/circular values fail explicitly. Streaming emits framed
 `output`/`request_info` SSE,
 then `done` with the **sandbox** `session_id`. Live output is provisional until
 `done`; pending authority and following frames are buffered until the exact cursor
-is conditionally committed. A conflict, encoding failure, execution failure or
+is conditionally committed. Snapshot retention is bounded by both event count and
+encoded bytes; exceeding either limit fails the turn without `done`. A conflict,
+encoding failure, execution failure or
 interruption cannot emit successful completion. Failed claimed turns are blocked
 to avoid replaying uncertain effects; start a new sandbox instead of blindly
 retrying non-idempotent work. Checkpoints do not provide exactly-once tool effects.
@@ -495,6 +497,15 @@ If a connection drops after commit, retrying the same trusted user/sandbox/call 
 replays that response's complete stored snapshot without executing the workflow or
 replacing its head. A different call ID starts normal turn validation and cannot
 retrieve that snapshot.
+Local callers may pass one built workflow for a one-shot non-pausing run. Any
+workflow that can pause for external input must use a request-aware factory so a
+fresh graph can restore and consume the durable reply on the next request.
+After a newer Invocations head is durably committed, the host reclaims completed
+ancestor response records and checkpoints oldest-first, retaining only current,
+pending, active or blocked authority. Cleanup failures are logged and retried by
+a later successful turn without changing the already committed result; default
+store expiry remains a backstop. Custom checkpoint providers own their conditional
+delete and retention behavior.
 
 The existing Invocations sandbox-routing and trusted user/call requirements apply,
 including the verified `agent_session_id` query alternative when the platform

@@ -488,6 +488,25 @@ class TestNativeWorkflowConfiguration:
         assert len(created) == 1
         assert calls == []
 
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_built_workflow_allows_one_shot_output_but_rejects_pauses_without_state(self, stream: bool) -> None:
+        calls: list[tuple[Ticket, str | None]] = []
+        one_shot = WorkflowBuilder(name="one-shot", start_executor=_TicketExecutor(calls)).build()
+        response, events = await _invoke(_host(one_shot), {"ticket_id": "T-1", "stream": stream})
+        assert response.status_code == 200
+        assert [event["event"] for event in events if event["event"] == "output"] == ["output"]
+        assert calls == [(Ticket("T-1", "Help"), None)]
+        store = FoundryWorkflowBindingStore(FoundryRequestScope("session", None, None, False))
+        assert await store.get_head("invocations", None) == (None, None)
+
+        pausing = WorkflowBuilder(name="pausing", start_executor=_ReviewExecutor([])).build()
+        response, events = await _invoke(_host(pausing), {"ticket_id": "T-2", "stream": stream})
+        assert response.status_code == (200 if stream else 400)
+        assert [event["event"] for event in events] == ["error"]
+        message = events[0].get("message") or events[0].get("error")
+        assert isinstance(message, str) and "request-aware factory" in message
+        assert await store.get_head("invocations", None) == (None, None)
+
 
 class TestNativeWorkflowTurns:
     async def test_checkpoint_allowlist_failure_happens_before_claim_and_dispatch(self) -> None:
@@ -655,6 +674,66 @@ class TestNativeWorkflowTurns:
         assert response.status_code == 200
         assert events[0]["data"]["turn"] == 2
         assert events[0]["data"]["previous_ticket"] == "T-1"
+
+    async def test_multiple_host_restarts_retain_only_current_response_and_checkpoint(self) -> None:
+        calls: list[tuple[Ticket, str | None]] = []
+        stores: list[FoundryCheckpointStore] = []
+
+        class RecordingCheckpoints(CheckpointStoreProvider):
+            def get_store_for_scope(
+                self, *, scope: Any, context_id: str, platform_context: FoundryAgentRequestContext
+            ) -> FoundryCheckpointStore:
+                store = cast(
+                    FoundryCheckpointStore,
+                    super().get_store_for_scope(
+                        scope=scope,
+                        context_id=context_id,
+                        platform_context=platform_context,
+                    ),
+                )
+                stores.append(store)
+                return store
+
+        def factory(_request: Request) -> Workflow:
+            return WorkflowBuilder(name="tickets", start_executor=_TicketExecutor(calls)).build()
+
+        provider = RecordingCheckpoints(
+            allowed_checkpoint_types=[f"{__name__}:{value.__qualname__}" for value in (Ticket, TicketState)]
+        )
+        for number in range(1, 6):
+            response, events = await _invoke(
+                _host(factory, checkpoints=provider),
+                {"ticket_id": f"T-{number}"},
+                session_id="retained",
+                call_id=f"call-{number}",
+            )
+            assert response.status_code == 200
+            assert events[0]["data"]["turn"] == number
+
+        binding_store = FoundryWorkflowBindingStore(FoundryRequestScope("retained", None, None, False))
+        for number in range(1, 5):
+            assert await binding_store.get_response(f"call-{number}") == (None, None)
+        current, _ = await binding_store.get_response("call-5")
+        head, _ = await binding_store.get_head("invocations", None)
+        assert current is not None and current.status == "completed"
+        assert head is not None and head.binding == current.binding
+        raw_bindings = await binding_store._get_store()  # pyright: ignore[reportPrivateUsage]
+        async with raw_bindings:
+            keys = await raw_bindings.list_keys(call_id=None)
+        assert len(keys.keys) == 2  # Current response record plus the fixed lineage head.
+        # The current turn retains its entry and final checkpoints; prior turns are reclaimed.
+        assert len(await stores[-1].list_checkpoint_ids(workflow_name="tickets")) == 2
+
+        before = list(calls)
+        replay, events = await _invoke(
+            _host(factory, checkpoints=provider),
+            {"ticket_id": "T-5"},
+            session_id="retained",
+            call_id="call-5",
+        )
+        assert replay.status_code == 200
+        assert events[0]["data"]["turn"] == 5
+        assert calls == before
 
     @pytest.mark.parametrize("change", ["name", "executor"])
     async def test_graph_changes_fail_before_executor_dispatch(self, change: str) -> None:
@@ -1167,6 +1246,50 @@ class TestNativeWorkflowStreamingLifecycle:
         assert [item["event"] for item in events] == ["error"]
         assert events[0]["status"] == 409
         assert replies == []
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("limit_kind", ["events", "bytes"])
+    async def test_snapshot_retention_limits_abort_without_done_or_cross_session_impact(
+        self, stream: bool, limit_kind: str
+    ) -> None:
+        class Fanout(Executor):
+            @handler
+            async def handle(self, _: Ticket, ctx: WorkflowContext[None, str]) -> None:
+                values = ["one", "two", "three"] if limit_kind == "events" else ["x" * 512]
+                for value in values:
+                    await ctx.yield_output(value)
+
+        server = _host(lambda _: WorkflowBuilder(name="fanout", start_executor=Fanout("start")).build())
+        event_limit = 2 if limit_kind == "events" else 100
+        byte_limit = 4096 if limit_kind == "events" else 128
+        with (
+            patch(
+                "agent_framework_foundry_hosting._invocations._MAX_WORKFLOW_SNAPSHOT_EVENTS",
+                event_limit,
+            ),
+            patch(
+                "agent_framework_foundry_hosting._invocations._MAX_WORKFLOW_SNAPSHOT_BYTES",
+                byte_limit,
+            ),
+        ):
+            response, events = await _invoke(server, {"ticket_id": "T-1", "stream": stream}, session_id="limited")
+        assert response.status_code == (200 if stream else 500)
+        assert events[-1]["event"] == "error"
+        message = events[-1].get("message") or events[-1].get("error")
+        assert isinstance(message, str)
+        assert "bounded Invocations snapshot limit" in message
+        assert not any(event["event"] == "done" for event in events)
+        store = FoundryWorkflowBindingStore(FoundryRequestScope("limited", None, None, False))
+        head, _ = await store.get_head("invocations", None)
+        assert head is not None and head.blocked
+
+        other, other_events = await _invoke(
+            _host(lambda _: WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build()),
+            {"ticket_id": "T-2"},
+            session_id="unrelated",
+        )
+        assert other.status_code == 200
+        assert other_events[0]["event"] == "output"
 
     async def test_same_call_replays_complete_committed_pending_batch_after_first_frame_disconnect(self) -> None:
         replies: list[tuple[str, bool]] = []
