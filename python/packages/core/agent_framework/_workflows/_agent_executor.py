@@ -314,6 +314,7 @@ class AgentExecutor(Executor):
         id: str | None = None,
         context_mode: Literal["full", "last_agent", "custom"] | None = None,
         context_filter: Callable[[list[Message]], list[Message]] | None = None,
+        ensure_trailing_user_turn: bool = False,
     ):
         """Initialize the executor with a unique identifier.
 
@@ -332,7 +333,12 @@ class AgentExecutor(Executor):
             context_filter: A function that takes the full conversation (list of Messages) as input and returns
                 a filtered list of Messages to be used as context for the agent run. This is required
                 if context_mode is set to "custom".
+            ensure_trailing_user_turn: If True, appends a synthetic user continuation message
+                ("please continue.") when the cache ends on an assistant message. Some
+                chat-completions providers return empty text when the prompt ends on
+                ``assistant``. Defaults to False to preserve existing behavior.
         """
+        self._ensure_trailing_user_turn = ensure_trailing_user_turn
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         exec_id = id or resolve_agent_id(agent)
         if not exec_id:
@@ -746,14 +752,21 @@ class AgentExecutor(Executor):
         containing incremental updates (streaming mode) or a single output event (type='output')
         containing the complete response (non-streaming mode).
         """
+        invocation_messages = self._build_invocation_messages()
         self._session.state[_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY] = True
         try:
             if ctx.is_streaming():
                 # Streaming mode: emit incremental updates
-                response = await self._run_agent_streaming(cast(WorkflowContext[Never, AgentResponseUpdate], ctx))
+                response = await self._run_agent_streaming(
+                    cast(WorkflowContext[Never, AgentResponseUpdate], ctx),
+                    messages=invocation_messages,
+                )
             else:
                 # Non-streaming mode: use run() and emit single event
-                response = await self._run_agent(cast(WorkflowContext[Never, AgentResponse], ctx))
+                response = await self._run_agent(
+                    cast(WorkflowContext[Never, AgentResponse], ctx),
+                    messages=invocation_messages,
+                )
         finally:
             self._session.state.pop(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY, None)
 
@@ -771,11 +784,39 @@ class AgentExecutor(Executor):
         await ctx.send_message(agent_response)
         self._cache.clear()
 
-    async def _run_agent(self, ctx: WorkflowContext[Never, AgentResponse]) -> AgentResponse | None:
+    def _build_invocation_messages(self) -> list[Message]:
+        """Return an invocation-only copy of the cache with trailing user turn if needed.
+
+        The copy — not ``self._cache`` — is what gets passed to the agent's
+        ``run()`` call, so the synthetic "please continue." message never
+        persists in the cache or ``full_conversation``. Only the invocation
+        that needs the trailing user turn sees it; downstream agents in a
+        multi-agent chain are unaffected.
+        """
+        messages = list(self._cache)
+        if self._ensure_trailing_user_turn and messages and messages[-1].role == "assistant":
+            logger.debug(
+                "AgentExecutor %s: cache ends on an assistant message; appending a synthetic "
+                "continuation turn to the invocation-only copy to avoid empty completions from "
+                "providers that require a trailing user message.",
+                self.id,
+            )
+            messages.append(Message(role="user", contents=["please continue."]))
+        return messages
+
+    async def _run_agent(
+        self,
+        ctx: WorkflowContext[Never, AgentResponse],
+        *,
+        messages: list[Message] | None = None,
+    ) -> AgentResponse | None:
         """Execute the underlying agent in non-streaming mode.
 
         Args:
             ctx: The workflow context for emitting events.
+            messages: Invocation-only message list. If provided, used instead
+                of ``self._cache`` so the synthetic trailing user turn does
+                not persist in the cache.
 
         Returns:
             The complete AgentResponse, or None if waiting for user input.
@@ -785,7 +826,8 @@ class AgentExecutor(Executor):
         function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs, resolved_run_kwargs)
         tools = ctx.get_runtime_tools()
 
-        if not self._cache:
+        cache = messages if messages is not None else self._cache
+        if not cache:
             logger.warning(
                 "AgentExecutor %s: Running agent with empty message cache. "
                 "This could lead to service error for some LLM providers.",
@@ -801,7 +843,7 @@ class AgentExecutor(Executor):
         }
         if tools is not None and self._accepts_runtime_tools:
             run_kwargs["tools"] = tools
-        response = await run_agent(self._cache, **run_kwargs)
+        response = await run_agent(cache, **run_kwargs)
 
         # Handle any user input requests
         if response.user_input_requests:
@@ -826,11 +868,19 @@ class AgentExecutor(Executor):
         await ctx.yield_output(response)
         return response
 
-    async def _run_agent_streaming(self, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> AgentResponse | None:
+    async def _run_agent_streaming(
+        self,
+        ctx: WorkflowContext[Never, AgentResponseUpdate],
+        *,
+        messages: list[Message] | None = None,
+    ) -> AgentResponse | None:
         """Execute the underlying agent in streaming mode and collect the full response.
 
         Args:
             ctx: The workflow context for emitting events.
+            messages: Invocation-only message list. If provided, used instead
+                of ``self._cache`` so the synthetic trailing user turn does
+                not persist in the cache.
 
         Returns:
             The complete AgentResponse, or None if waiting for user input.
@@ -840,7 +890,8 @@ class AgentExecutor(Executor):
         function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs, resolved_run_kwargs)
         tools = ctx.get_runtime_tools()
 
-        if not self._cache:
+        cache = messages if messages is not None else self._cache
+        if not cache:
             logger.warning(
                 "AgentExecutor %s: Running agent with empty message cache. "
                 "This could lead to service error for some LLM providers.",
@@ -859,7 +910,7 @@ class AgentExecutor(Executor):
         }
         if tools is not None and self._accepts_runtime_tools:
             run_kwargs["tools"] = tools
-        stream = run_agent_stream(self._cache, **run_kwargs)
+        stream = run_agent_stream(cache, **run_kwargs)
         async for update in stream:
             updates.append(update)
             if any(content.type == "computer_tool_call" and content.user_input_request for content in update.contents):
