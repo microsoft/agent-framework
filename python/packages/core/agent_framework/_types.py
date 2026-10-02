@@ -3768,17 +3768,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return value, transformed
 
     async def _record_update(self, update: UpdateT, *, run_after_gates: bool) -> UpdateT:
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._update_gates_before),
-            update,
-            target="update",
-        )
+        if self._update_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._update_gates_before),
+                update,
+                target="update",
+            )
         self._updates.append(update)
-        update, _ = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._transform_hooks),
-            update,
-        )
-        if run_after_gates:
+        if len(self._transform_hooks) == 1:
+            transformed_update = self._transform_hooks[0](update)
+            if isawaitable(transformed_update):
+                transformed_update = await transformed_update
+            if transformed_update is not None:
+                update = cast(UpdateT, transformed_update)
+        elif self._transform_hooks:
+            update, _ = await self._apply_transforms(
+                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._transform_hooks),
+                update,
+            )
+        if run_after_gates and self._update_gates_after:
             await self._run_gates(
                 cast(Sequence[Callable[[Any], object]], self._update_gates_after),
                 update,
@@ -3794,17 +3802,31 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     run_after_gates=run_after_gates,
                 )
 
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
+            context_factories = self._pull_context_manager_factories
+            update: UpdateT
+            if not context_factories:
                 if self._iterator is None:
                     stream = await self._get_stream()
                     self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
+                update = await self._iterator.__anext__()
+            elif len(context_factories) == 1:
+                with context_factories[0]():
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update = await self._iterator.__anext__()
+            else:
+                with contextlib.ExitStack() as stack:
+                    for factory in context_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update = await self._iterator.__anext__()
             if self._flat_map_update is not None:
                 mapped_updates = self._flat_map_update(update)
                 if isawaitable(mapped_updates):
@@ -3874,15 +3896,19 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         else:
             result = list(self._updates)
 
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_before),
-            result,
-            target="result",
-        )
-        result, self._result_was_transformed = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
-            result,
-        )
+        if self._result_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_before),
+                result,
+                target="result",
+            )
+        if self._result_hooks:
+            result, self._result_was_transformed = await self._apply_transforms(
+                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
+                result,
+            )
+        else:
+            self._result_was_transformed = False
         self._final_result = result
         self._result_prepared = True
 
@@ -3890,25 +3916,28 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         if self._finalized:
             return
         await self._prepare_final_result()
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_after),
-            self._final_result,
-            target="result",
-        )
-        terminal_result, transformed = await self._apply_transforms(
-            cast(
-                Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
-                self._terminal_result_transforms,
-            ),
-            self._final_result,
-        )
-        self._final_result = terminal_result
-        self._result_was_transformed = self._result_was_transformed or transformed
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
-            self._final_result,
-            target="result",
-        )
+        if self._result_gates_after:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_after),
+                self._final_result,
+                target="result",
+            )
+        if self._terminal_result_transforms:
+            terminal_result, transformed = await self._apply_transforms(
+                cast(
+                    Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+                    self._terminal_result_transforms,
+                ),
+                self._final_result,
+            )
+            self._final_result = terminal_result
+            self._result_was_transformed = self._result_was_transformed or transformed
+        if self._terminal_result_gates:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
+                self._final_result,
+                target="result",
+            )
         self._finalized = True
 
     async def _finish_consumption(self) -> None:
