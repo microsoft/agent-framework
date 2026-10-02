@@ -26,7 +26,7 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from typing_extensions import TypedDict
+from typing_extensions import Required, TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
@@ -113,12 +113,12 @@ def detect_media_type_from_base64(
 
             # Detect from base64 string
             base64_data = "iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(base64_data)
+            media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
             data_uri = "data:image/png;base64,iVBORw0KGgo..."
-            media_type = detect_media_type_from_base64(data_uri)
+            media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
     data: bytes | None = None
@@ -382,6 +382,8 @@ ContentType = Literal[
     "shell_tool_call",
     "shell_tool_result",
     "shell_command_output",
+    "computer_tool_call",
+    "computer_tool_result",
     "function_approval_request",
     "function_approval_response",
     "oauth_consent_request",
@@ -408,6 +410,15 @@ class Annotation(TypedDict, total=False):
     annotated_regions: Sequence[TextSpanRegion]
     additional_properties: dict[str, Any]
     raw_representation: Any
+
+
+@experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+class ComputerSafetyCheck(TypedDict, total=False):
+    """A provider warning that must be reviewed before running computer actions."""
+
+    id: Required[str]
+    code: str
+    message: str
 
 
 ContentT = TypeVar("ContentT", bound="Content")
@@ -464,17 +475,20 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
             combined = add_usage_details(usage1, usage2)
             # Result: {'input_token_count': 8, 'output_token_count': 16}
     """
-    if usage1 is None:
-        return usage2 or UsageDetails()
-    if usage2 is None:
-        return usage1
+    u1 = usage1 or UsageDetails()
+    u2 = usage2 or UsageDetails()
 
     result = UsageDetails()
     # Combine all keys from both dictionaries
-    all_keys = set(usage1.keys()) | set(usage2.keys())
+    all_keys = set(u1.keys()) | set(u2.keys())
     for key in all_keys:
-        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
-            (val2 := usage2.get(key, 0)), (int | None)
+        val1 = u1.get(key, 0)
+        val2 = u2.get(key, 0)
+        if (
+            isinstance(val1, bool)
+            or isinstance(val2, bool)
+            or not isinstance(val1, (int, type(None)))
+            or not isinstance(val2, (int, type(None)))
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
@@ -537,6 +551,11 @@ class Content:
         timeout_ms: int | None = None,
         max_output_length: int | None = None,
         status: str | None = None,
+        # Computer tool fields
+        actions: list[dict[str, Any]] | None = None,
+        screenshot: Content | None = None,
+        pending_safety_checks: list[ComputerSafetyCheck] | None = None,
+        acknowledged_safety_checks: list[ComputerSafetyCheck] | None = None,
         # Shell command output fields
         stdout: str | None = None,
         stderr: str | None = None,
@@ -569,8 +588,9 @@ class Content:
         )
         self.raw_representation = raw_representation
 
-        # Set all content-specific attributes
-        self.text = text
+        # Set all content-specific attributes. A text content always carries a string, so
+        # concatenation and `Message.text` never see None.
+        self.text = (text or "") if type == "text" else text
         self.protected_data = protected_data
         self.uri = uri
         self.media_type = media_type
@@ -594,6 +614,10 @@ class Content:
         self.timeout_ms = timeout_ms
         self.max_output_length = max_output_length
         self.status = status
+        self.actions = actions
+        self.screenshot = screenshot
+        self.pending_safety_checks = pending_safety_checks
+        self.acknowledged_safety_checks = acknowledged_safety_checks
         self.stdout = stdout
         self.stderr = stderr
         self.exit_code = exit_code
@@ -714,7 +738,7 @@ class Content:
 
                     from agent_framework import detect_media_type_from_base64, Content
 
-                    media_type = detect_media_type_from_base64(base64_string)
+                    media_type = detect_media_type_from_base64(data_str=base64_string)
                     if media_type is None:
                         raise ValueError("Could not detect media type")
                     data_bytes = base64.b64decode(base64_string)
@@ -743,7 +767,7 @@ class Content:
 
                 # If you have a base64 string and need to detect media type
                 base64_string = "iVBORw0KGgo..."
-                media_type = detect_media_type_from_base64(base64_string)
+                media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
                 image_bytes = base64.b64decode(base64_string)
@@ -1252,6 +1276,81 @@ class Content:
         )
 
     @classmethod
+    @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+    def from_computer_tool_call(
+        cls: type[ContentT],
+        *,
+        id: str,
+        call_id: str,
+        actions: Sequence[Mapping[str, Any]],
+        status: str | None = None,
+        pending_safety_checks: Sequence[ComputerSafetyCheck] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create an actionable computer request with ordered actions and provider safety warnings.
+
+        The application must review any pending safety checks and supply its own
+        acknowledgments with the result; they are never acknowledged automatically.
+        """
+        if not id or not call_id or not actions:
+            raise ValueError("A computer tool call requires an id, call_id, and at least one action.")
+        return cls(
+            "computer_tool_call",
+            id=id,
+            call_id=call_id,
+            actions=[dict(action) for action in actions],
+            status=status,
+            pending_safety_checks=list(pending_safety_checks) if pending_safety_checks is not None else None,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.COMPUTER_USE)
+    def from_computer_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str,
+        screenshot: Content | None = None,
+        id: str | None = None,
+        status: str | None = None,
+        acknowledged_safety_checks: Sequence[ComputerSafetyCheck] | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create the result for a computer call after the application executes its actions.
+
+        A screenshot is optional in shared content; connectors that require one validate it
+        when sending the result. If supplied, it may be ``Content.from_data``,
+        ``Content.from_uri``, or ``Content.from_hosted_file``. Pass only safety checks
+        explicitly acknowledged by the application.
+        """
+        if not call_id:
+            raise ValueError("A computer tool result requires a call_id.")
+        if screenshot is not None and (
+            not isinstance(screenshot, Content) or screenshot.type not in ("data", "uri", "hosted_file")
+        ):
+            raise ValueError("A computer screenshot must be image data, a URI, or a hosted file Content.")
+        return cls(
+            "computer_tool_result",
+            id=id,
+            call_id=call_id,
+            status=status,
+            screenshot=screenshot,
+            acknowledged_safety_checks=(
+                list(acknowledged_safety_checks) if acknowledged_safety_checks is not None else None
+            ),
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
         cls: type[ContentT],
         call_id: str,
@@ -1465,6 +1564,10 @@ class Content:
             "timeout_ms",
             "max_output_length",
             "status",
+            "actions",
+            "screenshot",
+            "pending_safety_checks",
+            "acknowledged_safety_checks",
             "stdout",
             "stderr",
             "exit_code",
@@ -1489,7 +1592,9 @@ class Content:
                 continue
             if field == "exception" and value is not None and redact_exception:
                 value = _SERIALIZED_EXCEPTION_MARKER
-            if field == "informational_only" and (self.type != "function_call" or not value):
+            if field == "informational_only" and (
+                self.type not in ("function_call", "computer_tool_call") or not value
+            ):
                 continue
             if exclude_none and value is None:
                 continue
@@ -1532,12 +1637,23 @@ class Content:
 
         # Special handling for DataContent with data and media_type
         if content_type == "data" and "data" in remaining and "media_type" in remaining:
-            # Use from_data() to properly create the DataContent with URI
-            return cls.from_data(remaining["data"], remaining["media_type"])
+            # Use from_data() to properly create the DataContent with URI. The three
+            # fields popped above are passed on explicitly: this branch returns before
+            # the constructor below, so leaving them out dropped on a data content what
+            # every other content type keeps.
+            return cls.from_data(
+                remaining["data"],
+                remaining["media_type"],
+                annotations=annotations,
+                additional_properties=additional_properties,
+                raw_representation=raw_representation,
+            )
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+        if (screenshot := remaining.get("screenshot")) and isinstance(screenshot, dict):
+            remaining["screenshot"] = cls.from_dict(screenshot)  # type: ignore[reportUnknownArgumentType]
 
         if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
             remaining["approved"] = False
@@ -2011,6 +2127,13 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
+    # An empty instruction list (or all-empty strings) adds nothing; without
+    # this a caller that passes an unset options default of "" gets a
+    # contentless system message injected ahead of the real conversation.
+    instructions = [part for part in instructions if part.strip()]
+    if not instructions:
+        return messages
+
     # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
@@ -2114,6 +2237,26 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _apply_response_tail_to_update(
+    response: ChatResponse[Any] | AgentResponse[Any],
+    update: ChatResponseUpdate | AgentResponseUpdate,
+) -> None:
+    """Carry the response-level fields that belong on the final update of a stream.
+
+    ``finish_reason``, ``continuation_token``, ``additional_properties`` and usage are properties
+    of the response as a whole rather than of any single message, so they ride on the last update.
+    This mirrors how :func:`_process_update` reads them back.
+    """
+    update.finish_reason = response.finish_reason
+    update.continuation_token = response.continuation_token
+    if response.additional_properties:
+        merged = dict(update.additional_properties) if update.additional_properties else {}
+        merged.update(response.additional_properties)
+        update.additional_properties = merged
+    if response.usage_details is not None:
+        update.contents.append(Content.from_usage(response.usage_details))
 
 
 def _merge_function_call_content(message: Message, content: Content) -> None:
@@ -2641,6 +2784,54 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         _finalize_response(msg)
         return msg
 
+    def to_updates(self) -> list[ChatResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse
+
+                response = ChatResponse.from_updates(updates)
+                assert response.text == ChatResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            ChatResponseUpdate(
+                contents=list(message.contents),
+                role=cast(Any, message.role),
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                conversation_id=self.conversation_id,
+                model=self.model,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                ChatResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    conversation_id=self.conversation_id,
+                    model=self.model,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
+
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
@@ -3053,6 +3244,52 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         _finalize_response(msg)
         return msg
 
+    def to_updates(self) -> list[AgentResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import AgentResponse
+
+                response = AgentResponse.from_updates(updates)
+                assert response.text == AgentResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            AgentResponseUpdate(
+                contents=list(message.contents),
+                role=message.role,
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                agent_id=self.agent_id,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                AgentResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    agent_id=self.agent_id,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
+
     def __str__(self) -> str:
         return self.text
 
@@ -3243,9 +3480,23 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream: AsyncIterable[UpdateT] | Awaitable[AsyncIterable[UpdateT]],
         *,
         finalizer: Callable[[Sequence[UpdateT]], FinalT | Awaitable[FinalT]] | None = None,
-        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
-        cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
-        result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
+        transform_hooks: Sequence[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
+        cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
+        result_hooks: Sequence[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
+        update_gates: Mapping[
+            Literal["before_transform", "after_transform"],
+            Sequence[Callable[[UpdateT], object]],
+        ]
+        | None = None,
+        result_gates: Mapping[
+            Literal["before_transform", "after_transform"],
+            Sequence[Callable[[FinalT], object]],
+        ]
+        | None = None,
+        update_transforms: Sequence[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
+        result_transforms: Sequence[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
+        stream_updates: bool = True,
+        result_to_updates: Callable[[FinalT], Sequence[UpdateT]] | None = None,
     ) -> None:
         """A Async Iterable stream of updates.
 
@@ -3257,27 +3508,85 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             transform_hooks: Optional list of callables that transform each update as it is yielded.
             cleanup_hooks: Optional list of callables that run after the stream is fully consumed (before finalizer).
             result_hooks: Optional list of callables that transform the final result (after finalizer).
+            update_gates: Optional update gates grouped by whether they run before or after update transforms.
+                Gates return ``None`` to permit the update and raise to block it.
+            result_gates: Optional final-result gates grouped by whether they run before or after result transforms.
+                Gates return ``None`` to permit the result and raise to block it.
+            update_transforms: Preferred alias for ``transform_hooks``. Both cannot be supplied.
+            result_transforms: Preferred alias for ``result_hooks``. Both cannot be supplied.
+            stream_updates: Whether processed updates are yielded as they arrive. When ``False``, updates are held
+                until the stream has finalized and every gate has passed.
+            result_to_updates: Rebuilds buffered updates from a transformed final result. Only valid when
+                ``stream_updates`` is ``False`` and required when a result transform returns a replacement.
 
         """
+        if transform_hooks is not None and update_transforms is not None:
+            raise ValueError("Cannot specify both transform_hooks and update_transforms.")
+        if result_hooks is not None and result_transforms is not None:
+            raise ValueError("Cannot specify both result_hooks and result_transforms.")
+        if stream_updates and result_to_updates is not None:
+            raise ValueError("result_to_updates is only valid when stream_updates is False.")
+
+        update_gate_keys = set(update_gates or ())
+        unknown_update_gate_keys = update_gate_keys - {"before_transform", "after_transform"}
+        if unknown_update_gate_keys:
+            formatted = ", ".join(sorted(unknown_update_gate_keys))
+            raise ValueError(f"Unknown update_gates phase(s): {formatted}.")
+        result_gate_keys = set(result_gates or ())
+        unknown_result_gate_keys = result_gate_keys - {"before_transform", "after_transform"}
+        if unknown_result_gate_keys:
+            formatted = ", ".join(sorted(unknown_result_gate_keys))
+            raise ValueError(f"Unknown result_gates phase(s): {formatted}.")
+
         self._stream_source = stream
         self._finalizer = finalizer
         self._stream: AsyncIterable[UpdateT] | None = None
         self._iterator: AsyncIterator[UpdateT] | None = None
         self._updates: list[UpdateT] = []
         self._consumed: bool = False
+        self._result_prepared: bool = False
         self._finalized: bool = False
         self._final_result: FinalT | None = None
-        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = (
-            transform_hooks if transform_hooks is not None else []
+        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = list(
+            update_transforms if update_transforms is not None else transform_hooks or ()
         )
-        self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = (
-            result_hooks if result_hooks is not None else []
+        self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = list(
+            result_transforms if result_transforms is not None else result_hooks or ()
         )
-        self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = (
-            cleanup_hooks if cleanup_hooks is not None else []
+        self._update_gates_before: list[Callable[[UpdateT], object]] = list(
+            (update_gates or {}).get("before_transform", ())
         )
+        self._update_gates_after: list[Callable[[UpdateT], object]] = list(
+            (update_gates or {}).get("after_transform", ())
+        )
+        self._result_gates_before: list[Callable[[FinalT], object]] = list(
+            (result_gates or {}).get("before_transform", ())
+        )
+        self._result_gates_after: list[Callable[[FinalT], object]] = list(
+            (result_gates or {}).get("after_transform", ())
+        )
+        self._cleanup_hooks: list[Callable[[], Awaitable[None] | None]] = list(cleanup_hooks or ())
         self._cleanup_run: bool = False
-        self._stream_error: Exception | None = None
+        self._stream_error: BaseException | None = None
+        self._stream_updates = stream_updates
+        self._result_to_updates = result_to_updates
+        self._terminal_result_to_updates: Callable[[FinalT], Sequence[UpdateT]] | None = None
+        self._terminal_result_is_authoritative = False
+        self._result_was_transformed = False
+        self._terminal_result_transforms: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = []
+        self._terminal_result_gates: list[Callable[[FinalT], object]] = []
+        self._release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
+        self._released_updates: list[UpdateT] = []
+        self._buffered_candidate_updates: list[UpdateT] = []
+        self._buffered_output_updates: list[UpdateT] = []
+        self._buffered_output_index = 0
+        self._buffered_materialized = False
+        self._buffered_materializing = False
+        self._buffered_materialization_error: BaseException | None = None
+        self._return_final_after_buffer_release_error = False
+        self._content_pipeline_started = False
+        self._content_hooks_sealed = False
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
@@ -3285,6 +3594,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._flat_map_update: Callable[[Any], Iterable[UpdateT] | Awaitable[Iterable[UpdateT]]] | None = None
         self._pending_mapped_updates: list[UpdateT] = []
         self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
+        self._consumption_context_manager_factories: list[
+            Callable[
+                [],
+                contextlib.AbstractContextManager[Any] | contextlib.AbstractAsyncContextManager[Any],
+            ]
+        ] = []
 
     def map(
         self,
@@ -3410,11 +3725,15 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
         rederive: Callable[[FinalT], Sequence[UpdateT]],
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Create a fully buffered stream whose content is finalized by a gate.
+        """Create a fully buffered stream whose content is finalized by a legacy gate.
 
-        This combinator exists for egress-gating middleware (e.g. policy enforcement)
-        that must apply a verdict to a run's *complete* content before anything is
-        released, and it states the hook-ordering contract in one place:
+        .. deprecated::
+            Configure ``update_gates``, ``result_gates``, transforms, and
+            ``stream_updates=False`` on :class:`ResponseStream` instead.
+
+        This compatibility adapter preserves the previous combined gate/transform
+        contract. New gates should only return ``None`` or raise; content replacement
+        belongs in transforms.
 
         1. On the first pull, ``consume`` runs and produces the buffered updates and
            the finalized result. Nothing has egressed yet.
@@ -3451,10 +3770,54 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         Returns:
             A sealed, fully buffered ResponseStream.
         """
-        return cast(
-            "ResponseStream[UpdateT, FinalT]",
-            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate, rederive),
+        warnings.warn(
+            "ResponseStream.buffered_and_gated() is deprecated; configure update_gates, result_gates, transforms, "
+            "and stream_updates=False on ResponseStream instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        return cls._buffered_and_gated(consume, gate, rederive)
+
+    @classmethod
+    def _buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Translate the legacy combined gate contract onto a normal ResponseStream."""
+        holder: dict[str, Any] = {}
+
+        async def _source() -> AsyncGenerator[UpdateT]:
+            stream = cast("ResponseStream[UpdateT, FinalT]", holder["stream"])
+            hooks_applied = bool(stream._transform_hooks or stream._result_hooks)
+
+            async def _legacy_gate_transform(final: FinalT) -> FinalT | None:
+                gated_final, gate_transformed = await gate(list(stream._buffered_candidate_updates), final)
+                if hooks_applied or gate_transformed:
+                    stream._result_to_updates = rederive
+                    return gated_final
+                return None
+
+            # This runs after every transform registered before the first pull,
+            # matching the legacy hook-before-gate ordering.
+            stream._result_hooks.append(_legacy_gate_transform)
+            updates, final = await consume()
+            holder["final"] = final
+            for update in updates:
+                yield update
+
+        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
+            return cast(FinalT, holder["final"])
+
+        stream: ResponseStream[UpdateT, FinalT] = cls(
+            _source(),
+            finalizer=_finalizer,
+            stream_updates=False,
+        )
+        stream._return_final_after_buffer_release_error = True
+        holder["stream"] = stream
+        return stream
 
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
@@ -3473,24 +3836,115 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
-    async def _record_update(self, update: UpdateT) -> UpdateT:
+    async def __aenter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the stream on block exit, including an early consumer break."""
+        await self.close()
+
+    def _start_content_pipeline(self) -> None:
+        if self._content_pipeline_started:
+            return
+        self._content_pipeline_started = True
+        if (
+            not self._stream_updates
+            or self._update_gates_before
+            or self._update_gates_after
+            or self._result_gates_before
+            or self._result_gates_after
+        ):
+            self._content_hooks_sealed = True
+
+    async def _run_gates(
+        self,
+        gates: Sequence[Callable[[Any], object]],
+        value: Any,
+        *,
+        target: str,
+    ) -> None:
+        for gate in gates:
+            gate_result = gate(value)
+            if isawaitable(gate_result):
+                gate_result = await gate_result
+            if gate_result is not None:
+                raise TypeError(
+                    f"ResponseStream {target} gates must return None or raise; use a {target} transform "
+                    "to replace content."
+                )
+
+    async def _apply_transforms(
+        self,
+        transforms: Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+        value: Any,
+    ) -> tuple[Any, bool]:
+        transformed = False
+        for transform in transforms:
+            transformed_value = transform(value)
+            if isawaitable(transformed_value):
+                transformed_value = await transformed_value
+            if transformed_value is not None:
+                value = transformed_value
+                transformed = True
+        return value, transformed
+
+    async def _record_update(self, update: UpdateT, *, run_after_gates: bool) -> UpdateT:
+        if self._update_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._update_gates_before),
+                update,
+                target="update",
+            )
         self._updates.append(update)
-        for hook in self._transform_hooks:
-            hooked = hook(update)
-            if isawaitable(hooked):
-                hooked = await hooked
-            if hooked is not None:
-                update = cast(UpdateT, hooked)
+        for transform in self._transform_hooks:
+            transformed_update = transform(update)
+            if isawaitable(transformed_update):
+                transformed_update = await transformed_update
+            if transformed_update is not None:
+                update = cast(UpdateT, transformed_update)
+        if run_after_gates and self._update_gates_after:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._update_gates_after),
+                update,
+                target="update",
+            )
         return update
 
-    async def __anext__(self) -> UpdateT:
+    async def _pull_next_update(self, *, run_after_gates: bool) -> UpdateT:
         while True:
             if self._pending_mapped_updates:
-                return await self._record_update(self._pending_mapped_updates.pop(0))
+                return await self._record_update(
+                    self._pending_mapped_updates.pop(0),
+                    run_after_gates=run_after_gates,
+                )
 
-            try:
+            context_factories = self._pull_context_manager_factories
+            update: UpdateT
+            if not context_factories:
+                if self._iterator is None:
+                    stream = await self._get_stream()
+                    self._iterator = stream.__aiter__()
+                update = await self._iterator.__anext__()
+            elif len(context_factories) == 1:
+                with context_factories[0]():
+                    if len(context_factories) == 1:
+                        if self._iterator is None:
+                            stream = await self._get_stream()
+                            self._iterator = stream.__aiter__()
+                        update = await self._iterator.__anext__()
+                    else:
+                        with contextlib.ExitStack() as stack:
+                            context_index = 1
+                            while context_index < len(context_factories):
+                                stack.enter_context(context_factories[context_index]())
+                                context_index += 1
+                            if self._iterator is None:
+                                stream = await self._get_stream()
+                                self._iterator = stream.__aiter__()
+                            update = await self._iterator.__anext__()
+            else:
                 with contextlib.ExitStack() as stack:
-                    for factory in self._pull_context_manager_factories:
+                    for factory in context_factories:
                         stack.enter_context(factory())
                     # Resolve the underlying stream inside the pull contexts so that any
                     # spans/contexts created during stream resolution (e.g. inner chat
@@ -3499,19 +3953,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     if self._iterator is None:
                         stream = await self._get_stream()
                         self._iterator = stream.__aiter__()
-                    update: UpdateT = await self._iterator.__anext__()
-            except StopAsyncIteration:
-                self._consumed = True
-                await self._run_cleanup_hooks()
-                await self.get_final_response()
-                raise
-            except Exception as exc:
-                self._stream_error = exc
-                try:
-                    await self._run_cleanup_hooks()
-                finally:
-                    self._stream_error = None
-                raise
+                    update = await self._iterator.__anext__()
             if self._flat_map_update is not None:
                 mapped_updates = self._flat_map_update(update)
                 if isawaitable(mapped_updates):
@@ -3522,7 +3964,215 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = self._map_update(update)  # type: ignore[assignment]
                 if isawaitable(update):
                     update = await update
-            return await self._record_update(update)
+            return await self._record_update(update, run_after_gates=run_after_gates)
+
+    async def _handle_stream_error(self, exc: BaseException) -> None:
+        self._stream_error = exc
+        try:
+            await self._run_cleanup_hooks()
+        finally:
+            self._stream_error = None
+
+    async def _run_release_hooks(self) -> None:
+        for hook in self._release_hooks:
+            result = hook()
+            if isawaitable(result):
+                await result
+
+    async def _run_release_error_hooks(self, exc: BaseException) -> None:
+        for hook in self._release_error_hooks:
+            result = hook(exc)
+            if isawaitable(result):
+                await result
+
+    async def _abort_buffered_materialization(self, exc: BaseException) -> None:
+        self._stream_error = exc
+        try:
+            iterator = self._iterator
+            if iterator is not None:
+                if isinstance(iterator, ResponseStream):
+                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                else:
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close()
+            self._consumed = True
+            await self._run_cleanup_hooks()
+        finally:
+            self._stream_error = None
+
+    async def _prepare_final_result(self) -> None:
+        if self._result_prepared:
+            return
+
+        inner_result: Any = None
+        if self._wrap_inner:
+            if self._inner_stream is None:
+                await self._resolve_stream_with_pull_contexts()
+            if self._inner_stream is None:
+                raise RuntimeError("Inner stream not available")
+            inner_result = await self._inner_stream.get_final_response()
+
+        result: Any
+        if self._finalizer is not None:
+            result = self._finalizer(self._updates)
+            if isawaitable(result):
+                result = await result
+        elif self._wrap_inner:
+            result = inner_result
+        else:
+            result = list(self._updates)
+
+        if self._result_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_before),
+                result,
+                target="result",
+            )
+        if self._result_hooks:
+            result, self._result_was_transformed = await self._apply_transforms(
+                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
+                result,
+            )
+        else:
+            self._result_was_transformed = False
+        self._final_result = result
+        self._result_prepared = True
+
+    async def _complete_final_result(self) -> None:
+        if self._finalized:
+            return
+        await self._prepare_final_result()
+        if self._result_gates_after:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_after),
+                self._final_result,
+                target="result",
+            )
+        if self._terminal_result_transforms:
+            terminal_result, transformed = await self._apply_transforms(
+                cast(
+                    Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+                    self._terminal_result_transforms,
+                ),
+                self._final_result,
+            )
+            self._final_result = terminal_result
+            self._result_was_transformed = self._result_was_transformed or transformed
+        if self._terminal_result_gates:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
+                self._final_result,
+                target="result",
+            )
+        self._finalized = True
+
+    async def _finish_consumption(self) -> None:
+        if not self._consumed:
+            self._consumed = True
+            await self._run_cleanup_hooks()
+        await self._complete_final_result()
+
+    async def _ensure_buffered_materialized(self) -> None:
+        self._start_content_pipeline()
+        if self._buffered_materialized:
+            return
+        if self._buffered_materialization_error is not None:
+            raise self._buffered_materialization_error
+        if self._buffered_materializing:
+            raise RuntimeError("ResponseStream does not support concurrent buffered consumption.")
+
+        self._buffered_materializing = True
+        release_phase_started = False
+        try:
+            async with contextlib.AsyncExitStack() as stack:
+                for factory in self._consumption_context_manager_factories:
+                    manager = factory()
+                    if isinstance(manager, contextlib.AbstractAsyncContextManager):
+                        await stack.enter_async_context(manager)
+                    else:
+                        stack.enter_context(manager)
+
+                self._buffered_candidate_updates = []
+                while True:
+                    try:
+                        self._buffered_candidate_updates.append(await self._pull_next_update(run_after_gates=True))
+                    except StopAsyncIteration:
+                        break
+
+                if not self._consumed:
+                    self._consumed = True
+                    await self._run_cleanup_hooks()
+                await self._prepare_final_result()
+
+            release_phase_started = True
+            await self._complete_final_result()
+            released_updates: list[UpdateT]
+            needs_rederive = self._result_was_transformed or self._terminal_result_is_authoritative
+            result_to_updates = self._terminal_result_to_updates or self._result_to_updates
+            if needs_rederive:
+                if result_to_updates is None:
+                    raise RuntimeError(
+                        "A buffered ResponseStream transform returned a replacement, but result_to_updates "
+                        "was not configured."
+                    )
+                released_updates = list(result_to_updates(cast(FinalT, self._final_result)))
+                for update in released_updates:
+                    await self._run_gates(
+                        cast(Sequence[Callable[[Any], object]], self._update_gates_after),
+                        update,
+                        target="update",
+                    )
+            else:
+                released_updates = self._buffered_candidate_updates
+
+            await self._run_release_hooks()
+            self._buffered_output_updates = released_updates
+            self._buffered_materialized = True
+        except BaseException as exc:
+            try:
+                if release_phase_started:
+                    await self._run_release_error_hooks(exc)
+                await self._abort_buffered_materialization(exc)
+            except BaseException as cleanup_exc:
+                self._buffered_materialization_error = cleanup_exc
+                raise
+            self._buffered_materialization_error = exc
+            raise
+        finally:
+            self._buffered_materializing = False
+
+    async def __anext__(self) -> UpdateT:
+        self._start_content_pipeline()
+        if not self._stream_updates:
+            await self._ensure_buffered_materialized()
+            if self._buffered_output_index >= len(self._buffered_output_updates):
+                raise StopAsyncIteration
+            update = self._buffered_output_updates[self._buffered_output_index]
+            self._buffered_output_index += 1
+            return update
+
+        try:
+            update = await self._pull_next_update(run_after_gates=True)
+            if self._update_gates_before or self._update_gates_after:
+                self._released_updates.append(update)
+            return update
+        except StopAsyncIteration:
+            await self._finish_consumption()
+            raise
+        except BaseException as exc:
+            # CancelledError must reach close() too: a cancel landing in an
+            # async map/flat_map transform, hook, or gate otherwise leaves the
+            # provider stream suspended until GC. Hooks run first because they
+            # read self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() stays in finally so the provider
+            # stream is released even when a hook raises; the original
+            # exception always re-raises.
+            try:
+                await self._handle_stream_error(exc)
+            finally:
+                await self.close()
+            raise
 
     async def close(self) -> None:
         """Close the active iterator and run cleanup hooks.
@@ -3582,113 +4232,111 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         This ensures that post-processing hooks registered on the inner stream (e.g., context
         provider notifications) are still executed even when the stream is wrapped/mapped.
         """
-        if self._wrap_inner:
-            if self._inner_stream is None:
-                # Use _resolve_stream_with_pull_contexts() so that any spans/contexts
-                # created while resolving the awaitable (e.g. inner telemetry spans)
-                # inherit the same active context as iterator pulls. This also handles
-                # the case where _stream_source and _inner_stream_source are the same
-                # coroutine (e.g., from from_awaitable), avoiding double-await errors.
-                await self._resolve_stream_with_pull_contexts()
-            if self._inner_stream is None:
-                raise RuntimeError("Inner stream not available")
-            if not self._finalized and not self._consumed:
-                # Consume outer stream (which delegates to inner) if not already consumed
-                async for _ in self:
-                    pass
-
-            # Re-check: __anext__ auto-finalization may have already finalized this stream
-            if not self._finalized:
-                # This ensures inner post-processing (e.g., context provider notifications) runs
-                # Skip if inner stream was already finalized (e.g., via auto-finalization on iteration)
-                if not self._inner_stream._finalized:
-                    inner_stream = self._inner_stream
-                    inner_result: Any
-                    if inner_stream._finalizer is not None:
-                        inner_finalizer = inner_stream._finalizer
-                        inner_result = inner_finalizer(inner_stream._updates)
-                        if isawaitable(inner_result):
-                            inner_result = await inner_result
-                    else:
-                        inner_result = list(inner_stream._updates)
-
-                    # Run inner stream's result hooks
-                    inner_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], inner_stream._result_hooks)
-                    for hook in inner_hooks:
-                        hooked_result = hook(inner_result)
-                        if isawaitable(hooked_result):
-                            hooked_result = await hooked_result
-                        if hooked_result is not None:
-                            inner_result = hooked_result
-                    inner_stream._final_result = inner_result
-                    inner_stream._finalized = True
-                else:
-                    inner_result = self._inner_stream._final_result
-
-                # Now finalize the outer stream with its own finalizer
-                # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
-                outer_result: Any
-                if self._finalizer is not None:
-                    outer_result = self._finalizer(self._updates)
-                    if isawaitable(outer_result):
-                        outer_result = await outer_result
-                else:
-                    # No outer finalizer - use inner's finalized result
-                    outer_result = inner_result
-
-                # Apply outer's result_hooks
-                outer_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
-                for hook in outer_hooks:
-                    outer_hook_result = hook(outer_result)
-                    if isawaitable(outer_hook_result):
-                        outer_hook_result = await outer_hook_result
-                    if outer_hook_result is not None:
-                        outer_result = outer_hook_result
-                self._final_result = outer_result
-                self._finalized = True
+        if not self._stream_updates:
+            if self._buffered_materializing and self._consumed:
+                await self._prepare_final_result()
+                return self._final_result  # type: ignore[return-value]
+            try:
+                await self._ensure_buffered_materialized()
+            except Exception:
+                if not self._return_final_after_buffer_release_error or not self._finalized:
+                    raise
             return self._final_result  # type: ignore[return-value]
 
         if not self._finalized and not self._consumed:
             async for _ in self:
                 pass
 
-        # Re-check: __anext__ auto-finalization may have already finalized this stream
         if not self._finalized:
-            result: Any
-            if self._finalizer is not None:
-                result = self._finalizer(self._updates)
-                if isawaitable(result):
-                    result = await result
-            else:
-                result = list(self._updates)
-
-            final_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
-            for hook in final_hooks:
-                final_hook_result = hook(result)
-                if isawaitable(final_hook_result):
-                    final_hook_result = await final_hook_result
-                if final_hook_result is not None:
-                    result = final_hook_result
-            self._final_result = result
-            self._finalized = True
+            await self._complete_final_result()
         return self._final_result  # type: ignore[return-value]
+
+    def _ensure_content_configuration_mutable(self) -> None:
+        if self._content_pipeline_started:
+            raise RuntimeError("Cannot change ResponseStream gates or buffering after consumption has started.")
+
+    @staticmethod
+    def _validate_gate_phase(phase: Literal["before_transform", "after_transform"]) -> None:
+        if phase not in {"before_transform", "after_transform"}:
+            raise ValueError(f"Unknown gate phase: {phase}.")
+
+    def with_update_gate(
+        self,
+        gate: Callable[[UpdateT], object],
+        *,
+        phase: Literal["before_transform", "after_transform"] = "after_transform",
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a blocking gate for streamed updates."""
+        self._ensure_content_configuration_mutable()
+        self._validate_gate_phase(phase)
+        gates = self._update_gates_before if phase == "before_transform" else self._update_gates_after
+        gates.append(gate)
+        return self
+
+    def with_result_gate(
+        self,
+        gate: Callable[[FinalT], object],
+        *,
+        phase: Literal["before_transform", "after_transform"] = "after_transform",
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a blocking gate for the finalized result."""
+        self._ensure_content_configuration_mutable()
+        self._validate_gate_phase(phase)
+        gates = self._result_gates_before if phase == "before_transform" else self._result_gates_after
+        gates.append(gate)
+        return self
+
+    def with_update_transform(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform executed for each update during iteration."""
+        if self._content_hooks_sealed:
+            raise RuntimeError(
+                "Cannot register an update transform: content is sealed after gated or buffered consumption starts."
+            )
+        self._transform_hooks.append(hook)
+        return self
+
+    def with_result_transform(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform executed after finalization."""
+        if self._content_hooks_sealed:
+            raise RuntimeError(
+                "Cannot register a result transform: content is sealed after gated or buffered consumption starts."
+            )
+        self._result_hooks.append(hook)
+        self._result_prepared = False
+        self._finalized = False
+        self._final_result = None
+        return self
 
     def with_transform_hook(
         self,
         hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a transform hook executed for each update during iteration."""
-        self._transform_hooks.append(hook)
-        return self
+        """Register an update transform using the legacy hook name."""
+        return self.with_update_transform(hook)
 
     def with_result_hook(
         self,
         hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a result hook executed after finalization."""
-        self._result_hooks.append(hook)
-        self._finalized = False
-        self._final_result = None
+        """Register a result transform using the legacy hook name."""
+        return self.with_result_transform(hook)
+
+    def buffer_updates(
+        self,
+        *,
+        result_to_updates: Callable[[FinalT], Sequence[UpdateT]] | None = None,
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Hold updates until finalization and all configured gates succeed."""
+        self._ensure_content_configuration_mutable()
+        self._stream_updates = False
+        if result_to_updates is not None:
+            self._result_to_updates = result_to_updates
         return self
 
     def with_cleanup_hook(
@@ -3718,6 +4366,69 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._pull_context_manager_factories.append(cm_factory)
         return self
 
+    def with_consumption_context_manager(
+        self,
+        cm_factory: Callable[
+            [],
+            contextlib.AbstractContextManager[Any] | contextlib.AbstractAsyncContextManager[Any],
+        ],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a context manager around complete buffered consumption and finalization."""
+        self._ensure_content_configuration_mutable()
+        self._consumption_context_manager_factories.append(cm_factory)
+        return self
+
+    def _with_terminal_result_transform(
+        self,
+        transform: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned transform after all composable result stages."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_transforms.append(transform)
+        return self
+
+    def _with_terminal_result_gate(
+        self,
+        gate: Callable[[FinalT], object],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned gate after terminal result transforms."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_gates.append(gate)
+        return self
+
+    def _with_terminal_result_to_updates(
+        self,
+        result_to_updates: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Bind the trusted converter used after terminal enforcement transforms content."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_to_updates = result_to_updates
+        return self
+
+    def _with_authoritative_terminal_result(self) -> ResponseStream[UpdateT, FinalT]:
+        """Require buffered release updates to be derived from the terminal result."""
+        self._ensure_content_configuration_mutable()
+        self._terminal_result_is_authoritative = True
+        return self
+
+    def _with_release_hook(
+        self,
+        hook: Callable[[], Awaitable[None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned hook after release updates pass every gate."""
+        self._ensure_content_configuration_mutable()
+        self._release_hooks.append(hook)
+        return self
+
+    def _with_release_error_hook(
+        self,
+        hook: Callable[[BaseException], Awaitable[None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a framework-owned hook for terminal enforcement or release failures."""
+        self._ensure_content_configuration_mutable()
+        self._release_error_hooks.append(hook)
+        return self
+
     async def _run_cleanup_hooks(self) -> None:
         if self._cleanup_run:
             return
@@ -3729,104 +4440,11 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     @property
     def updates(self) -> Sequence[UpdateT]:
+        if not self._stream_updates:
+            return self._buffered_output_updates
+        if self._update_gates_before or self._update_gates_after:
+            return self._released_updates
         return self._updates
-
-
-class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
-    """ResponseStream whose content is sealed once its gate has run.
-
-    Created by :meth:`ResponseStream.buffered_and_gated`. Hooks registered before
-    the gate runs are applied to the buffered content ahead of the gate; once the
-    gate has run, registering transform or result hooks raises so nothing can
-    rewrite content past the gate. (Cleanup hooks remain allowed: they cannot
-    influence content.)
-    """
-
-    _gate_sealed: bool = False
-
-    def with_transform_hook(
-        self,
-        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
-    ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a transform hook; rejected once the stream's gate has run."""
-        if self._gate_sealed:
-            raise RuntimeError(
-                "Cannot register a transform hook on a gated ResponseStream after its gate has "
-                "run: content is sealed by the gate's verdict."
-            )
-        return super().with_transform_hook(hook)
-
-    def with_result_hook(
-        self,
-        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
-    ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a result hook; rejected once the stream's gate has run."""
-        if self._gate_sealed:
-            raise RuntimeError(
-                "Cannot register a result hook on a gated ResponseStream after its gate has "
-                "run: content is sealed by the gate's verdict."
-            )
-        return super().with_result_hook(hook)
-
-    @classmethod
-    def create_buffered_and_gated(
-        cls,
-        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
-        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
-        rederive: Callable[[FinalT], Sequence[UpdateT]],
-    ) -> _GatedResponseStream[UpdateT, FinalT]:
-        """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
-        holder: dict[str, Any] = {}
-
-        async def _materialize() -> AsyncGenerator[UpdateT]:
-            stream = cast(_GatedResponseStream[UpdateT, FinalT], holder["stream"])
-            updates, final = await consume()
-            # Drain the hooks registered on the gated stream so far and apply them to
-            # the buffered content before the gate (contract step 2). Draining also
-            # means _record_update applies nothing during replay.
-            transform_hooks = list(stream._transform_hooks)
-            stream._transform_hooks.clear()
-            result_hooks = list(stream._result_hooks)
-            stream._result_hooks.clear()
-            cleanup_hooks = list(stream._cleanup_hooks)
-            stream._cleanup_hooks.clear()
-            hooked_updates: list[UpdateT] = []
-            for update in updates:
-                hooked_update = update
-                for hook in transform_hooks:
-                    hooked = hook(hooked_update)
-                    if isawaitable(hooked):
-                        hooked = await hooked
-                    if hooked is not None:
-                        hooked_update = cast(UpdateT, hooked)
-                hooked_updates.append(hooked_update)
-            for result_hook in result_hooks:
-                hooked_final = result_hook(final)
-                if isawaitable(hooked_final):
-                    hooked_final = await hooked_final
-                if hooked_final is not None:
-                    final = cast(FinalT, hooked_final)
-            for cleanup_hook in cleanup_hooks:
-                cleanup_result = cleanup_hook()
-                if isawaitable(cleanup_result):
-                    await cleanup_result
-            gated_final, gate_transformed = await gate(hooked_updates, final)
-            holder["final"] = gated_final
-            stream._gate_sealed = True
-            # No-divergence rule (contract step 4), owned here: hooks or a gate
-            # transform mean the buffered updates may no longer match the verdicted
-            # result, so the released updates are re-derived from it.
-            hooks_applied = bool(transform_hooks or result_hooks)
-            released = rederive(gated_final) if (hooks_applied or gate_transformed) else hooked_updates
-            for update in released:
-                yield update
-
-        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
-            return cast(FinalT, holder["final"])
-
-        stream: _GatedResponseStream[UpdateT, FinalT] = cls(_materialize(), finalizer=_finalizer)
-        holder["stream"] = stream
-        return stream
 
 
 # region ChatOptions

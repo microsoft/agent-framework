@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +37,16 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     /// Defines the configuration settings for the workflow.
     /// </summary>
     public IConfiguration? Configuration { get; init; }
+
+    /// <summary>
+    /// Gets the configuration or process environment variable names that may be exposed through the workflow <c>Env</c> scope.
+    /// </summary>
+    public IEnumerable<string>? AllowedEnvironmentVariables { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the workflow may fall back to process environment variables for allowed <c>Env</c> names missing from <see cref="Configuration"/>.
+    /// </summary>
+    public bool AllowProcessEnvironmentVariableFallback { get; init; }
 
     /// <summary>
     /// Optionally identifies a continued workflow conversation.

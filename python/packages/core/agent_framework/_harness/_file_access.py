@@ -26,6 +26,7 @@ import errno
 import fnmatch
 import logging
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
@@ -1113,6 +1114,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
+        prefix_depth = prefix.count("/")
         async with self._lock:
             entries = [(key, display) for key, (display, _) in self._files.items()]
         files: list[str] = []
@@ -1121,18 +1123,18 @@ class InMemoryAgentFileStore(AgentFileStore):
         for key, display in entries:
             if not key.startswith(prefix):
                 continue
-            remainder = key[len(prefix) :]
-            separator_index = remainder.find("/")
-            if separator_index == -1:
-                # ``display`` is the original-case normalized path; strip the
-                # directory prefix using the same length we matched on ``key``.
-                files.append(display[len(prefix) :])
-            elif separator_index > 0:
-                segment_key = remainder[:separator_index]
+            # Unicode lowercasing can change character counts, so key offsets
+            # cannot be used to slice the original display path.
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, separator, _ = remainder.partition("/")
+            if not separator:
+                files.append(remainder)
+            elif segment:
+                segment_key = segment.lower()
                 if segment_key in seen_dirs:
                     continue
                 seen_dirs.add(segment_key)
-                directories.append(display[len(prefix) : len(prefix) + separator_index])
+                directories.append(segment)
         results: list[FileStoreEntry] = [FileStoreEntry(name, FileStoreEntry.DIRECTORY) for name in directories]
         results.extend(FileStoreEntry(name, FileStoreEntry.FILE) for name in files)
         return results
@@ -1165,6 +1167,7 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
+        prefix_depth = prefix.count("/")
         search_pattern = _compile_search_regex(regex_pattern)
 
         async with self._lock:
@@ -1178,7 +1181,7 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_key = key[len(prefix) :]
                 if not recursive and "/" in relative_key:
                     continue
-                relative_display = display[len(prefix) :]
+                relative_display = display.split("/", prefix_depth)[-1]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
                 result = AgentFileStore.scan_content(relative_display, file_content, search_pattern)
@@ -1215,6 +1218,9 @@ class FileSystemAgentFileStore(AgentFileStore):
     single-tenant or co-operating-tenant use; it is not a sandbox against a
     hostile process that shares the root directory.
     """
+
+    # Case aliases can identify the same file while having different Path hashes.
+    _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
@@ -1317,6 +1323,8 @@ class FileSystemAgentFileStore(AgentFileStore):
                 is_link = _is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
+            except NotADirectoryError as exc:
+                raise NotADirectoryError(f"Parent path is not a directory: {current}") from exc
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
@@ -1343,7 +1351,23 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as exc:
+            # ``mkdir(parents=True)`` reports FileExistsError when an existing
+            # file blocks any parent segment. Surface the path type so callers
+            # can distinguish this from an existing target file.
+            parent_file = next(
+                (
+                    candidate
+                    for candidate in (full_path.parent, *full_path.parent.parents)
+                    if candidate.exists() and not candidate.is_dir()
+                ),
+                None,
+            )
+            if parent_file is not None:
+                raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1358,6 +1382,10 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            # Windows reports PermissionError when opening a directory for
+            # writing; POSIX exclusive creation can report FileExistsError.
+            if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():
+                raise IsADirectoryError(f"Path is a directory: {full_path}") from exc
             if not overwrite and isinstance(exc, FileExistsError):
                 raise
             # ``ELOOP`` (POSIX): the open refused because the leaf is a
@@ -1403,11 +1431,15 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
 
-    @staticmethod
-    def _delete_file_sync(full_path: Path) -> bool:
-        if not full_path.is_file():
-            return False
-        full_path.unlink()
+    @classmethod
+    def _delete_file_sync(cls, full_path: Path) -> bool:
+        with cls._DELETE_LOCK:
+            if not full_path.is_file():
+                return False
+            try:
+                full_path.unlink()
+            except FileNotFoundError:
+                return False
         return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
@@ -2006,6 +2038,13 @@ class FileAccessProvider(ContextProvider):
                 store_path = _session_path(normalized)
                 async with self._write_lock:
                     await self.store.write(store_path, content, overwrite=overwrite)
+            except NotADirectoryError:
+                return f"Could not write file '{file_name}': a parent path is already a file. Choose a different path."
+            except IsADirectoryError:
+                return (
+                    f"Could not write file '{file_name}': this path is already a directory. "
+                    "Choose a different file name."
+                )
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:

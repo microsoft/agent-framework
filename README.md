@@ -128,7 +128,7 @@ async def main():
       client=FoundryChatClient(
           credential=AzureCliCredential(),
           # project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-          # model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+          # model=os.environ["FOUNDRY_MODEL"],
       ),
       name="HaikuAgent",
       instructions="You are an upbeat assistant that writes beautifully.",

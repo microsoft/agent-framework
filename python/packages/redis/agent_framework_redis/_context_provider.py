@@ -12,7 +12,6 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-import numpy as np
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from agent_framework._telemetry import mark_feature_used
@@ -23,6 +22,7 @@ from agent_framework.exceptions import (
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
+from redisvl.redis.utils import array_to_buffer
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
 
@@ -341,7 +341,11 @@ class RedisContextProvider(ContextProvider):
                 text_list, batch_size=len(text_list)
             )
             for i, d in enumerate(prepared):
-                vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
+                # aembed_many returns lists unless as_buffer is enabled.
+                vec = array_to_buffer(
+                    embeddings[i],  # pyright: ignore[reportArgumentType]
+                    dtype=self.redis_vectorizer.dtype,
+                )
                 field_name: str = self.vector_field_name
                 d[field_name] = vec
 

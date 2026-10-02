@@ -1479,7 +1479,7 @@ async def run_workflow_stream(
                     executor_payload["data"] = make_json_safe(getattr(event, "data", None))
 
                 yield ActivitySnapshotEvent(
-                    message_id=f"executor:{executor_id}" if executor_id else generate_event_id(),
+                    message_id=f"{len(run_id)}:{run_id}:executor:{executor_id}" if executor_id else generate_event_id(),
                     activity_type="executor",
                     content=executor_payload,
                 )

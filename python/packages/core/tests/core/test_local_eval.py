@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from typing import Any
 
 import pytest
 
@@ -529,7 +530,7 @@ class TestAutoWrapEvalChecks:
 
 
 def _make_tool_call_item(
-    calls: list[tuple[str, dict | None]],
+    calls: list[tuple[str, Any]],
     expected: list[ExpectedToolCall] | None = None,
 ) -> EvalItem:
     """Build an EvalItem with tool calls in the conversation."""
@@ -643,6 +644,57 @@ class TestToolCallArgsMatch:
         result = tool_call_args_match(item)
 
         assert result.passed is expected_passed
+
+    def test_empty_expected_args_matches_none_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", None)],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_matches_empty_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", {})],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_matches_empty_string_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_does_not_match_invalid_json(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "not-json")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    def test_empty_expected_args_does_not_match_non_object_json(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "[]")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    def test_empty_expected_args_does_not_match_non_object_payload(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", [])],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
 
     def test_tool_not_called(self):
         item = _make_tool_call_item(

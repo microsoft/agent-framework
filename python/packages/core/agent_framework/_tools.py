@@ -142,6 +142,10 @@ class _FunctionArgumentValidationError(TypeError):
         self.redacted_message = redacted_message or message
 
 
+class _UnknownFunctionCallError(KeyError):
+    """A configured fatal unknown function call."""
+
+
 class _FunctionArgumentsChangedAfterApproval(Exception):
     """Signal that middleware changed an approval-bound invocation."""
 
@@ -1791,6 +1795,20 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     - ``include_detailed_errors``: Whether to include exception details in the
       function result returned to the model. Exception text may contain sensitive
       information regardless of its source, so enable this only for a trusted channel.
+    - ``disable_approval_response_binding``: Whether to stop binding inbound local
+      tool-approval responses to the approval requests the framework recorded in the
+      :class:`~agent_framework.AgentSession`. Binding is enabled by default: a local
+      ``function_approval_response`` authorizes execution only when it matches a
+      pending request recorded by the framework in an authoritative session, so an
+      approval replayed or fabricated in caller-supplied message history cannot
+      authorize a tool on its own. Hosted (provider-issued) approvals are provider
+      protocol data and always pass through unchanged. Because the recorded request
+      is the authority, resuming a local approval requires the caller to pass the
+      same ``AgentSession`` back on the next run; a run with no session cannot resume
+      one. Replaying a transcript whose approval already has a terminal result is
+      unaffected: such an approval is settled history and can no longer execute
+      anything, so it is left in place. Set this to ``True`` only when equivalent
+      binding is enforced elsewhere.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
@@ -1824,6 +1842,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
     allow_concurrent_invocation: bool
+    disable_approval_response_binding: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1839,6 +1858,7 @@ def normalize_function_invocation_configuration(
         "additional_tools": [],
         "include_detailed_errors": False,
         "allow_concurrent_invocation": True,
+        "disable_approval_response_binding": False,
     }
     if config:
         normalized.update(config)
@@ -2440,7 +2460,7 @@ async def _try_execute_function_call_groups(
             unknown_call_found = True
             unknown_call_name = function_name
     if unknown_call_found:
-        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
+        raise _UnknownFunctionCallError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface approval and Host-owned pauses in model order. Session-backed
         # executable siblings remain hidden until the approval batch resumes.
@@ -2953,15 +2973,71 @@ def _bind_approval_response_to_pending_request(
     return rebound
 
 
+def _drop_unrecorded_local_approval_responses(messages: list[Message], settled_response_ids: set[int]) -> bool:
+    """Remove local approval responses that no recorded pending request can authorize.
+
+    The authority for a local approval is the pending request the framework itself
+    recorded when it surfaced that request, which lives in an authoritative
+    ``AgentSession``. Without one there is nothing to bind against, and an approval
+    request that merely appears in caller-supplied history is not proof that the
+    framework ever asked a human to approve it: a caller could otherwise supply a
+    fabricated request together with its own approval and authorize an arbitrary tool
+    call. These responses are therefore dropped rather than honored.
+
+    ``settled_response_ids`` is an allow-list: every response outside it is dropped. A
+    settled response is one the occurrence-aware correlation already superseded or
+    consumed with a terminal result, so it is history rather than a pending
+    authorization. It cannot execute anything, and dropping it would serve no purpose
+    while penalizing every caller that replays a completed conversation. Settlement is
+    decided by the same correlation used to execute approvals, so fabricating a result
+    to reach this exemption also guarantees the call will not run.
+
+    The allow-list must be keyed on individual response objects rather than approval
+    ids, because several responses can share one approval id and only the first is
+    eligible to execute. Dropping by an id-keyed set would leave the duplicates behind
+    for a later collection to promote and honor.
+
+    Hosted (provider-issued) approvals are left untouched because they are provider
+    protocol data that must be forwarded as-is.
+
+    Returns:
+        Whether any response was dropped.
+    """
+    dropped = False
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents: list[Content] = []
+        for content in message.contents:
+            if (
+                content.type == "function_approval_response"
+                and not _is_hosted_tool_approval(content)
+                and id(content) not in settled_response_ids
+            ):
+                dropped = True
+                continue
+            filtered_contents.append(content)
+        if filtered_contents:
+            message.contents = filtered_contents
+            filtered_messages.append(message)
+    if dropped:
+        messages[:] = filtered_messages
+    return dropped
+
+
 def _bind_approval_responses_to_pending_requests(
     messages: list[Message],
     invocation_session: AgentSession | None,
-) -> None:
+    *,
+    consume: bool = True,
+    staged_response_ids: set[int] | None = None,
+) -> set[int]:
     """Rebind approval responses and remove unissued or duplicate responses."""
     if invocation_session is None:
-        return
+        return set()
 
     filtered_messages: list[Message] = []
+    bound_response_ids: set[int] = set()
+    claimed_request_ids: set[str] = set()
     for message in messages:
         filtered_contents: list[Content] = []
         for content in message.contents:
@@ -2971,20 +3047,33 @@ def _bind_approval_responses_to_pending_requests(
             rebound = _bind_approval_response_to_pending_request(
                 content,
                 invocation_session,
-                consume=True,
+                consume=consume,
             )
             if rebound is None:
+                if staged_response_ids and id(content) in staged_response_ids:
+                    continue
                 logger.warning(
                     "Ignored an approval response with id %r because it did not match the active approval "
                     "occurrence identity; the pending request was retained for retry.",
                     content.id,
                 )
                 continue
+            request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+            if isinstance(request_id, str) and request_id in claimed_request_ids:
+                continue
+            if isinstance(request_id, str):
+                claimed_request_ids.add(request_id)
+            if _is_hosted_tool_approval(rebound):
+                if not consume:
+                    _bind_approval_response_to_pending_request(rebound, invocation_session, consume=True)
+            else:
+                bound_response_ids.add(id(rebound))
             filtered_contents.append(rebound)
         if filtered_contents:
             message.contents = filtered_contents
             filtered_messages.append(message)
     messages[:] = filtered_messages
+    return bound_response_ids
 
 
 def _store_already_approved_approval_requests(
@@ -3021,8 +3110,13 @@ def _store_already_approved_approval_requests(
 def _stage_approval_batch_responses(
     invocation_session: AgentSession | None,
     approval_responses: Sequence[Content],
+    *,
+    staged_response_ids: set[int] | None = None,
 ) -> tuple[list[Content], list[dict[str, str | None]], list[Content] | None]:
-    """Accumulate approval decisions and release a batch only when every decision is present."""
+    """Accumulate approval decisions and release a batch only when every decision is present.
+
+    ``staged_response_ids`` records matched source objects for diagnostic-only warning suppression.
+    """
     if not approval_responses:
         return [], [], None
     state = _get_tool_approval_state(invocation_session)
@@ -3068,6 +3162,8 @@ def _stage_approval_batch_responses(
                 continue
             if request_id not in stored_responses:
                 stored_responses[request_id] = rebound
+            if staged_response_ids is not None:
+                staged_response_ids.add(id(response))
             matched = True
 
         if not matched:
@@ -3559,36 +3655,79 @@ def _collect_approval_responses(
     messages: list[Message],
     *,
     non_approval_result_ids: set[int] | None = None,
+    protected_response_ids: set[int] | None = None,
+    protected_result_ids_to_remove: set[int] | None = None,
+    settled_response_ids: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
     Hosted tool approvals (e.g. MCP) are excluded because they must be
     forwarded to the API as-is rather than processed locally.
+
+    When ``settled_response_ids`` is supplied it is populated with the object identity of
+    every approval response this correlation considered settled, meaning superseded by a
+    later request or consumed by a terminal result. Unlike the returned mapping, which
+    keeps one response per approval id, this set covers every individual response object,
+    so callers that need to reason about duplicate approval ids must use it rather than
+    the mapping values.
     """
     approval_responses: list[Content] = []
     pending_by_call_id: dict[str, deque[Content]] = {}
     pending_by_approval_id: dict[str, Content] = {}
+    pending_requests_by_call_id: dict[str, deque[Content]] = {}
+    pending_requests_by_id: dict[str, Content] = {}
+    latest_requests_by_id: dict[str, Content] = {}
+    request_ids_by_occurrence: dict[str, str] = {}
+    response_requests: dict[int, Content] = {}
+    protected_requests: list[Content] = []
+    closed_request_occurrences: set[int] = set()
+    latest_closed_request_by_call_id: dict[str, Content] = {}
+    result_ids_by_request_occurrence: dict[int, set[int]] = {}
     resolved_response_ids: set[int] = set()
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request" and content.id is not None:
                 if superseded := pending_by_approval_id.pop(content.id, None):
                     resolved_response_ids.add(id(superseded))
+                function_call = content.function_call
+                if (
+                    function_call is not None
+                    and function_call.call_id is not None
+                    and not _is_hosted_tool_approval(content)
+                    and content.id not in pending_requests_by_id
+                ):
+                    pending_requests_by_id[content.id] = content
+                    latest_requests_by_id[content.id] = content
+                    pending_requests_by_call_id.setdefault(function_call.call_id, deque()).append(content)
+                    if function_call.id is not None:
+                        request_ids_by_occurrence[function_call.id] = content.id
                 continue
             if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 function_call = content.function_call
                 if function_call is None or function_call.call_id is None:
                     continue
+                request_id = request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                request = latest_requests_by_id.get(request_id) if request_id is not None else None
+                is_protected = protected_response_ids is not None and id(content) in protected_response_ids
+                if not is_protected and request is not None and id(request) in closed_request_occurrences:
+                    continue
                 approval_responses.append(content)
                 if content.id is not None:
                     pending_by_approval_id[content.id] = content
+                if request is not None:
+                    if is_protected:
+                        protected_requests.append(request)
+                    else:
+                        response_requests[id(content)] = request
+                        if request.id is not None and pending_requests_by_id.get(request.id) is request:
+                            pending_requests_by_id.pop(request.id, None)
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
                 continue
             if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -3598,17 +3737,45 @@ def _collect_approval_responses(
             pending_responses = pending_by_call_id.get(content.call_id)
             while pending_responses and id(pending_responses[0]) in resolved_response_ids:
                 pending_responses.popleft()
-            if pending_responses:
+            if pending_responses and (
+                protected_response_ids is None or id(pending_responses[0]) not in protected_response_ids
+            ):
                 resolved = pending_responses.popleft()
                 resolved_response_ids.add(id(resolved))
+                if request := response_requests.get(id(resolved)):
+                    closed_request_occurrences.add(id(request))
                 if resolved.id is not None and pending_by_approval_id.get(resolved.id) is resolved:
                     pending_by_approval_id.pop(resolved.id, None)
+                continue
+            if not is_terminal_result:
+                continue
+            pending_requests = pending_requests_by_call_id.get(content.call_id)
+            while pending_requests and (
+                pending_requests[0].id is None
+                or pending_requests_by_id.get(pending_requests[0].id) is not pending_requests[0]
+            ):
+                pending_requests.popleft()
+            if pending_requests:
+                request = pending_requests.popleft()
+                closed_request_occurrences.add(id(request))
+                latest_closed_request_by_call_id[content.call_id] = request
+                result_ids_by_request_occurrence.setdefault(id(request), set()).add(id(content))
+                if request.id is not None and pending_requests_by_id.get(request.id) is request:
+                    pending_requests_by_id.pop(request.id, None)
+            elif request := latest_closed_request_by_call_id.get(content.call_id):
+                result_ids_by_request_occurrence.setdefault(id(request), set()).add(id(content))
+
+    if protected_result_ids_to_remove is not None:
+        for request in protected_requests:
+            protected_result_ids_to_remove.update(result_ids_by_request_occurrence.get(id(request), ()))
 
     collected_responses: dict[str, Content] = {}
     for content in approval_responses:
         if id(content) in resolved_response_ids or content.id is None:
             continue
         collected_responses.setdefault(content.id, content)
+    if settled_response_ids is not None:
+        settled_response_ids.update(resolved_response_ids)
     return collected_responses
 
 
@@ -3616,7 +3783,9 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
     unanswered_by_id: dict[str, Content] = {}
     requests_by_call_id: dict[str, deque[Content]] = {}
     request_ids_by_occurrence: dict[str, str] = {}
-    answered_request_ids_by_call_id: dict[str, deque[str]] = {}
+    latest_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
+    answered_requests_by_call_id: dict[str, deque[Content | None]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -3626,6 +3795,7 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                     continue
                 if content.id not in unanswered_by_id:
                     unanswered_by_id[content.id] = content
+                    latest_requests_by_id[content.id] = content
                     requests_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                     if function_call.id is not None:
                         request_ids_by_occurrence[function_call.id] = content.id
@@ -3634,28 +3804,35 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                 function_call = content.function_call
                 if content.id is not None:
                     request_id = request_ids_by_occurrence.get(content.id, content.id)
-                    unanswered_by_id.pop(request_id, None)
+                    request = latest_requests_by_id.get(request_id)
+                    if request is not None and id(request) in closed_request_occurrences:
+                        continue
+                    if request is not None and unanswered_by_id.get(request_id) is request:
+                        unanswered_by_id.pop(request_id, None)
                     if function_call is not None and function_call.call_id is not None:
-                        answered_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(request_id)
+                        answered_requests_by_call_id.setdefault(function_call.call_id, deque()).append(request)
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            answered_requests = answered_request_ids_by_call_id.get(content.call_id)
+            answered_requests = answered_requests_by_call_id.get(content.call_id)
             if answered_requests:
-                answered_requests.popleft()
+                request = answered_requests.popleft()
+                if request is not None:
+                    closed_request_occurrences.add(id(request))
                 continue
             requests = requests_by_call_id.get(content.call_id)
             while requests and (requests[0].id is None or unanswered_by_id.get(requests[0].id) is not requests[0]):
                 requests.popleft()
             if requests:
                 resolved = requests.popleft()
+                closed_request_occurrences.add(id(resolved))
                 if resolved.id is not None:
                     unanswered_by_id.pop(resolved.id, None)
 
@@ -3793,18 +3970,10 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
     messages[:] = filtered_messages
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    """Whether a function_result is the stand-in emitted while approval is pending."""
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 @dataclass
 class _ApprovalCallOccurrence:
     function_call: Content
     approval_id: str | None = None
-    placeholder_message: Message | None = None
-    placeholder_content: Content | None = None
     closed: bool = False
 
 
@@ -3816,8 +3985,6 @@ def _replace_approval_contents_with_results(
     non_approval_result_ids: set[int] | None = None,
 ) -> list[Content]:
     """Replace approval request/response contents with function call/result contents in-place.
-
-    Also replaces placeholder tool results (marked with [APPROVAL_PENDING]) with actual results.
 
     Returns:
         The terminal contents produced while resolving the approval responses, in response order.
@@ -3849,7 +4016,6 @@ def _replace_approval_contents_with_results(
     occurrences_by_call_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     occurrences_by_approval_id: dict[str, list[_ApprovalCallOccurrence]] = {}
     seen_approval_requests: set[tuple[str, str, str | None, str]] = set()
-    placeholder_replacements: list[tuple[Message, Content, list[Content]]] = []
     resolved_contents: list[Content] = []
 
     def find_open_occurrence(call_id: str, *, require_unbound: bool = False) -> _ApprovalCallOccurrence | None:
@@ -3956,19 +4122,7 @@ def _replace_approval_contents_with_results(
                     ]
                 if not replacements:
                     continue
-                if (
-                    occurrence is not None
-                    and occurrence.placeholder_message is not None
-                    and occurrence.placeholder_content is not None
-                ):
-                    placeholder_replacements.append((
-                        occurrence.placeholder_message,
-                        occurrence.placeholder_content,
-                        replacements,
-                    ))
-                    contents_to_remove.append(content_idx)
-                else:
-                    replacement_groups_by_index[content_idx] = replacements
+                replacement_groups_by_index[content_idx] = replacements
                 if occurrence is not None:
                     replacement_request = next(
                         (
@@ -3993,11 +4147,7 @@ def _replace_approval_contents_with_results(
                 occurrence = find_open_occurrence(content.call_id)
                 if occurrence is None:
                     continue
-                if _is_approval_placeholder_result(content):
-                    occurrence.placeholder_message = msg
-                    occurrence.placeholder_content = content
-                else:
-                    occurrence.closed = True
+                occurrence.closed = True
 
         if replacement_groups_by_index:
             msg.role = (
@@ -4021,12 +4171,6 @@ def _replace_approval_contents_with_results(
                 else:
                     updated_contents.append(existing)
             msg.contents = updated_contents
-
-    for placeholder_message, placeholder_content, replacements in placeholder_replacements:
-        for idx, existing in enumerate(placeholder_message.contents):
-            if existing is placeholder_content:
-                placeholder_message.contents[idx : idx + 1] = replacements
-                break
 
     messages_to_remove: list[int] = []
     for msg_idx, msg in enumerate(messages):
@@ -4405,6 +4549,7 @@ async def _resolve_approval_responses(
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
     approval_session_is_authoritative: bool = True,
+    disable_approval_response_binding: bool = False,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
@@ -4429,6 +4574,27 @@ async def _resolve_approval_responses(
             return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
     else:
         partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+        if not disable_approval_response_binding:
+            # Runs before the partial-batch check below so untrusted inbound history is filtered
+            # rather than raising. Settled occurrences are identified by the same correlation used
+            # to execute approvals, so replaying a completed conversation is unaffected and only
+            # responses that could still authorize an execution are removed.
+            settled_response_ids: set[int] = set()
+            _collect_approval_responses(
+                prepared_messages,
+                non_approval_result_ids=host_result_ids,
+                settled_response_ids=settled_response_ids,
+            )
+            if _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+                logger.warning(
+                    "Ignored one or more local tool-approval responses because this run has no authoritative "
+                    "AgentSession holding the matching approval request. Pass the same AgentSession back on the "
+                    "run that resumes an approval, or set the 'disable_approval_response_binding' function "
+                    "invocation configuration option to restore the previous unbound behavior."
+                )
+                # Dropping responses changes which calls in the batch are still awaiting an answer,
+                # so the batch must be reclassified before deciding whether it is incomplete.
+                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
         if partial_mixed_batch:
             raise RuntimeError(
                 "A mixed function-call batch requires responses for every approval and Host-owned request."
@@ -4437,9 +4603,11 @@ async def _resolve_approval_responses(
     pending_responses_before_binding = list(
         _collect_approval_responses(prepared_messages, non_approval_result_ids=host_result_ids).values()
     )
+    staged_response_ids: set[int] = set()
     staged_responses, function_call_order, waiting_requests = _stage_approval_batch_responses(
         approval_session,
         pending_responses_before_binding,
+        staged_response_ids=staged_response_ids,
     )
     if waiting_requests is not None:
         response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(waiting_requests)
@@ -4450,7 +4618,12 @@ async def _resolve_approval_responses(
             streaming_updates=streaming_updates,
         )
 
-    _bind_approval_responses_to_pending_requests(prepared_messages, approval_session)
+    bound_response_ids = _bind_approval_responses_to_pending_requests(
+        prepared_messages,
+        approval_session,
+        consume=False,
+        staged_response_ids=staged_response_ids,
+    )
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
         if _has_authoritative_approval_session(approval_session)
@@ -4521,14 +4694,34 @@ async def _resolve_approval_responses(
             prepared_messages.append(Message(role="user", contents=ordered_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
+    protected_result_ids_to_remove: set[int] = set()
     if not (
         pending_approval_responses := _collect_approval_responses(
             prepared_messages,
             non_approval_result_ids=host_result_ids,
+            protected_response_ids=bound_response_ids,
+            protected_result_ids_to_remove=protected_result_ids_to_remove,
         )
     ):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
+
+    if protected_result_ids_to_remove:
+        for message in prepared_messages:
+            message.contents = [
+                content for content in message.contents if id(content) not in protected_result_ids_to_remove
+            ]
+        prepared_messages[:] = [message for message in prepared_messages if message.contents]
+
+    if bound_response_ids:
+        pending = _load_pending_approval_requests(approval_session)
+        consumed_pending = False
+        for response in pending_approval_responses.values():
+            request_id = response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+            if id(response) in bound_response_ids and isinstance(request_id, str):
+                consumed_pending = pending.pop(request_id, None) is not None or consumed_pending
+        if consumed_pending:
+            _save_pending_approval_requests(approval_session, pending)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
     responses_to_execute = [
@@ -4665,7 +4858,12 @@ async def _process_model_function_calls(
         had_errors=execution.had_errors,
         max_errors=max_errors,
     )
-    if execution.should_terminate:
+    has_pending_computer_call = any(
+        content.type == "computer_tool_call" and content.user_input_request
+        for message in response.messages
+        for content in message.contents
+    )
+    if execution.should_terminate or has_pending_computer_call:
         processing_result.action = "return"
     if processing_result.action == "return":
         returned_approval_requests = [
@@ -4744,30 +4942,33 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None,
         invocation_session: AgentSession | None,
         response_conversation_id: str | None = None,
+        error_result: str = "Error: Tool execution was aborted by middleware before a result was produced.",
+        error_exception: str = "MiddlewareFailure",
     ) -> None:
         """Resolve an aborted batch's function calls on a service-managed conversation.
 
-        When ``MiddlewareFailure`` aborts a tool batch, the local run raises before
-        any result exists — but on a service-managed conversation the continuation
-        state (``session.service_session_id``) was already persisted, so the hosted
-        thread ends with unresolved ``function_call`` items and OpenAI-style
-        continuations reject the session's next request (missing tool output). Settle
-        the thread by submitting one error ``function_result`` per dangling call
-        (approval-response wrappers are unwrapped to their underlying calls;
-        hosted-tool approvals are left to their own provider protocol) with
-        ``tool_choice="none"`` so no new calls are requested, then advance the
-        persisted continuation to the settlement response: for response-ID
-        continuations the settlement response is the first endpoint whose chain
-        includes the synthetic outputs, so the next run must start from it (for
-        conversation-object ids the advance is a no-op). The settlement response is
-        otherwise discarded and the run still fails with the original
-        ``MiddlewareFailure``. Everything here is best-effort — a settlement failure
-        is logged and never masks the abort. Costs one extra request, only on the
-        failure path and only when a service-managed conversation is in play.
+        When a fail-closed error aborts a tool batch, the local run raises before any
+        result exists — but on a service-managed conversation the continuation state
+        (``session.service_session_id``) was already persisted, so the hosted thread
+        ends with unresolved ``function_call`` items and OpenAI-style continuations
+        reject the session's next request (missing tool output). Settle the thread by
+        submitting one error ``function_result`` per dangling call (approval-response
+        wrappers are unwrapped to their underlying calls; hosted-tool approvals are
+        left to their own provider protocol) with ``tool_choice="none"`` so no new
+        calls are requested, then advance the persisted continuation to the settlement
+        response: for response-ID continuations the settlement response is the first
+        endpoint whose chain includes the synthetic outputs, so the next run must
+        start from it (for conversation-object ids the advance is a no-op). The
+        settlement response is otherwise discarded and the run still fails with the
+        original error. Everything here is best-effort — a settlement failure is
+        logged and never masks the abort. Costs one extra request, only on the failure
+        path and only when a service-managed conversation is in play.
         """
+        from ._sessions import is_local_history_conversation_id
         from ._types import ChatResponse, Content, Message
 
-        if response_conversation_id is None and not options.get("conversation_id"):
+        continuation_id = response_conversation_id or cast("str | None", options.get("conversation_id"))
+        if continuation_id is None or is_local_history_conversation_id(continuation_id):
             return
         try:
             error_results: list[Content] = []
@@ -4780,8 +4981,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 error_results.append(
                     Content.from_function_result(
                         call_id=underlying_call.call_id,
-                        result="Error: Tool execution was aborted by middleware before a result was produced.",
-                        exception="MiddlewareFailure",
+                        result=error_result,
+                        exception=error_exception,
                         additional_properties=underlying_call.additional_properties,
                     )
                 )
@@ -4887,6 +5088,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
+            disable_approval_response_binding=self.function_invocation_configuration.get(
+                "disable_approval_response_binding", False
+            ),
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -4962,11 +5166,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     invocation_session=invocation_session,
                     approval_session_is_authoritative=approval_session_is_authoritative,
                 )
-            except MiddlewareFailure:
-                # Fail-closed abort: before propagating, settle the batch's calls on a
-                # service-managed conversation and advance the persisted continuation
-                # to the settled endpoint (best-effort — a settlement failure never
-                # masks the abort).
+            except (MiddlewareFailure, _UnknownFunctionCallError) as exc:
+                # Before propagating a fail-closed abort, settle the batch's calls on a
+                # service-managed conversation and advance the persisted continuation.
+                is_unknown_call = isinstance(exc, _UnknownFunctionCallError)
                 await self._settle_dangling_service_function_calls(
                     super_get_response=super_get_response,
                     function_calls=_extract_function_calls(response),
@@ -4976,6 +5179,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     tokenizer=tokenizer,
                     invocation_session=invocation_session,
                     response_conversation_id=response.conversation_id,
+                    error_result=(
+                        f"Error: Tool execution was aborted before a result was produced. {exc.args[0]}"
+                        if is_unknown_call
+                        else "Error: Tool execution was aborted by middleware before a result was produced."
+                    ),
+                    error_exception="KeyError" if is_unknown_call else "MiddlewareFailure",
                 )
                 raise
             total_function_calls = _record_function_calls(
@@ -5100,6 +5309,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
+            disable_approval_response_binding=self.function_invocation_configuration.get(
+                "disable_approval_response_binding", False
+            ),
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -5235,10 +5447,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     invocation_session=invocation_session,
                     approval_session_is_authoritative=approval_session_is_authoritative,
                 )
-            except MiddlewareFailure:
-                # See the non-streaming loop: settle a service-managed conversation's
-                # dangling calls and advance the persisted continuation before
-                # propagating the fail-closed abort (best-effort).
+            except (MiddlewareFailure, _UnknownFunctionCallError) as exc:
+                # See the non-streaming loop: settle and advance before propagating.
+                is_unknown_call = isinstance(exc, _UnknownFunctionCallError)
                 await self._settle_dangling_service_function_calls(
                     super_get_response=super_get_response,
                     function_calls=_extract_function_calls(response),
@@ -5248,6 +5459,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     tokenizer=tokenizer,
                     invocation_session=invocation_session,
                     response_conversation_id=response.conversation_id,
+                    error_result=(
+                        f"Error: Tool execution was aborted before a result was produced. {exc.args[0]}"
+                        if is_unknown_call
+                        else "Error: Tool execution was aborted by middleware before a result was produced."
+                    ),
+                    error_exception="KeyError" if is_unknown_call else "MiddlewareFailure",
                 )
                 raise
             errors_in_a_row = function_processing.errors_in_a_row

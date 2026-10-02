@@ -24,6 +24,7 @@ import keyword
 import math
 import re
 from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
@@ -115,10 +116,38 @@ def require_filter_string(value: Any) -> str:
     return value
 
 
+def _set_member_key(value: Any) -> Any:
+    """Key a set member so equality keeps bools distinct from numbers.
+
+    A set cannot be walked pairwise the way a sequence can, and ``{1} == {True}``
+    is true in Python because ``True`` hashes and compares equal to ``1``. Keying
+    each member by whether it is a bool restores the distinction, recursing
+    through the hashable containers a set can actually hold. Ints and floats
+    still compare equal, matching the scalar behaviour.
+    """
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, tuple):
+        return ("tuple", tuple(_set_member_key(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, frozenset):
+        return ("frozenset", frozenset(_set_member_key(item) for item in cast(AbstractSet[Any], value)))
+    return ("value", value)
+
+
 def filter_values_equal(left: Any, right: Any) -> bool:
-    """Compare validated scalars, sequences, and mappings without equating booleans to numbers."""
+    """Compare validated scalars, sequences, sets, and mappings without equating booleans to numbers."""
     if isinstance(left, bool) or isinstance(right, bool):
         return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, AbstractSet) and isinstance(right, AbstractSet):
+        left_set = cast(AbstractSet[Any], left)
+        right_set = cast(AbstractSet[Any], right)
+        if len(left_set) != len(right_set):
+            return False
+        return {_set_member_key(item) for item in left_set} == {_set_member_key(item) for item in right_set}
+    if isinstance(left, AbstractSet) or isinstance(right, AbstractSet):
+        # Only one side is a set. Preserve native semantics, which never equate
+        # a set with a list or a mapping.
+        return left == right
     if _is_non_string_sequence(left) and _is_non_string_sequence(right):
         # Preserve native container semantics, such as lists not equaling tuples.
         return left == right and all(

@@ -285,7 +285,12 @@ class AgentContext:
             Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[AgentResponse], AgentResponse | Awaitable[AgentResponse]]]
+        stream_result_hooks: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ]
         | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
@@ -327,11 +332,69 @@ class AgentContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[AgentResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: (
+            Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None
+        ) = None
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
         # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
         # covering this pipeline's run. The final handler offers it for adoption by
         # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
         # gate binds to that run's identity and never to middleware-initiated runs.
         self._run_persistence_gate: _RunPersistenceGate | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]]:
+        """Transforms applied to agent updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [AgentResponse[Any]],
+            AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized agent response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
 
     def _resolve_run_start_tools(self) -> list[ToolTypes]:
         """Resolve the run-start tool list for this invocation, normalized.
@@ -575,6 +638,11 @@ class ChatContext:
         stream_result_hooks: Hooks applied to the finalized response (after finalizer).
         stream_cleanup_hooks: Hooks executed after stream consumption (before finalizer).
 
+    Middleware that constructs provider-local replacement messages can call
+    :meth:`record_message_replacement` before downstream middleware runs. The replacement
+    remains call-local, but compaction summaries derived from it can be reconciled back to
+    the caller-owned source messages.
+
     Examples:
         .. code-block:: python
 
@@ -613,7 +681,13 @@ class ChatContext:
             Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_result_hooks: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ]
+        | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
@@ -646,6 +720,119 @@ class ChatContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[ChatResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = (
+            None
+        )
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
+        self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
+        self._fallback_reconciliation_messages: list[Message] | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]]:
+        """Transforms applied to chat updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [ChatResponse[Any]],
+            ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized chat response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
+
+    def record_message_replacement(
+        self,
+        replacement: Message,
+        sources: Message | Sequence[Message],
+    ) -> Message:
+        """Record replacement provenance for downstream compaction reconciliation.
+
+        This method does not modify :attr:`messages` or persist ``replacement``. It records
+        that the replacement carries content derived from caller-owned source messages, so
+        a downstream compaction summary can durably exclude and summarize those sources.
+        When one source becomes multiple replacement messages, record every replacement;
+        reconciliation rejects summaries that cover only part of the split.
+
+        Args:
+            replacement: A middleware-created replacement message.
+            sources: One or more messages replaced by ``replacement``.
+
+        Returns:
+            The replacement message, for convenient use while rebuilding a message list.
+
+        Raises:
+            TypeError: If ``replacement`` or any source is not a :class:`Message`.
+            ValueError: If no sources are provided or the replacement is also a source.
+        """
+        if not isinstance(replacement, Message):
+            raise TypeError("replacement must be a Message")
+
+        if isinstance(sources, Message):
+            source_messages = (sources,)
+        elif isinstance(sources, Sequence) and not isinstance(sources, (str, bytes, bytearray)):
+            source_messages = tuple(sources)
+        else:
+            raise TypeError("sources must be a Message or a sequence of Message objects")
+
+        if not source_messages:
+            raise ValueError("sources must contain at least one Message")
+
+        unique_sources: list[Message] = []
+        seen_source_identities: set[int] = set()
+        for source in source_messages:
+            if not isinstance(source, Message):
+                raise TypeError("sources must contain only Message objects")
+            if source is replacement:
+                raise ValueError("replacement cannot also be one of its sources")
+            source_identity = id(source)
+            if source_identity in seen_source_identities:
+                continue
+            seen_source_identities.add(source_identity)
+            unique_sources.append(source)
+
+        self._message_replacements.append((replacement, tuple(unique_sources)))
+        return replacement
 
 
 class AgentMiddleware(ABC):
@@ -1239,10 +1426,36 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
         return context.result
@@ -1408,7 +1621,13 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
 
             async def current_handler() -> None:
                 # MiddlewareTermination bubbles up to execute() to skip post-processing
-                await self._middleware[index].process(context, create_next_handler(index + 1))
+                try:
+                    await self._middleware[index].process(context, create_next_handler(index + 1))
+                finally:
+                    if context._fallback_reconciliation_messages is None:  # pyright: ignore[reportPrivateUsage]
+                        context._fallback_reconciliation_messages = list(  # pyright: ignore[reportPrivateUsage]
+                            context.messages
+                        )
 
             return current_handler
 
@@ -1417,10 +1636,36 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
         return context.result
@@ -1572,10 +1817,24 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                 if source_messages is not None:
                     from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
 
+                    if downstream_messages is not None:
+                        reconciliation_messages = downstream_messages
+                    else:
+                        fallback_reconciliation_messages = (
+                            context._fallback_reconciliation_messages  # pyright: ignore[reportPrivateUsage]
+                        )
+                        reconciliation_messages = (
+                            fallback_reconciliation_messages
+                            if fallback_reconciliation_messages is not None
+                            else middleware_messages
+                        )
+
                     _reconcile_compaction_summaries(
                         source_messages,
-                        downstream_messages if downstream_messages is not None else middleware_messages,
+                        reconciliation_messages,
                         source_message_identities,
+                        message_replacements=context._message_replacements,  # pyright: ignore[reportPrivateUsage]
+                        warn_on_rejection=True,
                     )
 
         if stream:
@@ -1861,9 +2120,19 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
         # Must have at least 2 parameters (context and call_next)
         if len(params) >= 2:
-            first_param = params[0]
-            if hasattr(first_param.annotation, "__name__"):
-                annotation_name = first_param.annotation.__name__
+            annotation = params[0].annotation
+            # Postponed (``from __future__ import annotations``) or quoted annotations are
+            # strings; match them by class name without evaluating them.
+            annotation_name: str | None
+            if isinstance(annotation, str):
+                annotation = annotation.strip()
+                # A quoted annotation under postponed evaluation keeps its quotes, e.g. "'ChatContext'".
+                if len(annotation) >= 2 and annotation[0] == annotation[-1] and annotation[0] in "'\"":
+                    annotation = annotation[1:-1].strip()
+                annotation_name = annotation.rsplit(".", 1)[-1].strip()
+            else:
+                annotation_name = getattr(annotation, "__name__", None)
+            if annotation_name is not None:
                 if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":

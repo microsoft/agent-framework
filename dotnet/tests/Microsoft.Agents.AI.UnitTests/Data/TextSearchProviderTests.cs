@@ -281,6 +281,47 @@ public sealed class TextSearchProviderTests
             Times.AtLeastOnce);
     }
 
+    [Fact]
+    public async Task InvokingAsync_ShouldPropagateCancellation_WhenSearchIsCanceledAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var provider = new TextSearchProvider((_, ct) => Task.FromCanceled<IEnumerable<TextSearchProvider.TextSearchResult>>(ct));
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await provider.InvokingAsync(invokingContext, cts.Token));
+    }
+
+    [Fact]
+    public async Task InvokingAsync_ShouldNotThrow_WhenProviderSearchIsCanceledAsync()
+    {
+        // Arrange
+        using var providerCts = new CancellationTokenSource();
+        providerCts.Cancel();
+        var provider = new TextSearchProvider(
+            (_, _) => Task.FromCanceled<IEnumerable<TextSearchProvider.TextSearchResult>>(providerCts.Token));
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        var messages = aiContext.Messages!.ToList();
+        Assert.Single(messages);
+        Assert.Equal("Q?", messages[0].Text);
+        Assert.Null(aiContext.Tools);
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData("Custom context prompt", "Custom citations prompt")]

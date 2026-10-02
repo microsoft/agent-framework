@@ -8,7 +8,7 @@ import logging
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
@@ -17,7 +17,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEvent
+from ag_ui.core import BaseEvent, MessagesSnapshotEvent, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
     AgentContext,
@@ -36,6 +36,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
+    MiddlewareBundle,
     MiddlewareFailure,
     SessionContext,
     SupportsAgentRun,
@@ -55,6 +56,8 @@ from agent_framework.security import SecureAgentConfig
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
+from fastapi.responses import StreamingResponse
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.types import Message as ASGIMessage
 from starlette.types import Receive, Scope, Send
@@ -127,6 +130,57 @@ async def _post_until_sse_event_then_disconnect(
         "server": ("testserver", 80),
     }
     await asyncio.wait_for(app(scope, cast(Receive, receive), cast(Send, send)), timeout=5)
+
+
+async def _post_asgi_request(
+    app: FastAPI,
+    path: str,
+    payload: dict[str, Any],
+) -> tuple[int, bytes]:
+    """Run one complete ASGI request and return its status and response body."""
+    request_sent = False
+    response_complete = asyncio.Event()
+    status_code = 0
+    chunks: list[bytes] = []
+    body = json.dumps(payload).encode()
+
+    async def receive() -> ASGIMessage:
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await response_complete.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: ASGIMessage) -> None:
+        nonlocal status_code
+        if message["type"] == "http.response.start":
+            status_code = int(message["status"])
+            return
+        if message["type"] != "http.response.body":
+            return
+        chunk = message.get("body", b"")
+        if isinstance(chunk, bytes):
+            chunks.append(chunk)
+        if not message.get("more_body", False):
+            response_complete.set()
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json"), (b"host", b"testserver")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(app(scope, cast(Receive, receive), cast(Send, send)), timeout=5)
+    return status_code, b"".join(chunks)
 
 
 def _run_finished_interrupts(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1202,8 +1256,8 @@ async def test_add_endpoint_workflow_checkpointing_over_the_wire():
     assert "TEXT_MESSAGE_CONTENT" in resumed_types
 
 
-async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build_chat_client):
-    """Keepalive configuration is accepted at the endpoint seam for every supported runner shape."""
+async def test_add_endpoint_accepts_transport_options_for_supported_runners(build_chat_client):
+    """Endpoint transport configuration is accepted for every supported runner shape."""
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
@@ -1217,9 +1271,21 @@ async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build
         name="wrapped",
     )
 
-    add_agent_framework_fastapi_endpoint(app, raw_agent, path="/raw-agent", keepalive_seconds=0.5)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        raw_agent,
+        path="/raw-agent",
+        keepalive_seconds=0.5,
+        detached_runs=True,
+    )
     add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/wrapped-agent", keepalive_seconds=None)
-    add_agent_framework_fastapi_endpoint(app, workflow, path="/raw-workflow", keepalive_seconds=1.0)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        workflow,
+        path="/raw-workflow",
+        keepalive_seconds=1.0,
+        detached_runs=True,
+    )
     add_agent_framework_fastapi_endpoint(
         app,
         AgentFrameworkWorkflow(workflow=workflow),
@@ -1242,6 +1308,28 @@ def test_add_endpoint_keepalive_default_is_enabled() -> None:
     assert parameter.default == 15
 
 
+def test_add_endpoint_detached_runs_default_is_disabled() -> None:
+    """Detached execution is opt-in so current disconnect cancellation semantics remain the default."""
+    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
+
+    assert parameter.default is False
+
+
+def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
+    """Detached producers have finite admission and post-disconnect lifetime defaults."""
+    parameters = signature(add_agent_framework_fastapi_endpoint).parameters
+
+    assert parameters["max_detached_runs"].default == 32
+    assert parameters["detached_run_timeout_seconds"].default == 3600
+
+
+def test_add_endpoint_detached_runs_preserves_existing_positional_parameter_order() -> None:
+    """The new option is appended after existing parameters so positional a2ui_config callers do not shift."""
+    parameters = list(signature(add_agent_framework_fastapi_endpoint).parameters)
+
+    assert parameters.index("detached_runs") > parameters.index("a2ui_config")
+
+
 def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
     """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
     docstring = add_agent_framework_fastapi_endpoint.__doc__
@@ -1255,10 +1343,34 @@ def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None
     assert "do not change AG-UI events" in normalized_docstring
 
 
+def test_add_endpoint_docstring_describes_detached_run_behavior() -> None:
+    """The public endpoint docs distinguish detached completion from resumable replay."""
+    docstring = add_agent_framework_fastapi_endpoint.__doc__
+
+    assert docstring is not None
+    normalized_docstring = " ".join(docstring.split())
+    assert "detached_runs" in normalized_docstring
+    assert "Defaults to False" in normalized_docstring
+    assert "continues after the SSE client disconnects" in normalized_docstring
+    assert "does not provide resumable event replay" in normalized_docstring
+    assert "Maximum number of detached producers" in normalized_docstring
+    assert "Maximum time a producer may remain active" in normalized_docstring
+
+
 def test_keepalive_option_is_endpoint_owned() -> None:
     """Keepalive is endpoint transport configuration, not runner configuration."""
     assert "keepalive_seconds" not in signature(AgentFrameworkAgent).parameters
     assert "keepalive_seconds" not in signature(AgentFrameworkWorkflow).parameters
+
+
+def test_detached_runs_option_is_endpoint_owned() -> None:
+    """Detached execution is endpoint transport configuration, not runner configuration."""
+    assert "detached_runs" not in signature(AgentFrameworkAgent).parameters
+    assert "detached_runs" not in signature(AgentFrameworkWorkflow).parameters
+    assert "max_detached_runs" not in signature(AgentFrameworkAgent).parameters
+    assert "max_detached_runs" not in signature(AgentFrameworkWorkflow).parameters
+    assert "detached_run_timeout_seconds" not in signature(AgentFrameworkAgent).parameters
+    assert "detached_run_timeout_seconds" not in signature(AgentFrameworkWorkflow).parameters
 
 
 def test_endpoint_module_import_does_not_import_sse_transport() -> None:
@@ -1342,6 +1454,807 @@ async def test_endpoint_keepalive_disabled_preserves_streaming_response_shape(st
     assert "RUN_FINISHED" in event_types
 
 
+@pytest.mark.parametrize("keepalive_seconds", [None, 15])
+async def test_endpoint_detached_fast_connected_producer_preserves_all_events(
+    keepalive_seconds: float | None,
+) -> None:
+    """A connected reader applies queue backpressure instead of being mistaken for a disconnect."""
+
+    class FastWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            for index in range(32):
+                yield StateSnapshotEvent(snapshot={"index": index})
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        FastWorkflowRunner(),
+        path="/detached-fast-connected",
+        keepalive_seconds=keepalive_seconds,
+        detached_runs=True,
+    )
+
+    status_code, body = await _post_asgi_request(
+        app,
+        "/detached-fast-connected",
+        {
+            "runId": "fast-run",
+            "threadId": "fast-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+    )
+
+    assert status_code == 200
+    events = [json.loads(line[6:]) for line in body.decode().splitlines() if line.startswith("data: ")]
+    assert len(events) == 34
+    assert events[0]["type"] == "RUN_STARTED"
+    assert [event["snapshot"]["index"] for event in events[1:-1]] == list(range(32))
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
+@pytest.mark.parametrize("keepalive_seconds", [None, 0.01])
+async def test_endpoint_detached_run_completes_and_saves_after_client_disconnect(
+    streaming_chat_client_stub: Any,
+    keepalive_seconds: float | None,
+) -> None:
+    """A disconnected reader cannot strand a bounded detached producer or skip final persistence."""
+    release = asyncio.Event()
+    source_completed = asyncio.Event()
+    observed_scopes: list[str] = []
+    request_scope: ContextVar[str] = ContextVar("detached-request-scope")
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        observed_scopes.append(request_scope.get())
+        yield ChatResponseUpdate(contents=[Content.from_text(text="first")], role="assistant")
+        await release.wait()
+        for index in range(32):
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"-chunk-{index}")],
+                role="assistant",
+                finish_reason="stop" if index == 31 else None,
+            )
+        source_completed.set()
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        scope = str((request.state or {})["scope"])
+        request_scope.set(scope)
+        return scope
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="detached",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached",
+        snapshot_store=store,
+        snapshot_scope_resolver=resolve_scope,
+        keepalive_seconds=keepalive_seconds,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached",
+        {
+            "runId": "run-detached",
+            "threadId": "thread-detached",
+            "messages": [{"role": "user", "content": "Start"}],
+            "state": {"scope": "tenant-a"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    assert not source_completed.is_set()
+
+    release.set()
+    await asyncio.wait_for(source_completed.wait(), timeout=5)
+
+    snapshot = None
+    for _ in range(100):
+        snapshot = await store.get(scope="tenant-a", thread_id="thread-detached")
+        if snapshot is not None and "chunk-31" in json.dumps(snapshot.messages):
+            break
+        await asyncio.sleep(0.01)
+
+    assert snapshot is not None
+    assert "chunk-31" in json.dumps(snapshot.messages)
+    assert observed_scopes == ["tenant-a"]
+
+
+async def test_endpoint_detached_run_completes_when_response_stream_never_starts(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """An unstarted response iterator cannot strand a producer behind its bounded queue."""
+    source_completed = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        for index in range(32):
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text=f"chunk-{index}")],
+                role="assistant",
+                finish_reason="stop" if index == 31 else None,
+            )
+        source_completed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="unstarted-reader",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/unstarted-reader",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/unstarted-reader")
+    assert isinstance(route, APIRoute)
+
+    response = await route.endpoint(
+        AGUIRequest.model_validate(
+            {
+                "runId": "unstarted-run",
+                "threadId": "unstarted-thread",
+                "messages": [{"role": "user", "content": "Start"}],
+            }
+        )
+    )
+    assert isinstance(response, StreamingResponse)
+
+    await asyncio.wait_for(source_completed.wait(), timeout=5)
+    snapshot = None
+    for _ in range(100):
+        snapshot = await store.get(scope="tenant-a", thread_id="unstarted-thread")
+        if snapshot is not None and "chunk-31" in json.dumps(snapshot.messages):
+            break
+        await asyncio.sleep(0.01)
+
+    assert snapshot is not None
+    assert "chunk-31" in json.dumps(snapshot.messages)
+
+
+async def test_endpoint_exactly_full_unstarted_stream_releases_detached_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Completion cannot block on a full queue when the response body never starts."""
+    import agent_framework_ag_ui._endpoint as endpoint_module
+
+    monkeypatch.setattr(endpoint_module, "_DETACHED_READER_START_TIMEOUT_SECONDS", 0.01)
+    first_completed = asyncio.Event()
+
+    class ExactCapacityWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+            self.run_count = 0
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            self.run_count += 1
+            if self.run_count == 1:
+                for index in range(16):
+                    yield StateSnapshotEvent(snapshot={"index": index})
+                first_completed.set()
+                return
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        ExactCapacityWorkflowRunner(),
+        path="/exact-capacity",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/exact-capacity")
+    assert isinstance(route, APIRoute)
+
+    response = await route.endpoint(
+        AGUIRequest.model_validate(
+            {
+                "runId": "unstarted-run",
+                "threadId": "unstarted-thread",
+                "messages": [{"role": "user", "content": "Start"}],
+            }
+        )
+    )
+    assert isinstance(response, StreamingResponse)
+    await asyncio.wait_for(first_completed.wait(), timeout=5)
+
+    retry_status = 503
+    retry_body = b""
+    for _ in range(100):
+        retry_status, retry_body = await _post_asgi_request(
+            app,
+            "/exact-capacity",
+            {
+                "runId": "retry-run",
+                "threadId": "retry-thread",
+                "messages": [{"role": "user", "content": "Retry"}],
+            },
+        )
+        if retry_status != 503:
+            break
+        await asyncio.sleep(0.01)
+
+    assert retry_status == 200
+    assert b'"type":"RUN_FINISHED"' in retry_body
+
+
+async def test_endpoint_disconnect_still_cancels_run_by_default(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Without the opt-in, disconnect retains the existing cancellation behavior."""
+    release = asyncio.Event()
+    source_closed = asyncio.Event()
+    source_completed = False
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal source_completed
+        del messages, options, kwargs
+        try:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="first")], role="assistant")
+            await release.wait()
+            source_completed = True
+            yield ChatResponseUpdate(
+                contents=[Content.from_text(text="-finished")],
+                role="assistant",
+                finish_reason="stop",
+            )
+        finally:
+            source_closed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = Agent(
+        name="cancel-on-disconnect",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/cancel-on-disconnect",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/cancel-on-disconnect",
+        {
+            "runId": "run-cancelled",
+            "threadId": "thread-cancelled",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(source_closed.wait(), timeout=5)
+
+    assert not source_completed
+    assert await store.get(scope="tenant-a", thread_id="thread-cancelled") is None
+
+
+async def test_endpoint_detached_workflow_runner_completes_after_disconnect() -> None:
+    """The endpoint-owned producer keeps workflow runners alive as well as agent runners."""
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    class BlockingWorkflowRunner(AgentFrameworkWorkflow):
+        def __init__(self) -> None:
+            self.snapshot_store = None
+            self.checkpoint_storage = None
+
+        async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
+            run_id = str(input_data["run_id"])
+            thread_id = str(input_data["thread_id"])
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield StateSnapshotEvent(snapshot={"started": True})
+            await release.wait()
+            completed.set()
+            yield RunFinishedEvent(run_id=run_id, thread_id=thread_id)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        BlockingWorkflowRunner(),
+        path="/detached-workflow",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-workflow",
+        {
+            "runId": "workflow-run",
+            "threadId": "workflow-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="STATE_SNAPSHOT",
+    )
+    assert not completed.is_set()
+
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=5)
+
+
+async def test_endpoint_detached_connected_failure_emits_run_error_and_completes(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Detached producer failures retain the connected stream's RUN_ERROR contract."""
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if False:  # pragma: no cover
+            yield ChatResponseUpdate()
+        raise RuntimeError("detached failure")
+
+    agent = Agent(
+        name="detached-error",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-error",
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    status_code, body = await _post_asgi_request(
+        app,
+        "/detached-error",
+        {
+            "runId": "run-error",
+            "threadId": "thread-error",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+    )
+
+    assert status_code == 200
+    events = [json.loads(line[6:]) for line in body.decode().splitlines() if line.startswith("data: ")]
+    run_errors = [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert len(run_errors) == 1
+    assert run_errors[0]["code"] == "RuntimeError"
+
+
+async def test_endpoint_detached_run_admission_is_bounded(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A caller cannot retain more detached producers than the endpoint limit."""
+    release = asyncio.Event()
+    first_started = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        text = messages[-1].text
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"started-{text}")], role="assistant")
+        if text == "first":
+            first_started.set()
+            await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="-done")],
+            role="assistant",
+            finish_reason="stop",
+        )
+
+    agent = Agent(
+        name="detached-capacity",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-capacity",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-capacity",
+        {
+            "runId": "first-run",
+            "threadId": "first-thread",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(first_started.wait(), timeout=5)
+
+    rejected_status, rejected_body = await _post_asgi_request(
+        app,
+        "/detached-capacity",
+        {
+            "runId": "second-run",
+            "threadId": "second-thread",
+            "messages": [{"role": "user", "content": "second"}],
+        },
+    )
+    assert rejected_status == 503
+    assert b"capacity is exhausted" in rejected_body
+
+    release.set()
+    accepted_status = 503
+    for _ in range(100):
+        accepted_status, _ = await _post_asgi_request(
+            app,
+            "/detached-capacity",
+            {
+                "runId": "second-run",
+                "threadId": "second-thread",
+                "messages": [{"role": "user", "content": "second"}],
+            },
+        )
+        if accepted_status != 503:
+            break
+        await asyncio.sleep(0.01)
+
+    assert accepted_status == 200
+
+
+async def test_endpoint_snapshot_hydration_bypasses_detached_run_capacity(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Hydration remains available while a disconnected run occupies the only detached slot."""
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        yield ChatResponseUpdate(contents=[Content.from_text(text="started")], role="assistant")
+        await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="-finished")],
+            role="assistant",
+            finish_reason="stop",
+        )
+        completed.set()
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="capacity-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "stored-user", "role": "user", "content": "Stored safe point"}],
+        ),
+    )
+    agent = Agent(
+        name="detached-hydration-capacity",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-hydration-capacity",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+        keepalive_seconds=None,
+        detached_runs=True,
+        max_detached_runs=1,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-hydration-capacity",
+        {
+            "runId": "active-run",
+            "threadId": "capacity-thread",
+            "messages": [{"role": "user", "content": "Start"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    hydration_status, hydration_body = await _post_asgi_request(
+        app,
+        "/detached-hydration-capacity",
+        {
+            "runId": "hydrate-run",
+            "threadId": "capacity-thread",
+            "messages": [],
+        },
+    )
+
+    assert hydration_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in hydration_body
+    assert b"Stored safe point" in hydration_body
+
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=5)
+
+
+async def test_endpoint_detached_run_expires_after_reader_disconnect(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A stalled abandoned run is cancelled and releases its scoped-thread slot."""
+    first_closed = asyncio.Event()
+    run_count = 0
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal run_count
+        del messages, options, kwargs
+        run_count += 1
+        if run_count == 1:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text(text="started")], role="assistant")
+                await asyncio.Event().wait()
+            finally:
+                first_closed.set()
+            return
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text="retry-complete")],
+            role="assistant",
+            finish_reason="stop",
+        )
+
+    agent = Agent(
+        name="detached-expiry",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-expiry",
+        keepalive_seconds=None,
+        detached_runs=True,
+        detached_run_timeout_seconds=0.05,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-expiry",
+        {
+            "runId": "expiring-run",
+            "threadId": "expiring-thread",
+            "messages": [{"role": "user", "content": "first"}],
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+    await asyncio.wait_for(first_closed.wait(), timeout=5)
+
+    retry_status, retry_body = await _post_asgi_request(
+        app,
+        "/detached-expiry",
+        {
+            "runId": "retry-run",
+            "threadId": "expiring-thread",
+            "messages": [{"role": "user", "content": "retry"}],
+        },
+    )
+
+    assert retry_status == 200
+    assert b"retry-complete" in retry_body
+
+
+async def test_endpoint_detached_run_guards_active_scoped_thread_mutations(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Active detached runs allow hydration but reject same-scope mutations until final persistence."""
+    release = asyncio.Event()
+    completed_scopes: set[str] = set()
+    request_scope: ContextVar[str] = ContextVar("detached-guard-scope")
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        scope = request_scope.get()
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"started-{scope}")], role="assistant")
+        await release.wait()
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text=f"-finished-{scope}")],
+            role="assistant",
+            finish_reason="stop",
+        )
+        completed_scopes.add(scope)
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        scope = str((request.state or {})["scope"])
+        request_scope.set(scope)
+        return scope
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="shared-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[{"id": "stored-user", "role": "user", "content": "Stored"}],
+        ),
+    )
+    agent = Agent(
+        name="detached-guard",
+        instructions="Test agent",
+        client=streaming_chat_client_stub(stream_fn),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/detached-guard",
+        snapshot_store=store,
+        snapshot_scope_resolver=resolve_scope,
+        keepalive_seconds=None,
+        detached_runs=True,
+    )
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-guard",
+        {
+            "runId": "run-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Start tenant A"}],
+            "state": {"scope": "tenant-a"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    hydration_status, hydration_body = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "hydrate-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [],
+            "state": {"scope": "tenant-a"},
+        },
+    )
+    assert hydration_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in hydration_body
+
+    mutation_status, mutation_body = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "conflict-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Race tenant A"}],
+            "state": {"scope": "tenant-a"},
+        },
+    )
+    assert mutation_status == 409
+    assert b"already active" in mutation_body
+
+    checkpoint_status, checkpoint_body = await _post_asgi_request(
+        app,
+        "/detached-guard",
+        {
+            "runId": "checkpoint-tenant-a",
+            "threadId": "shared-thread",
+            "messages": [],
+            "state": {"scope": "tenant-a"},
+            "forwardedProps": {"checkpoint_id": "checkpoint-1"},
+        },
+    )
+    assert checkpoint_status == 200
+    assert b'"type":"MESSAGES_SNAPSHOT"' in checkpoint_body
+
+    for forwarded_props in (
+        {"resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}]},
+        {"command": {"resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}]}},
+    ):
+        forwarded_resume_status, _ = await _post_asgi_request(
+            app,
+            "/detached-guard",
+            {
+                "runId": "forwarded-resume-tenant-a",
+                "threadId": "shared-thread",
+                "messages": [],
+                "state": {"scope": "tenant-a"},
+                "forwardedProps": forwarded_props,
+            },
+        )
+        assert forwarded_resume_status == 409
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/detached-guard",
+        {
+            "runId": "run-tenant-b",
+            "threadId": "shared-thread",
+            "messages": [{"role": "user", "content": "Start tenant B"}],
+            "state": {"scope": "tenant-b"},
+        },
+        event_type="TEXT_MESSAGE_CONTENT",
+    )
+
+    release.set()
+    for _ in range(100):
+        tenant_a_snapshot = await store.get(scope="tenant-a", thread_id="shared-thread")
+        tenant_b_snapshot = await store.get(scope="tenant-b", thread_id="shared-thread")
+        if (
+            tenant_a_snapshot is not None
+            and tenant_b_snapshot is not None
+            and "finished-tenant-a" in json.dumps(tenant_a_snapshot.messages)
+            and "finished-tenant-b" in json.dumps(tenant_b_snapshot.messages)
+        ):
+            break
+        await asyncio.sleep(0.01)
+
+    assert completed_scopes == {"tenant-a", "tenant-b"}
+
+    final_status = 409
+    for _ in range(100):
+        final_status, _ = await _post_asgi_request(
+            app,
+            "/detached-guard",
+            {
+                "runId": "after-completion",
+                "threadId": "shared-thread",
+                "messages": [{"role": "user", "content": "Continue"}],
+                "state": {"scope": "tenant-a"},
+            },
+        )
+        if final_status != 409:
+            break
+        await asyncio.sleep(0.01)
+
+    assert final_status == 200
+
+
 async def test_endpoint_keepalive_disabled_does_not_import_sse_transport(build_chat_client) -> None:
     """Disabled keepalive avoids importing sse-starlette's transport module."""
     saved_sse_modules = {
@@ -1378,6 +2291,28 @@ def test_add_endpoint_rejects_non_positive_keepalive_interval(build_chat_client,
 
     with pytest.raises(ValueError, match="keepalive_seconds must be positive"):
         add_agent_framework_fastapi_endpoint(app, agent, path="/invalid", keepalive_seconds=keepalive_seconds)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_detached_runs": 0}, "max_detached_runs must be greater than 0"),
+        ({"max_detached_runs": -1}, "max_detached_runs must be greater than 0"),
+        ({"detached_run_timeout_seconds": 0}, "detached_run_timeout_seconds must be positive"),
+        ({"detached_run_timeout_seconds": -1}, "detached_run_timeout_seconds must be positive"),
+    ],
+)
+def test_add_endpoint_rejects_invalid_detached_run_limits(
+    build_chat_client: Any,
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    """Detached admission and expiry configuration must remain finite and positive."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match=message):
+        add_agent_framework_fastapi_endpoint(app, agent, path="/invalid-detached", **kwargs)
 
 
 async def test_endpoint_with_state_schema(build_chat_client):
@@ -3829,6 +4764,109 @@ def _build_tool_approval_queue_endpoint(
     return TestClient(app), executed, messages_received, state, wrapped_agent
 
 
+@pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper"])
+@pytest.mark.parametrize("state_origin", ["request", "snapshot"])
+@pytest.mark.parametrize("trusted_approval", [False, True])
+async def test_endpoint_custom_approval_namespaces_remain_server_owned(
+    streaming_chat_client_stub: Any,
+    middleware_kind: str,
+    state_origin: str,
+    trusted_approval: bool,
+) -> None:
+    """Shared State cannot supply or replace approval rules, including after snapshot restore."""
+    executed: list[str] = []
+
+    def gated_tool() -> str:
+        executed.append("ran")
+        return "done"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if executed:
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+        else:
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_gated", name="gated_tool", arguments="{}")],
+                role="assistant",
+            )
+
+    source_ids = ("custom_approvals", "other_approvals")
+    approval = ToolApprovalMiddleware(source_id="initial_approvals")
+    middleware = [approval, ToolApprovalMiddleware(source_id=source_ids[1])]
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent = Agent(
+        client=chat_client,
+        tools=[
+            FunctionTool(name="gated_tool", description="Test tool", func=gated_tool, approval_mode="always_require")
+        ],
+        middleware=[MiddlewareBundle(middleware)] if middleware_kind == "bundle" else middleware,
+    )
+
+    class ForwardingAgent:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(agent, name)
+
+    wrapped = AgentFrameworkAgent(
+        agent=cast(SupportsAgentRun, ForwardingAgent()) if middleware_kind == "wrapper" else agent,
+        require_confirmation=False,
+    )
+    # Namespace discovery must use the live middleware, not construction-time configuration.
+    approval.source_id = source_ids[0]
+    rule = {"tool_name": "gated_tool"}
+    shared_state = {
+        **{source_id: {"rules": [] if trusted_approval else [rule]} for source_id in source_ids},
+        "client_value": "available",
+    }
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id="thread-approval-state",
+        snapshot=AGUIThreadSnapshot(
+            state=shared_state if state_origin == "snapshot" else None,
+            session_state={source_id: {"rules": [rule]} for source_id in source_ids} if trusted_approval else None,
+        ),
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped,
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    payload: dict[str, Any] = {
+        "threadId": "thread-approval-state",
+        "runId": "run-approval-state",
+        "messages": [{"role": "user", "content": "Run the test tool"}],
+    }
+    if state_origin == "request":
+        payload["state"] = shared_state
+    response = TestClient(app).post("/approval", json=payload)
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not any(event["type"] == "RUN_ERROR" for event in events)
+    finished = next(event for event in events if event["type"] == "RUN_FINISHED")
+    assert executed == (["ran"] if trusted_approval else [])
+    if trusted_approval:
+        assert "outcome" not in finished
+    else:
+        assert finished["outcome"]["type"] == "interrupt"
+        assert len(finished["outcome"]["interrupts"]) == 1
+    assert chat_client.last_session is not None
+    assert chat_client.last_session.state["client_value"] == "available"
+    snapshot = await store.get(scope="test", thread_id="thread-approval-state")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    for source_id in source_ids:
+        assert [stored_rule["tool_name"] for stored_rule in snapshot.session_state[source_id]["rules"]] == (
+            ["gated_tool"] if trusted_approval else []
+        )
+
+
 def _build_tool_approval_auto_endpoint(
     streaming_chat_client_stub: Any,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
@@ -5541,6 +6579,14 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
     snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
     assert snapshot is not None and snapshot.session_state is not None
     snapshot.session_state[security.source_id]["pending_policy_approvals"][original_id]["created_at"] = 0.0
+    assert snapshot.interrupt is not None
+    snapshot.interrupt.append(
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    )
     await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
 
     stale = client.post(
@@ -5562,6 +6608,10 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
     assert replacement_id != original_id
     assert replacement_interrupts[0]["toolCallId"] == "call-guarded"
     assert executed == []
+    replaced_snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert replaced_snapshot is not None
+    assert replaced_snapshot.interrupt is not None
+    assert {interrupt["id"] for interrupt in replaced_snapshot.interrupt} == {replacement_id, "other-input"}
     approval_state = wrapped_agent._approval_state_store.get_tool_approval_state(
         approval_state_thread_id(scope="tenant-a", thread_id=thread_id)
     )
@@ -9547,8 +10597,12 @@ async def test_endpoint_double_encoding_failure_terminates():
     assert response.status_code == 200
 
 
-async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streaming_chat_client_stub):
-    """A confirm_changes response persists the completed turn and clears the stored interrupt."""
+@pytest.mark.parametrize("with_other_interrupt", [False, True], ids=["only-confirm", "preserve-other"])
+async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(
+    streaming_chat_client_stub,
+    with_other_interrupt: bool,
+):
+    """A confirm response retires only its own persisted interrupt."""
     app = FastAPI()
     call_count = 0
 
@@ -9594,6 +10648,17 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     first_finished = [event for event in first_events if event.get("type") == "RUN_FINISHED"]
     first_interrupts = _run_finished_interrupts(first_finished[-1])
     confirm_call_id = first_interrupts[0]["id"]
+    if with_other_interrupt:
+        stored_snapshot = await store.get(scope="tenant-a", thread_id="agent-thread")
+        assert stored_snapshot is not None and stored_snapshot.interrupt is not None
+        stored_snapshot.interrupt.append(
+            {
+                "id": "other-input",
+                "reason": "input_required",
+                "message": "Choose another value.",
+            }
+        )
+        await store.save(scope="tenant-a", thread_id="agent-thread", snapshot=stored_snapshot)
 
     confirm_response = client.post(
         "/snapshots",
@@ -9619,7 +10684,10 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(streami
     assert hydrate_response.status_code == 200
     assert call_count == 1
     events = _decode_sse_events(hydrate_response)
-    assert "outcome" not in events[-1]
+    if with_other_interrupt:
+        assert [interrupt["id"] for interrupt in _run_finished_interrupts(events[-1])] == ["other-input"]
+    else:
+        assert "outcome" not in events[-1]
     messages = _latest_messages_snapshot(hydrate_response)
     assert any(
         message.get("role") == "assistant" and message.get("content") == "Changes confirmed and applied successfully!"
@@ -9983,6 +11051,150 @@ async def test_agent_endpoint_approval_resume_seeds_provider_history_from_snapsh
     assert ("user", "text", None, None) in received
     assert ("assistant", "function_call", "call_get_weather", "get_weather") in received
     assert ("tool", "function_result", "call_get_weather", None) in received
+
+
+async def test_agent_endpoint_approved_result_is_persisted_before_provider_continuation_failure():
+    """Hydration keeps an executed approval result when the provider continuation fails."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, agent, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    original_run = agent.run
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:  # pragma: no cover
+                yield AgentResponseUpdate()
+            raise ResponseInvalidatedException("provider continuation failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume-failure",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert executed_cities == ["Seattle"]
+    assert [
+        (event["toolCallId"], event["content"]) for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"
+    ] == [("call_get_weather", "Sunny in Seattle")]
+    assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == [
+        "ResponseInvalidatedException"
+    ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is None
+    assert "Sunny in Seattle" in str(snapshot.messages)
+
+
+async def test_agent_endpoint_rejected_approval_is_persisted_before_provider_continuation_failure():
+    """Hydration cannot replay a rejected approval when provider continuation fails."""
+    from agent_framework import AgentResponse, ResponseInvalidatedException, ResponseStream
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, agent, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    original_run = agent.run
+
+    def failing_run(*args: Any, **kwargs: Any) -> Any:
+        if not kwargs.get("stream", False):
+            return original_run(*args, **kwargs)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:  # pragma: no cover
+                yield AgentResponseUpdate()
+            raise ResponseInvalidatedException("provider continuation failed")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+    agent.run = failing_run  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-reject-failure",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"approved": False},
+                }
+            ],
+        },
+    )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert executed_cities == []
+    assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == [
+        "ResponseInvalidatedException"
+    ]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is None
+    assert "Tool call invocation was rejected by user" in str(snapshot.messages)
+
+
+async def test_agent_endpoint_approval_resume_preserves_other_stored_interrupts():
+    """A successful approval continuation retains unrelated stored interrupts."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, _, executed_cities = _build_weather_approval_endpoint(snapshot_store=store)
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert snapshot is not None
+    assert snapshot.interrupt is not None
+    snapshot.interrupt.append(
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    )
+    await store.save(scope="tenant-a", thread_id="thread-weather", snapshot=snapshot)
+
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume-preserve",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "call_get_weather",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+    final_snapshot = await store.get(scope="tenant-a", thread_id="thread-weather")
+    assert final_snapshot is not None
+    assert final_snapshot.interrupt == [
+        {
+            "id": "other-input",
+            "reason": "input_required",
+            "message": "Choose another value.",
+        }
+    ]
 
 
 async def test_agent_endpoint_cancelled_approval_resume_clears_persisted_interrupt():

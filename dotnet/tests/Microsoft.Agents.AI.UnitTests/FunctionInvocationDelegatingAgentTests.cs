@@ -2063,6 +2063,653 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
     #endregion
 
+    #region Function Replacement Tests
+
+    /// <summary>
+    /// Tests that a callback replacing the context function has that replacement invoked by the continuation.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MiddlewareReplacesFunction_ReplacementInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["Replacement-Executed"], executionOrder);
+        Assert.Equal(2, requests.Count);
+        Assert.Equal("Replacement result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that a callback replacing the context function has that replacement invoked during streaming runs.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_MiddlewareReplacesFunction_ReplacementInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in middleware.RunStreamingAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.NotEmpty(updates);
+        Assert.Equal(["Replacement-Executed"], executionOrder);
+        Assert.Equal(2, requests.Count);
+        Assert.Equal("Replacement result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that a replacement made by the first callback is invoked without running the later callbacks.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_FirstMiddlewareReplacesFunction_LaterMiddlewareNotInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> FirstMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("First-Pre");
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        ValueTask<object?> SecondMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Second-Pre");
+            return next(context, cancellationToken);
+        }
+
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await secondMiddleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["First-Pre", "Replacement-Executed"], executionOrder);
+        Assert.Equal(2, requests.Count);
+        Assert.Equal("Replacement result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that a replacement made by the last callback is invoked instead of the original function.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_LastMiddlewareReplacesFunction_ReplacementInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        async ValueTask<object?> FirstMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("First-Pre");
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("First-Post");
+            return result;
+        }
+
+        ValueTask<object?> SecondMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Second-Pre");
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await secondMiddleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["First-Pre", "Second-Pre", "Replacement-Executed", "First-Post"], executionOrder);
+        Assert.Equal("Replacement result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that wrapping a replacement with the pending callbacks lets the later callbacks run for it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ReplacementWrappedWithPendingMiddleware_LaterMiddlewareInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> FirstMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("First-Pre");
+            context.Function = context.WrapWithPendingMiddleware(replacementFunction);
+            return next(context, cancellationToken);
+        }
+
+        async ValueTask<object?> SecondMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Second-Pre");
+            var result = await next(context, cancellationToken);
+            executionOrder.Add("Second-Post");
+            return result;
+        }
+
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await secondMiddleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["First-Pre", "Second-Pre", "Replacement-Executed", "Second-Post"], executionOrder);
+        Assert.Equal("Replacement result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that wrapping a replacement returns it unchanged when no other callbacks are pending.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WrapWithPendingMiddleware_NoPendingMiddleware_ReturnsSameFunctionAsync()
+    {
+        // Arrange
+        var originalFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() => "Replacement result", "ReplacementFunction", "A replacement function");
+        AIFunction? wrappedFunction = null;
+
+        var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            wrappedFunction = context.WrapWithPendingMiddleware(replacementFunction);
+            context.Function = wrappedFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Same(replacementFunction, wrappedFunction);
+    }
+
+    /// <summary>
+    /// Tests that a replacement is invoked when the function is called without an ambient invocation context.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DirectFunctionInvocation_MiddlewareReplacesFunctionAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        object? directResult = null;
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(GetResponseAsync);
+
+        async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct)
+        {
+            // Invoke the function directly so that no FunctionInvokingChatClient context exists.
+            if (options?.Tools?.FirstOrDefault() is AIFunction function)
+            {
+                directResult = await function.InvokeAsync([], ct);
+            }
+
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
+        }
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            UseProvidedChatClientAsIs = true
+        });
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["Replacement-Executed"], executionOrder);
+        Assert.Equal("Replacement result", directResult?.ToString());
+    }
+
+    /// <summary>
+    /// Tests that the original function is still invoked when a callback leaves the context function unchanged.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MiddlewareKeepsFunction_OriginalInvokedAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+
+        var (mockChatClient, requests) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+        AIFunction? requestedFunction = null;
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            // Reassigning the same function must not change which function is invoked.
+            requestedFunction = context.Function;
+            context.Function = requestedFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(requestedFunction);
+        Assert.Equal(["Original-Executed"], executionOrder);
+        Assert.Equal("Original result", GetFunctionResult(requests[1]));
+    }
+
+    /// <summary>
+    /// Tests that wrapping a function outside of a callback invocation throws.
+    /// </summary>
+    [Fact]
+    public void WrapWithPendingMiddleware_NoActiveInvocation_Throws()
+    {
+        // Arrange
+        var function = AIFunctionFactory.Create(() => "Result", "TestFunction", "A test function");
+        var context = new FunctionInvocationContext { Function = function };
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() => context.WrapWithPendingMiddleware(function));
+    }
+
+    /// <summary>
+    /// Tests that wrapping validates its arguments.
+    /// </summary>
+    [Fact]
+    public void WrapWithPendingMiddleware_NullArguments_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var function = AIFunctionFactory.Create(() => "Result", "TestFunction", "A test function");
+        var context = new FunctionInvocationContext { Function = function };
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => ((FunctionInvocationContext)null!).WrapWithPendingMiddleware(function));
+        Assert.Throws<ArgumentNullException>(() => context.WrapWithPendingMiddleware(null!));
+    }
+
+    /// <summary>
+    /// Tests that wrapping throws once the callback called its continuation, because the pending callbacks ran.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WrapWithPendingMiddleware_AfterContinuation_ThrowsAsync()
+    {
+        // Arrange
+        var originalFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() => "Replacement result", "ReplacementFunction", "A replacement function");
+        Exception? capturedException = null;
+
+        var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        async ValueTask<object?> FirstMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            var result = await next(context, cancellationToken);
+            capturedException = Record.Exception(() => context.WrapWithPendingMiddleware(replacementFunction));
+            return result;
+        }
+
+        ValueTask<object?> SecondMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+            => next(context, cancellationToken);
+
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await secondMiddleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.IsType<InvalidOperationException>(capturedException);
+    }
+
+    /// <summary>
+    /// Tests that wrapping throws from an execution context that outlived the callback that created it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WrapWithPendingMiddleware_FromEscapedExecutionContext_ThrowsAsync()
+    {
+        // Arrange
+        var originalFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() => "Replacement result", "ReplacementFunction", "A replacement function");
+        var callbackReturned = new TaskCompletionSource<bool>();
+        Task<Exception?>? escapedWork = null;
+
+        var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            // Background work started by the callback inherits its execution context, and therefore its scope.
+            escapedWork = Task.Run(async () =>
+            {
+                await callbackReturned.Task;
+                return Record.Exception(() => context.WrapWithPendingMiddleware(replacementFunction));
+            });
+
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+        callbackReturned.SetResult(true);
+
+        // Assert
+        Assert.NotNull(escapedWork);
+        Assert.IsType<InvalidOperationException>(await escapedWork);
+    }
+
+    /// <summary>
+    /// Tests that a callback calling its continuation twice runs the later callbacks for both calls,
+    /// even when one of them replaced the function.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_RepeatedContinuation_AfterReplacement_InvokesLaterMiddlewareAgainAsync()
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var originalFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Original-Executed");
+            return "Original result";
+        }, "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Replacement-Executed");
+            return "Replacement result";
+        }, "ReplacementFunction", "A replacement function");
+
+        var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        async ValueTask<object?> FirstMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("First-Pre");
+            _ = await next(context, cancellationToken);
+            executionOrder.Add("First-Between");
+            return await next(context, cancellationToken);
+        }
+
+        ValueTask<object?> SecondMiddlewareAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            executionOrder.Add("Second-Pre");
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var firstMiddleware = new FunctionInvocationDelegatingAgent(innerAgent, FirstMiddlewareAsync);
+        var secondMiddleware = new FunctionInvocationDelegatingAgent(firstMiddleware, SecondMiddlewareAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await secondMiddleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert - the second call goes through the later callback again instead of invoking its replacement directly.
+        Assert.Equal(
+            ["First-Pre", "Second-Pre", "Replacement-Executed", "First-Between", "Second-Pre", "Replacement-Executed"],
+            executionOrder);
+        Assert.DoesNotContain("Original-Executed", executionOrder);
+    }
+
+    /// <summary>
+    /// Tests that the function requested by the model is restored on the context once the callbacks completed.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MiddlewareReplacesFunction_RequestedFunctionRestoredAsync()
+    {
+        // Arrange
+        var originalFunction = AIFunctionFactory.Create(() => "Original result", "TestFunction", "A test function");
+        var replacementFunction = AIFunctionFactory.Create(() => "Replacement result", "ReplacementFunction", "A replacement function");
+        AIFunction? requestedFunction = null;
+        FunctionInvocationContext? capturedContext = null;
+
+        var (mockChatClient, _) = CreateMockChatClientForFunctionCall("TestFunction");
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            capturedContext = context;
+            requestedFunction = context.Function;
+            context.Function = replacementFunction;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [originalFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert - telemetry and logging read the function after the invocation, so it must be the requested one.
+        Assert.NotNull(capturedContext);
+        Assert.Same(requestedFunction, capturedContext.Function);
+    }
+
+    /// <summary>
+    /// Tests that redirecting a directly invoked function to another wrapped function completes
+    /// instead of re-entering the same callback endlessly.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DirectFunctionInvocation_ReplacementIsAnotherWrappedFunction_DoesNotRecurseAsync()
+    {
+        // Arrange
+        var callbackCount = 0;
+        var firstFunction = AIFunctionFactory.Create(() => "First result", "FirstFunction", "The requested function");
+        var secondFunction = AIFunctionFactory.Create(() => "Second result", "SecondFunction", "The function to redirect to");
+        object? directResult = null;
+
+        AIFunction? wrappedSecondFunction = null;
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(GetResponseAsync);
+
+        async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct)
+        {
+            // Invoke the wrapped function directly so that no FunctionInvokingChatClient context exists.
+            if (options?.Tools is { Count: 2 } tools)
+            {
+                wrappedSecondFunction = (AIFunction)tools[1];
+                directResult = await ((AIFunction)tools[0]).InvokeAsync([], ct);
+            }
+
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
+        }
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
+        {
+            UseProvidedChatClientAsIs = true
+        });
+
+        ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+        {
+            callbackCount++;
+
+            // Unconditionally redirect to the other wrapped tool, which leads back to this callback.
+            context.Function = wrappedSecondFunction!;
+            return next(context, cancellationToken);
+        }
+
+        var middleware = new FunctionInvocationDelegatingAgent(innerAgent, MiddlewareCallbackAsync);
+
+        // Act
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [firstFunction, secondFunction] });
+        await middleware.RunAsync([new(ChatRole.User, "Test message")], null, options, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("Second result", directResult?.ToString());
+        Assert.Equal(1, callbackCount);
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Creates a mock IChatClient that requests a single function call and then completes, capturing every request.
+    /// </summary>
+    /// <param name="functionName">The name of the function to request.</param>
+    /// <returns>The mock and the list of message sequences received by it.</returns>
+    private static (Mock<IChatClient> Mock, List<List<ChatMessage>> Requests) CreateMockChatClientForFunctionCall(string functionName)
+    {
+        var mockChatClient = new Mock<IChatClient>();
+        var requests = new List<List<ChatMessage>>();
+
+        ChatResponse CreateResponse(IEnumerable<ChatMessage> messages)
+        {
+            requests.Add([.. messages]);
+            return requests.Count == 1
+                ? new ChatResponse([new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_123", functionName, new Dictionary<string, object?>())])])
+                : new ChatResponse([new ChatMessage(ChatRole.Assistant, "Final response")]);
+        }
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken) => CreateResponse(messages));
+
+        mockChatClient.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken) =>
+                CreateResponse(messages).ToChatResponseUpdates().ToAsyncEnumerable());
+
+        return (mockChatClient, requests);
+    }
+
+    /// <summary>
+    /// Gets the single function result sent back to the chat client.
+    /// </summary>
+    /// <param name="messages">The messages of a request received by the chat client.</param>
+    /// <returns>The function result value.</returns>
+    private static string? GetFunctionResult(List<ChatMessage> messages)
+        => Assert.Single(messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>()).Result?.ToString();
+
     private static async Task<(IChatClient Client, Mock<IChatClient> Mock, Queue<ChatResponse> Responses)> CaptureClientAsync(List<string> invocations)
     {
         var responses = new Queue<ChatResponse>([new(new ChatMessage(ChatRole.Assistant, "Initialized"))]);

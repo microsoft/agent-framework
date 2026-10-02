@@ -1026,9 +1026,7 @@ class TestAgentExecutorsCoverage:
         assert "AttemptedResolutionSteps: Restarted the printer twice." in input_text
 
     @_requires_powerfx
-    async def test_agent_executor_build_input_text_combines_arguments_and_messages(
-        self, mock_context, mock_state
-    ):
+    async def test_agent_executor_build_input_text_combines_arguments_and_messages(self, mock_context, mock_state):
         """input.arguments are kept alongside explicit messages (#7902)."""
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,
@@ -1050,9 +1048,7 @@ class TestAgentExecutorsCoverage:
         assert input_text == "IssueDescription: Printer jammed\nPlease help with this ticket."
 
     @_requires_powerfx
-    async def test_agent_executor_build_input_text_evaluates_argument_expressions(
-        self, mock_context, mock_state
-    ):
+    async def test_agent_executor_build_input_text_evaluates_argument_expressions(self, mock_context, mock_state):
         """Argument values that are expressions are evaluated before formatting (#7902)."""
         from agent_framework_declarative._workflows._executors_agents import (
             InvokeAzureAgentExecutor,

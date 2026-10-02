@@ -378,7 +378,8 @@ async def test_generated_object_id_dict_crud_and_projection(mongo_mocks, cursor_
     native_collection.delete_many.assert_awaited_once_with({"_id": {"$in": keys}})
 
 
-async def test_object_id_keys_round_trip_through_crud_tools(mongo_mocks, cursor_factory):
+@pytest.mark.parametrize("key_values", [{}, {"id": None}])
+async def test_object_id_keys_round_trip_through_crud_tools(mongo_mocks, cursor_factory, key_values):
     client, _, native_collection = mongo_mocks
     definition = VectorStoreCollectionDefinition([
         VectorStoreField("key", name="id", type_="ObjectId", is_auto_generated=True),
@@ -396,10 +397,12 @@ async def test_object_id_keys_round_trip_through_crud_tools(mongo_mocks, cursor_
     delete_tool = create_delete_tool(collection)
 
     schema = upsert_tool.parameters()["properties"]["records"]["items"]
-    assert schema["properties"]["id"] == {"type": "string", "pattern": "^[0-9a-fA-F]{24}$"}
+    assert schema["properties"]["id"] == {
+        "anyOf": [{"type": "string", "pattern": "^[0-9a-fA-F]{24}$"}, {"type": "null"}]
+    }
     assert schema["required"] == ["text"]
 
-    upserted = await upsert_tool.invoke(arguments={"records": [{"text": "hello"}]}, skip_parsing=True)
+    upserted = await upsert_tool.invoke(arguments={"records": [{**key_values, "text": "hello"}]}, skip_parsing=True)
     key = upserted["keys"][0]
     assert isinstance(key, str) and ObjectId.is_valid(key)
 
