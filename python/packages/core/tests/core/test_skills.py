@@ -78,7 +78,7 @@ class _NamedMockAgent(MockAgent):
 
 def _make_source_context(agent_name: str = "test-agent") -> SkillsSourceContext:
     """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
-    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 
 # Shared context for the common case where the agent/session are irrelevant.
@@ -2091,7 +2091,7 @@ class TestInlineSkill:
     def test_skill_is_abstract(self) -> None:
         """Skill base class cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            Skill()  # type: ignore[abstract]
+            Skill()  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     def test_inline_skill_is_skill(self) -> None:
         """InlineSkill is a subclass of Skill."""
@@ -7861,7 +7861,7 @@ class TestSkillsSourceContext:
 
     async def test_context_exposes_agent_and_session(self) -> None:
         """SkillsSourceContext carries the agent and optional session."""
-        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
         ctx = SkillsSourceContext(agent=agent)
         assert ctx.agent is agent
         assert ctx.session is None

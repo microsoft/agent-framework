@@ -3722,6 +3722,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
+    async def __aenter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the stream on block exit, including an early consumer break."""
+        await self.close()
+
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
             return
@@ -4033,8 +4040,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             await self._finish_consumption()
             raise
-        except Exception as exc:
-            await self._handle_stream_error(exc)
+        except BaseException as exc:
+            # CancelledError must reach close() too: a cancel landing in an
+            # async map/flat_map transform, hook, or gate otherwise leaves the
+            # provider stream suspended until GC. Hooks run first because they
+            # read self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() stays in finally so the provider
+            # stream is released even when a hook raises; the original
+            # exception always re-raises.
+            try:
+                await self._handle_stream_error(exc)
+            finally:
+                await self.close()
             raise
 
     async def close(self) -> None:
