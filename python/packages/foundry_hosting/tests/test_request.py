@@ -1,17 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Only the Responses request view and option policy are part of this slice."""
+"""Responses and Invocations request models and option policies."""
 
 from __future__ import annotations
 
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse
 
-from agent_framework_foundry_hosting import HostedResponseRequest
+from agent_framework_foundry_hosting import HostedResponseRequest, InvocationRun, response_input_messages
 from agent_framework_foundry_hosting._request import (
     prepare_response_options,
     response_run_options,
@@ -99,6 +99,29 @@ async def test_hook_uses_a_request_copy_and_does_not_mutate_defaults() -> None:
     assert payload["metadata"] == {"source": "caller"}
 
 
+async def test_explicit_message_migration_helper_converts_only_current_turn() -> None:
+    context = MagicMock(spec=ResponseContext)
+    context.response_id = "outer-id"
+    context.conversation_id = None
+    items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "current"}]}]
+    context.get_input_items = AsyncMock(return_value=items)
+    request = HostedResponseRequest(
+        cast(CreateResponse, {"input": "current"}),
+        context,
+        FoundryRequestScope("sandbox", "user", "call", True),
+        {},
+    )
+    converted = [MagicMock()]
+    with patch(
+        "agent_framework_foundry_hosting._responses._items_to_messages",
+        new=AsyncMock(return_value=converted),
+    ) as converter:
+        result = await response_input_messages(request)
+
+    assert result is converted
+    converter.assert_awaited_once_with(items, approval_storage=None)
+
+
 async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
     context = MagicMock(spec=ResponseContext)
     context.response_id = "outer-id"
@@ -133,3 +156,27 @@ def test_supported_unsupported_option_modes(mode: str) -> None:
 def test_unknown_unsupported_option_mode_fails_at_construction() -> None:
     with pytest.raises(ValueError, match="unsupported_options"):
         validate_unsupported_options("silent")
+
+
+def test_invocation_run_accepts_typed_messages_with_independent_defaults() -> None:
+    first = InvocationRun(messages="hello")
+    second = InvocationRun(messages="world", stream=True)
+    assert first.messages == "hello"
+    assert first.options == second.options == {}
+    assert first.options is not second.options
+    assert second.stream is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"messages": None}, "messages"),
+        ({"messages": [object()]}, "messages"),
+        ({"messages": "hello", "options": "not an object"}, "options"),
+        ({"messages": "hello", "options": {1: "wrong key"}}, "options"),
+        ({"messages": "hello", "stream": "true"}, "stream"),
+    ],
+)
+def test_invocation_run_rejects_invalid_parser_values(kwargs: dict[str, Any], error: str) -> None:
+    with pytest.raises(TypeError, match=error):
+        InvocationRun(**cast(Any, kwargs))

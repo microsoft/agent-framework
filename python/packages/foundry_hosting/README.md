@@ -29,6 +29,100 @@ The Responses host continues regular agents through its existing session store a
 existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
 requests must remain in the supported stores.
 
+## Native Responses workflows
+
+Use `workflow=` to host a built `Workflow` directly, without `.as_agent()`.
+`parse_response` is required and returns exactly one typed start input or a
+complete batch of validated pending replies:
+
+```python
+from pydantic import BaseModel
+
+from agent_framework_foundry_hosting import (
+    CheckpointStoreProvider,
+    HostedResponseRequest,
+    ResponsesHostServer,
+    WorkflowTurn,
+)
+
+
+class Ticket(BaseModel):
+    text: str
+
+
+def build_workflow(request: HostedResponseRequest):
+    return build_fresh_graph()  # stable workflow/executor IDs; fresh mutable resources
+
+
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]:
+    items = await request.get_input_items()
+    if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
+        return WorkflowTurn(responses=await request.get_workflow_responses())
+    return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
+
+
+ResponsesHostServer(
+    workflow=build_workflow,
+    parse_response=parse_response,
+    checkpoint_store_provider=CheckpointStoreProvider(
+        allowed_checkpoint_types=[f"{Ticket.__module__}:{Ticket.__qualname__}"],
+    ),
+)
+```
+
+A direct built workflow is single-use. Use a request-aware sync or async
+factory for continuation, approval/user-input pauses, or background recovery.
+The factory must return a freshly built graph and freshly owned executors,
+agents, clients, context providers, and mutable tools; hosting rejects known
+sharing rather than cloning or unwrapping it. Workflow names and executor IDs
+must remain stable so the exact scoped checkpoint can be restored.
+
+Native workflow state is scoped to the trusted platform user plus Foundry
+sandbox. Each outer stored `response.id` is bound to its exact MAF checkpoint,
+graph identity, lineage, pending reply authority, output, and usage. The host
+never chooses an unrelated latest checkpoint. Named conversations and
+`previous_response_id` continuations advance one conditional head; stale,
+forked, replayed, partial, duplicate, forged, cross-user, and cross-sandbox
+replies fail before execution.
+
+`store=False` writes no native host state or inner service history and rejects
+a pause that would require later resumption. Native `Agent` executors receive
+request options through the existing agent middleware boundary, with supported
+inner clients forced to `store=False`. A bare `RawAgent` is accepted only from a
+fresh factory when its model overrides are already materialized in unchanged
+defaults and a storing client explicitly defaults to `store=False`. Private
+provider continuation is rejected before output is paired or committed.
+
+For legacy message-input workflows, `response_input_messages(request)` converts
+only the current Responses turn to `list[Message]`. It does not load outer
+history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
+remains for this beta with a once-per-host deprecation warning because wrapper
+context providers, history, event projection, and request-info translation are
+real semantics and are not silently unwrapped.
+
+With `resilient_background=True`, the application must also enable the
+AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
+recover emitted output and usage without selecting newer unpaired workflow
+state. This is not an exactly-once guarantee for external tools: make
+side-effecting operations idempotent. Legacy unscoped workflow state is not
+read; migration starts a fresh Responses chain.
+
+For Responses integrations, use a factory when an MCP connection, provider, tool
+cache or client carries request identity. A Toolbox's streamable-HTTP writer
+inherits the context of the request that **connects** it; sharing that connection
+across callers can retain the first call ID. Create the Toolbox and its skills
+provider inside the factory, not at process startup.
+
+Factory agents are entered/exited for each request, including failed entry and
+cancellation. `Agent` manages context-managed clients and MCP tools, but it does
+not automatically manage every context provider or external credential. The
+[integration samples](../../samples/04-hosting/foundry-hosted-agents/) explicitly
+own their SDK transports, credentials and providers: Search is request-owned;
+Memory binds a fresh provider/project client to the trusted user and current call;
+custom Cosmos state uses user **and** sandbox namespaces with conditional writes.
+Only close resources that the factory creates and owns, never a supplied shared
+client or somebody else's credential.
+
 ## Responses agent history and storage
 
 The caller's `POST /responses` **`store` flag** controls whether the *outer* response is retrievable and whether
@@ -267,6 +361,41 @@ opaque composite identifier that preserves the boundaries between the platform s
 and user ID. Consumers must use it as a whole and must not parse it or depend on its internal
 representation. Repeated requests for the same identifier pair restore the saved session.
 Locally, the platform session ID is used unchanged.
+
+### Invocations agent requests and wire compatibility
+
+By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "stream": false}`. Applications can supply
+a sync or async `parse_request(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
+own JSON shape and MAF `Message` inputs. A sync or async `prepare_options(request, options)` hook can filter or replace
+a **copy** of this turn's caller options without changing the agent's `default_options`. It must return a mapping
+with string keys. The host rejects reserved platform/session fields, `store`, `extra_body`, and private continuation
+fields after the hook; callers cannot select another sandbox or enable downstream service continuation through
+runtime options. It also rejects agent execution controls: `additional_function_arguments`, `function_invocation_kwargs`,
+`client_kwargs`, `middleware`, `session`, `tools`, `instructions`, `compaction_strategy`, and `tokenizer`. Trusted tool
+arguments belong in developer-configured agent defaults or middleware/factories, not in request options or hook output.
+A hook may strip denied caller fields before validation; allowed generation and provider-specific options remain
+available. These restrictions apply to both wire formats and every `unsupported_options` policy.
+When an agent cannot accept runtime options, `unsupported_options="warn"` (default) logs and ignores
+them; `"ignore"` silently drops them and `"error"` rejects them. For request-scoped factories, unsupported options
+discovered after streaming starts are reported as an SSE `error` event with `status: 400`.
+
+**New default:** non-streaming success is JSON `{"response": "..."}`. Streaming success is real SSE
+`event: delta` with `{"text": "..."}`, followed by `event: done` with the platform sandbox `session_id`.
+The `done` event is sent only after the final MAF `ResponseStream` is finalized and the session is persisted.
+Client validation errors return JSON HTTP 400 before streaming where possible. Provider errors are logged and
+sanitized as JSON HTTP 500 or an SSE `error`; a cross-process ETag conflict is JSON HTTP 409 or an SSE `error`
+with `code: "session_conflict"` and `status: 409`. A stream may emit deltas before an error. The host serializes
+same-session requests in one process, but a CAS conflict can still follow external tool effects in separate
+processes; it does not guarantee exactly-once execution. See the
+[Invocations agent/parser example](../../samples/04-hosting/foundry-hosted-agents/invocations/basic/).
+
+**Deprecated opt-in:** set `InvocationsHostServer(agent, legacy_wire_format=True)` only for existing clients
+that must keep the previous plain-text non-streaming response and raw text-chunk streaming format. The host logs
+and emits a deprecation warning once on construction. Errors are never returned as successful text: non-stream
+failures still use JSON error statuses; a post-start legacy stream failure terminates the stream rather than
+injecting unexpected SSE framing. Migrate all opted-in clients to JSON/SSE; remove the compatibility mode only
+after those callers have migrated and a separate, deliberate breaking-change decision, never by silently
+switching an opted-in deployment.
 
 Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
 Session state must support `AgentSession` serialization. Use `register_state_type()` codecs for

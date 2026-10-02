@@ -1,21 +1,98 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Request-scoped Responses options and a view for developer hooks."""
+"""Foundry request models and per-turn options for protocol hosts."""
 
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Generic, Literal, TypeAlias, cast
 
+from agent_framework import AgentRunInputs, Content, Message, WorkflowInvocationKwargs
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item
+from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+InputT = TypeVar("InputT", default=Any)
+
+
+@dataclass(frozen=True)
+class WorkflowTurn(Generic[InputT]):
+    """A typed workflow start input or a complete batch of pending replies.
+
+    Args:
+        input: Application input accepted by the start executor. ``None`` is not a start input.
+        responses: Replies keyed by the exact pending workflow request IDs. The host validates
+            the batch against its scoped checkpoint before consuming any reply authority.
+        client_kwargs: Existing workflow kwargs forwarded to agent clients, not raw workflow run arguments.
+        function_invocation_kwargs: Existing workflow kwargs forwarded to tools. Trusted hosting
+            identity is supplied separately and cannot be overridden.
+        stream: Application streaming intent for protocols with a custom request parser.
+            Responses continues to use its native request's ``stream`` flag.
+    """
+
+    input: InputT | None = None
+    responses: Mapping[str, Any] | None = None
+    client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    stream: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.input is None and self.responses is None) or (self.input is not None and self.responses is not None):
+            raise ValueError("WorkflowTurn requires exactly one of input or non-empty responses.")
+        if self.responses is not None:
+            if (
+                not isinstance(self.responses, Mapping)
+                or not self.responses
+                or any(not isinstance(key, str) or not key for key in self.responses)
+            ):
+                raise ValueError("WorkflowTurn.responses must be a non-empty mapping of request IDs to replies.")
+            object.__setattr__(self, "responses", MappingProxyType(dict(self.responses)))
+        for name in ("client_kwargs", "function_invocation_kwargs"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, (Mapping, WorkflowInvocationKwargs)):
+                raise TypeError(f"WorkflowTurn.{name} must be a mapping or WorkflowInvocationKwargs.")
+        if not isinstance(self.stream, bool):
+            raise TypeError("WorkflowTurn.stream must be a boolean.")
+
+
+@dataclass(frozen=True)
+class InvocationRun:
+    """Messages, per-turn options, and streaming intent parsed from an Invocations request.
+
+    Args:
+        messages: MAF message input for this turn, including typed `Message` or `Content` values.
+        options: Caller generation options for this turn, separate from agent defaults.
+        stream: Whether to stream framed SSE events rather than return a JSON response.
+
+    Raises:
+        TypeError: If the messages, options, or streaming intent have invalid types.
+    """
+
+    messages: AgentRunInputs
+    options: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    stream: bool = False
+
+    def __post_init__(self) -> None:
+        if not (
+            isinstance(self.messages, (str, Content, Message))
+            or (
+                isinstance(self.messages, Sequence)
+                and all(isinstance(message, (str, Content, Message)) for message in self.messages)
+            )
+        ):
+            raise TypeError("InvocationRun.messages must be a string, Content, Message, or a sequence of them.")
+        if not isinstance(self.options, Mapping) or any(not isinstance(key, str) for key in self.options):
+            raise TypeError("InvocationRun.options must be a mapping with string keys.")
+        if not isinstance(self.stream, bool):
+            raise TypeError("InvocationRun.stream must be a boolean.")
+
 
 _HOST_CONTROLLED_FIELDS = frozenset({
     "agent",
@@ -86,6 +163,7 @@ class HostedResponseRequest:
         self.conversation_id = context.conversation_id
         self._context = context
         self._options: Mapping[str, Any] = MappingProxyType(dict(options))
+        self._workflow_responses: Callable[[], Awaitable[dict[str, Any]]] | None = None
 
     @property
     def options(self) -> Mapping[str, Any]:
@@ -104,6 +182,20 @@ class HostedResponseRequest:
         """Read this turn's text input, if present."""
         return await self._context.get_input_text()
 
+    async def get_workflow_responses(self) -> dict[str, Any]:
+        """Decode replies against this turn's exact scoped workflow checkpoint.
+
+        Use this explicitly in ``parse_response`` to resume a native workflow.
+        Unknown, duplicate, stale, and incomplete reply batches are rejected before
+        the host claims the workflow or executes any response handler.
+        """
+        if self._workflow_responses is None:
+            raise RuntimeError("Workflow replies require a native workflow host and a pending stored checkpoint.")
+        return await self._workflow_responses()
+
+    def _set_workflow_responses(self, loader: Callable[[], Awaitable[dict[str, Any]]]) -> None:
+        self._workflow_responses = loader
+
 
 OptionsHook: TypeAlias = Callable[
     [HostedResponseRequest, dict[str, Any]],
@@ -121,6 +213,18 @@ async def prepare_response_options(request: HostedResponseRequest, hook: Options
     if not isinstance(result, Mapping):
         raise TypeError("prepare_options must return a mapping of MAF run options.")
     request.set_options(result)
+
+
+async def response_input_messages(request: HostedResponseRequest) -> list[Message]:
+    """Convert only this Responses turn's input items to the legacy workflow message contract.
+
+    This explicit migration helper does not load outer history, restore checkpoints,
+    or decode pending native workflow replies. Native workflows should prefer typed
+    application inputs and use ``request.get_workflow_responses()`` for resumable pauses.
+    """
+    from ._responses import _items_to_messages  # pyright: ignore[reportPrivateUsage]
+
+    return await _items_to_messages(await request.get_input_items(), approval_storage=None)
 
 
 def validate_request_options(options: Mapping[str, Any]) -> None:

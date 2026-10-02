@@ -232,6 +232,22 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         """
         self._allowed_checkpoint_types = allowed_checkpoint_types
 
+    def validate_checkpoint_value(self, value: object) -> None:
+        """Verify a value can round-trip through this provider's restricted decoder.
+
+        Native hosts use this before claiming a stored typed workflow turn so an
+        omitted application allowlist fails before executors or tools run.
+        """
+        from agent_framework._workflows._checkpoint_encoding import (
+            decode_checkpoint_value,
+            encode_checkpoint_value,
+        )
+
+        decode_checkpoint_value(
+            encode_checkpoint_value(value),
+            allowed_types=frozenset(self._allowed_checkpoint_types or ()),
+        )
+
     def get_store(
         self,
         *,
@@ -243,11 +259,34 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
+        return self.get_store_for_scope(
+            context_id=context_id,
+            platform_context=platform_context,
+            scope=_store_scope(config, platform_context),
+        )
+
+    def get_store_for_scope(
+        self,
+        *,
+        scope: FoundryRequestScope | None,
+        context_id: str,
+        platform_context: FoundryAgentRequestContext,
+    ) -> CheckpointStorage:
+        """Create a checkpoint store using a host's already validated scope.
+
+        Native hosts use this after protocol-specific identity resolution.
+        ``get_store`` retains its strict configuration-based scope validation.
+
+        Args:
+            scope: Trusted user and sandbox scope resolved by the protocol host.
+            context_id: Native workflow lineage's checkpoint collection.
+            platform_context: The current request's storage authorization context.
+        """
         return FoundryCheckpointStore(
             context_id,
             platform_context,
             allowed_checkpoint_types=self._allowed_checkpoint_types,
-            scope=_store_scope(config, platform_context),
+            scope=scope,
         )
 
 
