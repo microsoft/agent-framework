@@ -6872,19 +6872,24 @@ class TestMCPIFCMetaLabels:
 
     @pytest.mark.parametrize("entrypoint", ["connect", "enter"])
     @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
-    @pytest.mark.parametrize("already_connected", [False, True])
+    @pytest.mark.parametrize(
+        ("already_connected", "already_bound"),
+        [(False, False), (True, False), (True, True)],
+        ids=["fresh", "connected-unbound", "connected-bound"],
+    )
     async def test_secure_mcp_proxy_setup_failure_preserves_live_connection_binding(
         self,
         entrypoint: str,
         failure_type: type[BaseException],
         already_connected: bool,
+        already_bound: bool,
     ):
         from agent_framework.security import SecureMCPToolProxy
 
         mcp_tool = _make_connected_mcp_discovery_tool()
         mcp_tool.is_connected = already_connected
         proxy = SecureMCPToolProxy(mcp_tool)
-        if already_connected:
+        if already_bound:
             mcp_tool._function_load_callback = proxy._function_load_callback
 
         async def open_connection(*_args: Any) -> Any:
@@ -6912,12 +6917,12 @@ class TestMCPIFCMetaLabels:
 
         if already_connected:
             assert mcp_tool.is_connected is True
-            assert mcp_tool._function_load_callback is proxy._function_load_callback
             close_mock.assert_not_called()
         else:
             assert mcp_tool.is_connected is False
-            assert mcp_tool._function_load_callback is None
             close_mock.assert_awaited_once()
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
 
     @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
     @pytest.mark.parametrize("already_bound", [False, True])

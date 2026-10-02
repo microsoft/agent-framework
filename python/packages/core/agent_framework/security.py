@@ -4471,7 +4471,7 @@ class SecureMCPToolProxy:
                 finally:
                     if callback_bound:
                         self._unbind_function_load_callback()
-            elif callback_bound and not self.is_connected:
+            elif callback_bound:
                 self._unbind_function_load_callback()
             raise
         return self
@@ -4499,7 +4499,7 @@ class SecureMCPToolProxy:
                 finally:
                     if callback_bound:
                         self._unbind_function_load_callback()
-            elif callback_bound and not self.is_connected:
+            elif callback_bound:
                 self._unbind_function_load_callback()
             raise
 
