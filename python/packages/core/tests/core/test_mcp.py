@@ -8141,6 +8141,78 @@ async def test_agent_run_supplies_mcp_connect_headers(
     assert initialize_headers[0].get("x-api-key") == "connect-token"
 
 
+async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
+
+    from httpx2 import AsyncClient, MockTransport, Request, Response
+
+    captured_methods: list[str] = []
+
+    async def mcp_v2_server_mock_handler(request: Request) -> Response:
+        if request.method == "DELETE":
+            return Response(200)
+
+        body = json.loads(request.content)
+        method = body["method"]
+        captured_methods.append(method)
+
+        if method == "initialize":
+            return Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "error": {"code": -32601, "message": "Method not found"},
+                },
+            )
+
+        if method == "server/discover":
+            return Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "supportedVersions": ["2026-07-28"],
+                        "capabilities": {"tools": {}},
+                    },
+                },
+            )
+
+        if method == "tools/list":
+            return Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "cacheScope": "private",
+                        "resultType": "complete",
+                        "ttlMs": 0,
+                        "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
+                    },
+                },
+            )
+
+        raise AssertionError(f"Unexpected MCP method: {method}")
+
+    user_client = AsyncClient(transport=MockTransport(mcp_v2_server_mock_handler))
+
+    tool_a = MCPStreamableHTTPTool(
+        name="a",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda _kw: {"Authorization": "Bearer token-a"},
+    )
+
+    async with tool_a:
+        assert tool_a.session is not None
+        assert tool_a.session.protocol_version == "2026-07-28"
+        assert [function.name for function in tool_a.functions] == ["greet"]
+
+    assert "server/discover" in captured_methods
+    assert "initialize" not in captured_methods
+
+
 async def test_agent_context_manager_authenticates_connect_with_closure_provider(
     client: SupportsChatGetResponse,
 ) -> None:
