@@ -181,6 +181,9 @@ class RawFoundryAgentChatClient(
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
 
+    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    """Service-owned state keys, including when this client is used by a generic Agent."""
+
     def __init__(
         self,
         *,

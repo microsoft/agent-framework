@@ -57,6 +57,10 @@ agent_framework/
 - **`RawAgent.open()` / `close()`** (inherited by `Agent`) - Explicitly enter the client's and configured MCP tools'
   async contexts, then release them along with lazily connected MCP tools. `async with agent` delegates to these
   methods; a partially failed `open()` closes resources already entered.
+- Providers that store service-owned continuation handles in `AgentSession.state` declare their keys through
+  `service_session_state_keys`. `as_tool(propagate_session=True)` combines declarations from the parent and child
+  agents and their clients to isolate those handles in both directions while ordinary application-owned state
+  propagates. Parent declarations travel through private function-invocation metadata, not tool arguments.
 
 ### Chat Clients (`_clients.py`)
 
