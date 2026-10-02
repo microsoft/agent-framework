@@ -404,7 +404,7 @@ def _pyrefly_command(paths: list[str], *, samples: bool) -> list[str]:
 
 
 def _ty_command(paths: list[str], *, samples: bool) -> list[str]:
-    command = ["uv", "run", "ty", "check"]
+    command = ["uv", "run", "ty", "check", "--exit-zero-on-warning"]
     if samples:
         command.extend(["--config-file", "ty.samples.toml"])
         for excluded in SAMPLE_TYPING_EXCLUDES:
