@@ -33,7 +33,7 @@ public sealed class ExpectedException : Exception
 /// </summary>
 internal sealed class RequestEmittingAgent : AIAgent
 {
-    private readonly AIContent _requestContent;
+    private readonly IReadOnlyList<AIContent> _requestContents;
     private readonly bool _completeOnResponse;
 
     /// <summary>
@@ -47,8 +47,19 @@ internal sealed class RequestEmittingAgent : AIAgent
     /// where the agent processes the tool result and produces a final answer.
     /// </param>
     public RequestEmittingAgent(AIContent requestContent, bool completeOnResponse = false)
+        : this([requestContent], completeOnResponse)
     {
-        this._requestContent = requestContent;
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="RequestEmittingAgent"/> that emits one update per content, modelling a stream
+    /// that spreads its request content over several updates.
+    /// </summary>
+    /// <param name="requestContents">The contents to emit, one update each.</param>
+    /// <param name="completeOnResponse">See the single-content constructor.</param>
+    public RequestEmittingAgent(IReadOnlyList<AIContent> requestContents, bool completeOnResponse = false)
+    {
+        this._requestContents = requestContents;
         this._completeOnResponse = completeOnResponse;
     }
 
@@ -79,7 +90,10 @@ internal sealed class RequestEmittingAgent : AIAgent
         else
         {
             // Emit the request content
-            yield return new AgentResponseUpdate(ChatRole.Assistant, [this._requestContent]);
+            foreach (AIContent requestContent in this._requestContents)
+            {
+                yield return new AgentResponseUpdate(ChatRole.Assistant, [requestContent]);
+            }
         }
     }
 }
@@ -377,6 +391,84 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         Assert.NotNull(retrievedContent);
         Assert.NotEqual(RequestId, retrievedContent.RequestId);
         Assert.EndsWith($":{RequestId}", retrievedContent.RequestId);
+    }
+
+    /// <summary>
+    /// Tests that a function call repeated across updates is raised once, keeping the first content seen,
+    /// instead of failing the run.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Test_AsAgent_RepeatedFunctionCallIsCoalescedAsync(bool emitAgentUpdateEvents)
+    {
+        // Arrange
+        const string CallId = "repeated-call-id";
+        const string FunctionName = "testFunction";
+        RequestEmittingAgent requestAgent = new(
+        [
+            new FunctionCallContent(CallId, FunctionName, new Dictionary<string, object?> { ["first"] = 1 }),
+            new FunctionCallContent(CallId, FunctionName, new Dictionary<string, object?> { ["second"] = 2 }),
+        ]);
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = emitAgentUpdateEvents });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeExceptionDetails: true)
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        // A repeated call ID is one pending request, not a failure.
+        Assert.Empty(updates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+
+        FunctionCallContent raised = Assert.Single(
+            updates.Where(update => update.RawRepresentation is RequestInfoEvent)
+                   .SelectMany(update => update.Contents.OfType<FunctionCallContent>()));
+
+        Assert.EndsWith($":{CallId}", raised.CallId, StringComparison.Ordinal);
+
+        // The first content seen for a request ID is the one kept.
+        Assert.NotNull(raised.Arguments);
+        Assert.Contains("first", raised.Arguments!.Keys);
+        Assert.DoesNotContain("second", raised.Arguments!.Keys);
+    }
+
+    /// <summary>
+    /// Tests that an approval request repeated across updates is raised once instead of failing the run.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Test_AsAgent_RepeatedToolApprovalRequestIsCoalescedAsync(bool emitAgentUpdateEvents)
+    {
+        // Arrange
+        const string RequestId = "repeated-request-id";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        RequestEmittingAgent requestAgent = new(
+        [
+            new ToolApprovalRequestContent(RequestId, mcpCall),
+            new ToolApprovalRequestContent(RequestId, mcpCall),
+        ]);
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = emitAgentUpdateEvents });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeExceptionDetails: true)
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        // A repeated request ID is one pending request, not a failure.
+        Assert.Empty(updates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+
+        ToolApprovalRequestContent raised = Assert.Single(
+            updates.Where(update => update.RawRepresentation is RequestInfoEvent)
+                   .SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+
+        Assert.EndsWith($":{RequestId}", raised.RequestId, StringComparison.Ordinal);
     }
 
     /// <summary>
