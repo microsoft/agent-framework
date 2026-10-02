@@ -35,6 +35,7 @@ internal sealed class RequestEmittingAgent : AIAgent
 {
     private readonly AIContent _requestContent;
     private readonly bool _completeOnResponse;
+    private readonly AIContent? _accompanyingContent;
 
     /// <summary>
     /// Creates a new <see cref="RequestEmittingAgent"/> that emits the given request content.
@@ -46,10 +47,15 @@ internal sealed class RequestEmittingAgent : AIAgent
     /// or <see cref="ToolApprovalResponseContent"/>.  This models realistic agent behaviour
     /// where the agent processes the tool result and produces a final answer.
     /// </param>
-    public RequestEmittingAgent(AIContent requestContent, bool completeOnResponse = false)
+    /// <param name="accompanyingContent">
+    /// When provided, emitted in the same update ahead of <paramref name="requestContent"/>, modelling an agent
+    /// that produces content alongside the request rather than the request on its own.
+    /// </param>
+    public RequestEmittingAgent(AIContent requestContent, bool completeOnResponse = false, AIContent? accompanyingContent = null)
     {
         this._requestContent = requestContent;
         this._completeOnResponse = completeOnResponse;
+        this._accompanyingContent = accompanyingContent;
     }
 
     private sealed class Session : AgentSession
@@ -79,8 +85,40 @@ internal sealed class RequestEmittingAgent : AIAgent
         else
         {
             // Emit the request content
-            yield return new AgentResponseUpdate(ChatRole.Assistant, [this._requestContent]);
+            yield return new AgentResponseUpdate(
+                ChatRole.Assistant,
+                this._accompanyingContent is null ? [this._requestContent] : [this._accompanyingContent, this._requestContent]);
         }
+    }
+}
+
+/// <summary>
+/// An agent that asks for approval and then answers that approval itself within the same run, modelling a run whose
+/// approval never becomes an external request.
+/// </summary>
+internal sealed class SelfApprovingAgent(ToolApprovalRequestContent requestContent) : AIAgent
+{
+    private sealed class Session : AgentSession
+    {
+        public Session() { }
+    }
+
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(new Session());
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        => new(new Session());
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => default;
+
+    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return new AgentResponseUpdate(ChatRole.Assistant, [requestContent]);
+        yield return new AgentResponseUpdate(ChatRole.User, [requestContent.CreateResponse(approved: true)]);
     }
 }
 
@@ -377,6 +415,174 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         Assert.NotNull(retrievedContent);
         Assert.NotEqual(RequestId, retrievedContent.RequestId);
         Assert.EndsWith($":{RequestId}", retrievedContent.RequestId);
+    }
+
+    /// <summary>
+    /// Tests that an approval request raised through the host executor's request port is surfaced once, carrying
+    /// the workflow-facing request ID, rather than also being streamed out with the agent-local request ID.
+    /// </summary>
+    [Fact]
+    public async Task Test_AsAgent_ToolApprovalRequestSurfacedOnceAsync()
+    {
+        // Arrange
+        const string RequestId = "single-surfacing-request-id";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        RequestEmittingAgent requestAgent = new(new ToolApprovalRequestContent(RequestId, mcpCall));
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent")
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate approvalUpdate = Assert.Single(
+            updates,
+            update => update.Contents.Any(content => content is ToolApprovalRequestContent));
+
+        // The workflow-facing request carries the only request ID the caller can answer with.
+        Assert.IsType<RequestInfoEvent>(approvalUpdate.RawRepresentation);
+
+        ToolApprovalRequestContent approvalRequest =
+            Assert.Single(approvalUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        Assert.EndsWith($":{RequestId}", approvalRequest.RequestId, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Tests that an approval request handled inside the workflow is still streamed out, because no
+    /// workflow-facing request is raised for it.
+    /// </summary>
+    [Fact]
+    public async Task Test_AsAgent_InterceptedToolApprovalRequestIsStreamedAsync()
+    {
+        // Arrange
+        const string RequestId = "intercepted-request-id";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        RequestEmittingAgent requestAgent = new(new ToolApprovalRequestContent(RequestId, mcpCall));
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUserInputRequests = true, EmitAgentUpdateEvents = true });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent")
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        ToolApprovalRequestContent internalRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.Equal(RequestId, internalRequest.RequestId);
+    }
+
+    /// <summary>
+    /// Tests that content emitted alongside a suppressed approval request still reaches the caller, with the
+    /// identity of the original update preserved.
+    /// </summary>
+    [Fact]
+    public async Task Test_AsAgent_ContentAccompanyingToolApprovalRequestIsPreservedAsync()
+    {
+        // Arrange
+        const string RequestId = "accompanied-request-id";
+        const string AccompanyingText = "Checking whether I may call that tool.";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        RequestEmittingAgent requestAgent = new(
+            new ToolApprovalRequestContent(RequestId, mcpCall),
+            accompanyingContent: new TextContent(AccompanyingText));
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent")
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate textUpdate = Assert.Single(
+            updates,
+            update => update.Contents.OfType<TextContent>().Any(text => text.Text == AccompanyingText));
+
+        Assert.Empty(textUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        Assert.Equal(ChatRole.Assistant, textUpdate.Role);
+
+        ToolApprovalRequestContent accompaniedRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.EndsWith($":{RequestId}", accompaniedRequest.RequestId, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Tests that the agent response event does not carry a second copy of an approval request that is raised
+    /// as a workflow-facing request.
+    /// </summary>
+    [Fact]
+    public async Task Test_AsAgent_ToolApprovalRequestSurfacedOnceWithResponseEventsAsync()
+    {
+        // Arrange
+        const string RequestId = "response-event-request-id";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        RequestEmittingAgent requestAgent = new(new ToolApprovalRequestContent(RequestId, mcpCall));
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions
+            {
+                InterceptUserInputRequests = false,
+                EmitAgentUpdateEvents = true,
+                EmitAgentResponseEvents = true,
+            });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeWorkflowOutputsInResponse: true)
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        ToolApprovalRequestContent raisedRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.EndsWith($":{RequestId}", raisedRequest.RequestId, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Tests that an approval the agent answers inside its own run is surfaced exactly once, since it never becomes
+    /// a workflow-facing request.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_AsAgent_SelfAnsweredToolApprovalRequestIsSurfacedOnceAsync(bool emitAgentResponseEvents)
+    {
+        // Arrange
+        const string RequestId = "self-answered-request-id";
+        McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
+        SelfApprovingAgent requestAgent = new(new ToolApprovalRequestContent(RequestId, mcpCall));
+        ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions
+            {
+                InterceptUserInputRequests = false,
+                EmitAgentUpdateEvents = true,
+                EmitAgentResponseEvents = emitAgentResponseEvents,
+            });
+        Workflow workflow = new WorkflowBuilder(agentBinding).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent("WorkflowAgent", includeWorkflowOutputsInResponse: emitAgentResponseEvents)
+                                                           .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                           .ToListAsync();
+
+        // Assert
+        ToolApprovalRequestContent selfAnsweredRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.Equal(RequestId, selfAnsweredRequest.RequestId);
+
+        // The approval has to keep its place ahead of the answer to it.
+        List<AIContent> approvalContents =
+            [.. updates.SelectMany(update => update.Contents)
+                       .Where(content => content is ToolApprovalRequestContent or ToolApprovalResponseContent)];
+
+        Assert.Equal(2, approvalContents.Count);
+        Assert.IsType<ToolApprovalRequestContent>(approvalContents[0]);
+        Assert.IsType<ToolApprovalResponseContent>(approvalContents[1]);
     }
 
     /// <summary>

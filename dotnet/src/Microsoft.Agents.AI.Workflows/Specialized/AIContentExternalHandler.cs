@@ -47,6 +47,17 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
 
     public bool HasPendingRequests => !this._pendingRequests.IsEmpty;
 
+    /// <summary>
+    /// Gets a value indicating whether requests are raised to an external caller through a request port,
+    /// rather than being handled by another executor inside the workflow.
+    /// </summary>
+    /// <remarks>
+    /// A request raised through the port is surfaced to the caller again, carrying the workflow-facing
+    /// request ID that the caller has to answer with. The executor that owns this handler uses this to
+    /// avoid also emitting the original request content as its own output.
+    /// </remarks>
+    public bool RaisesExternalRequests => !this.IsIntercepted;
+
     public Task ProcessRequestContentsAsync(Dictionary<string, TRequestContent> requests, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         IEnumerable<Task> requestTasks = from string requestId in requests.Keys
