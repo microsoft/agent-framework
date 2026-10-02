@@ -10,12 +10,10 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
-    <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
+    <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001</NoWarn>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
@@ -41,6 +39,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />

@@ -1,0 +1,20 @@
+﻿# Controls which files are excluded from the source-deploy ZIP (.gitignore syntax).
+azure.yaml
+.agentignore
+
+.env
+.env.*
+.azure/
+.git/
+
+bin/
+obj/
+out/
+*.user
+*.suo
+.vs/
+
+agent-files/
+.checkpoints/
+
+# Include local-feed/ and nuget.config so remote restore uses the prepared framework packages.
