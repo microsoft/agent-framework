@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import regex
@@ -12,6 +13,7 @@ from agent_framework import (
     AgentSession,
     Content,
     FileMemoryProvider,
+    FileSystemAgentFileStore,
     FunctionTool,
     InMemoryAgentFileStore,
 )
@@ -687,3 +689,18 @@ async def test_quota_rejection_preserves_existing_memory_content() -> None:
     result = await tools["file_memory_write"].invoke(arguments={"file_name": "plan.md", "content": "x" * 61})
     assert "Could not write" in _text(result) and "max_total_bytes" in _text(result)
     assert await store.read("user-1/plan.md") == "old"
+
+
+async def test_file_memory_list_reports_legacy_description_quota(tmp_path: Path) -> None:
+    """Listing refuses an oversized legacy description without discarding stored content."""
+    unlimited = FileSystemAgentFileStore(tmp_path)
+    await unlimited.write("user-1/notes.md", "body")
+    await unlimited.write("user-1/notes_description.md", "x" * 128)
+    store = FileSystemAgentFileStore(tmp_path, max_file_bytes=64)
+    _, tools = await _prepare(FileMemoryProvider(store=store, scope="user-1"))
+
+    result = _text(await tools["file_memory_ls"].invoke())
+
+    assert "Could not list memory files" in result and "max_file_bytes=64" in result
+    assert await unlimited.read("user-1/notes.md") == "body"
+    assert await unlimited.read("user-1/notes_description.md") == "x" * 128

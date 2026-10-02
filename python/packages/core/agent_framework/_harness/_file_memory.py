@@ -561,7 +561,10 @@ class FileMemoryProvider(ContextProvider):
                 description: str | None = None
                 desc_file_name = _description_file_name(file_name)
                 if desc_file_name in available:
-                    description = await self._active_store().read(_combine_paths(working_folder, desc_file_name))
+                    try:
+                        description = await self._active_store().read(_combine_paths(working_folder, desc_file_name))
+                    except _FileStoreQuotaError as exc:
+                        return f"Could not list memory files: {exc}"
                 results.append({"name": file_name, "type": "file", "description": description})
             return results
 

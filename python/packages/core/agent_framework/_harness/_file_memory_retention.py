@@ -140,7 +140,7 @@ class FileMemoryRetentionManager:
 
     @asynccontextmanager
     async def _locked(self, *, load_policy: bool = True) -> AsyncGenerator[None]:
-        self._prepare_control()
+        await _complete(asyncio.to_thread(self._prepare_control))
         # Keep the coordination pathname stable, including on Windows. Native OS
         # locks release after process death; a soft-file fallback cannot promise that.
         # https://py-filelock.readthedocs.io/en/latest/changelog.html
@@ -149,65 +149,68 @@ class FileMemoryRetentionManager:
         )
         try:
             async with lock:
-                for path in (self._control / "staging").iterdir():
-                    self._safe(path)
-                    if path.is_file() and path.name.endswith(".tmp"):
-                        path.unlink()
+
+                def cleanup_staging() -> None:
+                    for path in (self._control / "staging").iterdir():
+                        self._safe(path)
+                        if path.is_file() and path.name.endswith(".tmp"):
+                            path.unlink()
+
+                await _complete(asyncio.to_thread(cleanup_staging))
                 if load_policy:
-                    self._load_policy()
+                    policy = await _complete(asyncio.to_thread(self._load_policy))
+                    self._policy = policy
+                    self.retention_seconds = policy["retention_seconds"]
                 yield
         except Timeout as exc:
             raise TimeoutError("Timed out acquiring the file-memory management lock.") from exc
 
-    def _load_policy(self) -> None:
+    def _load_policy(self) -> dict[str, Any]:
         path = self._control / "policy.json"
         self._safe(path)
         if not path.exists():
-            self._policy = {
+            policy = {
                 "schema_version": 1,
                 "retention_seconds": self._initial_retention,
                 "generation": 0,
                 "resumed_expires_at": None,
             }
-            self._save_policy()
-        else:
-            if path.stat().st_size > 16384:
-                raise ValueError("The file-memory policy exceeds its supported size.")
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except (UnicodeError, json.JSONDecodeError) as exc:
-                raise ValueError("The file-memory policy is invalid; management is paused.") from exc
-            if (
-                not isinstance(raw, dict)
-                or cast(dict[str, Any], raw).get("schema_version") != 1
-                or isinstance(cast(dict[str, Any], raw).get("schema_version"), bool)
-            ):
-                raise ValueError("Unsupported file-memory policy version; management is paused.")
-            raw = cast(dict[str, Any], raw)
-            if not {"retention_seconds", "generation", "resumed_expires_at"}.issubset(raw):
-                raise ValueError("The file-memory policy is missing required fields.")
-            _FileStoreLimits.create(raw["retention_seconds"], None, None)
-            generation, deadline = raw.get("generation"), raw.get("resumed_expires_at")
-            if (
-                type(generation) is not int
-                or generation < 0
-                or (
-                    deadline is not None
-                    and (
-                        isinstance(deadline, bool)
-                        or not isinstance(deadline, (int, float))
-                        or not math.isfinite(deadline)
-                    )
+            self._save_policy(policy)
+            return policy
+        if path.stat().st_size > 16384:
+            raise ValueError("The file-memory policy exceeds its supported size.")
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError("The file-memory policy is invalid; management is paused.") from exc
+        if (
+            not isinstance(raw, dict)
+            or cast(dict[str, Any], raw).get("schema_version") != 1
+            or isinstance(cast(dict[str, Any], raw).get("schema_version"), bool)
+        ):
+            raise ValueError("Unsupported file-memory policy version; management is paused.")
+        raw = cast(dict[str, Any], raw)
+        if not {"retention_seconds", "generation", "resumed_expires_at"}.issubset(raw):
+            raise ValueError("The file-memory policy is missing required fields.")
+        _FileStoreLimits.create(raw["retention_seconds"], None, None)
+        generation, deadline = raw.get("generation"), raw.get("resumed_expires_at")
+        if (
+            type(generation) is not int
+            or generation < 0
+            or (
+                deadline is not None
+                and (
+                    isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline)
                 )
-                or (generation > 0 and deadline is None)
-            ):
-                raise ValueError("The file-memory policy has invalid recovery metadata.")
-            self._policy = raw
-        self.retention_seconds = self._policy["retention_seconds"]
+            )
+            or (generation > 0 and deadline is None)
+        ):
+            raise ValueError("The file-memory policy has invalid recovery metadata.")
+        return raw
 
-    def _save_policy(self) -> None:
+    def _save_policy(self, policy: dict[str, Any]) -> None:
         path = self._control / "policy.json"
-        payload = json.dumps(self._policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
         if len(payload) > 16384:
             raise ValueError("The file-memory policy exceeds its supported size.")
         self._check_growth(path, len(payload))
@@ -220,6 +223,7 @@ class FileMemoryRetentionManager:
             retention_seconds: Positive lifetime in seconds, or None to disable TTL.
 
         Disabling retains deadlines and permits ordinary reads without renewal.
+        Already-confirmed deletions continue to completion while TTL is disabled.
         Reenabling grants every retained ready record a complete new lifetime.
         Same-value calls are no-ops. Changing one positive value to another only
         changes subsequent successful writes/uses. Construction/restart reads an
@@ -238,8 +242,8 @@ class FileMemoryRetentionManager:
                 if previous is None and retention_seconds is not None:
                     policy["generation"] += 1
                     policy["resumed_expires_at"] = self._now() + retention_seconds
+                await asyncio.to_thread(self._save_policy, policy)
                 self._policy = policy
-                self._save_policy()
                 self.retention_seconds = retention_seconds
 
         await _complete(work())
@@ -341,7 +345,7 @@ class FileMemoryRetentionManager:
             resulting_bytes + reserve > max(total + largest, self._capacity.max_total_bytes)
         ):
             raise _FileStoreQuotaError(
-                "shared_max_total_bytes", self._capacity.max_total_bytes, resulting_bytes + largest
+                "shared_max_total_bytes", self._capacity.max_total_bytes, resulting_bytes + reserve
             )
 
     @staticmethod
@@ -368,9 +372,13 @@ class FileMemoryRetentionManager:
     async def _write_index(self, store: FileSystemAgentFileStore, view: _RetainedFileStore, folder: Path) -> None:
         path = folder / "memories.md"
         payload = (await view.index_text(folder.relative_to(store.root_path).as_posix())).encode("utf-8")
-        self._check_store_growth(store, path, len(payload))
-        self._check_growth(path, len(payload))
-        self._atomic(path, payload)
+
+        def write_index() -> None:
+            self._check_store_growth(store, path, len(payload))
+            self._check_growth(path, len(payload))
+            self._atomic(path, payload)
+
+        await asyncio.to_thread(write_index)
 
     def _atomic(self, path: Path, payload: bytes, *, overwrite: bool = True) -> None:
         temporary = self._control / "staging" / f"{uuid.uuid4().hex}.tmp"
@@ -428,7 +436,7 @@ class FileMemoryRetentionManager:
         async def work() -> _ResultT:
             async with self._locked():
                 self._safe(backing.root_path)
-                state = self._load(backing)
+                state = await asyncio.to_thread(self._load, backing)
                 view = _RetainedFileStore(self, backing, state, started_at, purpose)
                 result = await action(view)
                 if view.changed:
@@ -443,7 +451,7 @@ class FileMemoryRetentionManager:
                                 self._now() + self.retention_seconds if self.retention_seconds is not None else None
                             )
                     try:
-                        self._save(backing, state)
+                        await asyncio.to_thread(self._save, backing, state)
                     except (ValueError, OSError) as exc:
                         if view.pending or view.deleted:
                             raise _FileMemoryCommitError(
@@ -461,33 +469,44 @@ class FileMemoryRetentionManager:
         backing = self._validate_store(store)
         token_lock: AsyncFileLock | None = None
         token_path: Path | None = None
-        try:
+
+        async def register() -> float:
+            nonlocal token_lock, token_path
             async with self._locked():
-                self._load(backing)
+                await asyncio.to_thread(self._load, backing)
                 tokens = self._control / "active" / self._scope(backing)
                 self._safe(self._control / "active")
                 self._safe(tokens)
-                tokens.mkdir(parents=True, exist_ok=True)
+                await asyncio.to_thread(tokens.mkdir, parents=True, exist_ok=True)
                 token_path = tokens / f"{uuid.uuid4().hex}.lock"
-                self._check_growth(token_path, 0)
+                await asyncio.to_thread(self._check_growth, token_path, 0)
                 token_lock = AsyncFileLock(token_path, timeout=0, preserve_lock_file=True, fallback_to_soft=False)
                 await token_lock.acquire()
-                started_at = self._now()
+                return self._now()
+
+        try:
+            started_at = await _complete(register())
             yield started_at  # ruff: ignore[unnecessary-assign-before-yield] - capture visibility while registration holds the lock
         finally:
             if token_lock is not None:
+                held_lock = cast(AsyncFileLock, token_lock)
 
                 async def release() -> None:
                     try:
                         async with self._locked(load_policy=False):
-                            await token_lock.release()
+                            await held_lock.release()
                             if token_path is not None:
-                                token_path.unlink(missing_ok=True)
-                                if token_path.parent.exists() and not any(token_path.parent.iterdir()):
-                                    token_path.parent.rmdir()
+                                released_path = token_path
+
+                                def remove_token() -> None:
+                                    released_path.unlink(missing_ok=True)
+                                    if released_path.parent.exists() and not any(released_path.parent.iterdir()):
+                                        released_path.parent.rmdir()
+
+                                await asyncio.to_thread(remove_token)
                     finally:
                         # A broken policy/control directory must not pin an OS lease.
-                        await token_lock.release()
+                        await held_lock.release()
 
                 await _complete(release())
 
@@ -500,7 +519,7 @@ class FileMemoryRetentionManager:
         if not tokens.exists():
             return False
         active = False
-        for path in tokens.iterdir():
+        for path in await asyncio.to_thread(lambda: list(tokens.iterdir())):
             self._safe(path)
             if (
                 not path.is_file()
@@ -517,13 +536,17 @@ class FileMemoryRetentionManager:
                 active = True
             else:
                 await probe.release()
-                path.unlink(missing_ok=True)
+                await asyncio.to_thread(path.unlink, missing_ok=True)
         if not active:
-            tokens.rmdir()
+            await asyncio.to_thread(tokens.rmdir)
         return active
 
     async def collect(self) -> int:
-        """Delete registered expired memories, retaining active or uncertain scopes."""
+        """Delete registered expired memories and finish confirmed deletions.
+
+        Disabling TTL stops new expiry decisions; already-confirmed deletions still finish.
+        Active and uncertain scopes remain protected.
+        """
 
         async def work() -> int:
             async with self._locked():
@@ -537,7 +560,7 @@ class FileMemoryRetentionManager:
         active = self._control / "active"
         self._safe(active)
         if active.exists():
-            for tokens in active.iterdir():
+            for tokens in await asyncio.to_thread(lambda: list(active.iterdir())):
                 self._safe(tokens)
                 if (
                     not tokens.is_dir()
@@ -547,15 +570,17 @@ class FileMemoryRetentionManager:
                     raise ValueError("Unexpected request protection metadata.")
                 if await self._tokens_active(tokens.name):
                     active_scopes.add(tokens.name)
-        if self.retention_seconds is None:
-            return 0
-        for root in list(self.directory.iterdir()):
+        for root in await asyncio.to_thread(lambda: list(self.directory.iterdir())):
             if root == self._control or not root.is_dir():
                 continue
             try:
                 self._safe(root)
                 backing = FileSystemAgentFileStore(root)
-                state = self._load(backing)
+                state = await asyncio.to_thread(self._load, backing)
+                if self.retention_seconds is None and not any(
+                    record["state"] == "deleting" for record in state["entries"].values()
+                ):
+                    continue
                 limits = self._stored_limits(state)
                 if limits is not None:
                     backing = FileSystemAgentFileStore(
@@ -567,7 +592,7 @@ class FileMemoryRetentionManager:
                 if self._scope(backing) in active_scopes:
                     continue
                 view = _RetainedFileStore(self, backing, state, None, "gc")
-                files = self._files(root)
+                files = await asyncio.to_thread(self._files, root)
                 paths = {self._key(backing, p): p for p in files}
                 folders = {self._key(backing, p.parent): p.parent for p in files}
                 for key, record in list(state["entries"].items()):
@@ -575,7 +600,9 @@ class FileMemoryRetentionManager:
                     if record["state"] == "updating":
                         logger.warning("Retaining interrupted memory update; explicit repair is required.")
                         continue
-                    if record["state"] != "deleting" and (deadline is None or deadline > self._now()):
+                    if record["state"] != "deleting" and (
+                        self.retention_seconds is None or deadline is None or deadline > self._now()
+                    ):
                         continue
                     body, folder = paths.get(key), folders.get(record["folder"])
                     if body is not None and (
@@ -585,53 +612,70 @@ class FileMemoryRetentionManager:
                     ):
                         raise ValueError("Inconsistent file-memory lifecycle references.")
                     record["state"] = "deleting"
-                    self._save(backing, state, reclaim=True)
+                    await asyncio.to_thread(self._save, backing, state, reclaim=True)
                     if body is not None:
-                        body.unlink(missing_ok=True)
+                        await asyncio.to_thread(body.unlink, missing_ok=True)
                     description = paths.get(record["description"])
                     if description is not None:
                         from ._file_memory import _description_file_name  # pyright: ignore[reportPrivateUsage]
 
-                        referenced = any(
-                            p.exists()
-                            and not view.internal(p.name)
-                            and p.parent == description.parent
-                            and os.path.normcase(_description_file_name(p.name)) == os.path.normcase(description.name)
-                            for p in files
-                        )
-                        if not referenced:
-                            description.unlink(missing_ok=True)
+                        def remove_description(path: Path, sources: list[Path]) -> None:
+                            referenced = any(
+                                p.exists()
+                                and not _RetainedFileStore.internal(p.name)
+                                and p.parent == path.parent
+                                and os.path.normcase(_description_file_name(p.name)) == os.path.normcase(path.name)
+                                for p in sources
+                            )
+                            if not referenced:
+                                path.unlink(missing_ok=True)
+
+                        await asyncio.to_thread(remove_description, description, files)
                     del state["entries"][key]
-                    if folder is not None and folder.exists():
+                    if folder is not None and await asyncio.to_thread(folder.exists):
                         index = folder / "memories.md"
-                        if any(not view.internal(p.name) for p in folder.iterdir() if p.is_file()):
+
+                        def has_bodies(path: Path) -> bool:
+                            return any(not _RetainedFileStore.internal(p.name) for p in path.iterdir() if p.is_file())
+
+                        if await asyncio.to_thread(has_bodies, folder):
                             try:
                                 await self._write_index(backing, view, folder)
                             except _FileStoreQuotaError:
                                 # The index is a projection; insufficient space must not
                                 # leave an already-deleted body permanently tombstoned.
-                                index.unlink(missing_ok=True)
+                                await asyncio.to_thread(index.unlink, missing_ok=True)
                                 logger.warning("Deferred memory index rebuild due to capacity; stale index removed.")
                         else:
-                            index.unlink(missing_ok=True)
-                            if not any(folder.iterdir()):
-                                folder.rmdir()
-                    self._save(backing, state, reclaim=True)
+
+                            def remove_empty_index(path: Path) -> None:
+                                (path / "memories.md").unlink(missing_ok=True)
+                                if not any(path.iterdir()):
+                                    path.rmdir()
+
+                            await asyncio.to_thread(remove_empty_index, folder)
+                    await asyncio.to_thread(self._save, backing, state, reclaim=True)
                     removed += 1
-                directories: list[Path] = []
-                pending = [root]
-                while pending:
-                    directory = pending.pop()
-                    self._safe(directory)
-                    directories.append(directory)
-                    pending.extend(path for path in directory.iterdir() if path.is_dir())
-                for directory in reversed(directories[1:]):
-                    if not any(directory.iterdir()):
-                        directory.rmdir()
-                if not state["entries"] and not self._files(root):
-                    self._manifest_path(backing).unlink(missing_ok=True)
-                    if not any(root.iterdir()):
-                        root.rmdir()
+
+                def prune_empty_directories(root_path: Path, manifest: Path, empty: bool) -> None:
+                    directories: list[Path] = []
+                    pending = [root_path]
+                    while pending:
+                        directory = pending.pop()
+                        self._safe(directory)
+                        directories.append(directory)
+                        pending.extend(path for path in directory.iterdir() if path.is_dir())
+                    for directory in reversed(directories[1:]):
+                        if not any(directory.iterdir()):
+                            directory.rmdir()
+                    if empty and not self._files(root_path):
+                        manifest.unlink(missing_ok=True)
+                        if not any(root_path.iterdir()):
+                            root_path.rmdir()
+
+                await asyncio.to_thread(
+                    prune_empty_directories, root, self._manifest_path(backing), not state["entries"]
+                )
             except (ValueError, OSError) as exc:
                 logger.warning("Skipped file-memory cleanup (%s).", type(exc).__name__)
         return removed
@@ -656,8 +700,8 @@ class FileMemoryRetentionManager:
             async with self._locked():
                 if await self._active(backing):
                     raise ValueError("Cannot repair a memory scope while a request is active.")
-                state = self._load(backing)
-                files = self._files(backing.root_path)
+                state = await asyncio.to_thread(self._load, backing)
+                files = await asyncio.to_thread(self._files, backing.root_path)
                 paths = {self._key(backing, path): path for path in files}
                 folders = {self._key(backing, path.parent): path.parent for path in files}
                 view = _RetainedFileStore(self, backing, state, None, "repair")
@@ -681,7 +725,7 @@ class FileMemoryRetentionManager:
                 for folder in affected:
                     await self._write_index(backing, view, folder)
                 if repaired:
-                    self._save(backing, state)
+                    await asyncio.to_thread(self._save, backing, state)
                 return repaired
 
         return await _complete(work())
@@ -758,7 +802,7 @@ class _RetainedFileStore(AgentFileStore):
             self.changed = True
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
-        target = self._path(path)
+        target = await asyncio.to_thread(self._path, path)
         try:
             limits = self.backing._limits  # pyright: ignore[reportPrivateUsage]
             sizing = limits or _FileStoreLimits(
@@ -766,56 +810,67 @@ class _RetainedFileStore(AgentFileStore):
                 None,
                 self.manager._capacity.max_total_bytes if self.manager._capacity else None,  # pyright: ignore[reportPrivateUsage]
             )
-            if not overwrite and target.exists():
-                raise FileExistsError("The memory file already exists.")
-            size = sizing.content_size(content)
+            size = await asyncio.to_thread(sizing.content_size, content)
 
-            def check() -> None:
-                self.manager._check_store_growth(self.backing, target, size)  # pyright: ignore[reportPrivateUsage]
-                if self.internal(target.name):
-                    self.manager._check_growth(target, size)  # pyright: ignore[reportPrivateUsage]
-                    return
-                key = self.manager._key(self.backing, target)  # pyright: ignore[reportPrivateUsage]
-                previous = self.state["entries"].get(key)
-                record: dict[str, Any] = {
-                    **(previous or {}),
-                    "state": "ready",
-                    "expires_at": self.manager._now() + self.manager.retention_seconds  # pyright: ignore[reportPrivateUsage]
-                    if self.manager.retention_seconds is not None
-                    else None,
-                    "generation": self.manager._policy["generation"],  # pyright: ignore[reportPrivateUsage]
-                    "folder": self.manager._key(self.backing, target.parent),  # pyright: ignore[reportPrivateUsage]
-                    "description": self.manager._key(self.backing, target.with_name(self._description(target.name))),  # pyright: ignore[reportPrivateUsage]
-                }
-                self.state["entries"][key] = record
+            async def check() -> None:
+                candidate: dict[str, Any] | None = None
                 config: dict[str, Any] = {
                     **(self.state.get("store_limits") or {}),
                     "max_file_bytes": limits.max_file_bytes if limits else None,
                     "max_files": limits.max_files if limits else None,
                     "max_total_bytes": limits.max_total_bytes if limits else None,
                 }
-                self.state["store_limits"] = config
-                payload_size = len(json.dumps(self.state, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-                # A finite float's JSON representation is shorter than 32 bytes;
-                # reserve its maximum field width before touching the body.
-                if record["expires_at"] is not None:
-                    payload_size += max(0, 32 - len(json.dumps(record["expires_at"])))
-                if previous is None:
-                    self.state["entries"].pop(key)
-                else:
-                    self.state["entries"][key] = previous
-                self.manager._check_combined_growth(  # pyright: ignore[reportPrivateUsage]
-                    [(target, size), (self.manager._manifest_path(self.backing), payload_size)]  # pyright: ignore[reportPrivateUsage]
-                )
+                deadline: float | None = None
+                if not self.internal(target.name):
+                    deadline = (
+                        self.manager._now() + self.manager.retention_seconds  # pyright: ignore[reportPrivateUsage]
+                        if self.manager.retention_seconds is not None
+                        else None
+                    )
+                    key = self.manager._key(self.backing, target)  # pyright: ignore[reportPrivateUsage]
+                    previous = self.state["entries"].get(key)
+                    description_path = target.with_name(self._description(target.name))
+                    record: dict[str, Any] = {
+                        **(previous or {}),
+                        "state": "ready",
+                        "expires_at": deadline,
+                        "generation": self.manager._policy["generation"],  # pyright: ignore[reportPrivateUsage]
+                        "folder": self.manager._key(self.backing, target.parent),  # pyright: ignore[reportPrivateUsage]
+                        "description": self.manager._key(self.backing, description_path),  # pyright: ignore[reportPrivateUsage]
+                    }
+                    candidate = {
+                        **self.state,
+                        "entries": {**self.state["entries"], key: record},
+                        "store_limits": config,
+                    }
+
+                def check_files() -> None:
+                    if not overwrite and target.exists():
+                        raise FileExistsError("The memory file already exists.")
+                    self.manager._check_store_growth(self.backing, target, size)  # pyright: ignore[reportPrivateUsage]
+                    if candidate is None:
+                        self.manager._check_growth(target, size)  # pyright: ignore[reportPrivateUsage]
+                        return
+                    payload_size = len(json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+                    # Reserve the maximum finite-float width before changing content.
+                    if deadline is not None:
+                        payload_size += max(0, 32 - len(json.dumps(deadline)))
+                    self.manager._check_combined_growth(  # pyright: ignore[reportPrivateUsage]
+                        [(target, size), (self.manager._manifest_path(self.backing), payload_size)]  # pyright: ignore[reportPrivateUsage]
+                    )
+
+                await asyncio.to_thread(check_files)
+                if candidate is not None:
+                    self.state["store_limits"] = config
 
             try:
-                check()
+                await check()
             except _FileStoreQuotaError:
                 await self.manager._collect_locked()  # pyright: ignore[reportPrivateUsage]
-                loaded = self.manager._load(self.backing)  # pyright: ignore[reportPrivateUsage]
+                loaded = await asyncio.to_thread(self.manager._load, self.backing)  # pyright: ignore[reportPrivateUsage]
                 self.state.clear()
                 self.state.update(loaded)
-                check()
+                await check()
             if not self.internal(target.name):
                 key = self.manager._key(self.backing, target)  # pyright: ignore[reportPrivateUsage]
                 record = self.state["entries"].get(key)
@@ -829,20 +884,21 @@ class _RetainedFileStore(AgentFileStore):
                     "folder": self.manager._key(self.backing, target.parent),  # pyright: ignore[reportPrivateUsage]
                     "description": self.manager._key(self.backing, target.with_name(self._description(target.name))),  # pyright: ignore[reportPrivateUsage]
                 }
-                self.manager._save(self.backing, self.state)  # pyright: ignore[reportPrivateUsage]
+                await asyncio.to_thread(self.manager._save, self.backing, self.state)  # pyright: ignore[reportPrivateUsage]
                 try:
-                    self.manager._check_growth(target, size)  # pyright: ignore[reportPrivateUsage]
+                    await asyncio.to_thread(self.manager._check_growth, target, size)  # pyright: ignore[reportPrivateUsage]
                 except _FileStoreQuotaError:
                     if record is None:
                         self.state["entries"].pop(key, None)
                     else:
                         self.state["entries"][key] = record
-                    self.manager._save(self.backing, self.state, reclaim=True)  # pyright: ignore[reportPrivateUsage]
+                    await asyncio.to_thread(self.manager._save, self.backing, self.state, reclaim=True)  # pyright: ignore[reportPrivateUsage]
                     raise
                 self.pending.add(key)
                 self.changed = True
-            self.manager._check_growth(target, size)  # pyright: ignore[reportPrivateUsage]
-            await asyncio.to_thread(self.manager._atomic, target, content.encode("utf-8"), overwrite=overwrite)  # pyright: ignore[reportPrivateUsage]
+            await asyncio.to_thread(self.manager._check_growth, target, size)  # pyright: ignore[reportPrivateUsage]
+            payload = await asyncio.to_thread(content.encode, "utf-8")
+            await asyncio.to_thread(self.manager._atomic, target, payload, overwrite=overwrite)  # pyright: ignore[reportPrivateUsage]
         except BaseException:
             self.failed = True
             raise
@@ -885,22 +941,27 @@ class _RetainedFileStore(AgentFileStore):
         return content
 
     async def delete(self, path: str) -> bool:
-        target = self._path(path)
+        target = await asyncio.to_thread(self._path, path)
         if not self.internal(target.name):
             key = self.manager._key(self.backing, target)  # pyright: ignore[reportPrivateUsage]
             record = self.state["entries"].get(key)
             if record is not None:
                 record["state"] = "deleting"
-                self.manager._save(self.backing, self.state, reclaim=True)  # pyright: ignore[reportPrivateUsage]
+                await asyncio.to_thread(self.manager._save, self.backing, self.state, reclaim=True)  # pyright: ignore[reportPrivateUsage]
                 self.deleted.add(key)
                 self.changed = True
         elif target.name.lower().endswith("_description.md") and target.parent.exists():
-            if any(
-                p.is_file()
-                and not self.internal(p.name)
-                and os.path.normcase(self._description(p.name)) == os.path.normcase(target.name)
-                for p in target.parent.iterdir()
-            ):
+
+            def referenced() -> bool:
+                return any(
+                    p.is_file()
+                    and not self.internal(p.name)
+                    and self.manager._key(self.backing, p) not in self.pending  # pyright: ignore[reportPrivateUsage]
+                    and os.path.normcase(self._description(p.name)) == os.path.normcase(target.name)
+                    for p in target.parent.iterdir()
+                )
+
+            if await asyncio.to_thread(referenced):
                 return False
         try:
             return await asyncio.to_thread(self.backing._delete_file_sync, target)  # pyright: ignore[reportPrivateUsage]

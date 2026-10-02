@@ -194,8 +194,9 @@ await retention.set_retention(None)         # disable expiration; retain metadat
 await retention.set_retention(30 * 86400)   # explicitly resume with a complete new TTL
 ```
 
-While disabled, reads remain available without renewal and TTL GC deletes no memories;
-cleanup of dead request-protection markers continues.
+While disabled, reads remain available without renewal and GC starts no new expiry
+deletions. Already-confirmed deletions continue to completion, including after an
+interruption; cleanup of dead request-protection markers also continues.
 Resuming grants still-present, registered `ready` records a complete lifetime from resume.
 Repeated same-value calls do nothing. Changing one positive TTL to another affects new
 writes and subsequent successful uses, not all existing deadlines. Deleted records cannot

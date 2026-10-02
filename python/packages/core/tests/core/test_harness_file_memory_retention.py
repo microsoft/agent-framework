@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
+from filelock import AsyncFileLock, Timeout
 
 from agent_framework import (
     AgentSession,
@@ -801,3 +804,161 @@ async def test_read_only_managed_requests_do_not_allocate_empty_data_directories
     assert await _call(tools, "file_memory_ls") == "[]"
     assert "not found" in await _call(tools, "file_memory_read", file_name="notes.md")
     assert not store.root_path.exists()
+
+
+@pytest.mark.parametrize("other_body", ["absent", "managed", "legacy"])
+async def test_managed_overwrite_clears_omitted_description_unless_shared(tmp_path: Path, other_body: str) -> None:
+    manager = FileMemoryRetentionManager(tmp_path, retention_seconds=10)
+    store = FileSystemAgentFileStore(tmp_path / "owner")
+    _, tools = await _prepare(FileMemoryProvider(store, retention=manager))
+    await _call(tools, "file_memory_write", file_name="notes.md", content="old", description="summary")
+    if other_body == "managed":
+        await _call(tools, "file_memory_write", file_name="notes.txt", content="other", description="summary")
+    elif other_body == "legacy":
+        await store.write("conversation/notes.txt", "other")
+
+    assert "written" in await _call(tools, "file_memory_write", file_name="notes.md", content="new")
+
+    expected = None if other_body == "absent" else "summary"
+    assert await store.read("conversation/notes_description.md") == expected
+    listed = json.loads(await _call(tools, "file_memory_ls"))
+    assert next(item for item in listed if item["name"] == "notes.md")["description"] == expected
+    index = await store.read("conversation/memories.md") or ""
+    assert ("summary" in index) == (other_body != "absent")
+    if other_body != "absent":
+        assert await store.read("conversation/notes.txt") == "other"
+
+
+@pytest.mark.parametrize("body_present", [True, False])
+async def test_disabled_ttl_finishes_pending_deletion_and_preserves_ready(tmp_path: Path, body_present: bool) -> None:
+    manager = FileMemoryRetentionManager(tmp_path, retention_seconds=10)
+    now = [100.0]
+    manager._now = lambda: now[0]
+    store = FileSystemAgentFileStore(tmp_path / "owner")
+    _, tools = await _prepare(FileMemoryProvider(store, retention=manager))
+    await _call(tools, "file_memory_write", file_name="notes.md", content="delete", description="old summary")
+    now[0] = 105
+    await _call(tools, "file_memory_write", file_name="keep.md", content="preserve", description="keep summary")
+    process = await _worker(tmp_path, "crash_gc")
+    _, error = await asyncio.wait_for(process.communicate(), 15)
+    assert process.returncode == 17, error.decode()
+    if not body_present:
+        (store.root_path / "conversation/notes.md").unlink()
+
+    await manager.set_retention(None)
+    now[0] = 1000.0
+
+    assert await manager.collect() == 1
+    assert await manager.collect() == 0
+    assert await store.read("conversation/notes.md") is None
+    assert await store.read("conversation/notes_description.md") is None
+    assert await _call(tools, "file_memory_read", file_name="keep.md") == "preserve"
+    assert await store.read("conversation/keep_description.md") == "keep summary"
+    assert "notes.md" not in (await store.read("conversation/memories.md") or "")
+    assert "written" in await _call(tools, "file_memory_write", file_name="notes.md", content="replacement")
+
+
+async def test_shared_quota_message_accounts_for_new_atomic_copy(tmp_path: Path) -> None:
+    manager = FileMemoryRetentionManager(tmp_path, max_total_bytes=4000)
+    store = FileSystemAgentFileStore(tmp_path / "owner")
+    _, tools = await _prepare(FileMemoryProvider(store, retention=manager))
+    assert "written" in await _call(tools, "file_memory_write", file_name="notes.md", content="old")
+
+    message = await _call(tools, "file_memory_write", file_name="notes.md", content="x" * 3000)
+
+    assert "shared_max_total_bytes=4000" in message
+    requested = re.search(r"requested=(\d+)", message)
+    assert requested is not None
+    # The replacement and its complete atomic copy alone require at least 6000 bytes.
+    assert int(requested.group(1)) >= 6000
+    assert await store.read("conversation/notes.md") == "old"
+
+
+@pytest.mark.parametrize("accounting", ["shared", "root"])
+async def test_capacity_accounting_allows_other_coroutines_to_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accounting: str
+) -> None:
+    manager = FileMemoryRetentionManager(tmp_path, max_total_bytes=50000 if accounting == "shared" else None)
+    store = FileSystemAgentFileStore(tmp_path / "owner", max_total_bytes=30000 if accounting == "root" else None)
+    _, tools = await _prepare(FileMemoryProvider(store, retention=manager))
+    started, release, timed_out = threading.Event(), threading.Event(), threading.Event()
+    target, name = (manager, "_usage") if accounting == "shared" else (store, "_quota_usage")
+    original = getattr(target, name)
+    first = True
+
+    def slow_usage() -> Any:
+        nonlocal first
+        if first:
+            first = False
+            started.set()
+            if not release.wait(2):
+                timed_out.set()
+        return original()
+
+    monkeypatch.setattr(target, name, slow_usage)
+
+    async def foreground() -> None:
+        assert await asyncio.to_thread(started.wait, 5)
+        release.set()
+
+    heartbeat = asyncio.create_task(foreground())
+    try:
+        assert "written" in await _call(tools, "file_memory_write", file_name="notes.md", content="hello")
+    finally:
+        release.set()
+        await heartbeat
+
+    assert not timed_out.is_set(), "Storage accounting blocked the foreground coroutine"
+    assert await store.read("conversation/notes.md") == "hello"
+
+
+@pytest.mark.parametrize("operation", ["write", "registration"])
+async def test_cancelled_accounting_keeps_coordination_until_worker_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    manager = FileMemoryRetentionManager(tmp_path, max_total_bytes=50000)
+    store = FileSystemAgentFileStore(tmp_path / "owner")
+    provider = FileMemoryProvider(store, retention=manager)
+    _, tools = await _prepare(provider)
+    started, release = threading.Event(), threading.Event()
+    original = manager._usage
+    first = True
+
+    def slow_usage() -> tuple[int, int, int]:
+        nonlocal first
+        if first:
+            first = False
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("The test did not release the accounting worker")
+        return original()
+
+    monkeypatch.setattr(manager, "_usage", slow_usage)
+    protection = provider.protect()
+    task: asyncio.Task[Any]
+    if operation == "write":
+        task = asyncio.create_task(_call(tools, "file_memory_write", file_name="notes.md", content="complete"))
+    else:
+        task = asyncio.create_task(protection.__aenter__())
+    probe = AsyncFileLock(
+        tmp_path / ".retention/manager.lock", timeout=0, preserve_lock_file=True, fallback_to_soft=False
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        with pytest.raises(Timeout):
+            await probe.acquire()
+    finally:
+        await probe.release()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    await probe.acquire()
+    await probe.release()
+    if operation == "write":
+        assert await store.read("conversation/notes.md") == "complete"
+    else:
+        assert not list((tmp_path / ".retention/active").glob("*/*.lock"))
