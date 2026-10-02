@@ -1,62 +1,82 @@
-# What this sample demonstrates
+# Invocations agent with a custom request parser
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted using the **Invocations protocol** with session management. Unlike the Responses protocol, the Invocations protocol does **not** provide built-in server-side conversation history — this agent maintains an in-memory session store keyed by `agent_session_id`. In production, replace it with durable storage (Redis, Cosmos DB, etc.) so history survives restarts.
+[`main.py`](main.py) hosts an Agent Framework agent using the Foundry
+Invocations protocol. The sample accepts application JSON with a `prompt`
+field rather than the host's default `message` field. Its `parse_request`
+callback returns `InvocationRun(messages, options, stream)`, and
+`prepare_options` allows only `temperature` and `max_tokens` from the caller.
+The host also rejects platform IDs, `store`, and private continuation options
+even if a hook tries to return them. The agent keeps `store=False` as a
+developer default; caller options cannot enable service-managed history.
 
-## How It Works
+**Invocations does not store conversation history.** The sample's
+`InMemoryHistoryProvider` keeps model messages in the MAF `AgentSession`, which
+the host saves in its separate `invocation_sessions` store. That store uses
+files locally and Foundry state storage when hosted. A later turn, even in a
+replacement host process, restores the history from the same trusted user and
+sandbox. Sandbox files remain in the Foundry sandbox; they are not part of
+the MAF session.
 
-### Model Integration
+## Run and invoke
 
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. When a request arrives, the handler looks up (or creates) a session by `session_id`, runs the agent with the user message and session context, and returns the reply. The agent supports both streaming (SSE events) and non-streaming (JSON) response modes.
-
-See [main.py](main.py) for the full implementation.
-
-### Agent Hosting
-
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `InvocationsHostServer`, which provisions a REST API endpoint compatible with the Azure AI Invocations protocol.
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
-
-Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
+Follow the [parent guide](../../README.md#running-the-agent-host-locally)
+to run the sample locally. Send a non-streaming request:
 
 ```bash
-curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi"}'
+curl -i -X POST http://localhost:8088/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hi", "options": {"temperature": 0.3}}'
 ```
 
-Or with streaming:
+The default wire format is JSON, for example:
 
-```bash
-curl -X POST http://localhost:8088/invocations -i -H "Content-Type: application/json" -d '{"message": "Hi", "stream": true}'
-```
-
-The server will respond with a JSON object containing the response text. The `-i` flag in the `curl` command includes the HTTP response headers in the output, which includes the session ID that can be used for multi-turn conversations. Here is an example of the response:
-
-```
-HTTP/1.1 200
-content-length: 34
+```http
+HTTP/1.1 200 OK
 content-type: application/json
-x-agent-invocation-id: ec04d020-a0e7-441e-ae83-db75635a9f83
 x-agent-session-id: 9370b9d4-cd13-4436-a57f-03b843ac0e17
-x-platform-server: azure-ai-agentserver-core/2.0.0a20260410006 (python/3.12)
-date: Fri, 17 Apr 2026 23:46:44 GMT
-server: hypercorn-h11
 
-Hi! How can I help?
+{"response":"Hi! How can I help?"}
 ```
 
-### Multi-turn conversation
-
-To have a multi-turn conversation with the agent, take the session ID from the response headers of the previous request and include it in URL parameters for the next request. For example:
+To continue in that sandbox, put the returned **platform**
+`x-agent-session-id` in the Invocations **query parameter**:
 
 ```bash
-curl -X POST http://localhost:8088/invocations?agent_session_id=9370b9d4-cd13-4436-a57f-03b843ac0e17 -i -H "Content-Type: application/json" -d '{"message": "How are you?"}'
+curl -i -N -X POST \
+  "http://localhost:8088/invocations?agent_session_id=9370b9d4-cd13-4436-a57f-03b843ac0e17" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What did I say earlier?", "stream": true}'
 ```
 
-## Deploying the Agent to Foundry
+Streaming uses framed server-sent events (`text/event-stream`):
 
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
+```text
+event: delta
+data: {"text": "You said hi."}
+
+event: done
+data: {"session_id": "9370b9d4-cd13-4436-a57f-03b843ac0e17"}
+```
+
+The `done` ID is the **sandbox ID**, not the MAF `AgentSession.session_id`.
+On Foundry, the query ID routes the request to the sandbox; a body field does
+not. The host requires trusted platform user and call IDs. If
+`FOUNDRY_AGENT_SESSION_ID` is absent, even the first hosted request requires
+an explicit query ID matching the routed request context (for example,
+[create a hosted session first](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-sessions)).
+If the environment ID is present, a different query ID is rejected. Local
+requests retain the SDK's single-user generated-ID fallback. See the
+[state-store guide](../../../../../packages/foundry_hosting/README.md#state-store)
+for scope and retention details.
+
+Malformed requests return JSON client errors. Streaming failures produce
+`event: error` instead of `done`; a competing host's session write is reported
+as a conflict, not silently overwritten. Do not blindly retry calls with
+non-idempotent tools. Existing clients that still require the old plain-text
+response and raw text-chunk stream can set `legacy_wire_format=True` on the
+host temporarily; the host warns once and the mode is deprecated. Migrate
+clients to JSON and framed SSE before removing that opt-in in a deliberate
+breaking change.
+
+Follow the [parent deployment guide](../../README.md#deploying-the-agent-to-foundry)
+when deploying this example to Foundry.

@@ -5,6 +5,7 @@ on:
     branches: ["main", "feature*"]
     paths:
       - "python/**"
+      - ".github/workflows/python-tests.yml"
       - "!python/AGENTS.md"
       - "!python/**/AGENTS.md"
       - "!python/.github/skills/*"
@@ -24,6 +25,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
+        # Other native dependencies still take several minutes to build for 3.15 on Windows.
+        exclude:
+          - python-version: "3.15"
+            os: windows-latest
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     permissions:
@@ -39,7 +44,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
-          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || matrix.python-version == '3.15' && 'agent-framework-sql-server' || '' }}
+          # DuckDB has no Python 3.15 wheels yet; source builds dominate setup time.
+          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || matrix.python-version == '3.15' && 'agent-framework-sql-server agent-framework-duckdb' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache

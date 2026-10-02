@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -12,9 +13,15 @@ from typing_extensions import Never, TypedDict
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
-from .._sessions import AgentSession, AgentSessionDict
+from .._sessions import (
+    _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY,  # pyright: ignore[reportPrivateUsage]
+    AgentSession,
+    AgentSessionDict,
+    InMemoryHistoryProvider,
+    _paired_local_function_results,  # pyright: ignore[reportPrivateUsage]
+)
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
-from ..exceptions import WorkflowCheckpointException
+from ..exceptions import AgentInvalidResponseException, WorkflowCheckpointException
 from ._agent_utils import prepare_agent_run_args, resolve_agent_id, resolve_executor_kwargs
 from ._const import INTERNAL_SOURCE_ID, RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
@@ -29,6 +36,17 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_computer_tool_result(request: Content, response: Content) -> None:
+    if response.type != "computer_tool_result" or response.call_id != request.call_id:
+        raise AgentInvalidResponseException("Computer result must match its pending computer call ID.")
+    pending_check_ids = {check["id"] for check in request.pending_safety_checks or []}
+    acknowledged_check_ids = {check["id"] for check in response.acknowledged_safety_checks or []}
+    if pending_check_ids != acknowledged_check_ids:
+        raise AgentInvalidResponseException(
+            "Computer result must explicitly acknowledge exactly the pending safety checks."
+        )
 
 
 class AgentExecutorCheckpointState(TypedDict, total=False):
@@ -53,6 +71,7 @@ class AgentExecutorCheckpointState(TypedDict, total=False):
         agent_session: Serialized session payload (:class:`~agent_framework._sessions.AgentSessionDict`).
         pending_agent_requests: In-flight agent-owned user-input requests by request id.
         pending_responses_to_agent: Queued content responses waiting to be sent to the agent.
+        pending_request_order: Original request IDs for the current batch, including resolved requests.
     """
 
     cache: list[Message]
@@ -60,6 +79,7 @@ class AgentExecutorCheckpointState(TypedDict, total=False):
     agent_session: AgentSessionDict
     pending_agent_requests: dict[str, Content]
     pending_responses_to_agent: list[Content]
+    pending_request_order: list[str]
 
 
 def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
@@ -119,6 +139,28 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                     f"'pending_agent_requests[{request_id!r}]' must be Content, "
                     f"got {type(content).__name__}."
                 )
+
+    if (order_raw := state.get("pending_request_order")) is not None:
+        if not isinstance(order_raw, list):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_request_order' must be a list, "
+                f"got {type(order_raw).__name__}."
+            )
+        order = cast(list[Any], order_raw)
+        for index, request_id in enumerate(order):
+            if not isinstance(request_id, str):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field "
+                    f"'pending_request_order'[{index}] must be str, got {type(request_id).__name__}."
+                )
+        if len(set(order)) != len(order):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_request_order' has duplicate IDs."
+            )
+        if pending_raw and not set(cast("dict[str, Content]", pending_raw)).issubset(order):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_request_order' must include every pending request ID."
+            )
 
     if (session_raw := state.get("agent_session")) is not None:
         if not isinstance(session_raw, dict):
@@ -308,6 +350,7 @@ class AgentExecutor(Executor):
 
         self._pending_agent_requests: dict[str, Content] = {}
         self._pending_responses_to_agent: list[Content] = []
+        self._pending_request_order: list[str] = []
 
         # AgentExecutor maintains an internal cache of messages in between runs
         self._cache: list[Message] = []
@@ -433,20 +476,38 @@ class AgentExecutor(Executor):
         response: Content,
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
-        """Handle user input responses for function approvals during agent execution.
+        """Handle user input responses for approvals and computer calls.
 
         This will hold the executor's execution until all pending user input requests are resolved.
 
         Args:
-            original_request: The original function approval request sent by the agent.
-            response: The user's response to the function approval request.
+            original_request: The original user-input request sent by the agent.
+            response: The application's response to the request.
             ctx: The workflow context for emitting events and outputs.
         """
-        self._pending_responses_to_agent.append(response)
-        self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
+        if original_request.type == "computer_tool_call":
+            _validate_computer_tool_result(original_request, response)
+        request_id = original_request.id
+        if request_id is None or request_id not in self._pending_agent_requests:
+            raise AgentInvalidResponseException("Response must match a pending user input request ID.")
+        self._pending_agent_requests.pop(request_id)
+        self._queue_pending_response(request_id, response)
 
         if not self._pending_agent_requests:
             await self._resume_with_pending_responses(ctx)
+
+    def _queue_pending_response(self, request_id: str, response: Content) -> None:
+        """Place a reply in request order, including when other replies arrive first."""
+        if not self._pending_request_order:
+            self._pending_responses_to_agent.append(response)
+            return
+        if request_id not in self._pending_request_order:
+            raise AgentInvalidResponseException("Response request ID is absent from the pending request order.")
+        request_index = self._pending_request_order.index(request_id)
+        response_index = sum(
+            earlier_id not in self._pending_agent_requests for earlier_id in self._pending_request_order[:request_index]
+        )
+        self._pending_responses_to_agent.insert(response_index, response)
 
     async def _resume_with_pending_responses(
         self,
@@ -455,12 +516,119 @@ class AgentExecutor(Executor):
         """Resume agent execution after every pending request has reached an outcome."""
         if not self._pending_responses_to_agent:
             return
-        # Use role="tool" for function_result responses (from declaration-only tools)
-        # so the LLM receives proper tool results instead of orphaned tool_calls.
-        role = "tool" if all(r.type == "function_result" for r in self._pending_responses_to_agent) else "user"
-        self._cache = normalize_messages_input(Message(role=role, contents=self._pending_responses_to_agent))
+        cancelled_computer_calls = [
+            response
+            for response in self._pending_responses_to_agent
+            if response.type == "error" and response.additional_properties.get("cancelled_computer_call")
+        ]
+        messages: list[Message] = []
+        for response in self._pending_responses_to_agent:
+            role = (
+                "tool"
+                if response.type in ("function_result", "computer_tool_result")
+                else "assistant"
+                if response.type == "error"
+                else "user"
+            )
+            if messages and messages[-1].role == role:
+                messages[-1].contents.append(response)
+            else:
+                messages.append(Message(role=role, contents=[response]))
+        if cancelled_computer_calls:
+            self._pending_responses_to_agent.clear()
+            self._pending_request_order.clear()
+            self._cache.clear()
+            self._full_conversation = [*self._full_conversation, *messages]
+            self._session = self._agent.create_session()
+            await ctx.yield_output(AgentResponse(messages=messages))
+            return
+        history_before_run = self._omit_replayed_function_results_from_history()
+        self._cache = normalize_messages_input(messages)
         self._pending_responses_to_agent.clear()
-        await self._run_agent_and_emit(ctx)
+        self._pending_request_order.clear()
+        completed = False
+        try:
+            await self._run_agent_and_emit(ctx)
+            completed = True
+        finally:
+            if not completed and history_before_run is not None:
+                history_state, original_messages = history_before_run
+                history_state["messages"] = original_messages
+
+    def _omit_replayed_function_results_from_history(self) -> tuple[dict[str, Any], list[Message]] | None:
+        """Keep staged local results in one ordered replay, not twice in local history."""
+        source_id = InMemoryHistoryProvider.DEFAULT_SOURCE_ID
+        providers = getattr(self._agent, "context_providers", ())
+        if isinstance(providers, Sequence):
+            source_id = next(
+                (
+                    provider.source_id
+                    for provider in cast("Sequence[object]", providers)
+                    if isinstance(provider, InMemoryHistoryProvider) and provider.load_messages
+                ),
+                source_id,
+            )
+        history_state = self._session.state.get(source_id)
+        if not isinstance(history_state, dict):
+            return None
+        history_state = cast("dict[str, Any]", history_state)
+        history_raw = history_state.get("messages")
+        if not isinstance(history_raw, list):
+            return None
+        history_items = cast("list[Any]", history_raw)
+        if not all(isinstance(message, Message) for message in history_items):
+            return None
+        history = cast("list[Message]", history_items)
+        deferred = [result for result in self._pending_responses_to_agent if result.type == "function_result"]
+        if not deferred:
+            return None
+        start = next(
+            (
+                index
+                for index in range(len(history) - 1, -1, -1)
+                if any(
+                    content.type == "computer_tool_call" and content.id in self._pending_request_order
+                    for content in history[index].contents
+                )
+            ),
+            None,
+        )
+        if start is None:
+            return None
+        updated_history = list(history[:start])
+        removed = False
+        for message in history[start:]:
+            kept_contents: list[Content] = []
+            for content in message.contents:
+                match = next(
+                    (
+                        index
+                        for index, result in enumerate(deferred)
+                        if content is result
+                        or (
+                            content.type == "function_result"
+                            and content.id == result.id
+                            and content.call_id == result.call_id
+                        )
+                    ),
+                    None,
+                )
+                if match is None:
+                    kept_contents.append(content)
+                else:
+                    removed = True
+                    deferred.pop(match)
+            if kept_contents:
+                if len(kept_contents) == len(message.contents):
+                    updated_history.append(message)
+                else:
+                    copied_message = copy.copy(message)
+                    copied_message.contents = kept_contents
+                    updated_history.append(copied_message)
+        if not removed:
+            return None
+        history_state["messages"] = updated_history
+        return history_state, history
 
     @override
     async def _cancel_pending_request(
@@ -471,7 +639,7 @@ class AgentExecutor(Executor):
         """Release an agent-owned user-input request after workflow cancellation."""
         cancelled_request = self._pending_agent_requests.pop(request_id, None)
         if cancelled_request is not None and cancelled_request.type == "function_approval_request":
-            self._pending_responses_to_agent.append(cancelled_request.to_function_approval_response(approved=False))
+            self._queue_pending_response(request_id, cancelled_request.to_function_approval_response(approved=False))
         elif (
             cancelled_request is not None
             and cancelled_request.type == "function_call"
@@ -483,7 +651,15 @@ class AgentExecutor(Executor):
                 additional_properties={"cancelled": True},
             )
             cancellation_result.id = cancelled_request.id
-            self._pending_responses_to_agent.append(cancellation_result)
+            self._queue_pending_response(request_id, cancellation_result)
+        elif cancelled_request is not None and cancelled_request.type == "computer_tool_call":
+            self._queue_pending_response(
+                request_id,
+                Content.from_error(
+                    message=f"Computer call {cancelled_request.call_id} was cancelled without a result.",
+                    additional_properties={"cancelled_computer_call": True},
+                ),
+            )
         if not self._pending_agent_requests:
             await self._resume_with_pending_responses(ctx)
 
@@ -506,6 +682,7 @@ class AgentExecutor(Executor):
             "agent_session": self._session.to_dict(),
             "pending_agent_requests": self._pending_agent_requests,
             "pending_responses_to_agent": self._pending_responses_to_agent,
+            "pending_request_order": self._pending_request_order,
         }
 
     @override
@@ -521,6 +698,19 @@ class AgentExecutor(Executor):
                 field has an incompatible type.
         """
         _validate_agent_executor_checkpoint_state(state)
+
+        pending_requests_payload = state.get("pending_agent_requests")
+        pending_responses_payload = state.get("pending_responses_to_agent")
+        pending_order_payload = state.get("pending_request_order")
+        if (
+            pending_order_payload is None
+            and pending_responses_payload
+            and (pending_requests_payload or len(pending_responses_payload) > 1)
+        ):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint is missing 'pending_request_order' for a partially resolved batch; "
+                "restore a checkpoint from before the batch to preserve response order."
+            )
 
         cache_payload = state.get("cache")
         self._cache = cache_payload or []
@@ -539,11 +729,13 @@ class AgentExecutor(Executor):
         else:
             self._session = self._agent.create_session()
 
-        pending_requests_payload = state.get("pending_agent_requests")
         self._pending_agent_requests = pending_requests_payload or {}
 
-        pending_responses_payload = state.get("pending_responses_to_agent")
         self._pending_responses_to_agent = pending_responses_payload or []
+
+        self._pending_request_order = (
+            pending_order_payload if pending_order_payload is not None else list(self._pending_agent_requests)
+        )
 
     def reset(self) -> None:
         """Reset the internal cache of the executor."""
@@ -561,17 +753,22 @@ class AgentExecutor(Executor):
         containing the complete response (non-streaming mode).
         """
         invocation_messages = self._build_invocation_messages()
-        if ctx.is_streaming():
-            # Streaming mode: emit incremental updates
-            response = await self._run_agent_streaming(
-                cast(WorkflowContext[Never, AgentResponseUpdate], ctx),
-                messages=invocation_messages,
-            )
-        else:
-            response = await self._run_agent(
-                cast(WorkflowContext[Never, AgentResponse], ctx),
-                messages=invocation_messages,
-            )
+        self._session.state[_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY] = True
+        try:
+            if ctx.is_streaming():
+                # Streaming mode: emit incremental updates
+                response = await self._run_agent_streaming(
+                    cast(WorkflowContext[Never, AgentResponseUpdate], ctx),
+                    messages=invocation_messages,
+                )
+            else:
+                # Non-streaming mode: use run() and emit single event
+                response = await self._run_agent(
+                    cast(WorkflowContext[Never, AgentResponse], ctx),
+                    messages=invocation_messages,
+                )
+        finally:
+            self._session.state.pop(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY, None)
 
         # Snapshot current conversation as cache + latest agent outputs.
         # Do not append to prior snapshots: callers may provide full-history messages
@@ -662,9 +859,7 @@ class AgentExecutor(Executor):
                     user_input_request_count,
                     total_message_content_count,
                 )
-            for user_input_request in response.user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
-                await ctx.request_info(user_input_request, Content, request_id=user_input_request.id)
+            await self._register_user_input_requests(response.user_input_requests, ctx, response=response)
             return None
 
         # Only yield output if the response is complete and not waiting for user input.
@@ -704,7 +899,8 @@ class AgentExecutor(Executor):
             )
 
         updates: list[AgentResponseUpdate] = []
-        streamed_user_input_requests: list[Content] = []
+        deferred_computer_updates: list[AgentResponseUpdate] = []
+        awaiting_computer_finalization = False
         run_agent_stream = cast(Callable[..., ResponseStream[AgentResponseUpdate, AgentResponse[Any]]], self._agent.run)
         run_kwargs: dict[str, Any] = {
             "stream": True,
@@ -717,7 +913,11 @@ class AgentExecutor(Executor):
         stream = run_agent_stream(cache, **run_kwargs)
         async for update in stream:
             updates.append(update)
-            if update.user_input_requests:
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in update.contents):
+                awaiting_computer_finalization = True
+            if awaiting_computer_finalization:
+                deferred_computer_updates.append(update)
+            elif update.user_input_requests:
                 user_input_request_count = len(update.user_input_requests)
                 total_message_content_count = len(update.contents)
                 if user_input_request_count != total_message_content_count:
@@ -730,7 +930,6 @@ class AgentExecutor(Executor):
                         user_input_request_count,
                         total_message_content_count,
                     )
-                streamed_user_input_requests.extend(update.user_input_requests)
             else:
                 # Only yield output events for updates that do not contain user input requests.
                 # This is to avoid emitting two events of different types ('output' and 'request_info')
@@ -756,24 +955,95 @@ class AgentExecutor(Executor):
         else:
             response = AgentResponse.from_updates(updates)
 
-        # Handle any user input requests after the streaming completes
-        user_input_requests: list[Content] = []
-        seen_request_ids: set[str] = set()
-        for user_input_request in [*streamed_user_input_requests, *response.user_input_requests]:
-            request_id = getattr(user_input_request, "id", None)
-            if isinstance(request_id, str) and request_id:
-                if request_id in seen_request_ids:
-                    continue
-                seen_request_ids.add(request_id)
-            user_input_requests.append(user_input_request)
+        completed_computer_calls = {
+            (content.id, content.call_id)
+            for message in response.messages
+            for content in message.contents
+            if content.type == "computer_tool_call" and not content.user_input_request
+        }
+        for update in deferred_computer_updates:
+            for content in update.contents:
+                if content.type == "computer_tool_call" and (content.id, content.call_id) in completed_computer_calls:
+                    content.user_input_request = False
+                    content.informational_only = True
+            output_contents = [content for content in update.contents if not content.user_input_request]
+            if output_contents:
+                if len(output_contents) == len(update.contents):
+                    await ctx.yield_output(update)
+                else:
+                    output_update = copy.copy(update)
+                    output_update.contents = output_contents
+                    await ctx.yield_output(output_update)
 
-        if user_input_requests:
-            for user_input_request in user_input_requests:
-                self._pending_agent_requests[user_input_request.id] = user_input_request  # type: ignore[index]
-                await ctx.request_info(user_input_request, Content, request_id=user_input_request.id)
+        # The finalized response is authoritative: streamed calls can have been
+        # satisfied by later output items in the same turn.
+        if response.user_input_requests:
+            await self._register_user_input_requests(response.user_input_requests, ctx, response=response)
             return None
 
         return response
+
+    async def _register_user_input_requests(
+        self,
+        requests: Sequence[Content],
+        ctx: WorkflowContext[Any, Any],
+        *,
+        response: AgentResponse | None = None,
+    ) -> None:
+        """Validate the full request batch before registering any of its IDs."""
+        validated: list[tuple[str, Content]] = []
+        seen = set(self._pending_request_order)
+        for request in requests:
+            request_id = request.id
+            if not isinstance(request_id, str) or not request_id:
+                raise AgentInvalidResponseException("User input requests must have non-empty IDs.")
+            if request_id in seen:
+                raise AgentInvalidResponseException(f"Duplicate user input request ID: {request_id}")
+            seen.add(request_id)
+            validated.append((request_id, request))
+
+        request_ids = {request_id for request_id, _ in validated}
+        order: list[str] = [request_id for request_id, _ in validated]
+        completed_results: list[Content] = []
+        if response is not None and any(request.type == "computer_tool_call" for _, request in validated):
+            start = next(
+                (
+                    index
+                    for index, message in enumerate(response.messages)
+                    if any(
+                        content.type == "computer_tool_call"
+                        and content.user_input_request
+                        and content.id in request_ids
+                        for content in message.contents
+                    )
+                ),
+                None,
+            )
+            if start is None:
+                raise AgentInvalidResponseException("Pending computer call is absent from the final response.")
+            contents = [content for message in response.messages[start:] for content in message.contents]
+            paired_results = _paired_local_function_results(contents)
+            order = []
+            for content in contents:
+                if content.user_input_request and isinstance(content.id, str) and content.id in request_ids:
+                    order.append(content.id)
+                elif (
+                    content.type == "function_call"
+                    and not content.informational_only
+                    and content.id
+                    and content.call_id
+                    and (result := paired_results.get(id(content))) is not None
+                ):
+                    order.append(content.id)
+                    completed_results.append(result)
+            if len(order) != len(set(order)) or not request_ids.issubset(order):
+                raise AgentInvalidResponseException("Computer batch has missing or duplicate call occurrence IDs.")
+
+        self._pending_request_order.extend(order)
+        self._pending_responses_to_agent.extend(completed_results)
+        for request_id, request in validated:
+            self._pending_agent_requests[request_id] = request
+            await ctx.request_info(request, Content, request_id=request_id)
 
     def _prepare_agent_run_args(
         self,

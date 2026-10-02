@@ -223,6 +223,9 @@ def _apply_option_translations(options: dict[str, Any]) -> None:
         if old_key not in options or old_key == new_key:
             continue
         old_value = options.pop(old_key)
+        if old_key == "stop" and isinstance(old_value, str):
+            # ChatOptions allows a single stop string; stop_sequences takes a list.
+            old_value = [old_value]
         options.setdefault(new_key, old_value)
 
 
@@ -743,7 +746,8 @@ class RawAnthropicClient(
 
         # Handle user option -> metadata.user_id (Anthropic uses metadata.user_id instead of user)
         if user := run_options.pop("user", None):
-            metadata = run_options.get("metadata", {})
+            # Copy so the caller's metadata dict is not modified across requests.
+            metadata = dict(run_options.get("metadata") or {})
             if "user_id" not in metadata:
                 metadata["user_id"] = user
             run_options["metadata"] = metadata
@@ -847,7 +851,8 @@ class RawAnthropicClient(
                 schema = response_format
 
             if isinstance(schema, dict):
-                schema["additionalProperties"] = False
+                # Copy, so the caller's response_format is not changed for later requests.
+                schema = {**schema, "additionalProperties": False}
 
             return {
                 "type": "json_schema",
