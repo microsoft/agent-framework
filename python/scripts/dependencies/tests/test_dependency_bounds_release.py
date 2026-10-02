@@ -323,7 +323,7 @@ def test_release_probe_command_is_lock_independent_and_uses_bound_resolution(tmp
     assert "--no-project" in command
     assert command[command.index("--resolution") + 1] == "lowest-direct"
     assert command[command.index("--python") + 1] == "3.11"
-    assert command[command.index("--prerelease") + 1] == "if-necessary-or-explicit"
+    assert command[command.index("--prerelease") + 1] == "if-necessary"
     assert command.count("--with-editable") == 2
     assert "--with" not in command
     assert "pytest" not in command
