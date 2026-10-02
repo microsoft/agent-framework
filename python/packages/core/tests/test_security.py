@@ -6866,6 +6866,75 @@ class TestMCPIFCMetaLabels:
         await proxy.disconnect()
         assert mcp_tool._function_load_callback is None
 
+    @pytest.mark.parametrize("entrypoint", ["connect", "enter"])
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("already_connected", [False, True])
+    async def test_secure_mcp_proxy_setup_failure_preserves_live_connection_binding(
+        self,
+        entrypoint: str,
+        failure_type: type[BaseException],
+        already_connected: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.is_connected = already_connected
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_connected:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+
+        async def open_connection(*_args: Any) -> Any:
+            mcp_tool.is_connected = True
+            return mcp_tool
+
+        async def close_connection(*_args: Any) -> None:
+            mcp_tool.is_connected = False
+
+        open_mock = AsyncMock(side_effect=open_connection)
+        close_mock = AsyncMock(side_effect=close_connection)
+        if entrypoint == "connect":
+            mcp_tool.connect = open_mock  # type: ignore[method-assign]
+            mcp_tool.close = close_mock  # type: ignore[method-assign]
+            operation = proxy.connect
+        else:
+            mcp_tool.__aenter__ = open_mock  # type: ignore[method-assign]
+            mcp_tool.__aexit__ = close_mock  # type: ignore[method-assign]
+            operation = proxy.__aenter__
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            await operation()
+
+        if already_connected:
+            assert mcp_tool.is_connected is True
+            assert mcp_tool._function_load_callback is proxy._function_load_callback
+            close_mock.assert_not_called()
+        else:
+            assert mcp_tool.is_connected is False
+            assert mcp_tool._function_load_callback is None
+            close_mock.assert_awaited_once()
+
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("already_bound", [False, True])
+    async def test_secure_mcp_proxy_refresh_failure_only_removes_new_binding(
+        self,
+        failure_type: type[BaseException],
+        already_bound: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_bound:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            await proxy.refresh_labels()
+
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
+
     async def test_plain_mcp_tool_remains_unlabeled(self):
         from mcp import types as mcp_types
 

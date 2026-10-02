@@ -4459,12 +4459,20 @@ class SecureMCPToolProxy:
 
     async def __aenter__(self) -> SecureMCPToolProxy:
         """Enter context, connect the wrapped tool, and apply labels."""
-        self._bind_function_load_callback()
+        was_connected = self.is_connected
+        callback_bound = self._bind_function_load_callback()
         try:
             await self._mcp_tool.__aenter__()
             await self._apply_labels()
-        except BaseException:
-            self._unbind_function_load_callback()
+        except BaseException as ex:
+            if not was_connected and self.is_connected:
+                try:
+                    await self._mcp_tool.__aexit__(type(ex), ex, ex.__traceback__)
+                finally:
+                    if callback_bound:
+                        self._unbind_function_load_callback()
+            elif callback_bound and not self.is_connected:
+                self._unbind_function_load_callback()
             raise
         return self
 
@@ -4479,12 +4487,20 @@ class SecureMCPToolProxy:
 
     async def connect(self) -> None:
         """Connect the underlying MCPTool and apply security labels."""
-        self._bind_function_load_callback()
+        was_connected = self.is_connected
+        callback_bound = self._bind_function_load_callback()
         try:
             await self._mcp_tool.connect()
             await self._apply_labels()
         except BaseException:
-            self._unbind_function_load_callback()
+            if not was_connected and self.is_connected:
+                try:
+                    await self._mcp_tool.close()
+                finally:
+                    if callback_bound:
+                        self._unbind_function_load_callback()
+            elif callback_bound and not self.is_connected:
+                self._unbind_function_load_callback()
             raise
 
     async def disconnect(self) -> None:
@@ -4502,8 +4518,13 @@ class SecureMCPToolProxy:
         """
         if not self.is_connected:
             raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
-        self._bind_function_load_callback()
-        await self._apply_labels()
+        callback_bound = self._bind_function_load_callback()
+        try:
+            await self._apply_labels()
+        except BaseException:
+            if callback_bound:
+                self._unbind_function_load_callback()
+            raise
 
     # -- Delegated properties --
 
@@ -4534,11 +4555,14 @@ class SecureMCPToolProxy:
 
     # -- Internal --
 
-    def _bind_function_load_callback(self) -> None:
+    def _bind_function_load_callback(self) -> bool:
         current = self._mcp_tool._function_load_callback  # pyright: ignore[reportPrivateUsage]
+        if current is self._function_load_callback:
+            return False
         if current is not None and current is not self._function_load_callback:
             raise RuntimeError("MCPTool is already wrapped by another SecureMCPToolProxy.")
         self._mcp_tool._function_load_callback = self._function_load_callback  # pyright: ignore[reportPrivateUsage]
+        return True
 
     def _unbind_function_load_callback(self) -> None:
         if (
