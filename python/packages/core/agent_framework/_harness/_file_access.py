@@ -29,7 +29,8 @@ import os
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Mapping, MutableMapping
+from collections.abc import Awaitable, Generator, Mapping, MutableMapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Final, Protocol, cast
 
@@ -43,10 +44,12 @@ from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import ApprovalMode, tool
 from .._types import Content
+from ._file_store_limits import _FileStoreLimits, _FileStoreQuotaError  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FILE_ACCESS_SOURCE_ID = "file_access"
+_FILE_STORE_QUOTA_LOCK: Final[str] = ".agent-framework-quota.lock"
 DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "## File Access\n"
     "You have access to a shared file storage area via the `file_access_*` tools "
@@ -1017,6 +1020,8 @@ class AgentFileStore(ABC):
                 continue
             try:
                 content = await self.read(_combine_search_path(directory, name))
+            except _FileStoreQuotaError:
+                raise
             except (OSError, ValueError):
                 # ``read`` raises ValueError for non-UTF-8 bytes and for symlinked paths, and
                 # OSError for a file deleted or made unreadable under us. Skip either so one
@@ -1056,8 +1061,25 @@ class InMemoryAgentFileStore(AgentFileStore):
     directory structure is maintained.
     """
 
-    def __init__(self) -> None:
-        """Initialize an empty in-memory file store."""
+    def __init__(
+        self,
+        *,
+        max_file_bytes: int | None = None,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> None:
+        """Initialize an empty in-memory file store.
+
+        Keyword Args:
+            max_file_bytes: Maximum UTF-8 bytes per file and whole-file read, or ``None`` for no limit.
+            max_files: Maximum physical file count under this store, or ``None`` for no limit.
+            max_total_bytes: Maximum combined UTF-8 bytes under this store, or ``None`` for no limit.
+
+        Raises:
+            ValueError: If an explicit limit is not a positive integer.
+        """
+        self._limits = _FileStoreLimits.create(max_file_bytes, max_files, max_total_bytes)
+        self._file_sizes: dict[str, int] = {}
         # Keys are case-insensitive (normalized + lowercased) so the store
         # behaves consistently on case-insensitive deployments. Each entry
         # also records the *original* normalized path so ``list_children`` and
@@ -1083,6 +1105,15 @@ class InMemoryAgentFileStore(AgentFileStore):
         async with self._lock:
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
+            if self._limits is not None:
+                size = self._limits.content_size(content)
+                self._limits.check_usage(
+                    len(self._files) + int(key not in self._files),
+                    sum(self._file_sizes.values()) - self._file_sizes.get(key, 0) + size
+                    if self._limits.max_total_bytes is not None
+                    else 0,
+                )
+                self._file_sizes[key] = size
             self._files[key] = (display, content)
 
     async def read(self, path: str) -> str | None:
@@ -1090,12 +1121,15 @@ class InMemoryAgentFileStore(AgentFileStore):
         key = self._key(path)
         async with self._lock:
             entry = self._files.get(key)
+            if entry is not None and self._limits is not None:
+                self._limits.check_read(self._file_sizes[key])
         return entry[1] if entry is not None else None
 
     async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         key = self._key(path)
         async with self._lock:
+            self._file_sizes.pop(key, None)
             return self._files.pop(key, None) is not None
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
@@ -1222,7 +1256,14 @@ class FileSystemAgentFileStore(AgentFileStore):
     # Case aliases can identify the same file while having different Path hashes.
     _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
 
-    def __init__(self, root_directory: str | os.PathLike[str]) -> None:
+    def __init__(
+        self,
+        root_directory: str | os.PathLike[str],
+        *,
+        max_file_bytes: int | None = None,
+        max_files: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> None:
         """Initialize the file-system store.
 
         The root directory is **not** created here; construction performs no
@@ -1234,7 +1275,22 @@ class FileSystemAgentFileStore(AgentFileStore):
         Args:
             root_directory: The directory under which all files are stored.
                 Created lazily on first write if it does not exist.
+
+        Keyword Args:
+            max_file_bytes: Maximum bytes per file and whole-file read, or ``None`` for no limit.
+            max_files: Maximum regular-file count recursively under the root, or ``None`` for no limit.
+            max_total_bytes: Maximum regular-file content bytes under the root, or ``None`` for no limit.
+
+        Limits include existing files, memory descriptions, and indexes. Configured stores sharing
+        a root must use the same limits; all writers must cooperate through these stores. Accounting
+        is serialized across local processes, and the reserved root lock file is hidden from tools.
+        Limits do not cover filesystem overhead, other roots, or direct external filesystem writes.
+        No quota metadata is created when all limits are ``None``.
+
+        Raises:
+            ValueError: If an explicit limit is not a positive integer.
         """
+        self._limits = _FileStoreLimits.create(max_file_bytes, max_files, max_total_bytes)
         raw_root = os.fspath(root_directory)
         if not raw_root or not raw_root.strip():
             raise ValueError("root_directory must not be empty or whitespace-only.")
@@ -1347,7 +1403,77 @@ class FileSystemAgentFileStore(AgentFileStore):
         the obvious probe-then-open race for the file itself.
         """
         full_path = self._resolve_safe_path(path)
-        await asyncio.to_thread(self._write_file_sync, full_path, content, overwrite)
+        self._reject_quota_metadata(full_path)
+        if self._limits is None:
+            await asyncio.to_thread(self._write_file_sync, full_path, content, overwrite)
+        else:
+            await asyncio.to_thread(self._write_limited_sync, full_path, content, overwrite)
+
+    def _is_quota_metadata(self, path: Path) -> bool:
+        lock_path = self._root_path / _FILE_STORE_QUOTA_LOCK
+        return path == lock_path or (path.exists() and lock_path.exists() and path.samefile(lock_path))
+
+    def _reject_quota_metadata(self, path: Path) -> None:
+        if self._limits is not None and self._is_quota_metadata(path):
+            raise ValueError("This path is reserved for file-store quota accounting.")
+
+    @contextmanager
+    def _quota_lock(self) -> Generator[None]:
+        """Coordinate cooperating local processes without allocating quota state per request.
+
+        FileLock uses OS-backed local locks; do not remove the lock file after release.
+        See https://py-filelock.readthedocs.io/en/latest/ for supported filesystem guarantees.
+        """
+        from filelock import FileLock, Timeout
+
+        root = self._resolve_safe_directory_path("")
+        root.mkdir(parents=True, exist_ok=True)
+        lock_path = self._resolve_safe_path(_FILE_STORE_QUOTA_LOCK)
+        if lock_path.exists() and lock_path.stat().st_size:
+            raise ValueError("An existing file conflicts with file-store quota metadata.")
+        try:
+            with FileLock(lock_path, timeout=10, preserve_lock_file=True, fallback_to_soft=False):
+                yield
+        except Timeout as exc:
+            raise TimeoutError("Timed out acquiring the file-store quota lock.") from exc
+
+    def _quota_usage(self) -> tuple[int, int]:
+        """Read current sizes under the root lock, including data left by earlier instances."""
+        file_count = total_bytes = 0
+        directories = [self._root_path]
+        while directories:
+            for entry in directories.pop().iterdir():
+                if self._is_quota_metadata(entry) or _is_link_or_reparse_point(entry):
+                    continue
+                if entry.is_dir():
+                    directories.append(entry)
+                elif entry.is_file():
+                    file_count += 1
+                    total_bytes += entry.stat().st_size
+        return file_count, total_bytes
+
+    def _write_limited_sync(self, path: Path, content: str, overwrite: bool) -> None:
+        limits = cast(_FileStoreLimits, self._limits)
+        with self._quota_lock():
+            path = self._resolve_safe_path(path.relative_to(self._root_path).as_posix())
+            if path.is_dir():
+                raise IsADirectoryError(f"Path is a directory: {path}")
+            exists = path.is_file()
+            if not overwrite and exists:
+                raise FileExistsError(f"File already exists: {path.name!r}")
+            size = limits.content_size(content)
+            if limits.max_files is not None or limits.max_total_bytes is not None:
+                file_count, total_bytes = self._quota_usage()
+                previous_size = path.stat().st_size if exists else 0
+                limits.check_usage(file_count + int(not exists), total_bytes - previous_size + size)
+            self._write_file_sync(path, content, overwrite)
+
+    def _delete_limited_sync(self, path: Path) -> bool:
+        if not self._root_path.exists():
+            return False
+        with self._quota_lock():
+            path = self._resolve_safe_path(path.relative_to(self._root_path).as_posix())
+            return self._delete_file_sync(path)
 
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
@@ -1406,10 +1532,13 @@ class FileSystemAgentFileStore(AgentFileStore):
         recoverable string response rather than a stack trace.
         """
         full_path = self._resolve_safe_path(path)
-        return await asyncio.to_thread(self._read_file_sync, full_path)
+        self._reject_quota_metadata(full_path)
+        if self._limits is None or self._limits.max_file_bytes is None:
+            return await asyncio.to_thread(self._read_file_sync, full_path)
+        return await asyncio.to_thread(self._read_file_sync, full_path, self._limits.max_file_bytes)
 
     @staticmethod
-    def _read_file_sync(full_path: Path) -> str | None:
+    def _read_file_sync(full_path: Path, max_file_bytes: int | None = None) -> str | None:
         if not full_path.is_file():
             return None
         nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -1420,7 +1549,15 @@ class FileSystemAgentFileStore(AgentFileStore):
                 raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.") from exc
             raise
         with os.fdopen(fd, "rb") as handle:
-            raw = handle.read()
+            if max_file_bytes is None:
+                raw = handle.read()
+            else:
+                size = os.fstat(handle.fileno()).st_size
+                if size > max_file_bytes:
+                    raise _FileStoreQuotaError("max_file_bytes", max_file_bytes, size)
+                raw = handle.read(max_file_bytes + 1)
+                if len(raw) > max_file_bytes:
+                    raise _FileStoreQuotaError("max_file_bytes", max_file_bytes, len(raw))
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -1429,7 +1566,10 @@ class FileSystemAgentFileStore(AgentFileStore):
     async def delete(self, path: str) -> bool:
         """Delete the file and return whether anything was removed."""
         full_path = self._resolve_safe_path(path)
-        return await asyncio.to_thread(self._delete_file_sync, full_path)
+        self._reject_quota_metadata(full_path)
+        if self._limits is None:
+            return await asyncio.to_thread(self._delete_file_sync, full_path)
+        return await asyncio.to_thread(self._delete_limited_sync, full_path)
 
     @classmethod
     def _delete_file_sync(cls, full_path: Path) -> bool:
@@ -1450,7 +1590,10 @@ class FileSystemAgentFileStore(AgentFileStore):
         escapes the root. An empty list is returned for a non-existent directory.
         """
         full_dir = self._resolve_safe_directory_path(directory)
-        return await asyncio.to_thread(self._list_sync, full_dir)
+        entries = await asyncio.to_thread(self._list_sync, full_dir)
+        if self._limits is not None and full_dir == self._root_path:
+            entries = [entry for entry in entries if not self._is_quota_metadata(full_dir / entry.name)]
+        return entries
 
     @staticmethod
     def _list_sync(full_dir: Path) -> list[FileStoreEntry]:
@@ -1475,6 +1618,8 @@ class FileSystemAgentFileStore(AgentFileStore):
     async def file_exists(self, path: str) -> bool:
         """Return whether the file exists."""
         full_path = self._resolve_safe_path(path)
+        if self._limits is not None and self._is_quota_metadata(full_path):
+            return False
         return await asyncio.to_thread(self._file_exists_sync, full_path)
 
     @staticmethod
@@ -1500,6 +1645,8 @@ class FileSystemAgentFileStore(AgentFileStore):
         ``True`` all descendant files are searched, otherwise only the direct
         children.
         """
+        if self._limits is not None:
+            return await super().search(directory, regex_pattern, glob_pattern, recursive=recursive)
         full_dir = self._resolve_safe_directory_path(directory)
         search_pattern = _compile_search_regex(regex_pattern)
         return await _run_search_with_timeout(
@@ -1584,6 +1731,7 @@ class FileSystemAgentFileStore(AgentFileStore):
     async def create_directory(self, path: str) -> None:
         """Ensure the directory at ``path`` exists, creating it if necessary."""
         full_path = self._resolve_safe_directory_path(path)
+        self._reject_quota_metadata(full_path)
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 

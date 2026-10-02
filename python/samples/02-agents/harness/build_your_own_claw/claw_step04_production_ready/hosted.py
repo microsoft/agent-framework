@@ -58,6 +58,8 @@ from agent_framework import (
     AgentContext,
     AgentResponseUpdate,
     BackgroundAgentsProvider,
+    FileMemoryProvider,
+    FileMemoryRetentionManager,
     FileSystemAgentFileStore,
     InMemoryHistoryProvider,
     ResponseStream,
@@ -102,10 +104,18 @@ def _log_environment() -> None:
     )
 
 
-async def create_agent() -> Agent:
+async def create_agent(*, retention: FileMemoryRetentionManager | None = None) -> Agent:
     """Build request-owned tools and scope file memory by trusted user and sandbox."""
     config, context = AgentConfig.from_env(), get_request_context()
     scope = FoundryRequestScope.from_context(config, context, local_session_id="local-development")
+    memory_dir = Path.home() / ".claw" / "agent-file-memory" / scope.storage_key
+    memory_store = FileSystemAgentFileStore(
+        memory_dir,
+        max_file_bytes=int(os.environ.get("CLAW_FILE_MEMORY_MAX_FILE_BYTES", "1048576")),
+        max_files=int(os.environ.get("CLAW_FILE_MEMORY_MAX_FILES", "100")),
+        max_total_bytes=int(os.environ.get("CLAW_FILE_MEMORY_MAX_TOTAL_BYTES", "10485760")),
+    )
+    memory_provider = FileMemoryProvider(memory_store, retention=retention)
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
@@ -113,7 +123,6 @@ async def create_agent() -> Agent:
         if config.is_hosted
         else AzureCliCredential()
     )
-    memory_dir = Path.home() / ".claw" / "agent-file-memory" / scope.storage_key
 
     class RequestClient(FoundryChatClient):
         async def __aenter__(self) -> RequestClient:
@@ -145,7 +154,7 @@ async def create_agent() -> Agent:
         # external file_access_store (e.g. one backed by Azure Blob Storage) instead of the disk.
         enable_file_access=False,
         enable_shell=False,
-        file_memory_store=FileSystemAgentFileStore(memory_dir),
+        file_memory_provider=memory_provider,
         # Purview authenticates via the container's managed identity; InteractiveBrowserCredential
         # cannot run on a headless hosted container.
         purview_credential=credential,
@@ -159,6 +168,8 @@ async def create_agent() -> Agent:
         if context.session is None:
             raise RuntimeError("The hosted harness requires a request-owned AgentSession.")
         session = context.session
+        protection = memory_provider.protect()
+        await protection.__aenter__()
 
         @asynccontextmanager
         async def release_background() -> AsyncIterator[None]:
@@ -170,8 +181,10 @@ async def create_agent() -> Agent:
                 raise
             finally:
                 try:
-                    for provider in background_providers:
-                        await provider.release_session(session)
+                    async with AsyncExitStack() as release:
+                        release.push_async_callback(protection.__aexit__, None, None, None)
+                        for provider in background_providers:
+                            await provider.release_session(session)
                 except BaseException as cleanup_error:
                     logger.error("Failed to release request-owned background tasks (%s).", type(cleanup_error).__name__)
                     if not run_failed:
@@ -184,10 +197,11 @@ async def create_agent() -> Agent:
             except BaseException:
                 async with release_background():
                     raise
-            inner = context.result
-            if not isinstance(inner, ResponseStream):
+            result = context.result
+            if not isinstance(result, ResponseStream):
                 async with release_background():
                     raise RuntimeError("The streaming hosted harness must return a ResponseStream.")
+            inner = result
 
             cleaned_up = False
 
@@ -232,8 +246,21 @@ async def main() -> None:
     _configure_logging()
     load_dotenv()
     _log_environment()
-    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
-    await server.run_async()
+    value = os.environ.get("CLAW_FILE_MEMORY_RETENTION_SECONDS", "2592000")
+    retention_seconds = None if value.lower() == "none" else int(value)
+    retention = FileMemoryRetentionManager(
+        Path.home() / ".claw" / "agent-file-memory",
+        retention_seconds=retention_seconds,
+        max_total_bytes=int(os.environ.get("CLAW_FILE_MEMORY_SHARED_MAX_BYTES", "268435456")),
+        sweep_interval_seconds=int(os.environ.get("CLAW_FILE_MEMORY_SWEEP_INTERVAL_SECONDS", "300")),
+    )
+    async with retention:
+
+        async def request_agent() -> Agent:
+            return await create_agent(retention=retention)
+
+        server = ResponsesHostServer(agent=request_agent, history_source="agent_server")
+        await server.run_async()
 
 
 if __name__ == "__main__":

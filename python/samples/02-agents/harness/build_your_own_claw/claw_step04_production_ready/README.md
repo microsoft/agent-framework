@@ -134,6 +134,89 @@ resources require separate configuration. The unrelated Telegram sample also
 requires externally configured Telegram/Key Vault credentials. None of those
 credential-gated behaviors or deployments is proven by an offline smoke check.
 
+### File-memory capacity and retention
+
+SDK limits are opt-in: omitted `max_file_bytes`, `max_files`, and `max_total_bytes`
+remain unlimited, and `FileMemoryProvider` without a retention manager keeps its existing
+behavior. Retention currently supports the builtin filesystem store; customized backends
+continue using the existing interface and are rejected if retention is explicitly enabled.
+The hosted sample supplies finite limits and one server-owned
+`FileMemoryRetentionManager` shared by all request-owned stores.
+
+| Environment variable | Initial default | Meaning |
+| --- | --- | --- |
+| `CLAW_FILE_MEMORY_MAX_FILE_BYTES` | `1048576` (1 MiB) | Maximum stored file / whole-file read bytes |
+| `CLAW_FILE_MEMORY_MAX_FILES` | `100` | Regular files under each trusted user/sandbox root |
+| `CLAW_FILE_MEMORY_MAX_TOTAL_BYTES` | `10485760` (10 MiB) | Combined content bytes under each root |
+| `CLAW_FILE_MEMORY_SHARED_MAX_BYTES` | `268435456` (256 MiB) | Shared contents, control metadata, and atomic-copy reserve |
+| `CLAW_FILE_MEMORY_RETENTION_SECONDS` | `2592000` (30 days) | Initial idle lifetime for a new managed area; `none` initially disables TTL |
+| `CLAW_FILE_MEMORY_SWEEP_INTERVAL_SECONDS` | `300` (5 minutes) | Server-driven cleanup interval, including when there are no requests |
+
+These are example starting points, not universal deployment recommendations. Numeric values
+must be positive integers; invalid configuration fails instead of disabling protection.
+Root limits count existing files, descriptions, and `memories.md`, so `max_files` does not mean
+that many user-visible memories. Bytes count UTF-8 content, not filesystem allocation.
+The shared budget covers all roots and `.retention` control files; it reserves one staging
+file and the size of the largest file for an atomic replacement. Filesystem allocation,
+external writers, and unrelated storage are outside these limits. Reducing a budget does
+not delete unexpired data. New growth is refused; request registration still requires
+space for its protection token, and index repair may require additional capacity.
+
+Retention applies to a logical memory: its body, optional description, and index entry.
+Successful body reads, edits, and actual grep matches renew that memory. Listing,
+unmatched search, index injection, and background scanning do not renew every memory.
+Expired memories disappear from read/list/search/index before the next physical cleanup.
+GC deletes eligible bodies and descriptions still unreferenced by other bodies; it only
+prunes empty directories. Existing unregistered files stay readable and count toward
+capacity, but are not enrolled or deleted by reading/scanning. A successful overwrite
+starts their managed lifetime.
+
+`.retention/policy.json` records the shared policy; per-root versioned manifests use hashed
+record identifiers rather than filenames or identity values. This directory is host-owned
+and must not be exposed through file access, shell, or custom tools. The provider rejects
+overlapping filesystem `FileAccessProvider` roots. Every writer sharing the managed area
+must use the manager with identical shared limits and consistent per-root limits;
+direct store writes, older workers without management, multi-host
+deployment, and network filesystems do not provide these guarantees. File locks coordinate
+local processes and release after process death. Fixed coordination lock files stay in place.
+
+The host keeps request protection through the full run and stream consumption/close.
+GC skips scopes with an active request. That request can still use records that were valid
+when it began; new requests cannot revive an expired record by reading it. Empty scopes
+are reclaimed after their requests end. An existing root quota-lock marker is retained.
+
+A normal restart loads the stored TTL policy and preserves deadlines. The TTL environment
+value initializes a new area only; change an existing policy explicitly:
+
+```python
+# Use the same host-owned manager/directory as the server.
+await retention.set_retention(None)         # disable expiration; retain metadata
+await retention.set_retention(30 * 86400)   # explicitly resume with a complete new TTL
+```
+
+While disabled, reads remain available without renewal and TTL GC deletes no memories;
+cleanup of dead request-protection markers continues.
+Resuming grants still-present, registered `ready` records a complete lifetime from resume.
+Repeated same-value calls do nothing. Changing one positive TTL to another affects new
+writes and subsequent successful uses, not all existing deadlines. Deleted records cannot
+be restored; interrupted updates/deletions are not revived by resuming.
+
+Content, description, index, and manifest are not one filesystem transaction. Managed
+files use staged atomic replacement; an interrupted update remains protected from expiry.
+Failures after content changes report partial completion. Unknown/corrupt metadata is
+preserved and management for that scope stops. Operators inspect current content and then
+explicitly confirm interrupted updates with `await retention.repair(store)`; this rebuilds
+the index and starts a fresh lifetime, without claiming to recover the original operation.
+Pending deletions remain deletions and GC retries interrupted I/O. If a rebuilt index would
+exceed capacity, GC removes the stale index and completes confirmed deletion; the provider
+reconstructs its index projection on reads when capacity permits. Explicit update repair may
+still need additional capacity. Maintenance does not bypass file or shared quotas.
+
+The existing description naming replaces extensions, so `notes.md` and `notes.txt` share
+`notes_description.md`. Descriptions retain this existing last-write-wins behavior; cleanup
+preserves a sidecar while any other existing body still references it. Use distinct stems
+when memories need independent descriptions.
+
 ### Deploy to Foundry
 
 ```bash

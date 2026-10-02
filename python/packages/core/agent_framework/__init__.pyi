@@ -89,6 +89,7 @@ from ._harness._file_access import (
     InMemoryAgentFileStore,
 )
 from ._harness._file_memory import DEFAULT_FILE_MEMORY_INSTRUCTIONS, DEFAULT_FILE_MEMORY_SOURCE_ID, FileMemoryProvider
+from ._harness._file_memory_retention import FileMemoryRetentionManager
 from ._harness._loop import (
     AgentLoopMiddleware,
     JudgeVerdict,
@@ -466,6 +467,7 @@ __all__ = [
     "FileCheckpointStorage",
     "FileHistoryProvider",
     "FileMemoryProvider",
+    "FileMemoryRetentionManager",
     "FileSearchMatch",
     "FileSearchResult",
     "FileSessionStore",

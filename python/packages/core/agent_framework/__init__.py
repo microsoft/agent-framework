@@ -126,6 +126,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FileSystemAgentFileStore",
         "InMemoryAgentFileStore",
     ),
+    "._harness._file_memory_retention": ("FileMemoryRetentionManager",),
     "._harness._file_memory": (
         "DEFAULT_FILE_MEMORY_INSTRUCTIONS",
         "DEFAULT_FILE_MEMORY_SOURCE_ID",
@@ -511,6 +512,7 @@ __all__ = [
     "FileCheckpointStorage",
     "FileHistoryProvider",
     "FileMemoryProvider",
+    "FileMemoryRetentionManager",
     "FileSearchMatch",
     "FileSearchResult",
     "FileSessionStore",
