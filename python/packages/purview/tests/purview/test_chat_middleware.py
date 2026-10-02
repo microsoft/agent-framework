@@ -721,3 +721,78 @@ class TestPurviewChatPolicyMiddlewareDurableHistory:
 
         assert text == "model reply"
         assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+
+class TestPurviewChatPolicyMiddlewareBlockedResponseEnvelope:
+    """What a blocked response keeps from the response it replaced.
+
+    Blocking removes the content, not the call. The caller still needs to be able to
+    identify the call and resume it, so the control fields are carried over and only the
+    messages are replaced.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewChatPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @pytest.fixture
+    def evaluated(self) -> ChatResponse[Any]:
+        return ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text(text="confidential")])],
+            response_id="resp-1",
+            conversation_id="conv-1",
+            model="model-1",
+            created_at="2024-01-01T00:00:00Z",
+            finish_reason="stop",
+            continuation_token=cast(Any, {"token": "resume-me"}),
+            additional_properties={"custom": "value"},
+            raw_representation={"provider_payload": "confidential"},
+        )
+
+    def test_control_fields_are_carried_over(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.response_id == "resp-1"
+        assert blocked.conversation_id == "conv-1"
+        assert blocked.model == "model-1"
+        assert blocked.created_at == evaluated.created_at
+        assert blocked.finish_reason == "stop"
+        assert blocked.continuation_token == {"token": "resume-me"}
+        assert blocked.additional_properties["custom"] == "value"
+
+    def test_only_the_messages_are_replaced(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert len(blocked.messages) == 1
+        assert blocked.messages[0].role == "system"
+        assert "confidential" not in blocked.text
+
+    def test_the_provider_payload_is_not_carried_over(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        """It holds the content that was blocked, so carrying it would hand that content back."""
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.raw_representation is None
+
+    def test_properties_are_copied_rather_than_shared(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+        blocked.additional_properties["custom"] = "tampered"
+
+        assert evaluated.additional_properties["custom"] == "value"
+
+    def test_a_blocked_prompt_has_no_response_to_carry_from(self, middleware: PurviewChatPolicyMiddleware) -> None:
+        """Nothing was produced, so there is no envelope to preserve."""
+        blocked = middleware._blocked_response()
+
+        assert blocked.response_id is None
+        assert blocked.continuation_token is None
+        assert blocked.messages[0].role == "system"

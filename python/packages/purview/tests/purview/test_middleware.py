@@ -916,3 +916,115 @@ class TestPurviewPolicyMiddlewareSharedStream:
             released = [update async for update in cast(Any, context.result)]
 
         assert "".join(update.text for update in released) == "confidential"
+
+
+class TestPurviewPolicyMiddlewareBlockedResponseEnvelope:
+    """What a blocked response keeps from the response it replaced.
+
+    Blocking removes the content, not the call. The caller still needs to be able to
+    identify the run and resume it, so the control fields are carried over and only the
+    messages are replaced.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @pytest.fixture
+    def mock_agent(self) -> MagicMock:
+        agent = MagicMock()
+        agent.name = "test-agent"
+        return agent
+
+    @pytest.fixture
+    def evaluated(self) -> AgentResponse[Any]:
+        return AgentResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text(text="confidential")])],
+            response_id="resp-1",
+            agent_id="agent-1",
+            created_at="2024-01-01T00:00:00Z",
+            finish_reason="stop",
+            continuation_token=cast(Any, {"token": "resume-me"}),
+            additional_properties={"custom": "value"},
+            raw_representation={"provider_payload": "confidential"},
+        )
+
+    def test_control_fields_are_carried_over(
+        self, middleware: PurviewPolicyMiddleware, evaluated: AgentResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.response_id == "resp-1"
+        assert blocked.agent_id == "agent-1"
+        assert blocked.created_at == evaluated.created_at
+        assert blocked.finish_reason == "stop"
+        assert blocked.continuation_token == {"token": "resume-me"}
+        assert blocked.additional_properties["custom"] == "value"
+
+    def test_only_the_messages_are_replaced(
+        self, middleware: PurviewPolicyMiddleware, evaluated: AgentResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert len(blocked.messages) == 1
+        assert blocked.messages[0].role == "system"
+        assert "confidential" not in blocked.text
+
+    def test_the_provider_payload_is_not_carried_over(
+        self, middleware: PurviewPolicyMiddleware, evaluated: AgentResponse[Any]
+    ) -> None:
+        """It holds the content that was blocked, so carrying it would hand that content back."""
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.raw_representation is None
+
+    def test_properties_are_copied_rather_than_shared(
+        self, middleware: PurviewPolicyMiddleware, evaluated: AgentResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+        blocked.additional_properties["custom"] = "tampered"
+
+        assert evaluated.additional_properties["custom"] == "value"
+
+    def test_a_blocked_prompt_has_no_response_to_carry_from(self, middleware: PurviewPolicyMiddleware) -> None:
+        """Nothing was produced, so there is no envelope to preserve."""
+        blocked = middleware._blocked_response()
+
+        assert blocked.response_id is None
+        assert blocked.continuation_token is None
+        assert blocked.messages[0].role == "system"
+
+    async def test_a_blocked_streamed_run_keeps_the_envelope(
+        self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock, run_agent_middleware: Any
+    ) -> None:
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["Hello"])])
+        context.stream = True
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="confidential")])
+
+        def finalizer(collected: Any) -> AgentResponse[Any]:
+            final = AgentResponse.from_updates(collected)
+            final.continuation_token = cast(Any, {"token": "resume-me"})
+            final.response_id = "resp-1"
+            return final
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                context.result = cast(Any, ResponseStream(updates(), finalizer=finalizer))
+
+            await run_agent_middleware([middleware], context, mock_next)
+            stream = cast(Any, context.result)
+            released = [update async for update in stream]
+            final = await stream.get_final_response()
+
+        assert "confidential" not in "".join(update.text for update in released)
+        assert final.continuation_token == {"token": "resume-me"}
+        assert final.response_id == "resp-1"

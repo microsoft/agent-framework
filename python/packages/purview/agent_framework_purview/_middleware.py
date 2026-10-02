@@ -186,12 +186,30 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 resolved_user_id,
             )
             if should_block_response:
-                context.result = self._blocked_response()
+                context.result = self._blocked_response(context.result)
 
-    def _blocked_response(self) -> "AgentResponse[Any]":
-        """Build the replacement response returned when policy blocks the content."""
+    def _blocked_response(self, evaluated: "AgentResponse[Any] | None" = None) -> "AgentResponse[Any]":
+        """Build the replacement response returned when policy blocks the content.
+
+        When a response was actually produced, its control fields are carried over and only
+        the messages are replaced, so the caller can still identify the operation and resume
+        it. The structured value and the raw provider payload are deliberately not carried,
+        because both hold the content that was blocked.
+        """
         msg = self._settings.get("blocked_response_message", None) or "Response blocked by policy"
-        return AgentResponse(messages=[Message(role="system", contents=[msg])])
+        blocked = Message(role="system", contents=[msg])
+        if evaluated is None:
+            return AgentResponse(messages=[blocked])
+        return AgentResponse(
+            messages=[blocked],
+            response_id=evaluated.response_id,
+            agent_id=evaluated.agent_id,
+            created_at=evaluated.created_at,
+            finish_reason=cast("Any", evaluated.finish_reason),
+            usage_details=evaluated.usage_details,
+            continuation_token=evaluated.continuation_token,
+            additional_properties=dict(evaluated.additional_properties) if evaluated.additional_properties else None,
+        )
 
     def _evaluate_stream(
         self,
@@ -227,7 +245,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 user_id,
             )
             if should_block_response:
-                return self._blocked_response()
+                return self._blocked_response(final)
             # Returning the evaluated response, rather than None, is what makes the
             # released updates be re-derived from it. A finalizer may produce a response
             # that is not the assembly of its own updates, so releasing the buffered
@@ -333,15 +351,33 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 resolved_user_id,
             )
             if should_block_response:
-                context.result = self._blocked_response()
+                context.result = self._blocked_response(context.result)
 
-    def _blocked_response(self) -> "ChatResponse[Any]":
-        """Build the replacement response returned when policy blocks the content."""
+    def _blocked_response(self, evaluated: "ChatResponse[Any] | None" = None) -> "ChatResponse[Any]":
+        """Build the replacement response returned when policy blocks the content.
+
+        When a response was actually produced, its control fields are carried over and only
+        the messages are replaced, so the caller can still identify the call and resume it.
+        The structured value and the raw provider payload are deliberately not carried,
+        because both hold the content that was blocked.
+        """
         blocked_message = Message(
             role="system",
             contents=[self._settings.get("blocked_response_message", None) or "Response blocked by policy"],
         )
-        return ChatResponse(messages=[blocked_message])
+        if evaluated is None:
+            return ChatResponse(messages=[blocked_message])
+        return ChatResponse(
+            messages=[blocked_message],
+            response_id=evaluated.response_id,
+            conversation_id=evaluated.conversation_id,
+            model=evaluated.model,
+            created_at=evaluated.created_at,
+            finish_reason=cast("Any", evaluated.finish_reason),
+            usage_details=evaluated.usage_details,
+            continuation_token=evaluated.continuation_token,
+            additional_properties=dict(evaluated.additional_properties) if evaluated.additional_properties else None,
+        )
 
     def _evaluate_stream(
         self,
@@ -377,7 +413,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 user_id,
             )
             if should_block_response:
-                return self._blocked_response()
+                return self._blocked_response(final)
             # Returning the evaluated response, rather than None, is what makes the
             # released updates be re-derived from it. A finalizer may produce a response
             # that is not the assembly of its own updates, so releasing the buffered
