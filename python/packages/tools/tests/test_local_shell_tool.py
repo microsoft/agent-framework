@@ -517,3 +517,39 @@ async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.Pa
         await tool.run(f"Set-Location -LiteralPath '{subdir}'")
         pwd = await tool.run("(Get-Location).Path")
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+async def test_audit_log_records_allowed_command() -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
+    await tool.run(cmd)
+
+    record = tool.audit_log.records[0]
+    assert record.command == cmd
+    assert record.policy_decision == "allow"
+    assert record.exit_code == 0
+    assert record.timestamp_utc
+
+
+async def test_audit_log_records_denied_command() -> None:
+    tool = LocalShellTool(
+        mode="stateless",
+        policy=ShellPolicy(denylist=[r"forbidden"]),
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+    )
+    with pytest.raises(ShellCommandError):
+        await tool.run("echo forbidden")
+
+    record = tool.audit_log.records[0]
+    assert record.policy_decision == "deny"
+    assert record.exit_code is None
+    assert record.denial_reason
+
+
+async def test_audit_log_accumulates_multiple() -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
+    for _ in range(3):
+        await tool.run(cmd)
+    assert len(tool.audit_log) == 3

@@ -15,6 +15,7 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from .._feature_usage import FeatureIndex
+from ._audit import ShellAuditLog
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
@@ -136,6 +137,10 @@ class LocalShellTool:
             will execute any command the model emits.
         on_command: Optional audit hook called with the command string for
             every command that passes policy. Use for logging / telemetry.
+
+    Attributes:
+        audit_log: :class:`ShellAuditLog` recording every evaluated command
+            (allowed or denied) with its policy decision and exit code.
     """
 
     def __init__(
@@ -174,6 +179,7 @@ class LocalShellTool:
         self._max_output_bytes = max_output_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
+        self.audit_log: ShellAuditLog = ShellAuditLog()
 
         merged_env: dict[str, str] | None
         if env is None and not clean_env:
@@ -249,6 +255,11 @@ class LocalShellTool:
         mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
+        record = self.audit_log.record(
+            command=command,
+            policy_decision=decision.decision,
+            denial_reason=decision.reason if decision.decision == "deny" else "",
+        )
         if decision.decision == "deny":
             raise ShellCommandError(f"Command rejected by policy: {decision.reason}")
         if self._on_command is not None:
@@ -265,9 +276,11 @@ class LocalShellTool:
             if self._session is None:
                 raise RuntimeError("LocalShellTool session failed to start")
             effective = self._maybe_reanchor(command)
-            return await self._session.run(effective, timeout=effective_timeout)
+            result = await self._session.run(effective, timeout=effective_timeout)
+            record.exit_code = result.exit_code
+            return result
 
-        return await run_stateless(
+        result = await run_stateless(
             self._stateless_argv,
             command,
             workdir=self._workdir,
@@ -275,6 +288,8 @@ class LocalShellTool:
             timeout=effective_timeout,
             max_output_bytes=self._max_output_bytes,
         )
+        record.exit_code = result.exit_code
+        return result
 
     # ------------------------------------------------------------------ AF wiring
 
