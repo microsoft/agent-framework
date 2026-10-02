@@ -11,6 +11,20 @@ Samples demonstrating the [Harness AIContextProviders](../../../src/Microsoft.Ag
 | [Harness_Step03_DataProcessing](./Harness_Step03_DataProcessing/README.md) | Using FileAccessProvider to give an agent access to CSV data files for reading, analysis, and output generation |
 | [Harness_Step05_Loop](./Harness_Step05_Loop/README.md) | Wrapping a HarnessAgent with the LoopAgent decorator to re-invoke it until a configured LoopEvaluator (completion marker, predicate, AI judge, or approval-aware loop) decides to stop |
 
+## Console token usage
+
+The console status line shows the latest reported input, output, and total token
+counts, with percentages when context/output limits are configured. It also shows
+`session` tokens: the sum of reported usage across model calls observed for the
+current agent session. Repeated input tokens are counted on every call, so this
+total can exceed the context window and does not reset when history is compacted.
+
+The session total uses the provider's total token count, or input plus output when
+both are available. Missing usage is not estimated. The counter is local to the
+console observer; importing a session or restarting the console does not restore
+previous usage, and separately executed background agents are not included unless
+their usage is forwarded to this observer.
+
 ## Build your own claw blog series
 
 Samples accompanying the [*Build your own agent harness or claw with Microsoft Agent Framework*](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework) blog series, which builds a personal finance assistant step by step.
