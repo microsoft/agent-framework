@@ -387,6 +387,7 @@ ContentType = Literal[
     "function_approval_request",
     "function_approval_response",
     "oauth_consent_request",
+    "compaction",
 ]
 
 
@@ -1500,6 +1501,43 @@ class Content:
             "oauth_consent_request",
             consent_link=consent_link,
             user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.SERVER_COMPACTION)
+    def from_compaction(
+        cls: type[ContentT],
+        *,
+        protected_data: str,
+        id: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create compaction content.
+
+        A compaction item is an opaque, provider-encrypted summary of earlier conversation
+        state, produced by service-side context compaction (for example the OpenAI Responses
+        API ``context_management`` option). It carries that state into later turns in fewer
+        tokens, and providers that support it replay it as input on the next request.
+
+        Keyword Args:
+            protected_data: The provider's encrypted compaction payload.
+            id: The provider's identifier for the compaction item.
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``compaction``.
+        """
+        return cls(
+            "compaction",
+            id=id,
+            protected_data=protected_data,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,

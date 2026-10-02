@@ -44,6 +44,7 @@ from agent_framework._compaction import (
     CompactionStrategy,
     TokenizerProtocol,
 )
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
@@ -204,6 +205,17 @@ class ReasoningOptions(TypedDict, total=False):
     """How to summarize reasoning in the response."""
 
 
+@experimental(feature_id=ExperimentalFeature.SERVER_COMPACTION)
+class ContextManagementOptions(TypedDict, total=False):
+    """Service-side context management entry for the Responses API."""
+
+    type: Literal["compaction"]
+    """The context management strategy. Only ``compaction`` is supported."""
+
+    compact_threshold: int
+    """Token count at which the service compacts the context."""
+
+
 class StreamOptions(TypedDict, total=False):
     """Options for streaming responses."""
 
@@ -257,6 +269,14 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
     Sending this option requires openai 2.45.0 or later.
     See: https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints"""
+
+    context_management: list[ContextManagementOptions]
+    """Service-side context management, such as automatic compaction.
+    When the context crosses ``compact_threshold`` the service emits an encrypted
+    compaction item, surfaced as ``compaction`` content. With ``store=False`` the
+    latest compaction item is replayed on later requests and the history before it
+    (other than system/developer messages) is no longer sent.
+    See: https://learn.microsoft.com/azure/foundry/openai/how-to/responses#server-side-compaction"""
 
     reasoning: ReasoningOptions
     """Configuration for reasoning models (gpt-5, o-series).
@@ -1749,6 +1769,7 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
+            chat_messages = self._drop_messages_before_latest_compaction(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
             self._validate_reasoning_groups_for_stateless_replay(
                 chat_messages,
@@ -1770,6 +1791,30 @@ class RawOpenAIChatClient(
         # Coalesce hosted-MCP result markers onto matching mcp_call input
         # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
         return self._coalesce_pending_mcp_results(flat)
+
+    @staticmethod
+    def _drop_messages_before_latest_compaction(chat_messages: Sequence[Message]) -> Sequence[Message]:
+        """Drop the history that a service-side compaction item already summarizes.
+
+        The latest compaction item carries the context needed to continue, so for stateless
+        replay the messages before the one that contains it are not sent again. System and
+        developer messages are kept because they carry instructions rather than conversation
+        state. Whole messages are kept or dropped so tool calls stay paired with their results.
+        """
+        latest_index = next(
+            (
+                index
+                for index in range(len(chat_messages) - 1, -1, -1)
+                if any(content.type == "compaction" for content in chat_messages[index].contents)
+            ),
+            None,
+        )
+        if latest_index is None or latest_index == 0:
+            return chat_messages
+        return [
+            *(message for message in chat_messages[:latest_index] if message.role in ("system", "developer")),
+            *chat_messages[latest_index:],
+        ]
 
     def _validate_reasoning_groups_for_stateless_replay(
         self,
@@ -1905,6 +1950,20 @@ class RawOpenAIChatClient(
                         all_messages.append(reasoning_item)
                         serialized_reasoning_ids.add(content.id)
                     continue
+                case "compaction":
+                    # With service-side storage the service already holds the compaction item.
+                    if request_uses_service_side_storage or not content.protected_data:
+                        continue
+                    if "content" in args or "tool_calls" in args:
+                        all_messages.append(args)
+                        args = {"type": "message", "role": message.role}
+                    compaction_item: dict[str, Any] = {
+                        "type": "compaction",
+                        "encrypted_content": content.protected_data,
+                    }
+                    if content.id:
+                        compaction_item["id"] = content.id
+                    all_messages.append(compaction_item)
                 case "function_result":
                     new_args: dict[str, Any] = {}
                     new_args.update(
@@ -3264,6 +3323,23 @@ class RawOpenAIChatClient(
             return FinishReason("tool_calls")
         return FinishReason("stop")
 
+    @staticmethod
+    def _parse_compaction_content(item: Any) -> Content | None:
+        """Convert a Responses API compaction item into compaction content."""
+        encrypted_content = getattr(item, "encrypted_content", None)
+        if not isinstance(encrypted_content, str) or not encrypted_content:
+            logger.debug("Ignoring compaction item without encrypted content: %s", item)
+            return None
+        additional_properties: dict[str, Any] = {}
+        if created_by := getattr(item, "created_by", None):
+            additional_properties["created_by"] = created_by
+        return Content.from_compaction(
+            id=getattr(item, "id", None),
+            protected_data=encrypted_content,
+            additional_properties=additional_properties or None,
+            raw_representation=item,
+        )
+
     def _parse_response_from_openai(
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
@@ -3539,6 +3615,9 @@ class RawOpenAIChatClient(
                     contents.extend(self._image_generation_item_to_contents(item))
                 case "shell_call" | "local_shell_call" | "shell_call_output":
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
+                case "compaction":  # ResponseCompactionItem
+                    if compaction_content := self._parse_compaction_content(item):
+                        contents.append(compaction_content)
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
         self._mark_completed_computer_calls(contents)
@@ -4123,6 +4202,9 @@ class RawOpenAIChatClient(
                                 raw_representation=done_item,
                             )
                         )
+                elif getattr(done_item, "type", None) == "compaction":
+                    if compaction_content := self._parse_compaction_content(done_item):
+                        contents.append(compaction_content)
                 elif done_item.type == "message":
                     for content_index, part in enumerate(done_item.content):
                         if part.type == "output_text":

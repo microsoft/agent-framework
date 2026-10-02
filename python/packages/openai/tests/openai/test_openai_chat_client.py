@@ -10974,3 +10974,195 @@ async def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkey
 
 
 # endregion
+
+
+# region Server-side compaction
+
+
+def _compaction_mock_response(response_id: str, output: list[Any]) -> MagicMock:
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = response_id
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.finish_reason = "stop"
+    mock_response.incomplete = None
+    mock_response.conversation = None
+    mock_response.output = output
+    return mock_response
+
+
+def _compaction_text_item(text: str) -> MagicMock:
+    text_content = MagicMock()
+    text_content.type = "output_text"
+    text_content.text = text
+    text_content.annotations = []
+    text_content.logprobs = None
+    text_item = MagicMock()
+    text_item.type = "message"
+    text_item.content = [text_content]
+    return text_item
+
+
+def test_parse_response_preserves_compaction_item() -> None:
+    from openai.types.responses import ResponseCompactionItem
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    compaction_item = ResponseCompactionItem(id="cmp_1", type="compaction", encrypted_content="encrypted-state")
+    mock_response = _compaction_mock_response("resp-1", [compaction_item, _compaction_text_item("Done.")])
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    compaction = response.messages[0].contents[0]
+    assert compaction.type == "compaction"
+    assert compaction.id == "cmp_1"
+    assert compaction.protected_data == "encrypted-state"
+    assert compaction.raw_representation is compaction_item
+    assert response.text == "Done."
+
+
+def test_parse_response_ignores_compaction_item_without_encrypted_content() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    compaction_item = MagicMock()
+    compaction_item.type = "compaction"
+    compaction_item.id = "cmp_empty"
+    compaction_item.encrypted_content = None
+    mock_response = _compaction_mock_response("resp-1", [compaction_item, _compaction_text_item("Done.")])
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert [content.type for content in response.messages[0].contents] == ["text"]
+
+
+def test_streamed_compaction_item_is_preserved() -> None:
+    from openai.types.responses import ResponseCompactionItem
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    done_event = MagicMock()
+    done_event.type = "response.output_item.done"
+    done_event.item = ResponseCompactionItem(
+        id="cmp_stream", type="compaction", encrypted_content="encrypted-state", created_by="system"
+    )
+
+    update = client._parse_chunk_from_openai(done_event, {}, {})
+    response = ChatResponse.from_updates([update])
+
+    compaction = response.messages[0].contents[0]
+    assert (compaction.type, compaction.id, compaction.protected_data) == (
+        "compaction",
+        "cmp_stream",
+        "encrypted-state",
+    )
+    assert compaction.additional_properties["created_by"] == "system"
+
+
+async def test_stateless_request_replays_latest_compaction_and_drops_earlier_history() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="system", contents=["You are helpful."]),
+        Message(role="user", contents=["First question"]),
+        Message(
+            role="assistant",
+            contents=[Content.from_compaction(id="cmp_old", protected_data="old-state"), "First answer"],
+        ),
+        Message(role="user", contents=["Second question"]),
+        Message(
+            role="assistant",
+            contents=[Content.from_compaction(id="cmp_new", protected_data="new-state"), "Second answer"],
+        ),
+        Message(role="user", contents=["Third question"]),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    request_input = run_options["input"]
+    assert request_input[0]["role"] == "system"
+    assert request_input[1] == {"type": "compaction", "encrypted_content": "new-state", "id": "cmp_new"}
+    assert [item.get("role") for item in request_input[2:]] == ["assistant", "user"]
+    serialized = json.dumps(request_input)
+    assert "First question" not in serialized
+    assert "Second question" not in serialized
+    assert "old-state" not in serialized
+
+
+async def test_request_with_service_side_storage_does_not_replay_or_prune_compaction() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=["First question"]),
+        Message(role="assistant", contents=[Content.from_compaction(id="cmp_1", protected_data="state"), "Answer"]),
+        Message(role="user", contents=["Second question"]),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"conversation_id": "resp_previous"})
+
+    assert all(item.get("type") != "compaction" for item in run_options["input"])
+    assert "First question" in json.dumps(run_options["input"])
+
+
+async def test_compaction_content_round_trips_through_serialized_history() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    assistant = Message(
+        role="assistant", contents=[Content.from_compaction(id="cmp_1", protected_data="state"), "Answer"]
+    )
+    restored = Message.from_dict(assistant.to_dict())
+
+    _, run_options, _ = await client._prepare_request(
+        [Message(role="user", contents=["Old"]), restored, Message(role="user", contents=["New"])],
+        {"store": False},
+    )
+
+    assert run_options["input"][0] == {"type": "compaction", "encrypted_content": "state", "id": "cmp_1"}
+    assert "Old" not in json.dumps(run_options["input"])
+
+
+async def test_context_management_option_is_forwarded() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    context_management = [{"type": "compaction", "compact_threshold": 200000}]
+
+    _, run_options, _ = await client._prepare_request(
+        [Message(role="user", contents=["Hello"])],
+        {"store": False, "context_management": context_management},
+    )
+
+    assert run_options["context_management"] == context_management
+
+
+async def test_agent_with_history_replays_compaction_on_next_turn_when_store_false() -> None:
+    from openai.types.responses import ResponseCompactionItem
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first = _compaction_mock_response(
+        "resp-1",
+        [
+            ResponseCompactionItem(id="cmp_1", type="compaction", encrypted_content="compacted-state"),
+            _compaction_text_item("First answer"),
+        ],
+    )
+    second = _compaction_mock_response("resp-2", [_compaction_text_item("Second answer")])
+    default_options: OpenAIChatOptions = {
+        "store": False,
+        "context_management": [{"type": "compaction", "compact_threshold": 1000}],
+    }
+    agent = Agent(
+        client=client,
+        instructions="Be brief.",
+        context_providers=[InMemoryHistoryProvider()],
+        default_options=default_options,
+    )
+    session = agent.create_session()
+
+    with patch.object(client.client.responses, "create", side_effect=[_as_raw(first), _as_raw(second)]) as create:
+        await agent.run("First question", session=session)
+        await agent.run("Second question", session=session)
+
+    second_input = create.call_args_list[1].kwargs["input"]
+    assert {"type": "compaction", "encrypted_content": "compacted-state", "id": "cmp_1"} in second_input
+    assert "First question" not in json.dumps(second_input)
+    assert "Second question" in json.dumps(second_input)
+    assert create.call_args_list[1].kwargs["context_management"] == [{"type": "compaction", "compact_threshold": 1000}]
+
+
+# endregion
