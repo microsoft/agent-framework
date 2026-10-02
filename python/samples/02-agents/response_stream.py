@@ -486,6 +486,7 @@ if __name__ == "__main__":
 
 # Expected output includes:
 # === Example 6: Gates Around Transforms ===
+# Released updates:
 #   [Before gate] Saw: 'Public content. '
 #   -> 'Public content. '
 #   [Before gate] Saw: 'Internal secret.'
@@ -493,6 +494,7 @@ if __name__ == "__main__":
 # Final result: 'Public content. [redacted].'
 #
 # === Example 7: Buffered Final Replacement ===
+# The source is fully consumed and the replacement is approved before the first update is released:
 #   [Before result gate] Original: 'Public content. Internal secret.'
 #   -> 'Approved replacement response.'
 # Final replacement: 'Approved replacement response.'
