@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterable, Sequence
+from copy import copy
 
 from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message, ResponseStream
 
@@ -234,11 +235,12 @@ async def main() -> None:
 
     def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
         """Transform that converts text to uppercase."""
-        if update.text:
-            return ChatResponseUpdate(
-                contents=[Content.from_text(update.text.upper())], role=None, response_id=update.response_id
-            )
-        return update
+        transformed = copy(update)
+        transformed.contents = [copy(content) for content in update.contents]
+        for content in transformed.contents:
+            if content.type == "text" and content.text is not None:
+                content.text = content.text.upper()
+        return transformed
 
     # Pass update transforms directly to the constructor.
     stream3: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
