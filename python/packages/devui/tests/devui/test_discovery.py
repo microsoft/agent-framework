@@ -5,10 +5,42 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from agent_framework import Agent, ContextProvider, InMemoryHistoryProvider
 
 from agent_framework_devui._discovery import EntityDiscovery
+from agent_framework_devui._utils import extract_agent_metadata
 
 # Note: test_entities_dir fixture is provided by conftest.py
+
+
+@pytest.mark.parametrize(
+    "context_providers, expected",
+    [
+        ([], None),
+        ([InMemoryHistoryProvider()], ["InMemoryHistoryProvider"]),
+        (
+            [InMemoryHistoryProvider(), ContextProvider("additional")],
+            ["InMemoryHistoryProvider", "ContextProvider"],
+        ),
+    ],
+)
+async def test_context_providers_in_agent_metadata(mock_chat_client, context_providers, expected):
+    """Discovery includes all configured providers in their configured order."""
+    agent = Agent(client=mock_chat_client, name="Example", context_providers=context_providers)
+
+    entity_info = await EntityDiscovery().create_entity_info_from_object(agent)
+
+    assert entity_info.context_provider == expected
+
+
+def test_legacy_context_provider_in_agent_metadata():
+    """Agent-like objects using the singular attribute retain their metadata."""
+    agent = SimpleNamespace(context_provider=InMemoryHistoryProvider())
+
+    assert extract_agent_metadata(agent)["context_provider"] == ["InMemoryHistoryProvider"]
 
 
 async def test_discover_agents(test_entities_dir):
