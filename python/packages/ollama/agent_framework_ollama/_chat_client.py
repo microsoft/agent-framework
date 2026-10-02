@@ -32,6 +32,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    validate_tool_mode,
 )
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
@@ -97,7 +98,7 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
-        tool_choice: Ollama only supports auto tool choice.
+        tool_choice: Ollama only supports auto tool choice, but ``none`` is honored by omitting the tools.
         allow_multiple_tool_calls: Not configurable.
         user: Not supported.
         store: Not supported.
@@ -217,7 +218,7 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
     # ChatOptions fields not supported in Ollama
     tool_choice: None  # type: ignore[misc]
-    """Not supported. Ollama only supports auto tool choice."""
+    """Not supported. Ollama only supports auto tool choice, but ``none`` is honored by omitting the tools."""
 
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Not configurable in Ollama."""
@@ -454,7 +455,12 @@ class OllamaChatClient(
 
         # tools
         tools = options.get("tools")
-        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode and tool_mode.get("mode") == "none":
+            # Ollama has no tool_choice parameter.
+            # Omit tools entirely so the model won't attempt tool calls.
+            run_options.pop("tools", None)
+        elif tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options
