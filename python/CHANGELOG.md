@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **agent-framework-core**: Add GT1 Signal Protocol for `AgentLoopMiddleware` autonomous loops: `SignalParser`, `signal_should_continue()`, `LoopExitReason`, `get_loop_exit_reason()`, and the `TASK_COMPLETE:` / `NEED_INPUT:` text-signal convention. `AgentLoopMiddleware` now stamps `loop_exit_reason` in `AdditionalProperties` when the iteration cap fires.
+
 ## [1.19.0] - 2026-09-18
 
 ### Added
