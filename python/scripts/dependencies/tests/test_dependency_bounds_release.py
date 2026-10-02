@@ -78,6 +78,43 @@ name = "agent_framework_connector"
     _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
 
 
+@pytest.mark.parametrize("all_config", ["", "[project.optional-dependencies]\nall = []"])
+def test_core_all_dependency_bounds_reject_missing_or_empty_extra(tmp_path: Path, all_config: str) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        f"""
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+{all_config}
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+
+    with pytest.raises(RuntimeError, match="all must not be missing or empty"):
+        _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
 @pytest.mark.parametrize(
     "requirement",
     [

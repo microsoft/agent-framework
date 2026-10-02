@@ -164,8 +164,12 @@ def _validate_core_all_dependency_bounds(projects: dict[str, ReleaseProject]) ->
     if core is None:
         return
 
+    all_requirements = core.optional_dependencies.get("all")
+    if not all_requirements:
+        raise RuntimeError("agent-framework-core[all] dependency bounds are incomplete:\n- all must not be missing or empty")
+
     errors: list[str] = []
-    for requirement_text in core.optional_dependencies.get("all", ()):
+    for requirement_text in all_requirements:
         try:
             requirement = Requirement(requirement_text)
         except InvalidRequirement as exc:
