@@ -6,6 +6,7 @@ import contextlib
 import json
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -41,6 +42,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _MODEL_OUTPUT_KIND_KEY,
     _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
@@ -2492,6 +2494,222 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[0].text == "Thinking A1 A2"
     assert contents[1].id == "rs_bbb"
     assert contents[1].text == "Thinking B1 B2"
+
+
+def _reference_coalesce(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
+    """The pre-fix fold, kept as the equivalence oracle: deepcopy the run head, then += the rest."""
+    if not contents:
+        return
+    coalesced: list[Content] = []
+    acc: Content | None = None
+    for content in contents:
+        if content.type == type_str:
+            if acc is None:
+                acc = deepcopy(content)
+            elif type_str == "text" and acc.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced.append(acc)
+                acc = deepcopy(content)
+            else:
+                try:
+                    acc += content
+                except AdditionItemMismatch:
+                    coalesced.append(acc)
+                    acc = deepcopy(content)
+        else:
+            if acc:
+                coalesced.append(acc)
+            acc = None
+            coalesced.append(content)
+    if acc:
+        coalesced.append(acc)
+    contents.clear()
+    contents.extend(coalesced)
+
+
+@pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
+def test_coalesce_matches_repeated_add(type_str: Literal["text", "text_reasoning"]) -> None:
+    """The one-pass fold must reproduce the repeated-+= result on a mixed stream."""
+    from agent_framework._types import _coalesce_text_content
+
+    def make(i: int, **kwargs: Any) -> Content:
+        if type_str == "text":
+            return Content.from_text(f"chunk{i} ", **kwargs)
+        return Content.from_text_reasoning(text=f"chunk{i} ", **kwargs)
+
+    streams = [
+        # plain run
+        [make(i) for i in range(5)],
+        # run with props, annotations and raw representations of mixed shapes
+        [
+            make(0, additional_properties={"a": 1}, raw_representation={"n": 0}),
+            make(1, additional_properties={"a": 2, "b": 1}, raw_representation=[{"n": 1}]),
+            make(2),
+            make(3, raw_representation={"n": 3}),
+        ],
+        # annotations on the head, on a later chunk, and on both
+        [
+            make(0, annotations=[{"type": "citation", "url": "https://a"}]),
+            make(1),
+            make(2, annotations=[{"type": "citation", "url": "https://b"}]),
+        ],
+        [make(0), make(1, annotations=[{"type": "citation", "url": "https://b"}]), make(2)],
+        # split by an unrelated content type, then resume
+        [make(0), Content.from_data(b"\x00", media_type="application/octet-stream"), make(1), make(2)],
+        # single chunk stays a plain copy
+        [make(0, raw_representation={"n": 0})],
+    ]
+    if type_str == "text":
+        marker = {_MODEL_OUTPUT_KIND_KEY: "refusal"}
+        streams.append([make(0), make(1, additional_properties=marker), make(2, additional_properties=marker), make(3)])
+    else:
+        streams.append([make(0, id="rs_a"), make(1, id="rs_a"), make(2, id="rs_b"), make(3)])
+        streams.append([
+            make(0, additional_properties={"reasoning_text": True}),
+            make(1),
+            make(2, additional_properties={"reasoning_text": True}),
+        ])
+
+    for stream in streams:
+        # Shallow copies: deepcopy would strip raw_representation up front and make
+        # the explicit raw comparison below vacuous.
+        expected = [copy(c) for c in stream]
+        _reference_coalesce(expected, type_str)
+        actual = list(stream)
+        _coalesce_text_content(actual, type_str)
+        assert actual == expected, type_str
+        # Content.__eq__ excludes raw_representation, so compare it explicitly.
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected], type_str
+
+
+def test_coalesce_fold_does_not_readd_chunks() -> None:
+    """Aggregating n chunks must not invoke Content.__add__ per chunk (the old O(n^2) path)."""
+    from agent_framework._types import _coalesce_text_content
+
+    calls = 0
+    original_add = Content.__add__
+
+    def counting_add(self: Content, other: Content) -> Content:
+        nonlocal calls
+        calls += 1
+        return original_add(self, other)
+
+    contents = [Content.from_text(f"c{i} ", raw_representation={"i": i}) for i in range(2000)]
+    try:
+        Content.__add__ = counting_add  # type: ignore[method-assign]
+        _coalesce_text_content(contents, "text")
+    finally:
+        Content.__add__ = original_add  # type: ignore[method-assign]
+
+    assert calls == 0
+    assert len(contents) == 1
+    assert contents[0].text == "".join(f"c{i} " for i in range(2000))
+    # The run head's raw representation is dropped by the fold's deepcopy semantics;
+    # the remaining 1999 entries flatten in order.
+    assert contents[0].raw_representation == [{"i": i} for i in range(1, 2000)]
+
+
+def test_coalesce_text_reasoning_one_pass_semantics() -> None:
+    """text_reasoning specifics: id from the first tagged chunk, protected_data from the last non-null."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text_reasoning(id="rs_a", text="t1", protected_data="sig1"),
+        Content.from_text_reasoning(text="t2"),
+        Content.from_text_reasoning(text=None, protected_data="sig2"),
+    ]
+    _coalesce_text_content(contents, "text_reasoning")
+    assert len(contents) == 1
+    assert contents[0].id == "rs_a"
+    assert contents[0].text == "t1t2"
+    assert contents[0].protected_data == "sig2"
+
+    # a fully text-less run keeps text=None rather than ""
+    none_run = [Content.from_text_reasoning(text=None), Content.from_text_reasoning(text=None)]
+    _coalesce_text_content(none_run, "text_reasoning")
+    assert len(none_run) == 1
+    assert none_run[0].text is None
+
+
+def test_coalesce_text_reasoning_empty_id_matches_repeated_add() -> None:
+    """An empty-string id survives the fold exactly like repeated += (``None or ""`` yields ``""``)."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [Content.from_text_reasoning(text="a"), Content.from_text_reasoning(id="", text="b")]
+    _coalesce_text_content(contents, "text_reasoning")
+    assert len(contents) == 1
+    assert contents[0].id == ""
+
+
+def test_coalesce_detaches_run_head_nested_values() -> None:
+    """Mutating the source head's nested values after the fold must not leak into the aggregate."""
+    from agent_framework._types import _coalesce_text_content
+
+    head = Content.from_text(
+        "h ",
+        additional_properties={"k": {"nested": 1}},
+        annotations=[{"type": "citation", "url": "https://a"}],
+    )
+    contents = [head, Content.from_text("t")]
+    _coalesce_text_content(contents, "text")
+    props = head.additional_properties
+    annotations = head.annotations
+    assert props is not None and annotations is not None
+    props["k"]["nested"] = 99
+    annotations[0]["url"] = "https://mutated"
+    folded_props = contents[0].additional_properties
+    folded_annotations = contents[0].annotations
+    assert folded_props is not None and folded_annotations is not None
+    assert folded_props["k"]["nested"] == 1
+    assert folded_annotations[0]["url"] == "https://a"
+
+
+@pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
+def test_coalesce_matches_repeated_add_fuzz(type_str: Literal["text", "text_reasoning"]) -> None:
+    """Seeded random streams: the one-pass fold must match repeated += exactly.
+
+    The oracle folds through the live ``__add__``, so any future drift between
+    the add-path and the one-pass fold fails here.
+    """
+    import random
+
+    from agent_framework._types import _coalesce_text_content
+
+    rng = random.Random(20261002)
+
+    def rand_chunk() -> Content:
+        kwargs: dict[str, Any] = {}
+        if rng.random() < 0.5:
+            props: dict[str, Any] = {rng.choice(["a", "b"]): rng.randint(0, 3)}
+            if type_str == "text" and rng.random() < 0.2:
+                props[_MODEL_OUTPUT_KIND_KEY] = rng.choice(["refusal", "regular"])
+            if type_str == "text_reasoning" and rng.random() < 0.3:
+                props["reasoning_text"] = True
+            kwargs["additional_properties"] = props
+        if rng.random() < 0.3:
+            annotation: Annotation = {"type": "citation", "url": f"https://x/{rng.randint(0, 9)}"}
+            kwargs["annotations"] = [annotation]
+        if rng.random() < 0.4:
+            kwargs["raw_representation"] = (
+                {"n": rng.randint(0, 5)} if rng.random() < 0.5 else [{"n": rng.randint(0, 5)}]
+            )
+        if type_str == "text":
+            return Content.from_text(rng.choice(["", "x", "y "]), **kwargs)
+        return Content.from_text_reasoning(
+            id=rng.choice([None, "", "rs_a", "rs_b"]), text=rng.choice([None, "", "t "]), **kwargs
+        )
+
+    for _ in range(300):
+        stream = [rand_chunk() for _ in range(rng.randint(0, 8))]
+        if stream and rng.random() < 0.3:
+            stream.insert(rng.randrange(len(stream)), Content.from_data(b"\x00", media_type="application/octet-stream"))
+        expected = [copy(c) for c in stream]
+        _reference_coalesce(expected, type_str)
+        actual = list(stream)
+        _coalesce_text_content(actual, type_str)
+        assert actual == expected
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected]
 
 
 def test_agent_response_from_updates_preserves_refusal_marker() -> None:
