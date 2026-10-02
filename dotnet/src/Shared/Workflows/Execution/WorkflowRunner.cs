@@ -17,7 +17,6 @@ namespace Shared.Workflows;
 
 // Types are for evaluation purposes only and is subject to change or removal in future updates.
 #pragma warning disable OPENAI001 
-#pragma warning disable OPENAICUA001
 #pragma warning disable MEAI001
 
 internal sealed class WorkflowRunner

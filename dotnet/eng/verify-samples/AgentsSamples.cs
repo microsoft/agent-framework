@@ -52,6 +52,19 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
+            Name = "Agent_With_AzureOpenAIResponses_ComputerUse",
+            ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIResponses_ComputerUse",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            ExpectedOutputDescription =
+            [
+                "The output should show a computer automation session running batched actions (such as click, type or keypress) against simulated browser screenshots, followed by a final response describing search results.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
             Name = "Agent_With_AzureAIProject",
             ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureAIProject",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
@@ -1188,8 +1201,8 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "FoundryAgent_Step15_ComputerUse",
-            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUse",
+            Name = "FoundryAgent_Step15_ComputerUsePreview",
+            ProjectPath = "samples/02-agents/AgentProviders/foundry/Agent_Step15_ComputerUsePreview",
             RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME"],
             OptionalEnvironmentVariables = [],
             ExpectedOutputDescription = ["The output should show a computer automation session processing simulated browser screenshots with iteration steps and a final response describing search results."],

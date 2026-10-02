@@ -6,28 +6,21 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);OPENAICUA001;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- FoundryAITool.CreateComputerTool() provides the GA computer tool. -->
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Assets\cua_browser_search.jpg">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="Assets\cua_search_results.jpg">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="Assets\cua_search_typed.jpg">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
+    <!-- Reuses the simulated browser screenshots of the preview computer use sample. -->
+    <None Include="..\..\foundry\Agent_Step15_ComputerUsePreview\Assets\*.jpg" Link="Assets\%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>
