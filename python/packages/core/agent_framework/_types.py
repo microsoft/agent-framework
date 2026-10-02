@@ -3813,10 +3813,21 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 update = await self._iterator.__anext__()
             elif len(context_factories) == 1:
                 with context_factories[0]():
-                    if self._iterator is None:
-                        stream = await self._get_stream()
-                        self._iterator = stream.__aiter__()
-                    update = await self._iterator.__anext__()
+                    if len(context_factories) == 1:
+                        if self._iterator is None:
+                            stream = await self._get_stream()
+                            self._iterator = stream.__aiter__()
+                        update = await self._iterator.__anext__()
+                    else:
+                        with contextlib.ExitStack() as stack:
+                            context_index = 1
+                            while context_index < len(context_factories):
+                                stack.enter_context(context_factories[context_index]())
+                                context_index += 1
+                            if self._iterator is None:
+                                stream = await self._get_stream()
+                                self._iterator = stream.__aiter__()
+                            update = await self._iterator.__anext__()
             else:
                 with contextlib.ExitStack() as stack:
                     for factory in context_factories:

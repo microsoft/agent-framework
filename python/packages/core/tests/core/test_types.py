@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import json
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
@@ -4275,6 +4276,38 @@ class TestResponseStreamBasicIteration:
         assert len(stream.updates) == 2
         assert stream.updates[0].text == "update_0"
         assert stream.updates[1].text == "update_1"
+
+    async def test_pull_context_added_by_factory_applies_to_current_pull(self) -> None:
+        """A pull context registered by the first factory wraps the same iterator pull."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            events.append("pull")
+            yield ChatResponseUpdate(contents=[Content.from_text("update")], role="assistant")
+
+        @contextlib.contextmanager
+        def added_context() -> Any:
+            events.append("added_enter")
+            try:
+                yield
+            finally:
+                events.append("added_exit")
+
+        @contextlib.contextmanager
+        def initial_context() -> Any:
+            events.append("initial_enter")
+            stream.with_pull_context_manager(added_context)
+            try:
+                yield
+            finally:
+                events.append("initial_exit")
+
+        stream = ResponseStream(updates(), finalizer=_combine_updates).with_pull_context_manager(initial_context)
+
+        await anext(stream)
+        await stream.close()
+
+        assert events == ["initial_enter", "added_enter", "pull", "added_exit", "initial_exit"]
 
     async def test_auto_finalize_on_iteration_completion(self) -> None:
         """Stream auto-finalizes when async iteration completes."""
