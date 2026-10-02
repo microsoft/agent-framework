@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 from agent_framework import (
+    Content,
     Executor,
     InMemoryCheckpointStorage,
     Message,
@@ -684,15 +685,9 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
     assert len(yes_turns) >= 2
 
 
-def test_snapshot_messages_from_resume_skips_approval_via_pending_type() -> None:
-    from types import SimpleNamespace
-
+def test_snapshot_messages_from_resume_keeps_conversational_approval_text() -> None:
     from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
 
-    approval_pending = SimpleNamespace(response_type=bool, data="Approve?")
-    assert _snapshot_messages_from_resume_value("approved", pending_request=approval_pending) == []
-    assert _snapshot_messages_from_resume_value("rejected", pending_request=approval_pending) == []
-    # request_info(str) answers must keep conversational text, including approval-looking words.
     assert _snapshot_messages_from_resume_value("approved") == [{"role": "user", "content": "approved"}]
     assert _snapshot_messages_from_resume_value("Please refund me") == [{"role": "user", "content": "Please refund me"}]
 
@@ -976,3 +971,131 @@ def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_pr
     )
     assert current_turn_client_messages == []
     assert [m["id"] for m in merged] == ["u0", "a0", "u1", "a1", "generated-yes-2"]
+
+
+@pytest.mark.parametrize("workflow_mode", ["live", "factory", "cold-checkpoint"])
+@pytest.mark.parametrize("response_kind", ["content-approval", "bool-approval", "text"])
+async def test_workflow_snapshot_uses_validated_resume_responses(workflow_mode: str, response_kind: str) -> None:
+    """Approval controls stay out of snapshots for live, factory and cold resumes."""
+    import json
+
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    handled: list[Any] = []
+
+    class ContentApprovalExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            call = Content.from_function_call(call_id="call-1", name="refund", arguments={"amount": 5})
+            request = Content.from_function_approval_request(id="reply-1", function_call=call)
+            await ctx.request_info(request, Content, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: Content, response: Content, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response.type == "function_approval_response"
+            assert response.approved is True
+            await ctx.yield_output("Decision processed")
+
+    class BoolApprovalExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Approve?", bool, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: str, response: bool, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response is True
+            await ctx.yield_output("Decision processed")
+
+    class TextExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Say something", str, request_id="reply-1")
+
+        @response_handler
+        async def respond(self, original_request: str, response: str, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            assert response == "approved"
+            await ctx.yield_output("Reply processed")
+
+    executor_type: type[Executor] = {
+        "content-approval": ContentApprovalExecutor,
+        "bool-approval": BoolApprovalExecutor,
+        "text": TextExecutor,
+    }[response_kind]
+
+    def build_workflow() -> Workflow:
+        return WorkflowBuilder(start_executor=executor_type(id="requester")).build()
+
+    storage = InMemoryCheckpointStorage()
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = build_workflow()
+    agent = AgentFrameworkWorkflow(
+        workflow=workflow if workflow_mode != "factory" else None,
+        workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "factory" else None,
+        snapshot_store=store,
+        checkpoint_storage=storage,
+    )
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "approval-thread",
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+            "messages": [{"id": "start", "role": "user", "content": "start"}],
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = next(event for event in first_events if event.type == "RUN_FINISHED")
+    interrupt = _interrupts_from_finished(first_finished)[0]
+    request = interrupt["metadata"]["agent_framework"]["value"]
+    if isinstance(request, str):
+        request = json.loads(request)
+    if response_kind == "content-approval":
+        # The execution path accepts a JSON-string Content response; snapshotting
+        # must consume its validated Content instead of persisting that raw string.
+        value = json.dumps(
+            {
+                "type": "function_approval_response",
+                "id": "reply-1",
+                "approved": True,
+                "function_call": request["function_call"],
+            }
+        )
+    elif response_kind == "bool-approval":
+        value = "true"
+    else:
+        value = "approved"
+    payload: dict[str, Any] = {
+        "thread_id": "approval-thread",
+        _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        "messages": [],
+        "resume": {"interrupts": [{"id": "reply-1", "value": value}]},
+    }
+    if workflow_mode == "cold-checkpoint":
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        latest = max(checkpoints, key=lambda checkpoint: checkpoint.timestamp)
+        payload["forwarded_props"] = {"checkpoint_id": latest.checkpoint_id}
+        agent = AgentFrameworkWorkflow(workflow=build_workflow(), snapshot_store=store, checkpoint_storage=storage)
+    resumed = await _run(agent, payload)
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert len(handled) == 1
+    snapshot = await store.get(scope="tenant-a", thread_id="approval-thread")
+    assert snapshot is not None
+    user_contents = [message["content"] for message in snapshot.messages if message.get("role") == "user"]
+    assert user_contents == (["start", "approved"] if response_kind == "text" else ["start"])
+    # Hydration must replay the same safe history without executing the response again.
+    hydrated = await _run(
+        agent, {"thread_id": "approval-thread", _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a", "messages": []}
+    )
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_users = [message.content for message in replay.messages if message.role == "user"]
+    assert replay_users == user_contents
+    assert len(handled) == 1

@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 from collections import Counter
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable
 from typing import Any, cast
 
 from ag_ui.core import (
@@ -79,40 +79,16 @@ def _hashable_message_content(content: Any) -> Any:
         return repr(content)
 
 
-def _pending_request_is_approval(pending_request: Any | None) -> bool:
-    """Whether a pending request_info event is an approval gate (not conversational HITL)."""
-    if pending_request is None:
-        return False
-    response_type: Any | None
-    try:
-        response_type = pending_request.response_type
-    except Exception:
-        response_type = getattr(pending_request, "_response_type", None)
-    if response_type is bool:
-        return True
-    type_name = getattr(response_type, "__name__", "") or str(response_type or "")
-    if "Approval" in type_name:
-        return True
-    data = getattr(pending_request, "data", None)
-    if isinstance(data, dict) and any(key in data for key in ("functionCall", "function_call")):
-        return True
-    return False
-
-
 def _snapshot_messages_from_resume_value(
     value: Any,
-    *,
-    pending_request: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
 
-    Approval / structured tool payloads are skipped based on the matched pending request's
-    type/data (not the response text). Only ``user`` turns are projected so resume cannot
+    Values have already been coerced and validated by the execution path. Only
+    ``user`` turns are projected so resume cannot
     forge assistant/system/tool history into the backend-owned snapshot.
     """
     if isinstance(value, bool) or value is None:
-        return []
-    if _pending_request_is_approval(pending_request):
         return []
     if isinstance(value, str):
         text = value.strip()
@@ -159,22 +135,6 @@ def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
         normalized["content"] = contents
     normalized.pop("contents", None)
     return normalized
-
-
-def _snapshot_messages_from_workflow_resume(
-    resume_payload: Any,
-    pending_events: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Collect user-visible snapshot messages from a workflow resume payload."""
-    messages: list[dict[str, Any]] = []
-    pending = pending_events or {}
-    for interrupt in _normalize_resume_interrupts(resume_payload):
-        if interrupt.get("status") not in {None, "resolved"}:
-            continue
-        interrupt_id = interrupt.get("id")
-        pending_request = pending.get(str(interrupt_id)) if interrupt_id is not None else None
-        messages.extend(_snapshot_messages_from_resume_value(interrupt.get("value"), pending_request=pending_request))
-    return messages
 
 
 def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
@@ -298,6 +258,19 @@ class _WorkflowSnapshotBuilder:
         self._provisional_reasoning_messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] | None = None
         self.interrupt: list[dict[str, Any]] | None = None
+
+    def append_resume_messages(
+        self, messages: list[dict[str, Any]], *, content_dedupe_against: list[dict[str, Any]]
+    ) -> None:
+        """Seed validated user replies before any workflow output is observed."""
+        self._synthesized_messages = _append_unique_snapshot_messages(
+            self._synthesized_messages,
+            agui_messages_to_snapshot_format(messages),
+            content_dedupe_against=content_dedupe_against,
+        )
+        self._synthesized_message_ids = {
+            message_id for message in self._synthesized_messages if (message_id := message.get("id"))
+        }
 
     def observe(self, event: BaseEvent) -> None:
         """Fold one replayable AG-UI event into the latest snapshot state."""
@@ -727,7 +700,7 @@ class AgentFrameworkWorkflow:
                     "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
                     "checkpoint storage on the workflow instance."
                 )
-        live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
+        live_pending_events = await _pending_request_events(workflow)
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
@@ -761,6 +734,9 @@ class AgentFrameworkWorkflow:
                     code="WORKFLOW_RESUME_NOT_FOUND",
                 )
                 return
+        effective_pending_events = live_pending_events
+        if checkpoint_id is not None:
+            effective_pending_events = dict(checkpoint.pending_request_info_events or {})
         if self.workflow is not None and checkpoint_id is None:
             for interrupt_id in resume_interrupt_ids:
                 request_event = live_pending_events.get(interrupt_id)
@@ -812,35 +788,31 @@ class AgentFrameworkWorkflow:
                 )
             else:
                 builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
-        if resume_payload is not None and snapshot_session.enabled:
-            # Conversational HITL resumes put the user reply in interrupt.value with
-            # messages:[]; fold that text into the snapshot so hydrate keeps it (#8160).
-            # Skip when the client already included the same turn in `messages`.
-            hitl_messages = _snapshot_messages_from_workflow_resume(
-                resume_payload,
-                pending_events=live_pending_events,
-            )
-            if hitl_messages:
-                # Content fallback is only for the current request's newly supplied
-                # turns (e.g. client id remap of the resume reply). Rows already in
-                # the stored snapshot keep their ids when replayed in ``messages`` and
-                # must not starve a later identical resume interrupt.
-                stored_ids = {
-                    message.get("id")
-                    for message in (stored_snapshot.messages if stored_snapshot is not None else [])
-                    if message.get("id")
-                }
-                current_turn_client_messages = [
-                    message
-                    for message in client_request_messages
-                    if not (message.get("id") and message.get("id") in stored_ids)
-                ]
-                builder_seed_messages = _append_unique_snapshot_messages(
-                    builder_seed_messages,
-                    hitl_messages,
-                    content_dedupe_against=current_turn_client_messages,
-                )
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
+
+        def append_conversational_responses(values: list[Any]) -> None:
+            # Execution owns response validation and approval classification. Project only
+            # validated conversational values from its effective live/checkpoint requests.
+            if snapshot_builder is None or resume_payload is None:
+                return
+            hitl_messages = [
+                message for value in values for message in _snapshot_messages_from_resume_value(make_json_safe(value))
+            ]
+            stored_ids = {
+                message.get("id")
+                for message in (stored_snapshot.messages if stored_snapshot is not None else [])
+                if message.get("id")
+            }
+            current_turn_client_messages = [
+                message
+                for message in client_request_messages
+                if not (message.get("id") and message.get("id") in stored_ids)
+            ]
+            snapshot_builder.append_resume_messages(
+                hitl_messages,
+                content_dedupe_against=current_turn_client_messages,
+            )
+
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
             # persists the latest known Shared State instead of dropping it.
@@ -849,7 +821,12 @@ class AgentFrameworkWorkflow:
                 snapshot_builder.state = cast(dict[str, Any], state_snapshot)
         run_error_emitted = False
         async for event in run_workflow_stream(
-            input_data, workflow, checkpoint_storage=run_checkpoint_storage, checkpoint_id=checkpoint_id
+            input_data,
+            workflow,
+            checkpoint_storage=run_checkpoint_storage,
+            checkpoint_id=checkpoint_id,
+            pending_request_events=effective_pending_events,
+            on_conversational_responses=append_conversational_responses,
         ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)

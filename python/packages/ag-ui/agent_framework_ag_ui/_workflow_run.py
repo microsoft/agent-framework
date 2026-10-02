@@ -874,12 +874,15 @@ def _coerce_responses_for_pending_requests(
 def _coerce_responses_for_pending_requests_strict(
     responses: dict[str, Any],
     pending_events: dict[str, Any],
+    *,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
 ) -> tuple[dict[str, Any], RunErrorEvent | None]:
     """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
     if not responses or not pending_events:
         return responses, None
 
     normalized: dict[str, Any] = {}
+    conversational_values: list[Any] = []
     pending_by_id: dict[str, Any] = {}
     for request_id, event in pending_events.items():
         pending_by_id[str(request_id)] = event
@@ -920,6 +923,14 @@ def _coerce_responses_for_pending_requests_strict(
                 ),
             )
         normalized[request_key] = coerced_value
+        # Typed execution controls must never become conversational snapshot history.
+        # Use the response execution actually accepts, including JSON-string Content.
+        if not isinstance(coerced_value, bool) and not (
+            isinstance(coerced_value, Content) and coerced_value.type == "function_approval_response"
+        ):
+            conversational_values.append(coerced_value)
+    if on_conversational_responses is not None:
+        on_conversational_responses(conversational_values)
     return normalized, None
 
 
@@ -1136,6 +1147,8 @@ async def run_workflow_stream(
     *,
     checkpoint_storage: CheckpointStorage | None = None,
     checkpoint_id: str | None = None,
+    pending_request_events: dict[str, Any] | None = None,
+    on_conversational_responses: Callable[[list[Any]], None] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events.
 
@@ -1153,6 +1166,8 @@ async def run_workflow_stream(
             mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
             treated as request-info responses (or ignored) rather than a new
             start-executor message, so resume stays consistent with the core API.
+        pending_request_events: Optional effective pending requests already resolved by the wrapper.
+        on_conversational_responses: Optional callback for validated non-control responses.
     """
     supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
     thread_id = supplied_thread_id or str(uuid.uuid4())
@@ -1179,7 +1194,9 @@ async def run_workflow_stream(
     # persisted pending set instead. Only do so when a resume payload is present, so a
     # pure checkpoint restore still surfaces its pending interrupts instead of tripping
     # the "resume required" contract.
-    if checkpoint_id is not None and resume_payload is not None:
+    if pending_request_events is not None:
+        pending_before_run = pending_request_events
+    elif checkpoint_id is not None and resume_payload is not None:
         # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
         # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
         if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
@@ -1227,7 +1244,9 @@ async def run_workflow_stream(
         if request_id in pending_interrupt_ids
     }
     responses = _merge_workflow_response_sources(resume_responses, message_responses)
-    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    responses, response_error = _coerce_responses_for_pending_requests_strict(
+        responses, pending_before_run, on_conversational_responses=on_conversational_responses
+    )
     if response_error is not None:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield response_error
