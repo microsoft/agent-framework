@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import AsyncIterable, Sequence
-from copy import copy
 
 from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message, ResponseStream
 
@@ -235,12 +234,11 @@ async def main() -> None:
 
     def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
         """Transform that converts text to uppercase."""
-        transformed = copy(update)
-        transformed.contents = [copy(content) for content in update.contents]
-        for content in transformed.contents:
-            if content.type == "text" and content.text is not None:
-                content.text = content.text.upper()
-        return transformed
+        if update.text:
+            return ChatResponseUpdate(
+                contents=[Content.from_text(update.text.upper())], role=None, response_id=update.response_id
+            )
+        return update
 
     # Pass update transforms directly to the constructor.
     stream3: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
@@ -293,9 +291,10 @@ async def main() -> None:
     def wrap_in_quotes_transform(response: ChatResponse) -> ChatResponse:
         """Result transform that wraps the response text in quotes."""
         if response.text:
-            transformed = copy(response)
-            transformed.messages = [Message(contents=[f'"{response.text}"'], role="assistant")]
-            return transformed
+            return ChatResponse(
+                messages=[Message(contents=[f'"{response.text}"'], role="assistant")],
+                additional_properties=response.additional_properties,
+            )
         return response
 
     # The finalizer creates a response, then result transforms run in order.
