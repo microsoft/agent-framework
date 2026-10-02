@@ -249,17 +249,17 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
         if "," not in uri:
             raise ContentError("Data URI must contain a comma separating metadata and data")
         prefix, _ = uri.split(",", 1)
-        if ";" in prefix:
-            parts = prefix.split(";")
-            if len(parts) < 2:
-                raise ContentError("Invalid data URI format")
-            # Check encoding
-            encoding = parts[-1]
-            if encoding not in ("base64", ""):
-                raise ContentError(f"Unsupported data URI encoding: {encoding}")
-            if media_type is None:
-                # attempt to extract:
-                media_type = parts[0][5:]  # Remove 'data:'
+        # RFC 2397: data:[<mediatype>][;base64],<data>, where <mediatype> is type/subtype followed by
+        # optional ;attribute=value parameters. Only a final bare "base64" token names the encoding.
+        declared_type, *parameters = prefix[len("data:") :].split(";")
+        if parameters and parameters[-1] in ("base64", ""):
+            parameters = parameters[:-1]
+        for parameter in parameters:
+            if "=" not in parameter:
+                raise ContentError(f"Unsupported data URI encoding: {parameter}")
+        if media_type is None:
+            # RFC 2397 defaults an omitted media type to text/plain.
+            media_type = declared_type or "text/plain"
         return {"type": "data", "uri": uri, "media_type": media_type}
 
     # Check for common URI schemes

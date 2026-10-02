@@ -4206,6 +4206,35 @@ def test_validate_uri_data_uri():
     assert "uri" in result
 
 
+@mark.parametrize(
+    ("uri", "expected_media_type"),
+    [
+        ("data:text/plain,hello", "text/plain"),
+        ("data:text/plain;charset=utf-8,hello%20world", "text/plain"),
+        ("data:application/json;charset=utf-8;base64,e30=", "application/json"),
+        ("data:,hello", "text/plain"),
+        ("data:;base64,aGVsbG8=", "text/plain"),
+    ],
+)
+def test_validate_uri_data_uri_parameters_and_default_media_type(uri: str, expected_media_type: str):
+    """RFC 2397 data URIs may carry parameters, and the media type comes from the prefix."""
+    assert _validate_uri(uri, None) == {"type": "data", "uri": uri, "media_type": expected_media_type}
+
+
+@mark.parametrize("uri", ["data:image/png;base32,AAAA", "data:text/plain;base64;charset=utf-8,AAAA"])
+def test_validate_uri_rejects_unsupported_data_uri_encoding(uri: str):
+    """Only a final bare base64 token names an encoding; any other bare token is rejected."""
+    with raises(ContentError, match="Unsupported data URI encoding"):
+        _validate_uri(uri, None)
+
+
+def test_from_uri_accepts_data_uri_with_charset_parameter():
+    """Content.from_uri accepts a non-base64 data URI with a charset parameter."""
+    content = Content.from_uri("data:text/plain;charset=utf-8,hello%20world")
+    assert content.type == "data"
+    assert content.media_type == "text/plain"
+
+
 # endregion
 
 
