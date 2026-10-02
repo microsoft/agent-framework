@@ -7243,6 +7243,59 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     assert len(function_results) == 0
 
 
+async def test_mixed_declaration_only_and_executable_batch_runs_executable_after_host_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An executable sibling of a declaration-only call stays hidden until the Host answers."""
+    from agent_framework import FunctionTool
+
+    execution_counts: list[int] = []
+
+    @tool(name="counter_func")
+    def counter_func() -> str:
+        execution_counts.append(1)
+        return "counted"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[host_func, counter_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="counter", name="counter_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    assert host_request.call_id == "host"
+    assert len(execution_counts) == 0
+
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        host_result,
+        session=session,
+    )
+
+    assert len(execution_counts) == 1
+    assert final_response.text == "done"
+
+
 @pytest.mark.parametrize(
     "argument_chunks",
     [
