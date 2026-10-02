@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from agent_framework import (
@@ -977,12 +979,19 @@ def test_append_unique_snapshot_messages_keeps_resume_yes_when_client_replays_pr
     "workflow_mode", ["live", "factory", "cold-checkpoint", "cold-restore", "cold-factory-restore"]
 )
 @pytest.mark.parametrize("response_kind", ["content-approval", "bool-approval", "text"])
-async def test_workflow_snapshot_uses_validated_resume_responses(workflow_mode: str, response_kind: str) -> None:
+async def test_workflow_snapshot_uses_validated_resume_responses(
+    workflow_mode: str, response_kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Snapshots preserve conversational replies and pending cards across resume and cold restore."""
     import json
 
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    # A coarse clock can give the initial and interrupted checkpoints the same timestamp.
+    checkpoint_clock = Mock(wraps=datetime)
+    checkpoint_clock.now.return_value = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr("agent_framework._workflows._checkpoint.datetime", checkpoint_clock)
 
     handled: list[Any] = []
 
@@ -1084,8 +1093,12 @@ async def test_workflow_snapshot_uses_validated_resume_responses(workflow_mode: 
     restore_only = workflow_mode in {"cold-restore", "cold-factory-restore"}
     if workflow_mode == "cold-checkpoint" or restore_only:
         checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
-        latest = max(checkpoints, key=lambda checkpoint: checkpoint.timestamp)
-        payload["forwarded_props"] = {"checkpoint_id": latest.checkpoint_id}
+        assert len(checkpoints) > 1
+        assert len({checkpoint.timestamp for checkpoint in checkpoints}) == 1
+        pending_checkpoint = next(
+            checkpoint for checkpoint in checkpoints if "reply-1" in checkpoint.pending_request_info_events
+        )
+        payload["forwarded_props"] = {"checkpoint_id": pending_checkpoint.checkpoint_id}
         agent = AgentFrameworkWorkflow(
             workflow=build_workflow() if workflow_mode != "cold-factory-restore" else None,
             workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "cold-factory-restore" else None,
