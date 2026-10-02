@@ -3,9 +3,10 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Never, assert_type, cast, overload
+from typing import Any, Literal, cast, overload
 
 import pytest
+from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -2720,6 +2721,113 @@ class TestWorkflowAgentToolApproval:
             getattr(content, "type", None) == "function_call" for msg in result.messages for content in msg.contents
         )
         assert any("18C" in (getattr(content, "text", "") or "") for msg in result.messages for content in msg.contents)
+
+    async def test_workflow_as_agent_drops_reasoning_call_group_atomically(self) -> None:
+        """An assistant message mixing reasoning with a function call is dropped whole.
+
+        The call's tool-role result is excluded by the role policy, so keeping the
+        reasoning-bearing message would leave an orphaned call in the transcript
+        (moonbox3's review: remove the reasoning/call/result group atomically).
+        """
+
+        @executor
+        async def reasoning_call_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, list[Message]],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output([
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text(text="The user wants the weather, I should call the tool."),
+                        Content.from_function_call(call_id="call-2", name="get_weather", arguments={"city": "Rome"}),
+                    ],
+                ),
+                Message(
+                    role="tool",
+                    contents=[Content.from_function_result(call_id="call-2", result="21C")],
+                ),
+                Message(role="assistant", contents=[Content.from_text("It is 21C in Rome.")]),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=reasoning_call_executor).build()
+        agent = workflow.as_agent("reasoning-call-agent")
+
+        # Streaming path
+        updates: list[AgentResponseUpdate] = []
+        async for chunk in agent.run("weather", stream=True):
+            updates.append(chunk)
+        assert len(updates) == 1
+        assert updates[0].text == "It is 21C in Rome."
+
+        # Non-streaming path: neither the call nor its reasoning survives, only the answer.
+        result = await agent.run("weather")
+        assert len(result.messages) == 1
+        assert result.messages[0].text == "It is 21C in Rome."
+
+    async def test_workflow_as_agent_stream_drops_function_call_updates(self) -> None:
+        """Streamed updates carrying function-call envelopes are not forwarded.
+
+        Forwarding one would let AgentResponse.from_updates persist an orphaned
+        call that later session turns replay to providers as invalid history.
+        """
+
+        @executor
+        async def call_update_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="call-3", name="get_weather", arguments={"city": "Oslo"}),
+                    ],
+                    role="assistant",
+                )
+            )
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text("It is 3C in Oslo.")], role="assistant")
+            )
+
+        workflow = WorkflowBuilder(start_executor=call_update_executor).build()
+        agent = workflow.as_agent("call-update-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for chunk in agent.run("weather", stream=True):
+            updates.append(chunk)
+
+        assert len(updates) == 1
+        assert updates[0].text == "It is 3C in Oslo."
+
+    async def test_workflow_as_agent_stream_roleless_user_continuation_not_leaked(self) -> None:
+        """Role-less continuation chunks of a user stream inherit the user role.
+
+        A stream may declare role only on its first delta; without tracking the
+        declared role across updates, every continuation chunk would be forwarded
+        as caller-visible output (moonbox3's review).
+        """
+
+        @executor
+        async def user_stream_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text(text="user said: hello")], role="user")
+            )
+            await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text(text=" and this too")], role=None))
+            await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text("the answer")], role="assistant"))
+
+        workflow = WorkflowBuilder(start_executor=user_stream_executor).build()
+        agent = workflow.as_agent("user-stream-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for chunk in agent.run("test", stream=True):
+            updates.append(chunk)
+
+        assert len(updates) == 1
+        assert updates[0].role == "assistant"
+        assert updates[0].text == "the answer"
 
     async def test_workflow_as_agent_filters_single_non_assistant_message(self) -> None:
         """Verify WorkflowAgent filters a single Message when role is not assistant."""
