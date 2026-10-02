@@ -2653,10 +2653,16 @@ def test_coalesce_detaches_run_head_nested_values() -> None:
     )
     contents = [head, Content.from_text("t")]
     _coalesce_text_content(contents, "text")
-    head.additional_properties["k"]["nested"] = 99
-    head.annotations[0]["url"] = "https://mutated"
-    assert contents[0].additional_properties["k"]["nested"] == 1
-    assert contents[0].annotations[0]["url"] == "https://a"
+    props = head.additional_properties
+    annotations = head.annotations
+    assert props is not None and annotations is not None
+    props["k"]["nested"] = 99
+    annotations[0]["url"] = "https://mutated"
+    folded_props = contents[0].additional_properties
+    folded_annotations = contents[0].annotations
+    assert folded_props is not None and folded_annotations is not None
+    assert folded_props["k"]["nested"] == 1
+    assert folded_annotations[0]["url"] == "https://a"
 
 
 @pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
