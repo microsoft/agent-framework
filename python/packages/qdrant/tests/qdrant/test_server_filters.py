@@ -119,6 +119,45 @@ async def test_server_native_portable_semantics(payload_collection: QdrantCollec
     assert [point.id for point in points] == expected
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (Filter("text", "exists"), [1, 2, 3]),
+        (Filter("text", "is_not_null"), [2, 3]),
+        (Filter("text", "ne", "a"), [1, 3]),
+        (Filter("number", "exists"), [1, 2, 3]),
+        (Filter("number", "ne", 1.0), [1, 3]),
+        (Filter("integer", "not_in", [1]), [3]),
+        (Filter("flag", "is_not_null"), [2, 3]),
+        (Filter("tags", "is_null"), [1]),
+        (Filter("tags", "contains_all", ["a"]), [2]),
+    ],
+)
+async def test_server_presence_ignores_missing_keys_and_null_array_elements(
+    server_collection: QdrantCollection, expression, expected
+):
+    # Qdrant 1.19.0 counts a missing key as zero values and 1.19.1 matches is_null on arrays containing null.
+    await server_collection.async_client.upsert(
+        server_collection.collection_name,
+        points=[
+            models.PointStruct(id=index, vector={}, payload=payload)
+            for index, payload in enumerate([
+                {},
+                {"body": None, "price": None, "integer": None, "flag": None, "tags": None},
+                {"body": "a", "price": 1.0, "integer": 1, "flag": True, "tags": ["a", None]},
+                {"body": "b", "price": 2.0, "integer": 2, "flag": False, "tags": [None]},
+            ])
+        ],
+        wait=True,
+    )
+    points, _ = await server_collection.async_client.scroll(
+        server_collection.collection_name,
+        scroll_filter=server_collection._prepare_filter(expression),
+        limit=100,
+    )
+    assert [point.id for point in points] == expected
+
+
 async def test_filtered_get_search_and_tool_params(server_collection, record):
     collection = server_collection
     await collection.upsert(

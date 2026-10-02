@@ -75,6 +75,26 @@ def test_reject_unsafe_numeric_range(collection, value):
         collection._prepare_filter(Filter("integer", "gt", value))
 
 
+def test_scalar_presence_and_null_do_not_depend_on_values_count(collection):
+    # Qdrant 1.19.0 counts a missing key as zero values; 1.19.1 also matches is_null on arrays containing null.
+    empty = {"is_empty": {"key": "body"}}
+    null = {"must": [{"is_null": {"key": "body"}}, empty]}
+    expected = {
+        "exists": {"should": [{"must_not": [empty]}, null]},
+        "is_null": null,
+        "is_not_null": {"must_not": [empty]},
+    }
+    for operator, condition in expected.items():
+        native = collection._prepare_filter(Filter("text", operator))
+        assert native is not None
+        assert native.model_dump(exclude_none=True) == {"must": [condition]}
+    native = collection._prepare_filter(Filter("tags", "is_null"))
+    assert native is not None
+    assert native.model_dump(exclude_none=True) == {
+        "must": [{"must": [{"is_null": {"key": "tags"}}, {"is_empty": {"key": "tags"}}]}]
+    }
+
+
 def test_numeric_equality_preserves_bool_distinction(collection):
     native = collection._prepare_filter(Filter("integer", "eq", True))
     assert native is not None
