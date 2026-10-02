@@ -1,55 +1,77 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "agent-framework-core",
+#     "agent-framework-foundry",
+#     "agent-framework-foundry-hosting",
+#     "azure-ai-agentserver-core>=2.1.0,<3",
+#     "azure-identity",
+#     "python-dotenv",
+# ]
+# ///
+
 # Copyright (c) Microsoft. All rights reserved.
+
+"""Discover Toolbox skills with a fresh MCP session and provider for every request."""
+
+from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import AsyncExitStack
+from types import TracebackType
 
 from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, FoundryToolbox, ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from agent_framework.foundry import FoundryChatClient, FoundryToolbox
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.core import AgentConfig, get_request_context
+from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
 
-
-async def main() -> None:
-    credential = DefaultAzureCredential()
-
-    # FoundryToolbox resolves the toolbox endpoint from the environment
-    # (TOOLBOX_ENDPOINT, or FOUNDRY_PROJECT_ENDPOINT + TOOLBOX_NAME), authenticates
-    # every request with the credential, and forwards the platform per-request
-    # call-id. ``load_tools=False`` keeps the toolbox's tools hidden so only its
-    # Agent Skills (SEP-2640) are surfaced; passing it via ``tools=`` connects the
-    # MCP session that ``as_skills_provider()`` reads from.
-    toolbox = FoundryToolbox(credential, load_tools=False)
-
-    # as_skills_provider() discovers skills from skill://index.json on the toolbox
-    # MCP session and exposes them as an agent context provider; SKILL.md bodies are
-    # fetched on demand via resources/read. disable_load_skill_approval=True registers
-    # the load_skill tool with approval_mode="never_require" so this unattended agent
-    # can load skills without an approval round-trip -- the Responses host runs the
-    # agent without an AgentSession, which the default approval flow requires.
-    skills_provider = toolbox.as_skills_provider(disable_load_skill_approval=True)
-
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=credential,
+def create_agent() -> Agent:
+    """Keep skill caches, credentials and the MCP writer within this request."""
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    credential = (
+        ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
+        if AgentConfig.from_env().is_hosted
+        else AzureCliCredential()
     )
 
-    agent = Agent(
+    class RequestClient(FoundryChatClient):
+        async def __aenter__(self) -> RequestClient:
+            return self
+
+        async def __aexit__(
+            self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        ) -> None:
+            async with AsyncExitStack() as cleanup:
+                cleanup.push_async_callback(credential.close)
+                cleanup.push_async_callback(self.project_client.close)
+                cleanup.push_async_callback(self.client.close)
+
+    # tools= connects the MCP session; context_providers= reads skills from that same session.
+    toolbox = FoundryToolbox(credential, load_tools=False)
+    skills_provider = toolbox.as_skills_provider(disable_load_skill_approval=True)
+    client = RequestClient(
+        project_endpoint=endpoint,
+        model=model,
+        credential=credential,
+        default_headers=get_request_context().platform_headers(),
+    )
+    return Agent(
         client=client,
         name=os.environ.get("AGENT_NAME", "hosted-toolbox-mcp-skills"),
         instructions="You are a helpful assistant.",
         tools=toolbox,
         context_providers=[skills_provider],
-        # History will be managed by the hosting infrastructure, thus there
-        # is no need to store history by the service. Learn more at:
-        # https://developers.openai.com/api/reference/resources/responses/methods/create
-        default_options={"store": False},
     )
 
-    server = ResponsesHostServer(agent)
+
+async def main() -> None:
+    load_dotenv()
+    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
     await server.run_async()
 
 

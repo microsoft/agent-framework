@@ -4577,6 +4577,132 @@ class TestResponseStreamCleanupHooks:
 
         assert events == ["iterator", "inner", "outer"]
 
+    async def test_async_with_break_closes_iterator(self) -> None:
+        """Breaking out of `async with stream:` releases the iterator without a manual close."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async with stream:
+            async for _ in stream:
+                break
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_transform_hook_error_closes_iterator(self) -> None:
+        """A hook that fails after a yielded update releases the suspended iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook blew up")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[failing_hook],  # ty: ignore[invalid-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+        assert events == ["iterator"]
+
+    async def test_cancellation_closes_iterator(self) -> None:
+        """Cancelling the consumer mid-iteration releases the suspended iterator."""
+        events: list[str] = []
+        provider_suspended = asyncio.Event()
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                provider_suspended.set()
+                await asyncio.sleep(60)
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async def consume() -> None:
+            async for _ in stream:
+                pass
+
+        task = asyncio.create_task(consume())
+        await provider_suspended.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_cancelled_error_from_hook_closes_iterator(self) -> None:
+        """A hook raising CancelledError after a yielded update still closes the iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[cancelling_hook],  # ty: ignore[invalid-argument-type]
+            cleanup_hooks=[lambda: events.append("cleanup")],
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in stream:
+                pass
+
+        # Error path runs cleanup before close() releases the iterator.
+        assert events == ["cleanup", "iterator"]
+
+    async def test_cancelled_error_from_map_transform_closes_inner_stream(self) -> None:
+        """A cancelled async map transform releases the wrapped provider iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(updates())
+        outer = inner.map(cancelling_transform, _combine_updates)
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in outer:
+                pass
+
+        assert events == ["iterator"]
+
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
         cleanup_called = {"value": False}

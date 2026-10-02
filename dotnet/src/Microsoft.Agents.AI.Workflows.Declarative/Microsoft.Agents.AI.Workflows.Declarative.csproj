@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <InjectSharedHttpHeaderValidation>true</InjectSharedHttpHeaderValidation>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>

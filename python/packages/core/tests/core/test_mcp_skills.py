@@ -8,8 +8,9 @@ import base64
 import hashlib
 import io
 import json
+import warnings
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 from urllib.parse import unquote
@@ -895,12 +896,15 @@ class TestMCPSkillsSourceErrorCodeBranching:
 # ---------------------------------------------------------------------------
 
 
-def _make_zip(files: dict[str, bytes]) -> bytes:
-    """Build an in-memory ZIP archive from a ``{path: content}`` mapping."""
+def _make_zip(files: Mapping[str, bytes] | Sequence[tuple[str, bytes]]) -> bytes:
+    """Build an in-memory ZIP from a mapping or ordered entries, including duplicate names."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
+    entries = files.items() if isinstance(files, Mapping) else files
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Duplicate name:", category=UserWarning, module="zipfile")
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in entries:
+                archive.writestr(name, data)
     return buffer.getvalue()
 
 
@@ -1354,6 +1358,100 @@ class TestMCPSkillsSourceArchive:
         assert skills == []
 
 
+class TestMCPSkillsSourceArchiveCollisions:
+    """Colliding archive members warn and preserve the first file through discovery."""
+
+    @pytest.mark.parametrize(
+        "alias",
+        [
+            "refs/policy.md",
+            ".//refs//policy.md",
+            "refs\\policy.md",
+            "refs/./policy.md",
+            "/refs/policy.md",
+            "refs/POLICY.md",
+            "REFS\\POLICY.MD",
+        ],
+    )
+    @pytest.mark.parametrize("alias_first", [False, True])
+    @pytest.mark.parametrize("identical", [False, True])
+    @pytest.mark.parametrize("with_digest", [False, True])
+    async def test_colliding_resources_keep_first_file_and_warn(
+        self, alias: str, alias_first: bool, identical: bool, with_digest: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "refs/policy.md") if alias_first else ("refs/policy.md", alias)
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("refs/", b""),
+            (first_name, b"First resource."),
+            (second_name, b"First resource." if identical else b"Substituted resource."),
+            (".//refs//other.md", b"Unaffected resource."),
+        ])
+        digest = f"sha256:{hashlib.sha256(archive).hexdigest()}" if with_digest else None
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        source = MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip"))
+
+        for _ in range(2):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+            assert len(skills) == 1
+            for resource_name in ("refs/policy.md", "REFS/POLICY.MD"):
+                resource = await skills[0].get_resource(resource_name)
+                assert resource is not None
+                assert await resource.read() == "First resource."
+            other = await skills[0].get_resource("refs/other.md")
+            assert other is not None
+            assert await other.read() == "Unaffected resource."
+
+        collisions = [record for record in caplog.records if "duplicate archive member" in record.getMessage()]
+        assert len(collisions) == 2
+        assert all(record.levelname == "WARNING" for record in collisions)
+        assert all("keeping the first file" in record.getMessage() for record in collisions)
+        assert all("Substituted resource." not in record.getMessage() for record in collisions)
+
+    @pytest.mark.parametrize("alias", ["SKILL.md", ".//SKILL.md", "/SKILL.md", "skill.md", "Skill.MD"])
+    @pytest.mark.parametrize("alias_first", [False, True])
+    async def test_colliding_skill_md_keeps_first_file_and_warns(
+        self, alias: str, alias_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "SKILL.md") if alias_first else ("SKILL.md", alias)
+        archive = _make_zip([
+            (first_name, ARCHIVE_SKILL_MD.encode()),
+            (second_name, ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: other-skill").encode()),
+            ("reference.md", b"Unaffected resource."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+        assert "Instructions from an archive." in await skills[0].get_content()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    async def test_collision_does_not_skip_other_skills(self, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"First."),
+            ("./reference.md", b"Second."),
+        ])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert sorted(skill.frontmatter.name for skill in skills) == ["packaged-skill", "unit-converter"]
+        assert "duplicate archive member" in caplog.text
+
+
 class TestMCPSkillsSourceArchiveDigest:
     """Tests for archive digest verification through the MCP discovery pipeline."""
 
@@ -1657,6 +1755,60 @@ class TestArchiveExtractor:
         archive = _make_zip({"a.md": b"a", "b.md": b"b", "c.md": b"c"})
         with pytest.raises(ValueError, match="file count"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 2, 1024 * 1024)
+
+    def test_duplicate_members_count_toward_file_limit(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip([("reference.md", b"First."), ("reference.md", b"Second.")])
+
+        with pytest.raises(ValueError, match="file count"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 1, 1024 * 1024)
+
+    def test_skipped_duplicate_is_not_decompressed(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory, _read_member_with_limit
+
+        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"x" * 100)])
+        with patch("agent_framework._skills._read_member_with_limit", wraps=_read_member_with_limit) as read:
+            files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, len(b"First."))
+
+        assert files == {"reference.md": b"First."}
+        read.assert_called_once()
+        assert "duplicate archive member" in caplog.text
+
+    @pytest.mark.parametrize("first_name", ["reference.md", "REFERENCE.md"])
+    def test_case_collision_keeps_first_name_and_warns(self, first_name: str, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        second_name = "REFERENCE.md" if first_name == "reference.md" else "reference.md"
+        archive = _make_zip([(first_name, b"First."), (second_name, b"Second.")])
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {first_name: b"First."}
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    def test_distinct_lowercase_resource_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        # Resource lookup uses lower(), not Unicode casefold().
+        archive = _make_zip({"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."}
+        assert not caplog.records
+
+    def test_distinct_trailing_dot_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"reference.md": b"First.", "reference.md.": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"reference.md": b"First.", "reference.md.": b"Second."}
+        assert not caplog.records
 
     def test_uncompressed_size_limit_is_enforced(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory

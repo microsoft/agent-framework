@@ -30,7 +30,7 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
-from ._event_converters import AGUIEventConverter
+from ._event_converters import AGUIEventConverter, _finalize_agui_response
 from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
@@ -430,17 +430,19 @@ class AGUIChatClient(
                     options=options,
                     **kwargs,
                 ),
-                finalizer=ChatResponse.from_updates,
+                finalizer=_finalize_agui_response,
             )
 
         async def _get_response() -> ChatResponse:
-            return await ChatResponse.from_update_generator(
-                self._streaming_impl(
+            updates = [
+                update
+                async for update in self._streaming_impl(
                     messages=messages,
                     options=options,
                     **kwargs,
                 )
-            )
+            ]
+            return _finalize_agui_response(updates)
 
         return _get_response()
 
