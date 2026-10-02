@@ -89,7 +89,9 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this.State), cancellationToken).ConfigureAwait(false);
+            DeclarativeWorkflowContext declarativeContext =
+                await DeclarativeWorkflowContext.CreateAsync(context, this.State, cancellationToken).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(declarativeContext, cancellationToken).ConfigureAwait(false);
             Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)

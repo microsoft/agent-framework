@@ -48,7 +48,12 @@ from ._declarative_base import (
     DeclarativeWorkflowState,
 )
 from ._executors_tools import ToolApprovalResponse
-from ._mcp_handler import MCPToolHandler, MCPToolInvocation, MCPToolResult
+from ._mcp_handler import (
+    MCPToolHandler,
+    MCPToolInvocation,
+    MCPToolResult,
+    get_or_create_workflow_session_id,
+)
 
 __all__ = [
     "MCP_ACTION_EXECUTORS",
@@ -236,6 +241,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             arguments=arguments,
             headers=headers,
             connection_name=connection_name,
+            workflow_session_id=get_or_create_workflow_session_id(ctx.state),
         )
         if require_approval:
             await self._request_approval(
@@ -342,6 +348,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             arguments=original_request.arguments,
             headers=self._evaluate_headers(state, self._action_def.get("headers")),
             connection_name=getattr(original_request, "connection_name", None),
+            workflow_session_id=get_or_create_workflow_session_id(ctx.state),
         )
         if invocation.headers or original_request.header_names:
             binding = getattr(original_request, "header_binding", None)
