@@ -337,6 +337,328 @@ async def test_run_with_task_response_no_artifacts(a2a_agent: A2AAgent, mock_a2a
     assert response.response_id == "task-empty"
 
 
+@mark.parametrize("route", ["run", "stream", "poll"])
+@mark.parametrize(
+    "state",
+    [
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+        TaskState.TASK_STATE_REJECTED,
+    ],
+    ids=["completed", "failed", "canceled", "rejected"],
+)
+async def test_terminal_task_status_message_is_returned(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, route: str, state: TaskState
+) -> None:
+    """A terminal Task's status.message is returned through run() and poll_task()."""
+    message_id = f"status-{route}-{TaskState.Name(state).lower()}"
+    answer = "Final answer from task status"
+    status_message = A2AMessage(
+        message_id=message_id,
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text=answer)],
+    )
+    task = Task(
+        id="task-status-only",
+        context_id="ctx-status-only",
+        status=TaskStatus(state=state, message=status_message),
+    )
+
+    if route == "poll":
+        mock_a2a_client.get_task_response = task
+        response = await a2a_agent.poll_task(A2AContinuationToken(task_id=task.id, context_id=task.context_id))
+    else:
+        mock_a2a_client.responses.append(StreamResponse(task=task))
+        if route == "stream":
+            response_stream = a2a_agent.run("Hello", stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert len(updates) == 1
+            assert updates[0].message_id == message_id
+        else:
+            response = await a2a_agent.run("Hello")
+
+    assert len(response.messages) == 1
+    assert response.messages[0].text == answer
+    assert response.messages[0].message_id == message_id
+
+
+async def test_terminal_task_status_message_is_not_repeated_when_history_has_same_id(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """An identical protocol message ID in history and status contributes one response."""
+    history_message = A2AMessage(
+        message_id="shared-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="History answer")],
+    )
+    status_message = A2AMessage(
+        message_id="shared-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Status answer")],
+    )
+    task = Task(
+        id="task-shared-message",
+        context_id="ctx-shared-message",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=status_message),
+        history=[history_message],
+    )
+    mock_a2a_client.responses.append(StreamResponse(task=task))
+
+    response_stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert [update.text for update in updates] == ["History answer"]
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "History answer"
+
+
+async def test_terminal_task_status_message_with_same_text_and_different_id_is_preserved(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Distinct protocol message IDs are preserved even when their text is identical."""
+    history_message = A2AMessage(
+        message_id="history-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Same text")],
+    )
+    status_message = A2AMessage(
+        message_id="status-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Same text")],
+    )
+    task = Task(
+        id="task-distinct-messages",
+        context_id="ctx-distinct-messages",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=status_message),
+        history=[history_message],
+    )
+    mock_a2a_client.responses.append(StreamResponse(task=task))
+
+    response_stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert [update.text for update in updates] == ["Same text", "Same text"]
+    assert [update.message_id for update in updates] == ["history-message-id", "status-message-id"]
+    assert len(response.messages) == 2
+
+
+async def test_terminal_task_status_message_follows_artifacts_in_order(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """A terminal status message is appended after existing task artifacts."""
+    task = Task(
+        id="task-artifacts-and-status",
+        context_id="ctx-artifacts-and-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=A2AMessage(
+                message_id="status-message-id",
+                role=A2ARole.ROLE_USER,
+                parts=[
+                    Part(text="Status message"),
+                    Part(url="https://example.test/status.bin", media_type="application/octet-stream"),
+                ],
+                metadata={"status_key": "status_value"},
+            ),
+        ),
+        artifacts=[
+            Artifact(artifact_id="artifact-one", parts=[Part(text="First artifact")]),
+            Artifact(artifact_id="artifact-two", parts=[Part(text="Second artifact")]),
+        ],
+        metadata={"task_key": "task_value"},
+    )
+    mock_a2a_client.responses.append(StreamResponse(task=task))
+
+    response_stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert [message.text for message in response.messages] == [
+        "First artifact",
+        "Second artifact",
+        "Status message",
+    ]
+    assert [message.message_id for message in response.messages] == [
+        "artifact-one",
+        "artifact-two",
+        "status-message-id",
+    ]
+    status_update = updates[-1]
+    assert status_update.role == "user"
+    assert status_update.contents[1].type == "uri"
+    assert status_update.contents[1].uri == "https://example.test/status.bin"
+    assert status_update.additional_properties is not None
+    assert status_update.additional_properties["a2a_metadata"] == {
+        "status_key": "status_value",
+        "task_key": "task_value",
+    }
+
+
+async def test_terminal_task_status_message_survives_streamed_artifact_filter(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """A streamed artifact ID does not filter a distinct Task status Message."""
+    shared_id = "shared-a2a-id"
+    streamed_artifact = TaskArtifactUpdateEvent(
+        task_id="task-status-after-artifact",
+        context_id="ctx-status-after-artifact",
+        artifact=Artifact(artifact_id=shared_id, parts=[Part(text="Artifact chunk")]),
+        append=False,
+    )
+    task = Task(
+        id="task-status-after-artifact",
+        context_id="ctx-status-after-artifact",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=A2AMessage(
+                message_id=shared_id,
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Status message")],
+            ),
+        ),
+        artifacts=[Artifact(artifact_id=shared_id, parts=[Part(text="Artifact complete")])],
+    )
+    mock_a2a_client.responses.extend([StreamResponse(artifact_update=streamed_artifact), StreamResponse(task=task)])
+
+    response_stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in response_stream]
+    await response_stream.get_final_response()
+
+    assert [update.text for update in updates] == ["Artifact chunk", "Status message"]
+    assert [update.message_id for update in updates] == [shared_id, shared_id]
+
+
+@mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_terminal_status_update_and_task_do_not_repeat_same_message_identity(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, stream: bool
+) -> None:
+    """A terminal status event and Task with one protocol message ID yield one response."""
+    answer = "Terminal response"
+    message = A2AMessage(
+        message_id="terminal-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text=answer)],
+    )
+    task_id = "task-terminal-message"
+    context_id = "ctx-terminal-message"
+    status = TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=message)
+    status_event = TaskStatusUpdateEvent(task_id=task_id, context_id=context_id, status=status)
+    task = Task(id=task_id, context_id=context_id, status=status)
+    mock_a2a_client.responses.extend([StreamResponse(status_update=status_event), StreamResponse(task=task)])
+
+    if stream:
+        response_stream = a2a_agent.run("Hello", stream=True)
+        updates = [update async for update in response_stream]
+        await response_stream.get_final_response()
+        assert [update.text for update in updates if update.contents] == [answer]
+        assert [update.message_id for update in updates if update.contents] == ["terminal-message-id"]
+    else:
+        response = await a2a_agent.run("Hello")
+        assert response.text == answer
+
+
+@mark.parametrize("sequence", ["task-then-status", "status-then-task"], ids=["task-status", "status-task"])
+async def test_duplicate_task_message_keeps_last_metadata(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, sequence: str
+) -> None:
+    """Duplicate content is suppressed while the last A2A metadata is retained."""
+    answer = "Terminal response"
+    message_id = "metadata-message-id"
+    task_message = A2AMessage(
+        message_id=message_id,
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text=answer)],
+        metadata={"task_message_key": "task_message_value"},
+    )
+    status_message = A2AMessage(
+        message_id=message_id,
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text=answer)],
+        metadata={"status_message_key": "status_message_value"},
+    )
+    task = Task(
+        id="task-metadata-message",
+        context_id="ctx-metadata-message",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=task_message),
+        metadata={"task_key": "task_value"},
+    )
+    status_event = TaskStatusUpdateEvent(
+        task_id=task.id,
+        context_id=task.context_id,
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=status_message),
+        metadata={"status_event_key": "status_event_value"},
+    )
+    if sequence == "task-then-status":
+        mock_a2a_client.responses.extend([StreamResponse(task=task), StreamResponse(status_update=status_event)])
+        expected_metadata = {
+            "status_message_key": "status_message_value",
+            "status_event_key": "status_event_value",
+        }
+        duplicate_raw = status_event
+    else:
+        mock_a2a_client.responses.extend([StreamResponse(status_update=status_event), StreamResponse(task=task)])
+        expected_metadata = {"task_message_key": "task_message_value", "task_key": "task_value"}
+        duplicate_raw = task
+
+    response_stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert [update.text for update in updates if update.contents] == [answer]
+    [metadata_update] = [update for update in updates if not update.contents]
+    assert metadata_update.message_id == message_id
+    assert metadata_update.role == "assistant"
+    assert metadata_update.additional_properties == {"a2a_metadata": expected_metadata}
+    assert metadata_update.raw_representation == duplicate_raw
+    assert response.text == answer
+    assert response.additional_properties["a2a_metadata"] == expected_metadata
+    assert response.raw_representation is not None
+    assert response.raw_representation[-1] == duplicate_raw
+
+
+@mark.parametrize("sequence", ["task-then-status", "repeated-task"], ids=["task-status", "task-task"])
+@mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_terminal_task_message_identity_is_not_emitted_again(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, sequence: str, stream: bool
+) -> None:
+    """A terminal Task message is emitted once when the same ID reappears later in its run."""
+    answer = "Terminal response"
+    message = A2AMessage(
+        message_id="terminal-message-id",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text=answer)],
+    )
+    task_id = "task-terminal-message"
+    context_id = "ctx-terminal-message"
+    task = Task(
+        id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=message),
+    )
+    if sequence == "task-then-status":
+        status_event = TaskStatusUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED, message=message),
+        )
+        mock_a2a_client.responses.extend([StreamResponse(task=task), StreamResponse(status_update=status_event)])
+    else:
+        mock_a2a_client.responses.extend([StreamResponse(task=task), StreamResponse(task=task)])
+
+    if stream:
+        response_stream = a2a_agent.run("Hello", stream=True)
+        updates = [update async for update in response_stream]
+        await response_stream.get_final_response()
+        assert [update.text for update in updates if update.contents] == [answer]
+    else:
+        response = await a2a_agent.run("Hello")
+        assert response.text == answer
+
+
 async def test_run_with_unknown_response_type_raises_error(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test run() method with unknown response type raises NotImplementedError."""
     # An empty StreamResponse has no payload set (WhichOneof returns None)
