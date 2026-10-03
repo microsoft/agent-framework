@@ -4279,7 +4279,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         *,
         phase: Literal["before_transform", "after_transform"] = "after_transform",
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a blocking gate for the finalized result."""
+        """Register a blocking gate for the finalized result.
+
+        The gate runs at finalization. On a stream that is not buffered the consumer has
+        already received the updates by then, so a gate that raises cannot hold them back;
+        call ``buffer_updates()`` to hold updates until the gates pass.
+        """
         self._ensure_content_configuration_mutable()
         self._validate_gate_phase(phase)
         gates = self._result_gates_before if phase == "before_transform" else self._result_gates_after

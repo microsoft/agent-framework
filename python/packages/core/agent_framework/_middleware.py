@@ -1348,6 +1348,27 @@ class BaseMiddlewarePipeline(ABC):
             )
 
 
+def _warn_unbuffered_result_gates(
+    gates_before: list[Callable[[Any], object]],
+    gates_after: list[Callable[[Any], object]],
+    *,
+    buffer_updates: bool,
+) -> None:
+    """Warn when result gates are registered on a stream that releases updates unbuffered.
+
+    A result gate runs at finalization, so on an unbuffered stream the consumer has already
+    received every update by the time the gate raises: the gate fails open. Buffering holds
+    the updates until the gates pass.
+    """
+    if buffer_updates or not (gates_before or gates_after):
+        return
+    logger.warning(
+        "Result gates are registered on a streamed run with stream_buffer_updates=False; "
+        "updates reach the consumer before the gates run, so a gate that raises cannot hold "
+        "the answer back. Set stream_buffer_updates=True to make the gates blocking."
+    )
+
+
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain.
 
@@ -1426,6 +1447,11 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
+            _warn_unbuffered_result_gates(
+                context.stream_result_gates_before,
+                context.stream_result_gates_after,
+                buffer_updates=context.stream_buffer_updates,
+            )
             if context.stream_buffer_updates:
                 context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
             for factory in context.stream_consumption_context_manager_factories:
@@ -1636,6 +1662,11 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
+            _warn_unbuffered_result_gates(
+                context.stream_result_gates_before,
+                context.stream_result_gates_after,
+                buffer_updates=context.stream_buffer_updates,
+            )
             if context.stream_buffer_updates:
                 context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
             for factory in context.stream_consumption_context_manager_factories:

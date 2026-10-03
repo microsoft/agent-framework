@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 from unittest.mock import patch
@@ -277,6 +278,49 @@ class TestChatMiddleware:
 
         # Verify middleware executed
         assert execution_order == ["streaming_before", "streaming_after"]
+
+    async def test_chat_result_gate_without_buffer_logs_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on an unbuffered streamed run logs a fail-open warning."""
+
+        @chat_middleware
+        async def result_gate_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            if context.stream:
+                context.stream_result_gates_after.append(lambda result: None)
+            await call_next()
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, result_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in chat_client_base.get_response(messages, stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_chat_result_gate_with_buffer_logs_no_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on a buffered streamed run blocks as documented, so no warning."""
+
+        @chat_middleware
+        async def buffered_result_gate_middleware(
+            context: ChatContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            if context.stream:
+                context.stream_buffer_updates = True
+                context.stream_result_gates_after.append(lambda result: None)
+            await call_next()
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, buffered_result_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [update async for update in chat_client_base.get_response(messages, stream=True)]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
 
     async def test_run_level_middleware_isolation(self, chat_client_base: "MockBaseChatClient") -> None:
         """Test that run-level middleware is isolated and doesn't persist across calls."""
