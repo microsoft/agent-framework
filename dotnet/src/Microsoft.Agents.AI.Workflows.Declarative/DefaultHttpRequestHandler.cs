@@ -9,6 +9,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
 
@@ -264,24 +265,21 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
     private static void ValidateHeader(string name, string value)
     {
-        if (ContainsHttpHeaderDelimiter(name))
-        {
-            throw new ArgumentException("HTTP header name contains invalid characters.", nameof(name));
-        }
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            name,
+            nameof(name),
+            "HTTP header name contains invalid characters.");
 
         ValidateHeaderValue(name, value);
     }
 
     private static void ValidateHeaderValue(string name, string value)
     {
-        if (ContainsHttpHeaderDelimiter(value))
-        {
-            throw new ArgumentException($"HTTP header '{name}' contains invalid characters.", nameof(value));
-        }
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            value,
+            nameof(value),
+            $"HTTP header '{name}' contains invalid characters.");
     }
-
-    private static bool ContainsHttpHeaderDelimiter(string value) =>
-        value.IndexOfAny(['\r', '\n', '\0']) >= 0;
 
     private static HttpClient CreateOwnedHttpClient()
     {

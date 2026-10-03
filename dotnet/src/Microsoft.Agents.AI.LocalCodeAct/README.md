@@ -149,8 +149,13 @@ dedicated timeout (`ProcessExecutionLimits.ValidationTimeoutSeconds`).
 - **Blocked imports**: `subprocess`, `sys`, `socket`, `importlib`, network and
   threading modules, etc.
 - **Allowed builtins**: `print`, `len`, `str`, type constructors, etc.
-- **Blocked builtins**: `eval`, `exec`, `compile`, `__import__`, `open`,
-  `getattr`, `setattr`, etc.
+- **Blocked builtins**: `__builtins__`, `__loader__`, `__spec__`, `eval`, `exec`,
+  `compile`, `__import__`, `open`, `getattr`, `setattr`, etc.
+
+`str.format` and `str.format_map` method access is blocked because replacement
+fields perform runtime attribute and item traversal that is invisible to AST
+validation. Use f-strings or the `format()` builtin instead; f-string
+expressions are validated as regular AST nodes.
 
 OS-derived aliases retain the same restrictions. Filesystem-querying path
 helpers, environment mutation, unknown descendants, and reflective access are

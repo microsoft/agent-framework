@@ -176,6 +176,42 @@ async def test_auth_flow_injects_bearer_token_async_credential() -> None:
     assert cred.scopes == ["https://ai.azure.com/.default"]
 
 
+@pytest.mark.parametrize(
+    ("additional_features", "expected"),
+    [
+        (None, "Toolboxes=V1Preview"),
+        ("   ", "Toolboxes=V1Preview"),
+        ("FeatureOne=Enabled,FeatureTwo=Enabled", "Toolboxes=V1Preview,FeatureOne=Enabled,FeatureTwo=Enabled"),
+        ("FeatureOne=Enabled, toolboxes=v1preview ", "FeatureOne=Enabled, toolboxes=v1preview "),
+    ],
+)
+async def test_auth_flow_injects_foundry_features_header(
+    monkeypatch: pytest.MonkeyPatch,
+    additional_features: str | None,
+    expected: str,
+) -> None:
+    if additional_features is None:
+        monkeypatch.delenv("FOUNDRY_AGENT_TOOLSET_FEATURES", raising=False)
+    else:
+        monkeypatch.setenv("FOUNDRY_AGENT_TOOLSET_FEATURES", additional_features)
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert prepared.headers["Foundry-Features"] == expected
+
+
+def test_sync_auth_flow_injects_foundry_features_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDRY_AGENT_TOOLSET_FEATURES", "FeatureOne=Enabled")
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert prepared.headers["Foundry-Features"] == "Toolboxes=V1Preview,FeatureOne=Enabled"
+
+
 def test_sync_auth_flow_injects_bearer_token() -> None:
     cred = _FakeCredential("sync123")
     auth = _ToolboxAuth(cred, "https://ai.azure.com/.default")  # type: ignore
@@ -217,21 +253,54 @@ async def test_auth_flow_omits_call_id_when_absent() -> None:
     assert "x-agent-foundry-call-id" not in prepared.headers
 
 
-async def test_close_closes_owned_http_client() -> None:
+async def test_async_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = await anext(auth.async_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = await anext(auth.async_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
+def test_sync_auth_flow_removes_call_id_from_reused_request_when_context_absent() -> None:
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    token = set_request_context(FoundryAgentRequestContext(call_id="canary-call-id"))
+    try:
+        prepared = next(auth.sync_auth_flow(request))
+        assert prepared.headers["x-agent-foundry-call-id"] == "canary-call-id"
+    finally:
+        reset_request_context(token)
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert "x-agent-foundry-call-id" not in prepared.headers
+
+
+async def test_close_closes_owned_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore
         url="https://h/toolboxes/tb/mcp",
     )
     client = toolbox._httpx_client
     assert client is not None
-    client.aclose = AsyncMock()  # zuban: ignore
+    aclose = AsyncMock()
+    monkeypatch.setattr(client, "aclose", aclose)
 
     await toolbox.close()
 
-    client.aclose.assert_awaited_once()
+    aclose.assert_awaited_once()
     # Idempotent: a second close does not re-close the client.
     await toolbox.close()
-    client.aclose.assert_awaited_once()
+    aclose.assert_awaited_once()
 
 
 def test_as_skills_provider_returns_provider() -> None:
@@ -472,7 +541,7 @@ def test_as_skills_provider_forwards_only_set_archive_options() -> None:
 
 
 class TestFoundryToolboxReconnection:
-    async def test_close_preserves_credential_for_reconnection(self) -> None:
+    async def test_close_preserves_credential_for_reconnection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After close(), get_mcp_client() should recreate an authenticated client."""
         cred = _FakeCredential("reconnect-token")
         toolbox = FoundryToolbox(
@@ -490,10 +559,11 @@ class TestFoundryToolboxReconnection:
         original_auth = toolbox._httpx_client.auth
 
         client = toolbox._httpx_client
-        client.aclose = AsyncMock()  # zuban: ignore
+        aclose = AsyncMock()
+        monkeypatch.setattr(client, "aclose", aclose)
         await toolbox.close()
 
-        client.aclose.assert_awaited_once()
+        aclose.assert_awaited_once()
         assert toolbox._httpx_client is None
 
         assert toolbox._credential is cred

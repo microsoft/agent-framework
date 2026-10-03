@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareFailure, MiddlewareTermination
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
 from ._tools import (
@@ -2880,7 +2880,11 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 binding = self._pending_record(context, violations)
             except (TypeError, ValueError, OverflowError):
                 self._block_unsafe_approval_binding(context, context_label=context_label)
-            approved = self._matches_pending_approval(context, binding)
+                raise MiddlewareFailure(  # pyright: ignore[reportUnreachable]
+                    "Unsafe policy approval binding did not terminate"
+                ) from None
+            else:
+                approved = self._matches_pending_approval(context, binding)
 
         disclosed = ", ".join(item["violation_type"] for item in violations)
         if approved:
@@ -2896,7 +2900,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 violations=violations,
                 binding=binding,
             )
-        elif self.block_on_violation:
+        elif self.block_on_violation or self.approval_on_violation:
             self._block_policy_violation(context, context_label=context_label, violations=violations)
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
@@ -4051,6 +4055,52 @@ def _map_mcp_annotations_to_labels(
     return (integrity, ConfidentialityLabel.PUBLIC, False)
 
 
+def _apply_mcp_security_label_to_function(
+    function: FunctionTool,
+    annotations: Any,
+    *,
+    default_integrity: IntegrityLabel,
+    annotation_overrides: Mapping[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None,
+    mark_write_tools_as_sinks: bool,
+    trust_server_ifc: bool,
+) -> None:
+    """Apply one local MCP security policy to a remote function."""
+    properties = function.additional_properties
+    if properties is None:
+        properties = {}
+        function.additional_properties = properties
+    remote_name = properties.get("_mcp_remote_name")
+    if not isinstance(remote_name, str):
+        return
+
+    overrides = annotation_overrides or {}
+    if remote_name in overrides:
+        integrity, max_confidentiality = overrides[remote_name]
+        accepts_untrusted = False
+    else:
+        integrity, max_confidentiality, accepts_untrusted = _map_mcp_annotations_to_labels(
+            annotations,
+            default_integrity=default_integrity,
+        )
+
+    properties["source_integrity"] = integrity.value
+    if mark_write_tools_as_sinks and max_confidentiality is not None:
+        properties["max_allowed_confidentiality"] = max_confidentiality.value
+    else:
+        properties.pop("max_allowed_confidentiality", None)
+    properties["accepts_untrusted"] = accepts_untrusted
+    properties[_MCP_TRUST_SERVER_IFC_KEY] = trust_server_ifc
+    _wrap_mcp_function_for_ifc(function, default_integrity)
+
+    logger.info(
+        "MCP auto-label: tool=%s integrity=%s max_confidentiality=%s accepts_untrusted=%s",
+        remote_name,
+        integrity.value,
+        max_confidentiality.value if max_confidentiality else "none",
+        accepts_untrusted,
+    )
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 async def apply_mcp_security_labels(
     mcp_tool: Any,
@@ -4068,6 +4118,7 @@ async def apply_mcp_security_labels(
     ``additional_properties``.  The existing
     :class:`LabelTrackingFunctionMiddleware` picks these up automatically
     (Tier 2 label propagation), so **no middleware changes are needed**.
+    Currently hidden progressive-disclosure tools are included.
 
     Server annotations cannot relax local policy. Use ``annotation_overrides``
     for explicit local per-tool static policy. Server result ``_meta.ifc`` is
@@ -4076,6 +4127,8 @@ async def apply_mcp_security_labels(
     that result. ToolAnnotations remain non-authoritative in both modes.
 
     Call this **after** the ``MCPTool`` is connected (tools already loaded).
+    Use :class:`SecureMCPToolProxy` to keep the same policy bound to functions
+    discovered later in the connection lifecycle.
 
     Args:
         mcp_tool: A connected ``MCPTool`` instance (``MCPStdioTool``,
@@ -4119,70 +4172,31 @@ async def apply_mcp_security_labels(
     if session is None:
         raise RuntimeError("MCPTool has no active session.")
 
-    # ------------------------------------------------------------------
-    # 1. Fetch tool list (with annotations) from the server
-    # ------------------------------------------------------------------
     from mcp import types as mcp_types
 
-    annotation_map: dict[str, Any] = {}  # remote_name → ToolAnnotations | None
+    annotation_map: dict[str, Any] = {}
     params: mcp_types.PaginatedRequestParams | None = None
     while True:
         tool_list = await session.list_tools(params=params)
-        for t in tool_list.tools:
-            annotation_map[t.name] = t.annotations
-        if not tool_list or not tool_list.nextCursor:
+        for remote_tool in tool_list.tools:
+            annotation_map[remote_tool.name] = remote_tool.annotations
+        if not tool_list.nextCursor:
             break
         params = mcp_types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
-    # ------------------------------------------------------------------
-    # 2. Patch each FunctionTool's additional_properties
-    # ------------------------------------------------------------------
-    overrides = annotation_overrides or {}
-    functions: list[FunctionTool] = getattr(mcp_tool, "functions", [])
-
-    for func in functions:
-        props = func.additional_properties
-        if props is None:
-            props = {}
-            func.additional_properties = props
-
-        remote_name: str | None = props.get("_mcp_remote_name")
-        if remote_name is None:
-            continue
-
-        # Check for explicit per-tool override first
-        if remote_name in overrides:
-            integrity, max_conf = overrides[remote_name]
-            accepts_untrusted = False  # overrides must opt-in explicitly
-        else:
-            annotations = annotation_map.get(remote_name)
-            integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(
-                annotations, default_integrity=default_integrity
-            )
-
-        # Patch source_integrity (Tier 2 - read by LabelTrackingFunctionMiddleware)
-        props["source_integrity"] = integrity.value
-
-        # Patch sink constraint
-        if mark_write_tools_as_sinks and max_conf is not None:
-            props["max_allowed_confidentiality"] = max_conf.value
-        else:
-            props.pop("max_allowed_confidentiality", None)
-
-        # Server annotations cannot authorize tainted input.
-        props["accepts_untrusted"] = accepts_untrusted
-
-        # Local configuration controls result-label authority; MCP result
-        # metadata is attached to Content and cannot mutate tool properties.
-        props[_MCP_TRUST_SERVER_IFC_KEY] = trust_server_ifc
-        _wrap_mcp_function_for_ifc(func, default_integrity)
-
-        logger.info(
-            "MCP auto-label: tool=%s integrity=%s max_confidentiality=%s accepts_untrusted=%s",
-            remote_name,
-            integrity.value,
-            max_conf.value if max_conf else "none",
-            accepts_untrusted,
+    loaded_functions = getattr(mcp_tool, "_functions", None)
+    if not isinstance(loaded_functions, list):
+        loaded_functions = getattr(mcp_tool, "functions", [])
+    for function in cast(list[FunctionTool], loaded_functions):
+        properties = function.additional_properties or {}
+        remote_name = properties.get("_mcp_remote_name")
+        _apply_mcp_security_label_to_function(
+            function,
+            annotation_map.get(remote_name) if isinstance(remote_name, str) else None,
+            default_integrity=default_integrity,
+            annotation_overrides=annotation_overrides,
+            mark_write_tools_as_sinks=mark_write_tools_as_sinks,
+            trust_server_ifc=trust_server_ifc,
         )
 
 
@@ -4314,7 +4328,9 @@ class SecureMCPToolProxy:
 
     Wraps any ``MCPTool`` subclass and calls
     :func:`apply_mcp_security_labels` automatically when entering the async
-    context manager (or when :meth:`connect` is called explicitly).
+    context manager (or when :meth:`connect` is called explicitly). The same
+    local policy is applied before later-discovered and progressively exposed
+    remote functions become callable.
 
     The proxy delegates ``functions``, ``is_connected``, and ``name`` to the
     wrapped tool.  Pass ``proxy.tools`` (or ``proxy.functions``) directly to
@@ -4437,40 +4453,78 @@ class SecureMCPToolProxy:
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
         self._trust_server_ifc = trust_server_ifc
+        self._function_load_callback = self._apply_function_labels
 
     # -- Async context manager --
 
     async def __aenter__(self) -> SecureMCPToolProxy:
         """Enter context, connect the wrapped tool, and apply labels."""
-        await self._mcp_tool.__aenter__()
-        await self._apply_labels()
+        was_connected = self.is_connected
+        callback_bound = self._bind_function_load_callback()
+        try:
+            await self._mcp_tool.__aenter__()
+            await self._apply_labels()
+        except BaseException as ex:
+            if not was_connected and self.is_connected:
+                try:
+                    await self._mcp_tool.__aexit__(type(ex), ex, ex.__traceback__)
+                finally:
+                    if callback_bound:
+                        self._unbind_function_load_callback()
+            elif callback_bound:
+                self._unbind_function_load_callback()
+            raise
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context and close the wrapped MCP tool."""
-        await self._mcp_tool.__aexit__(exc_type, exc_val, exc_tb)
+        try:
+            await self._mcp_tool.__aexit__(exc_type, exc_val, exc_tb)
+        finally:
+            self._unbind_function_load_callback()
 
     # -- Explicit connect/disconnect --
 
     async def connect(self) -> None:
         """Connect the underlying MCPTool and apply security labels."""
-        await self._mcp_tool.connect()
-        await self._apply_labels()
+        was_connected = self.is_connected
+        callback_bound = self._bind_function_load_callback()
+        try:
+            await self._mcp_tool.connect()
+            await self._apply_labels()
+        except BaseException:
+            if not was_connected and self.is_connected:
+                try:
+                    await self._mcp_tool.close()
+                finally:
+                    if callback_bound:
+                        self._unbind_function_load_callback()
+            elif callback_bound:
+                self._unbind_function_load_callback()
+            raise
 
     async def disconnect(self) -> None:
         """Disconnect the underlying MCPTool."""
-        await self._mcp_tool.close()
+        try:
+            await self._mcp_tool.close()
+        finally:
+            self._unbind_function_load_callback()
 
     async def refresh_labels(self) -> None:
-        """Re-apply labels/wrappers for tools added while connected.
+        """Re-apply labels and wrappers to all currently discovered functions.
 
-        Some MCP servers can expose additional tools during a long-lived
-        connection. Call this to re-run annotation mapping and wrap newly
-        discovered tool callables without reconnecting.
+        Later-discovered functions are labeled automatically while the proxy
+        is active.
         """
         if not self.is_connected:
             raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
-        await self._apply_labels()
+        callback_bound = self._bind_function_load_callback()
+        try:
+            await self._apply_labels()
+        except BaseException:
+            if callback_bound:
+                self._unbind_function_load_callback()
+            raise
 
     # -- Delegated properties --
 
@@ -4500,6 +4554,32 @@ class SecureMCPToolProxy:
         return self._mcp_tool
 
     # -- Internal --
+
+    def _bind_function_load_callback(self) -> bool:
+        current = self._mcp_tool._function_load_callback  # pyright: ignore[reportPrivateUsage]
+        if current is self._function_load_callback:
+            return False
+        if current is not None and current is not self._function_load_callback:
+            raise RuntimeError("MCPTool is already wrapped by another SecureMCPToolProxy.")
+        self._mcp_tool._function_load_callback = self._function_load_callback  # pyright: ignore[reportPrivateUsage]
+        return True
+
+    def _unbind_function_load_callback(self) -> None:
+        if (
+            self._mcp_tool._function_load_callback  # pyright: ignore[reportPrivateUsage]
+            is self._function_load_callback
+        ):
+            self._mcp_tool._function_load_callback = None  # pyright: ignore[reportPrivateUsage]
+
+    def _apply_function_labels(self, function: FunctionTool, annotations: Any) -> None:
+        _apply_mcp_security_label_to_function(
+            function,
+            annotations,
+            default_integrity=self._default_integrity,
+            annotation_overrides=self._annotation_overrides,
+            mark_write_tools_as_sinks=self._mark_write_tools_as_sinks,
+            trust_server_ifc=self._trust_server_ifc,
+        )
 
     async def _apply_labels(self) -> None:
         await apply_mcp_security_labels(
