@@ -48,7 +48,8 @@ The sample forces a tool call so you can see middleware output for each inner mo
 ### Running the IsMalicious content gate sample
 
 This example uses `FunctionInvocationContext` and `call_next()` around one local
-fetch tool. A separate operator decision authorizes the hostname. The middleware
+fetch tool. A separate operator decision authorizes an exact URL and its hostname.
+The middleware refuses any different URL before calling either remote service. It
 checks its URL with `GET /gate/url`, executes the tool only when policy permits,
 then sends the complete UTF-8 result and source URL to `POST /gate/scan`.
 Both gate requests go to `https://api.ismalicious.com`. The selected document's
@@ -86,18 +87,20 @@ since termination alone can preserve a result that has already been produced.
 
 An `allow` result means the service did not object under its current rules;
 it does not prove content or a destination is benign. The service currently maps
-unknown link reputation to `allow`. Unknown records and additive response fields
-are retained in `context.metadata["ismalicious_scan"]` for another middleware to
-inspect; this sample refuses `links_truncated=True`. Original allowed text is
-released unchanged, without using `sanitized_content` as a replacement.
+unknown link reputation to `allow`. The gate response models retain unknown records
+and additive fields, but the middleware stores only bounded decisions and counts
+(including unknown links) in `context.metadata["ismalicious_scan"]`. It retains
+no URLs or `sanitized_content` there; this sample refuses `links_truncated=True`.
+Original allowed text is released unchanged, without using `sanitized_content` as a replacement.
 The request uses `mode="fast"`; the reserved `thorough` mode currently behaves as
 `fast` and is not a stronger inspection path.
 
 The example covers only non-streaming `Agent.run()` with this exact selected
 local tool, returning a complete UTF-8 `text/plain` or `text/html` string. It
 refuses objects, binary content, invalid UTF-8 and documents whose complete
-serialized scan request exceeds 1 MiB, without truncation. The selected hostname
-should be a public document source under operator control; this example is not a
+serialized scan request exceeds 1 MiB, without truncation. The configured URL
+should identify a public document approved by the operator, and its hostname
+must match `CONTENT_GATE_HOST`. This example is not a
 general-purpose network sandbox. MCP tools and tools executed by a provider are
 outside its tested scope. Gate requests are direct client calls, so they do not
 re-enter the tool middleware.

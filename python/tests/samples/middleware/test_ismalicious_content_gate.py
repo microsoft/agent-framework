@@ -141,7 +141,7 @@ async def run_scenario(
         httpx.AsyncClient(transport=httpx.MockTransport(scenario.gate_request)) as gate_http,
         httpx.AsyncClient(transport=httpx.MockTransport(scenario.fetch_request)) as fetch_http,
     ):
-        fetch_tool = sample.make_text_fetch_tool(fetch_http, approved_host="example.test")
+        fetch_tool = sample.make_text_fetch_tool(fetch_http, approved_host="example.test", approved_url=URL)
         if custom_result is not None:
 
             @tool(approval_mode="never_require", result_parser=SKIP_PARSING)
@@ -152,6 +152,7 @@ async def run_scenario(
         middleware = sample.IsMaliciousContentGate(
             sample.IsMaliciousGate(gate_http, api_key="synthetic-key", api_secret="synthetic-secret"),
             fetch_tool,
+            approved_url=URL,
             allow_warn=allow_warn,
         )
         model = ScriptedClient(fetch_tool.name, url=url)
@@ -176,8 +177,8 @@ async def test_allow_retains_exact_text_and_unknown_reputation() -> None:
     ]
     assert results == [RAW]
     report = reports[0]["ismalicious_scan"]
-    assert report["links"][0]["verdict"] == "unknown"
-    assert report["sanitized_content"] == SCAN["sanitized_content"]
+    assert report["unknown_link_count"] == 1 and report["link_count"] == 1
+    assert "sanitized_content" not in report and "links" not in report
     assert report["links_truncated"] is False
     url_request, scan_request = scenario.gate_requests
     assert url_request.url.params["u"] == URL
@@ -250,10 +251,23 @@ async def test_arbitrary_result_fields_are_not_silently_unscanned() -> None:
     assert len(model.requests) == 1 and RAW not in str(result)
 
 
-async def test_unapproved_destination_is_not_fetched() -> None:
+@pytest.mark.parametrize("url", ["https://not-approved.test/", "https://example.test/other"])
+async def test_unapproved_exact_url_never_reaches_gate_or_fetch(url: str) -> None:
     scenario = Scenario()
-    _, model, _ = await run_scenario(scenario, url="https://not-approved.test/")
-    assert scenario.events == ["url"] and len(model.requests) == 1
+    _, model, _ = await run_scenario(scenario, url=url)
+    assert scenario.events == [] and len(model.requests) == 1
+
+
+async def test_refused_remote_response_text_and_urls_are_absent_from_metadata() -> None:
+    scenario = Scenario(scan_reply={**SCAN, "verdict": "block", "sanitized_content": RAW})
+    result, model, reports = await run_scenario(scenario)
+    assert len(model.requests) == 1 and RAW not in str(result)
+    metadata = json.dumps(reports, default=str)
+    assert RAW not in metadata and "EXTERNAL-CONTENT-MARKER" not in metadata
+    decisions = {key: value for key, value in reports[0].items() if key.startswith("ismalicious_")}
+    # The framework's own approval metadata legitimately retains the approved arguments.
+    assert "https://" not in json.dumps(decisions) and "sanitized_content" not in json.dumps(decisions)
+    assert reports[0]["ismalicious_scan"]["verdict"] == "block"
 
 
 async def test_decision_logs_contain_no_credentials_url_or_content(caplog: pytest.LogCaptureFixture) -> None:
