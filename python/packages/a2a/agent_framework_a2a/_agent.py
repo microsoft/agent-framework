@@ -859,6 +859,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 updates[-1].is_operation_terminal = True
                 return updates
             if task.artifacts:
+                if not background:
+                    return []
                 return [
                     AgentResponseUpdate(
                         contents=[],
@@ -982,6 +984,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         if not update_event.status.HasField("message") or not update_event.status.message.parts:
+            if not background:
+                return []
             return [
                 AgentResponseUpdate(
                     contents=[],
@@ -997,6 +1001,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
+            if not background:
+                return []
             return [
                 AgentResponseUpdate(
                     contents=[],
