@@ -26,7 +26,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Register your agents
 builder.AddAIAgent("assistant", "You are a helpful assistant.")
-    .WithInMemorySessionStore();
+    .WithInMemorySessionStore(withIsolation: false); // Single-user local development only.
 
 // Register DevUI services
 if (builder.Environment.IsDevelopment())
@@ -58,7 +58,10 @@ app.Run();
 DevUI sends each turn as a separate HTTP request. The conversation ID identifies
 the conversation, but preserving an agent's `AgentSession.StateBag` between those
 requests also requires a session store on that agent's registration. The usage
-example enables this with `WithInMemorySessionStore()`.
+example enables this with `WithInMemorySessionStore(withIsolation: false)` for
+single-user local development. The default `withIsolation: true` requires an
+`AgentIsolationKeyProvider`; configure that provider and endpoint authorization
+when serving multiple callers, as shown in the shared hosting guide below.
 
 This is separate from a `ChatHistoryProvider`: that provider reads and writes
 messages for the session it receives. Registering a custom history provider does
@@ -92,7 +95,7 @@ Configure a session store on every agent that exposes an
 
 ```csharp
 builder.AddAIAgent("assistant", "You are a helpful assistant.")
-    .WithInMemorySessionStore();
+    .WithInMemorySessionStore(withIsolation: false); // Single-user local development only.
 ```
 
 `WithInMemorySessionStore()` preserves approvals between requests but loses them
