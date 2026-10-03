@@ -172,6 +172,10 @@ class _CallbackAggregator(Executor):
             else:
                 ret = await asyncio.to_thread(self._callback, results)
 
+        # Async callable objects and wrappers returning a coroutine are not coroutine functions
+        if inspect.isawaitable(ret):
+            ret = await ret
+
         # If the callback returned a value, finalize the workflow with it
         if ret is not None:
             await ctx.yield_output(ret)
