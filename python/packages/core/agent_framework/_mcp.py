@@ -499,6 +499,7 @@ _MCP_SAMPLING_DEPRECATION_MESSAGE = (
 # and returns (or awaits to) a truthy value to approve the request or a falsy
 # value to deny it. Both synchronous and asynchronous callables are supported.
 SamplingApprovalCallback = Callable[["types.CreateMessageRequestParams"], "bool | Coroutine[Any, Any, bool]"]
+_MCPFunctionLoadCallback = Callable[[FunctionTool, Any], None]
 
 # region: Helpers
 
@@ -1048,6 +1049,7 @@ class MCPTool:
             self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
+        self._function_load_callback: _MCPFunctionLoadCallback | None = None
         self.use_progressive_disclosure = use_progressive_disclosure
         self.always_load = always_load
         self._always_load_names = set(always_load or ())
@@ -2514,6 +2516,9 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
         self._validate_config_names([*self._functions, *new_functions])
+        if self._function_load_callback is not None:
+            for function in new_functions:
+                self._function_load_callback(function, None)
         self._functions.extend(new_functions)
 
     async def load_tools(self) -> None:
@@ -2553,6 +2558,7 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_task_support_by_name: dict[str, str] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
+        tool_annotations_by_name: dict[str, Any] = {}
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -2588,6 +2594,7 @@ class MCPTool:
                 raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
+                tool_annotations_by_name[tool.name] = tool.annotations
                 if tool.meta is not None:
                     tool_call_meta_by_name[tool.name] = _validate_mcp_meta(tool.meta) or {}
 
@@ -2671,6 +2678,17 @@ class MCPTool:
         ]
         current_functions.extend(new_functions)
         self._validate_config_names(current_functions)
+        for function in current_functions:
+            properties = function.additional_properties or {}
+            if not properties.get(_MCP_IS_TOOL_KEY):
+                continue
+            remote_name = properties.get(_MCP_REMOTE_NAME_KEY)
+            if (
+                isinstance(remote_name, str)
+                and remote_name in tool_annotations_by_name
+                and self._function_load_callback is not None
+            ):
+                self._function_load_callback(function, tool_annotations_by_name[remote_name])
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name

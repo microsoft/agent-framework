@@ -2,9 +2,10 @@
 
 
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -25,6 +26,12 @@ from azure.ai.agentserver.core.storage import (
 from ._scope import FoundryRequestScope
 
 StoreT = TypeVar("StoreT")
+
+
+def _encoded_checkpoint_hash(value: Any) -> str:
+    """Hash the exact JSON-compatible representation acknowledged by storage."""
+    payload = json.dumps(value, sort_keys=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _store_scope(config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FoundryRequestScope | None:
@@ -148,6 +155,14 @@ class FoundryCheckpointStore:
             await store.set_item(checkpoint.checkpoint_id, encoded_checkpoint, call_id=self.platform_context.call_id)
             return checkpoint.checkpoint_id
 
+    async def _load_encoded(self, checkpoint_id: CheckpointID) -> Any:
+        store = await self._get_store()
+        async with store:
+            item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
+        if item is None:
+            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
+        return item.value
+
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
         """Load a workflow checkpoint from the store.
 
@@ -162,12 +177,21 @@ class FoundryCheckpointStore:
         """
         from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
 
-        store = await self._get_store()
-        async with store:
-            item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
-        if item is None:
-            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
-        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value, allowed_types=self._allowed_types))
+        encoded = await self._load_encoded(checkpoint_id)
+        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(encoded, allowed_types=self._allowed_types))
+
+    async def load_with_hash(self, checkpoint_id: CheckpointID) -> tuple[WorkflowCheckpoint, str]:
+        """Load a checkpoint and hash its exact persisted encoding.
+
+        Pickle is not a canonical serialization across Python versions or repeated
+        encodes. Hashing the acknowledged storage value preserves exact tamper
+        detection without rejecting an unchanged checkpoint after deserialization.
+        """
+        from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
+
+        encoded = await self._load_encoded(checkpoint_id)
+        checkpoint = WorkflowCheckpoint.from_dict(decode_checkpoint_value(encoded, allowed_types=self._allowed_types))
+        return checkpoint, _encoded_checkpoint_hash(encoded)
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List all workflow checkpoints for a given workflow name."""

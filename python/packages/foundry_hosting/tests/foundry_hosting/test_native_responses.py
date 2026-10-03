@@ -942,23 +942,23 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
 
     try:
         with patch.object(HostedWorkflowRun, "stage", stage):
-            async with server.router.lifespan_context(server):
-                async with httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=server), base_url="http://test"
-                ) as client:
-                    pending = await client.post(
-                        "/responses",
-                        json={
-                            "input": "2",
-                            "agent_session_id": "sandbox",
-                            "store": True,
-                            "background": True,
-                        },
-                    )
-                    assert pending.status_code == 200
-                    response_id = pending.json()["id"]
-                    await asyncio.wait_for(started.wait(), timeout=3)
-                    await asyncio.wait_for(paired.wait(), timeout=3)
+            async with (
+                server.router.lifespan_context(server),
+                httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client,
+            ):
+                pending = await client.post(
+                    "/responses",
+                    json={
+                        "input": "2",
+                        "agent_session_id": "sandbox",
+                        "store": True,
+                        "background": True,
+                    },
+                )
+                assert pending.status_code == 200
+                response_id = pending.json()["id"]
+                await asyncio.wait_for(started.wait(), timeout=3)
+                await asyncio.wait_for(paired.wait(), timeout=3)
         assert stopped.is_set()
         if outer_checkpoint_failure:
             assert provider.failures > 0
