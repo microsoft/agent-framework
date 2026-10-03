@@ -90,8 +90,8 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         - Think through the task before acting. Break complex work into clear steps.
         - Use the tools available to you to gather information, perform actions, and verify results.
-        - Explain your reasoning and thought process as you work through tasks.
-        - Explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
+        - Explain decisions, actions, results, and important trade-offs at a high level. Do not expose private chain-of-thought or hidden reasoning.
+        - Keep the user informed with concise progress updates between tool calls, summarizing what you learned and what you will do next.
         - Avoid making more than 4 tool calls in a row without explaining what you are doing.
         - If a tool call fails or returns unexpected results, adapt your approach rather than repeating the same call.
         - When you have completed the task, present a clear and concise summary of what you did and what you found.
