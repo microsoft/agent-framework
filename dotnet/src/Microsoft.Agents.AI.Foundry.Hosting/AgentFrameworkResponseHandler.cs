@@ -186,7 +186,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // point below: AsyncLocal writes made in this streaming iterator are reverted across yield
         // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
         var platformCallId = context.PlatformContext?.CallId;
+        var platformUserId = context.PlatformContext?.UserIdKey;
         HostedCallContext.CallId = platformCallId;
+        HostedCallContext.UserId = platformUserId;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -278,6 +280,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
             // value, and the toolbox tools/list + consent egress below must carry it per request.
             HostedCallContext.CallId = platformCallId;
+            HostedCallContext.UserId = platformUserId;
 
             var toolboxResolution = await this.ResolveToolboxToolsAsync(
                 this._toolboxService,
@@ -382,6 +385,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 // below revert the ambient AsyncLocal, but the MCP tools/call egress that happens
                 // inside MoveNextAsync must carry the platform call id on every request.
                 HostedCallContext.CallId = platformCallId;
+                HostedCallContext.UserId = platformUserId;
 
                 bool shutdownDetected = false;
                 McpConsentInfo? consentInfo = null;
