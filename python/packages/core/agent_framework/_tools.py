@@ -122,9 +122,10 @@ _PENDING_MIXED_PAUSE_BATCH_KEY: Final[str] = "pending_mixed_pause_batch"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 # Tags an already-approved group that hides ordinary executable siblings of a
 # declaration-only/Host-owned batch. Such a group releases on Host function_result
-# answers (matched by call_id) rather than on approval responses.
+# answers, matched per stored pause occurrence like the mixed pause batch rather
+# than on approval responses.
 _DECLARATION_ONLY_HOST_GROUP_KEY: Final[str] = "_declaration_only_host_group"
-_DECLARATION_ONLY_HOST_CALL_IDS_KEY: Final[str] = "_declaration_only_host_call_ids"
+_DECLARATION_ONLY_HOST_ITEMS_KEY: Final[str] = "_declaration_only_host_items"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
@@ -2563,8 +2564,8 @@ async def _try_execute_function_call_groups(
         host_pauses = [_as_user_input_pause(function_call) for function_call in host_pause_calls]
         if _has_authoritative_approval_session(approval_session):
             # Session-backed executable siblings stay hidden until every stored Host-owned
-            # call_id is answered; the tagged group then releases them alongside synthetic
-            # approved responses in function_call_order.
+            # pause occurrence is answered; the tagged group then releases them alongside
+            # synthetic approved responses in function_call_order.
             executable_requests = [
                 Content.from_function_approval_request(
                     id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
@@ -2582,15 +2583,21 @@ async def _try_execute_function_call_groups(
             return [[pause] for pause in host_pauses], False
 
         # No authoritative session: run the executable siblings now and return their
-        # result groups in model order next to the Host-owned pauses.
-        sibling_tasks = [create_execution_task(function_call) for function_call in executable_siblings]
-        try:
-            sibling_results = await asyncio.gather(*sibling_tasks)
-        except BaseException:
-            for task in sibling_tasks:
-                task.cancel()
-            await asyncio.gather(*sibling_tasks, return_exceptions=True)
-            raise
+        # result groups in model order next to the Host-owned pauses, honoring the
+        # same concurrency setting as the pure executable batch below.
+        sibling_results: list[tuple[list[Content], bool]] = []
+        if config.get("allow_concurrent_invocation", True):
+            sibling_tasks = [create_execution_task(function_call) for function_call in executable_siblings]
+            try:
+                sibling_results = await asyncio.gather(*sibling_tasks)
+            except BaseException:
+                for task in sibling_tasks:
+                    task.cancel()
+                await asyncio.gather(*sibling_tasks, return_exceptions=True)
+                raise
+        else:
+            for function_call in executable_siblings:
+                sibling_results.append(await create_execution_task(function_call))
         results_by_call = dict(zip((id(function_call) for function_call in executable_siblings), sibling_results))
         mixed_result_groups: list[list[Content]] = []
         for function_call in function_calls:
@@ -3175,10 +3182,13 @@ def _store_already_approved_approval_requests(
     }
     if declaration_only_host_group:
         # The visible pauses are Host-owned calls, so this group must unlock when every
-        # Host function_result arrives (matched by call_id) instead of on approval responses.
+        # Host pause occurrence is answered by a function_result (matched like the mixed
+        # pause batch) instead of on approval responses.
         group[_DECLARATION_ONLY_HOST_GROUP_KEY] = True
-        group[_DECLARATION_ONLY_HOST_CALL_IDS_KEY] = [
-            request.call_id for request in visible_approval_requests if request.call_id is not None
+        group[_DECLARATION_ONLY_HOST_ITEMS_KEY] = [
+            {"kind": "host", "request": request.to_dict()}
+            for request in visible_approval_requests
+            if request.call_id is not None
         ]
     pending_groups.append(group)
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
@@ -3195,7 +3205,7 @@ def _stage_approval_batch_responses(
 
     ``staged_response_ids`` records matched source objects for diagnostic-only warning suppression.
     ``host_results`` carries inbound Host ``function_result`` answers, which release a tagged
-    declaration-only group once every Host-owned call in that group is answered.
+    declaration-only group once every Host-owned pause occurrence in that group is answered.
     """
     if not approval_responses and not host_results:
         return [], [], None
@@ -3223,16 +3233,26 @@ def _stage_approval_batch_responses(
 
         if group.get(_DECLARATION_ONLY_HOST_GROUP_KEY) is True:
             # Hidden executable siblings of a Host-owned batch: unlock only when every
-            # corresponding Host result is present, so a partial answer stays fail-closed.
-            raw_host_call_ids = group.get(_DECLARATION_ONLY_HOST_CALL_IDS_KEY)
-            host_call_ids = (
-                [str(item) for item in cast(list[Any], raw_host_call_ids)]
-                if isinstance(raw_host_call_ids, list)
+            # Host pause occurrence is answered, so a partial answer stays fail-closed.
+            # Matching mirrors the mixed pause batch: a result carrying an occurrence id
+            # answers only that occurrence, and an id-less result answers a call_id only
+            # while exactly one occurrence of that call_id is still unanswered. Matched
+            # responses persist on the stored items so answers accumulate across runs.
+            raw_host_items = group.get(_DECLARATION_ONLY_HOST_ITEMS_KEY)
+            host_items = (
+                [
+                    copy.deepcopy(cast(dict[str, Any], item))
+                    for item in cast(list[Any], raw_host_items)
+                    if isinstance(item, dict)
+                ]
+                if isinstance(raw_host_items, list)
                 else []
             )
-            answered_call_ids = {result.call_id for result in host_results or () if result.call_id is not None}
-            if not host_call_ids or not all(call_id in answered_call_ids for call_id in host_call_ids):
-                remaining_groups.append(raw_group)
+            _, host_batch_incomplete, _, _ = _match_mixed_pause_responses(host_items, host_results or ())
+            if not host_items or host_batch_incomplete:
+                updated_group = dict(group)
+                updated_group[_DECLARATION_ONLY_HOST_ITEMS_KEY] = host_items
+                remaining_groups.append(updated_group)
                 continue
             raw_order = group.get(_FUNCTION_CALL_ORDER_KEY)
             if isinstance(raw_order, list):
@@ -4718,7 +4738,7 @@ async def _resolve_approval_responses(
         _collect_approval_responses(prepared_messages, non_approval_result_ids=host_result_ids).values()
     )
     # Host answers arrive as function_result contents; a tagged declaration-only group keys
-    # off them (by call_id) to release its hidden executable siblings.
+    # off them (by stored pause occurrence) to release its hidden executable siblings.
     inbound_host_results = [
         content for message in prepared_messages for content in message.contents if content.type == "function_result"
     ]
