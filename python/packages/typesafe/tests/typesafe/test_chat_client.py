@@ -264,6 +264,9 @@ async def test_owned_client_sends_configured_api_key_on_wire(monkeypatch: pytest
         )
 
     def create_client(**kwargs: Any) -> AsyncTypeSafeClient:
+        # The connector must leave the SDK's HTTP stack alone so proxy settings still apply.
+        assert "transport" not in kwargs
+        assert "http_client" not in kwargs
         return AsyncTypeSafeClient(**kwargs, transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr(
@@ -302,6 +305,7 @@ async def test_owned_client_honors_proxy_environment(monkeypatch: pytest.MonkeyP
         )
         await writer.drain()
         writer.close()
+        await writer.wait_closed()
 
     proxy = await asyncio.start_server(handle_proxy_request, "127.0.0.1", 0)
     proxy_port = proxy.sockets[0].getsockname()[1]
