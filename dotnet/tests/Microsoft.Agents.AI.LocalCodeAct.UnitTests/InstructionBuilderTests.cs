@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.ComponentModel;
 using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
 
@@ -22,6 +23,48 @@ public sealed class InstructionBuilderTests
         var description = InstructionBuilder.BuildExecuteCodeDescription(tools, new List<FileMount>());
 
         Assert.Contains("get_weather", description);
+    }
+
+    [Fact]
+    public void BuildExecuteCodeDescription_WithToolParameters_IncludesParameterMetadata()
+    {
+        static string Lookup(
+            [Description("Search text")] string query,
+            [Description("Maximum results")] int limit = 10) => $"{query}:{limit}";
+
+        var tool = AIFunctionFactory.Create(Lookup, name: "lookup", description: "Look up an item.");
+        var description = InstructionBuilder.BuildExecuteCodeDescription(
+            new List<AIFunction> { tool },
+            new List<FileMount>());
+
+        Assert.Contains("lookup", description);
+        Assert.Contains("query", description);
+        Assert.Contains("Search text", description);
+        Assert.Contains("Maximum results", description);
+        Assert.Contains("\"required\":[\"query\"]", description);
+        Assert.Contains("\"default\":10", description);
+    }
+
+    [Fact]
+    public void BuildExecuteCodeDescription_WithZeroParameterTool_ReportsNoParameters()
+    {
+        var tool = AIFunctionFactory.Create(() => "ok", name: "ping", description: "Pings.");
+        var description = InstructionBuilder.BuildExecuteCodeDescription(
+            new List<AIFunction> { tool },
+            new List<FileMount>());
+
+        Assert.Contains("Parameters: none.", description);
+        Assert.DoesNotContain("Parameters (JSON Schema)", description);
+    }
+
+    [Fact]
+    public void BuildExecuteCodeDescription_WithUnconstrainedSchema_OmitsParameterBlock()
+    {
+        var tools = new List<AIFunction> { new TestTool("legacy_tool", "Does not describe its input.") };
+        var description = InstructionBuilder.BuildExecuteCodeDescription(tools, new List<FileMount>());
+
+        Assert.Contains("legacy_tool", description);
+        Assert.DoesNotContain("Parameters", description);
     }
 
     [Fact]
