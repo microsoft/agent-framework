@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host a single (non-workflow) agent that counts down slowly, steerably.
+"""Host a long-running countdown agent while steering is temporarily unavailable.
 
 The agent is asked to count down from a target number, pacing its own output with a short remark
-before each number so a real response takes a while to fully generate. With
-`steerable_conversations=True`, sending a new turn on the same conversation while the countdown is
-still streaming cancels the in-progress turn and drains the new turn next. Steering is only
-supported for non-workflow agents like this one.
+before each number so a response takes a while to fully generate. This sample currently runs
+without steering; the hosting layer rejects ``steerable_conversations=True`` until a patched
+AgentServer SDK is released and verified.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
@@ -18,7 +17,6 @@ import os
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -43,8 +41,8 @@ def main() -> None:
     )
 
     server = ResponsesHostServer(
-        agent,
-        options=ResponsesServerOptions(steerable_conversations=True),
+        agent=agent,
+        history_source="agent_server",
         log_level="DEBUG",
     )
     server.run()

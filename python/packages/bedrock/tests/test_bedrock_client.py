@@ -15,8 +15,12 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockEmbeddingClient
-from agent_framework_bedrock._chat_client import BedrockSettings
+from agent_framework_bedrock import (
+    BedrockChatClient,
+    BedrockChatOptions,
+    BedrockEmbeddingClient,
+    BedrockSettings,
+)
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
 

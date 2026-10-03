@@ -40,6 +40,9 @@ namespace Microsoft.Agents.AI;
 [RequiresDynamicCode("The CosmosChatHistoryProvider uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
 {
+    // The most operations Cosmos DB accepts in one transactional batch.
+    private const int MaxTransactionalBatchSize = 100;
+
     private readonly ProviderSessionState<State> _sessionState;
     private IReadOnlyList<string>? _stateKeys;
     private readonly CosmosClient _cosmosClient;
@@ -72,7 +75,12 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// Gets or sets the maximum number of items per transactional batch operation.
     /// Default is 100, maximum allowed by Cosmos DB is 100.
     /// </summary>
-    public int MaxBatchSize { get; set; } = 100;
+    /// <exception cref="ArgumentOutOfRangeException">The value is less than 1 or greater than 100.</exception>
+    public int MaxBatchSize
+    {
+        get;
+        set => field = Throw.IfOutOfRange(value, 1, MaxTransactionalBatchSize);
+    } = MaxTransactionalBatchSize;
 
     /// <summary>
     /// Gets or sets the maximum number of messages to retrieve from the provider.
