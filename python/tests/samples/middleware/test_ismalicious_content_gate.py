@@ -128,6 +128,11 @@ async def run_scenario(
     allow_warn: bool = False,
     custom_result: object | None = None,
     url: str = URL,
+    gate_approved_url: str = URL,
+    outer_middleware: Callable[[FunctionInvocationContext, Callable[[], Awaitable[None]]], Awaitable[None]]
+    | None = None,
+    inner_middleware: Callable[[FunctionInvocationContext, Callable[[], Awaitable[None]]], Awaitable[None]]
+    | None = None,
 ) -> tuple[Any, ScriptedClient, list[dict[str, Any]]]:
     reports: list[dict[str, Any]] = []
 
@@ -152,11 +157,15 @@ async def run_scenario(
         middleware = sample.IsMaliciousContentGate(
             sample.IsMaliciousGate(gate_http, api_key="synthetic-key", api_secret="synthetic-secret"),
             fetch_tool,
-            approved_url=URL,
+            approved_host="example.test",
+            approved_url=gate_approved_url,
             allow_warn=allow_warn,
         )
         model = ScriptedClient(fetch_tool.name, url=url)
-        async with Agent(client=model, tools=[fetch_tool], middleware=[observe, middleware]) as agent:
+        pipeline = [observe, middleware] if outer_middleware is None else [observe, outer_middleware, middleware]
+        if inner_middleware is not None:
+            pipeline.append(inner_middleware)
+        async with Agent(client=model, tools=[fetch_tool], middleware=pipeline) as agent:
             session = AgentSession()
             result = await agent.run("Summarize the approved document.", session=session)
             if len(model.requests) == 1:
@@ -256,6 +265,70 @@ async def test_unapproved_exact_url_never_reaches_gate_or_fetch(url: str) -> Non
     scenario = Scenario()
     _, model, _ = await run_scenario(scenario, url=url)
     assert scenario.events == [] and len(model.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.test/document",
+        "https://not-approved.test/document",
+        "https://example.test:444/document",
+        "https://user@example.test/document",
+        "https://example.test:bad/document",
+    ],
+)
+async def test_invalid_operator_scope_is_rejected_before_any_http(url: str) -> None:
+    scenario = Scenario()
+    with pytest.raises(ValueError):
+        await run_scenario(scenario, custom_result=RAW, url=url, gate_approved_url=url)
+    assert scenario.events == [] and scenario.gate_requests == []
+
+
+async def test_inner_result_transform_is_scanned_before_release() -> None:
+    transformed = "TRANSFORMED-CONTENT-MARKER\n" + RAW
+
+    async def transform(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        context.result = transformed
+
+    scenario = Scenario(scan_reply={**SCAN, "verdict": "block"})
+    result, model, _ = await run_scenario(scenario, inner_middleware=transform)
+    assert json.loads(scenario.gate_requests[-1].content)["content"] == transformed
+    assert scenario.events == ["url", "fetch", "scan"]
+    assert len(model.requests) == 1 and "TRANSFORMED-CONTENT-MARKER" not in str(result)
+
+
+async def test_inner_url_rewrite_never_reaches_unapproved_destination() -> None:
+    async def rewrite(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        context.arguments = {"url": "https://not-approved.test/"}
+        await call_next()
+
+    scenario = Scenario()
+    result, model, _ = await run_scenario(scenario, inner_middleware=rewrite)
+    assert scenario.events == ["url"] and len(model.requests) == 1
+    assert scenario.gate_requests[0].url.params["u"] == URL
+    assert RAW not in str(result)
+
+
+async def test_argument_repair_precedes_gate_without_disclosing_original_url() -> None:
+    async def repair(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        context.arguments = {"url": URL}
+        await call_next()
+
+    scenario = Scenario()
+    _, model, _ = await run_scenario(scenario, url="https://not-approved.test/", outer_middleware=repair)
+    assert scenario.events == ["url", "fetch", "scan"] and len(model.requests) == 2
+    assert scenario.gate_requests[0].url.params["u"] == URL
+    assert all(b"not-approved.test" not in request.content for request in scenario.gate_requests)
+
+
+@pytest.mark.parametrize("verdict", ["allow", "block"])
+async def test_status_distinguishes_returned_termination_response(verdict: str) -> None:
+    result, model, _ = await run_scenario(Scenario(scan_reply={**SCAN, "verdict": verdict}))
+    assert result is not None  # Native graceful termination still returns a response.
+    expected = "Agent run completed." if verdict == "allow" else "Agent run stopped by the content gate."
+    assert sample.run_status(result) == expected
+    assert len(model.requests) == (2 if verdict == "allow" else 1)
 
 
 async def test_refused_remote_response_text_and_urls_are_absent_from_metadata() -> None:

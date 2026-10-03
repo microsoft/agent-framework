@@ -49,7 +49,11 @@ The sample forces a tool call so you can see middleware output for each inner mo
 
 This example uses `FunctionInvocationContext` and `call_next()` around one local
 fetch tool. A separate operator decision authorizes an exact URL and its hostname.
-The middleware refuses any different URL before calling either remote service. It
+The middleware and fetch tool share a validator for that exact URL, HTTPS scheme,
+hostname, port and absence of user information. Invalid operator configuration is
+rejected before starting a run, and invocation scope is checked again before any
+reputation request or fetch. The middleware refuses any different URL before
+calling either remote service. It
 checks its URL with `GET /gate/url`, executes the tool only when policy permits,
 then sends the complete UTF-8 result and source URL to `POST /gate/scan`.
 Both gate requests go to `https://api.ismalicious.com`. The selected document's
@@ -84,6 +88,19 @@ Timeouts, HTTP failures, redirects, malformed or unsupported verdicts, and
 incomplete link inspection also stop the run. The middleware replaces its current
 result with a fixed withholding message before raising `MiddlewareTermination`,
 since termination alone can preserve a result that has already been produced.
+The native graceful stop still returns an `AgentResponse`; the sample recognizes
+its fixed withholding result to print the stopped status rather than treating a
+non-null response as successful completion.
+
+Register the gate before result-transforming function middleware, for example
+`middleware=[content_gate, trusted_transformer]`. It then scans the complete result
+after inner middleware finish transforming it. Argument-repair middleware belongs
+before policy inspection, but must not rewrite the returned result. Middleware
+registered before the gate can replace a result after it has been scanned; do not
+use an outer result rewriter with this sample. Changes at other agent/chat/provider
+boundaries remain outside this selected function policy. Native graceful
+termination stops the next model turn after the current accepted batch completes;
+it does not cancel sibling tool calls in that batch.
 
 An `allow` result means the service did not object under its current rules;
 it does not prove content or a destination is benign. The service currently maps
