@@ -1957,10 +1957,75 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     response = await stream.get_final_response()
 
     assert [update.text for update in updates] == ["Hello ", "world"]
-    assert updates[-1].contents == []
-    assert updates[-1].is_operation_terminal is True
     assert response.text == "Hello world"
     assert len(response.messages) == 1
+
+
+async def test_streaming_background_artifacts_emit_terminal_marker_without_duplication(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """A background artifact stream should emit a terminal marker without duplicating content."""
+    working_task = Task(
+        id="task-art-background",
+        context_id="ctx-art-background",
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    first_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-background",
+        context_id="ctx-art-background",
+        artifact=Artifact(
+            artifact_id="artifact-background",
+            parts=[Part(text="Hello ")],
+        ),
+        append=False,
+    )
+    second_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-background",
+        context_id="ctx-art-background",
+        artifact=Artifact(
+            artifact_id="artifact-background",
+            parts=[Part(text="world")],
+        ),
+        append=True,
+    )
+    terminal_task = Task(
+        id="task-art-background",
+        context_id="ctx-art-background",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        artifacts=[
+            Artifact(
+                artifact_id="artifact-background",
+                parts=[Part(text="Hello world")],
+            )
+        ],
+    )
+
+    mock_a2a_client.responses.extend([
+        StreamResponse(task=working_task),
+        StreamResponse(artifact_update=first_chunk),
+        StreamResponse(artifact_update=second_chunk),
+        StreamResponse(task=terminal_task),
+    ])
+
+    stream = a2a_agent.run("Hello", stream=True, background=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 4
+
+    assert updates[0].contents == []
+    assert updates[0].continuation_token is not None
+    assert updates[0].is_operation_terminal is False
+
+    assert [update.text for update in updates[1:3]] == ["Hello ", "world"]
+
+    assert updates[3].contents == []
+    assert updates[3].continuation_token is None
+    assert updates[3].is_operation_terminal is True
+
+    assert response.text == "Hello world"
+    assert response.continuation_token is None
 
 
 async def test_streaming_terminal_task_artifacts_are_emitted_when_terminal_event_has_no_content(
