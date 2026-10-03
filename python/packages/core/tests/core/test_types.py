@@ -6206,4 +6206,88 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
     assert data["finish_reason"] == "tool_calls"
 
 
+async def test_chat_client_agent_streaming_continuation_token() -> None:
+    """Chat response aggregation should preserve an in-progress continuation token."""
+    events = [
+        ChatResponseUpdate(
+            contents=[Content.from_text(text="working")],
+            response_id="resp_1",
+            model="gpt-5",
+            continuation_token={"response_id": "resp_1"},
+        ),
+        ChatResponseUpdate(contents=[Content.from_text(text="...still working")]),
+    ]
+
+    aggregated = ChatResponse.from_updates(events)
+
+    assert aggregated.continuation_token == {"response_id": "resp_1"}
+
+
+def test_chat_response_finished_update_clears_continuation_token() -> None:
+    """A finished chat response should clear its continuation token."""
+    events = [
+        ChatResponseUpdate(continuation_token={"response_id": "resp_1"}),
+        ChatResponseUpdate(is_operation_terminal=True),
+    ]
+
+    aggregated = ChatResponse.from_updates(events)
+
+    assert aggregated.continuation_token is None
+
+
+def test_chat_response_finish_reason_does_not_clear_continuation_token() -> None:
+    """A finish reason alone should not be treated as the terminal streaming signal."""
+    events = [
+        ChatResponseUpdate(continuation_token={"response_id": "resp_1"}),
+        ChatResponseUpdate(finish_reason="stop"),
+    ]
+
+    aggregated = ChatResponse.from_updates(events)
+
+    assert aggregated.continuation_token == {"response_id": "resp_1"}
+    assert aggregated.finish_reason == "stop"
+
+
+def test_agent_response_update_preserves_continuation_token() -> None:
+    """Agent response aggregation should preserve an in-progress continuation token."""
+    events = [
+        AgentResponseUpdate(continuation_token={"response_id": "resp_1"}),
+        AgentResponseUpdate(contents=[Content.from_text(text="...still working")]),
+    ]
+
+    aggregated = AgentResponse.from_updates(events)
+
+    assert aggregated.continuation_token == {"response_id": "resp_1"}
+
+
+def test_agent_response_finished_update_clears_continuation_token() -> None:
+    """A finished agent response should clear its continuation token."""
+    events = [
+        AgentResponseUpdate(continuation_token={"response_id": "resp_1"}),
+        AgentResponseUpdate(is_operation_terminal=True),
+    ]
+
+    aggregated = AgentResponse.from_updates(events)
+
+    assert aggregated.continuation_token is None
+
+
+def test_map_chat_to_agent_update_preserves_terminal_signal() -> None:
+    """Chat-to-agent update conversion should preserve terminality."""
+    update = map_chat_to_agent_update(ChatResponseUpdate(is_operation_terminal=True), agent_name=None)
+
+    assert update.is_operation_terminal is True
+
+
+@pytest.mark.parametrize("update_type", [ChatResponseUpdate, AgentResponseUpdate])
+def test_response_update_serialization_omits_false_terminal_signal(
+    update_type: type[ChatResponseUpdate] | type[AgentResponseUpdate],
+) -> None:
+    """Nonterminal updates should retain their existing serialized shape."""
+    assert "is_operation_terminal" not in update_type().to_dict()
+    serialized = update_type(is_operation_terminal=True).to_dict()
+    assert serialized["is_operation_terminal"] is True
+    assert update_type.from_dict(serialized).is_operation_terminal is True
+
+
 # endregion
