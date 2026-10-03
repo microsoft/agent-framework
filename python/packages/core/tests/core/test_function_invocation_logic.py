@@ -7243,6 +7243,269 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     assert len(function_results) == 0
 
 
+async def test_mixed_declaration_only_and_executable_batch_runs_executable_after_host_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An executable sibling of a declaration-only call stays hidden until the Host answers."""
+    from agent_framework import FunctionTool
+
+    execution_counts: list[int] = []
+
+    @tool(name="counter_func")
+    def counter_func() -> str:
+        execution_counts.append(1)
+        return "counted"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[host_func, counter_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="counter", name="counter_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    assert host_request.call_id == "host"
+    assert len(execution_counts) == 0
+
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        host_result,
+        session=session,
+    )
+
+    assert len(execution_counts) == 1
+    assert final_response.text == "done"
+
+
+async def test_sessionless_mixed_declaration_only_and_executable_batch_runs_executable_same_turn(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Without a session, the executable sibling of a declaration-only call runs on that same turn."""
+    execution_counts: list[int] = []
+
+    @tool(name="counter_func")
+    def counter_func() -> str:
+        execution_counts.append(1)
+        return "counted"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="counter", name="counter_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run both"])],
+        options={"tool_choice": "auto", "tools": [host_func, counter_func]},
+    )
+
+    # The sibling executed on this turn while the Host-owned call only paused for input.
+    assert len(execution_counts) == 1
+    contents = [content for message in response.messages for content in message.contents]
+    host_pauses = [content for content in contents if content.type == "function_call" and content.user_input_request]
+    assert [pause.call_id for pause in host_pauses] == ["host"]
+    sibling_results = [content for content in contents if content.type == "function_result"]
+    assert [(result.call_id, result.result) for result in sibling_results] == [("counter", "counted")]
+    # Model order: the Host pause is returned together with, and ahead of, the sibling result.
+    assert contents.index(host_pauses[0]) < contents.index(sibling_results[0])
+
+
+async def test_mixed_declaration_only_duplicate_call_id_occurrences_require_every_host_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """One result for a duplicated call_id answers only the occurrence it carries."""
+    execution_counts: list[int] = []
+
+    @tool(name="counter_func")
+    def counter_func() -> str:
+        execution_counts.append(1)
+        return "counted"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[host_func, counter_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}, id="host-occurrence-1"),
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}, id="host-occurrence-2"),
+                    Content.from_function_call(call_id="counter", name="counter_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run everything", session=session)
+    host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [request.id for request in host_requests] == ["host-occurrence-1", "host-occurrence-2"]
+    assert len(execution_counts) == 0
+
+    first_result = Content.from_function_result(call_id="host", result="first answer")
+    first_result.id = "host-occurrence-1"
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["still waiting"])),
+    ]
+    partial_response = await agent.run(first_result, session=session)
+
+    # A single occurrence answer leaves the duplicate unanswered, so the sibling stays locked.
+    assert len(execution_counts) == 0
+    assert partial_response.text == "still waiting"
+
+    second_result = Content.from_function_result(call_id="host", result="second answer")
+    second_result.id = "host-occurrence-2"
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(second_result, session=session)
+
+    assert len(execution_counts) == 1
+    assert final_response.text == "done"
+
+
+async def test_mixed_declaration_only_distinct_call_ids_require_every_host_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A host answer for one call_id does not release the sibling of another unanswered call_id."""
+    execution_counts: list[int] = []
+
+    @tool(name="counter_func")
+    def counter_func() -> str:
+        execution_counts.append(1)
+        return "counted"
+
+    first_host_func = FunctionTool(name="first_host_func", func=None, description="Handled by the caller")
+    second_host_func = FunctionTool(name="second_host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[first_host_func, second_host_func, counter_func])
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host-a", name="first_host_func", arguments={}),
+                    Content.from_function_call(call_id="host-b", name="second_host_func", arguments={}),
+                    Content.from_function_call(call_id="counter", name="counter_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    first_response = await agent.run("run everything", session=session)
+    host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [request.call_id for request in host_requests] == ["host-a", "host-b"]
+    assert len(execution_counts) == 0
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["still waiting"])),
+    ]
+    await agent.run(Content.from_function_result(call_id="host-a", result="a answer"), session=session)
+
+    # Only one of the two Host-owned calls is answered, so the sibling stays locked.
+    assert len(execution_counts) == 0
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    final_response = await agent.run(
+        Content.from_function_result(call_id="host-b", result="b answer"),
+        session=session,
+    )
+
+    assert len(execution_counts) == 1
+    assert final_response.text == "done"
+
+
+async def test_sessionless_mixed_declaration_only_batch_honors_sequential_invocation(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Sessionless mixed siblings run one at a time when concurrent invocation is disabled."""
+    execution_order: list[str] = []
+
+    @tool(name="first_func", approval_mode="never_require")
+    async def first_func() -> str:
+        execution_order.append("first_start")
+        await asyncio.sleep(0.01)
+        execution_order.append("first_end")
+        return "first"
+
+    @tool(name="second_func", approval_mode="never_require")
+    async def second_func() -> str:
+        execution_order.append("second_start")
+        await asyncio.sleep(0.01)
+        execution_order.append("second_end")
+        return "second"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="first", name="first_func", arguments={}),
+                    Content.from_function_call(call_id="second", name="second_func", arguments={}),
+                ],
+            )
+        ),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run all"])],
+        options={"tool_choice": "auto", "tools": [host_func, first_func, second_func]},
+    )
+
+    # The second sibling starts only after the first one finished, in model order.
+    assert execution_order == ["first_start", "first_end", "second_start", "second_end"]
+    results = [content for msg in response.messages for content in msg.contents if content.type == "function_result"]
+    assert [(result.call_id, result.result) for result in results] == [("first", "first"), ("second", "second")]
+    host_pauses = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [pause.call_id for pause in host_pauses] == ["host"]
+
+
 @pytest.mark.parametrize(
     "argument_chunks",
     [
