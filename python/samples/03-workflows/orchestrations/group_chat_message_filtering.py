@@ -10,8 +10,11 @@ would already have received the original response.
 This is a text-only policy demonstration, not a complete PII detector or a security
 boundary for the originating agent. Its local session, tools, model provider, and
 telemetry may still contain the original data. User input is broadcast normally;
-apply your input policy before starting the workflow. Do not enable participant
-intermediate outputs when only filtered output should be visible to the caller.
+apply your input policy before starting the workflow. Participant intermediate
+outputs are disabled, but executor lifecycle events can still contain raw responses
+before this handler runs. Filter or restrict access to those events separately
+before exposing workflow results to callers. This policy protects shared history
+and broadcasts, not every event returned by workflow.run().
 
 Prerequisites: install agent-framework-foundry and agent-framework-orchestrations,
 set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL, and run az login.
@@ -112,8 +115,8 @@ async def main() -> None:
         max_rounds=2,
     )
     workflow = GroupChatBuilder(participants=participants, orchestrator=orchestrator).build()
-    # Only the orchestrator's completion is exposed. Raw participant streams
-    # must not be selected via intermediate_output_from.
+    # Print only the orchestrator's completion. The result's executor lifecycle
+    # events can still contain raw responses, even without participant outputs.
     result = await workflow.run("Prepare a brief summary of the fictional support case.")
     for response in result.get_outputs():
         if isinstance(response, AgentResponse):
