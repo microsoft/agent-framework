@@ -680,16 +680,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         all_updates.append(update)
                         yield update
                 elif is_terminal or is_input_required:
-                    if updates:
+                    if updates and any(update.contents for update in updates):
                         # Terminal/input-required event with content — discard accumulated intermediates
                         pending_updates_by_task.pop(status_event.task_id, None)
                         for update in updates:
                             all_updates.append(update)
                             yield update
                     elif is_terminal:
-                        # Terminal event with NO content — flush accumulated updates
+                        # Terminal event with no content — flush accumulated updates before its metadata marker.
                         pending = pending_updates_by_task.pop(status_event.task_id, [])
                         for update in pending:
+                            all_updates.append(update)
+                            yield update
+                        for update in updates:
                             all_updates.append(update)
                             yield update
                 else:
@@ -840,7 +843,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     if getattr(message.raw_representation, "artifact_id", None) not in streamed_artifact_ids
                 ]
             if task_messages:
-                return [
+                updates = [
                     AgentResponseUpdate(
                         contents=message.contents,
                         role=message.role,
@@ -853,13 +856,27 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     )
                     for message in task_messages
                 ]
+                updates[-1].is_operation_terminal = True
+                return updates
             if task.artifacts:
-                return []
+                if not background:
+                    return []
+                return [
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=task.id,
+                        is_operation_terminal=True,
+                        additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                        raw_representation=task,
+                    )
+                ]
             return [
                 AgentResponseUpdate(
                     contents=[],
                     role="assistant",
                     response_id=task.id,
+                    is_operation_terminal=True,
                     additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
                     raw_representation=task,
                 )
@@ -962,18 +979,43 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 )
             ]
 
-        if not update_event.status.HasField("message") or not update_event.status.message.parts:
-            return []
-
         if state not in TERMINAL_TASK_STATES:
             return []
+
+        event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
+        if not update_event.status.HasField("message") or not update_event.status.message.parts:
+            if not background:
+                return []
+            return [
+                AgentResponseUpdate(
+                    contents=[],
+                    role="assistant",
+                    response_id=update_event.task_id,
+                    is_operation_terminal=True,
+                    continuation_token=continuation_token,
+                    additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                    raw_representation=update_event,
+                )
+            ]
 
         message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
-            return []
+            if not background:
+                return []
+            return [
+                AgentResponseUpdate(
+                    contents=[],
+                    role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=update_event.task_id,
+                    message_id=message.message_id,
+                    is_operation_terminal=True,
+                    continuation_token=continuation_token,
+                    additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                    raw_representation=update_event,
+                )
+            ]
         msg_meta = MessageToDict(message.metadata) if message.metadata else {}
-        event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
 
         return [
@@ -982,6 +1024,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
                 message_id=message.message_id,
+                is_operation_terminal=True,
                 continuation_token=continuation_token,
                 additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,

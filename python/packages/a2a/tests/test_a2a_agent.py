@@ -1142,6 +1142,101 @@ async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock
     assert updates[1].contents[0].text == "Stream resumed"
 
 
+@mark.parametrize(
+    "terminal_state",
+    [
+        TaskState.TASK_STATE_COMPLETED,
+        TaskState.TASK_STATE_FAILED,
+        TaskState.TASK_STATE_CANCELED,
+        TaskState.TASK_STATE_REJECTED,
+    ],
+)
+async def test_resume_streaming_terminal_task_clears_final_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+    terminal_state: TaskState,
+) -> None:
+    """A terminal A2A task should clear the aggregated continuation token."""
+    working_task = Task(
+        id="task-rs-terminal",
+        context_id="ctx-rs-terminal",
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    completed_task = Task(
+        id="task-rs-terminal",
+        context_id="ctx-rs-terminal",
+        status=TaskStatus(state=terminal_state),
+        artifacts=[
+            Artifact(
+                artifact_id="art-rs-terminal",
+                name="result",
+                parts=[Part(text="Stream completed")],
+            )
+        ],
+    )
+    mock_a2a_client.subscribe_responses.extend([
+        StreamResponse(task=working_task),
+        StreamResponse(task=completed_task),
+    ])
+
+    stream = a2a_agent.run(
+        stream=True,
+        continuation_token=A2AContinuationToken(
+            task_id="task-rs-terminal",
+            context_id="ctx-rs-terminal",
+        ),
+        background=True,
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert updates[0].continuation_token is not None
+    assert updates[1].continuation_token is None
+    assert updates[1].is_operation_terminal is True
+    assert response.continuation_token is None
+    assert response.finish_reason is None
+
+
+async def test_streaming_terminal_status_without_message_clears_final_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """A message-less terminal status update should clear the aggregated continuation token."""
+    working_task = Task(
+        id="task-status-terminal",
+        context_id="ctx-status-terminal",
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    completed_event = TaskStatusUpdateEvent(
+        task_id="task-status-terminal",
+        context_id="ctx-status-terminal",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+    )
+    mock_a2a_client.subscribe_responses.extend([
+        StreamResponse(task=working_task),
+        StreamResponse(status_update=completed_event),
+    ])
+
+    stream = a2a_agent.run(
+        stream=True,
+        continuation_token=A2AContinuationToken(
+            task_id="task-status-terminal",
+            context_id="ctx-status-terminal",
+        ),
+        background=True,
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 2
+    assert updates[0].continuation_token is not None
+    assert updates[1].contents == []
+    assert updates[1].is_operation_terminal is True
+    assert response.continuation_token is None
+    assert response.finish_reason is None
+
+
 async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test poll_task returns continuation token when task is still in progress."""
     status = TaskStatus(state=TaskState.TASK_STATE_WORKING, message=None)
@@ -1864,6 +1959,73 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     assert [update.text for update in updates] == ["Hello ", "world"]
     assert response.text == "Hello world"
     assert len(response.messages) == 1
+
+
+async def test_streaming_background_artifacts_emit_terminal_marker_without_duplication(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """A background artifact stream should emit a terminal marker without duplicating content."""
+    working_task = Task(
+        id="task-art-background",
+        context_id="ctx-art-background",
+        status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
+    )
+    first_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-background",
+        context_id="ctx-art-background",
+        artifact=Artifact(
+            artifact_id="artifact-background",
+            parts=[Part(text="Hello ")],
+        ),
+        append=False,
+    )
+    second_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-background",
+        context_id="ctx-art-background",
+        artifact=Artifact(
+            artifact_id="artifact-background",
+            parts=[Part(text="world")],
+        ),
+        append=True,
+    )
+    terminal_task = Task(
+        id="task-art-background",
+        context_id="ctx-art-background",
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
+        artifacts=[
+            Artifact(
+                artifact_id="artifact-background",
+                parts=[Part(text="Hello world")],
+            )
+        ],
+    )
+
+    mock_a2a_client.responses.extend([
+        StreamResponse(task=working_task),
+        StreamResponse(artifact_update=first_chunk),
+        StreamResponse(artifact_update=second_chunk),
+        StreamResponse(task=terminal_task),
+    ])
+
+    stream = a2a_agent.run("Hello", stream=True, background=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 4
+
+    assert updates[0].contents == []
+    assert updates[0].continuation_token is not None
+    assert updates[0].is_operation_terminal is False
+
+    assert [update.text for update in updates[1:3]] == ["Hello ", "world"]
+
+    assert updates[3].contents == []
+    assert updates[3].continuation_token is None
+    assert updates[3].is_operation_terminal is True
+
+    assert response.text == "Hello world"
+    assert response.continuation_token is None
 
 
 async def test_streaming_terminal_task_artifacts_are_emitted_when_terminal_event_has_no_content(

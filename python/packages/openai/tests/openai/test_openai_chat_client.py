@@ -9751,6 +9751,47 @@ def test_streaming_terminal_response_sets_finish_reason(
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
 
     assert update.finish_reason == expected_finish_reason
+    assert update.is_operation_terminal is True
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "incomplete_reason"),
+    [
+        ("response.failed", "failed", None),
+        ("response.incomplete", "incomplete", "other"),
+    ],
+)
+def test_streaming_terminal_response_clears_aggregated_continuation_token(
+    event_type: str,
+    status: str,
+    incomplete_reason: str | None,
+) -> None:
+    """Terminal Responses API events should clear an earlier continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_terminal"
+    in_progress_event.response.conversation = None
+
+    terminal_event = MagicMock()
+    terminal_event.type = event_type
+    terminal_event.response.id = "resp_terminal"
+    terminal_event.response.conversation = None
+    terminal_event.response.model = "test-model"
+    terminal_event.response.created_at = 1000000000
+    terminal_event.response.usage = None
+    terminal_event.response.status = status
+    terminal_event.response.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    )
+    terminal_event.response.output = []
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(terminal_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is None
 
 
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:

@@ -669,6 +669,7 @@ class WorkflowAgent(BaseAgent):
                         # connectors may set any string); forward the value unchanged.
                         finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
                         continuation_token=data.continuation_token,
+                        is_operation_terminal=data.is_operation_terminal,
                         additional_properties=dict(data.additional_properties)
                         if data.additional_properties is not None
                         else None,
@@ -695,6 +696,7 @@ class WorkflowAgent(BaseAgent):
                     updates[-1].agent_id = data.agent_id
                     updates[-1].finish_reason = data.finish_reason
                     updates[-1].continuation_token = data.continuation_token
+                    updates[-1].is_operation_terminal = data.continuation_token is None
                     updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):

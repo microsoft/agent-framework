@@ -3649,6 +3649,7 @@ class RawOpenAIChatClient(
         created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
+        is_operation_terminal = False
         model = self.model
 
         def output_text_properties(output: Any) -> dict[str, Any] | None:
@@ -3892,6 +3893,7 @@ class RawOpenAIChatClient(
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed" | "response.incomplete" | "response.failed":
+                is_operation_terminal = True
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
@@ -4201,6 +4203,7 @@ class RawOpenAIChatClient(
             created_at=created_at,
             continuation_token=continuation_token,
             finish_reason=finish_reason,
+            is_operation_terminal=is_operation_terminal,
             additional_properties=metadata,
             raw_representation=event,
         )

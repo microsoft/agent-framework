@@ -863,7 +863,7 @@ class TestWorkflowAgent:
         assert "second output" in texts
 
     async def test_workflow_as_agent_stream_preserves_response_update_metadata(self) -> None:
-        """Test that streaming forwards finish_reason, continuation_token and additional_properties.
+        """Test that streaming forwards finish_reason, continuation_token, terminality, and additional properties.
 
         This validates the fix for issue #7952: AgentResponseUpdate metadata should be
         forwarded as-is when the workflow is wrapped via .as_agent().
@@ -880,6 +880,7 @@ class TestWorkflowAgent:
                     message_id="source-message",
                     finish_reason="stop",
                     continuation_token=cast(Any, {"token": "resume-token"}),
+                    is_operation_terminal=False,
                     additional_properties={"provider_marker": "preserve-me"},
                 )
             )
@@ -898,6 +899,7 @@ class TestWorkflowAgent:
         assert update.agent_id == "source-agent"
         assert update.finish_reason == "stop"
         assert update.continuation_token == {"token": "resume-token"}
+        assert update.is_operation_terminal is False
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
     async def test_workflow_as_agent_stream_preserves_response_metadata(self) -> None:
@@ -934,6 +936,7 @@ class TestWorkflowAgent:
         assert updates[-1].agent_id == "source-agent"
         assert updates[-1].finish_reason == "length"
         assert updates[-1].continuation_token == {"token": "response-resume-token"}
+        assert updates[-1].is_operation_terminal is False
         assert updates[-1].additional_properties == {"provider_marker": "preserve-response"}
         assert final_response.agent_id == "source-agent"
         assert final_response.finish_reason == "length"
