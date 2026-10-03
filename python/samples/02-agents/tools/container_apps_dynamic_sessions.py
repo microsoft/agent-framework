@@ -42,7 +42,13 @@ load_dotenv()
 async def main() -> None:
     pool_endpoint = os.environ["POOL_MANAGEMENT_ENDPOINT"].rstrip("/")
     endpoint = urlsplit(pool_endpoint)
-    if endpoint.scheme != "https" or not endpoint.netloc or endpoint.query or endpoint.fragment or endpoint.username:
+    if (
+        endpoint.scheme != "https"
+        or not endpoint.netloc
+        or "?" in pool_endpoint
+        or "#" in pool_endpoint
+        or endpoint.username is not None
+    ):
         raise ValueError("POOL_MANAGEMENT_ENDPOINT must be a trusted HTTPS pool URL without credentials or a query.")
     session_id = str(uuid4())
 

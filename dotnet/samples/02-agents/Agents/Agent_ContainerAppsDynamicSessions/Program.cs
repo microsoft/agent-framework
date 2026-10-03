@@ -19,7 +19,7 @@ string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
 string poolEndpoint = Environment.GetEnvironmentVariable("POOL_MANAGEMENT_ENDPOINT")
     ?? throw new InvalidOperationException("POOL_MANAGEMENT_ENDPOINT is not set.");
 Uri poolUri = new(poolEndpoint);
-if (poolUri.Scheme != Uri.UriSchemeHttps || poolUri.UserInfo.Length != 0 || poolUri.Query.Length != 0 || poolUri.Fragment.Length != 0)
+if (poolUri.Scheme != Uri.UriSchemeHttps || poolUri.UserInfo.Length != 0 || poolEndpoint.Contains('?') || poolEndpoint.Contains('#'))
 {
     throw new InvalidOperationException("POOL_MANAGEMENT_ENDPOINT must be a trusted HTTPS pool URL without credentials or a query.");
 }
