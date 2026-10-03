@@ -164,8 +164,6 @@ class _OpaqueArgumentToken:
 
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
-    if isinstance(value, BaseModel):
-        return _argument_comparison_token(value.model_dump(exclude_unset=True))
     if isinstance(value, dict):
         return (
             "dict",
@@ -182,6 +180,7 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
+    # Serialized projections do not cover the full state of native objects, including Pydantic models.
     value_type = cast(type[object], type(value))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
@@ -203,9 +202,17 @@ def _argument_authority_token(value: Any, *, boundary: str) -> Any:
 
         raise MiddlewareFailure(
             f"Cannot safely bind {boundary} to opaque mutable function arguments. "
-            "Use JSON-native values or an immutable Pydantic representation."
+            "Use JSON-native values at this boundary."
         )
     return token
+
+
+class _PreparedArguments(dict[str, Any]):
+    """Native arguments with the serialized projection produced during validation."""
+
+    def __init__(self, arguments: Mapping[str, Any], *, serialized_arguments: dict[str, Any]) -> None:
+        super().__init__(arguments)
+        self.serialized_arguments = serialized_arguments
 
 
 @dataclass(frozen=True)
@@ -832,6 +839,7 @@ class FunctionTool(SerializationMixin):
         if arguments is None:
             return {}
 
+        validated_model: BaseModel | None = None
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -842,7 +850,8 @@ class FunctionTool(SerializationMixin):
                     # apply. Excluding null instead would strip a required nullable
                     # parameter the model deliberately set to null, failing the
                     # invocation on the missing argument (#5934).
-                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_model = self.input_model.model_validate(parsed_arguments)
+                    parsed_arguments = validated_model.model_dump(exclude_unset=True)
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -850,6 +859,7 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                validated_model = arguments
                 parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
@@ -867,13 +877,23 @@ class FunctionTool(SerializationMixin):
             ) from exc
 
         try:
-            return _validate_arguments_against_schema(
+            parsed_arguments = _validate_arguments_against_schema(
                 arguments=parsed_arguments,
                 schema=self.parameters(),
                 tool_name=self.name,
             )
         except TypeError as exc:
             raise _FunctionArgumentValidationError(str(exc)) from exc
+
+        if validated_model is not None and not self._input_model_explicitly_provided:
+            # Recursive dumping is for validation, not invocation: inferred nested
+            # models and dataclasses must reach the function as their declared types.
+            native_arguments = dict(validated_model)
+            return _PreparedArguments(
+                {name: native_arguments.get(name, value) for name, value in parsed_arguments.items()},
+                serialized_arguments=parsed_arguments,
+            )
+        return parsed_arguments
 
     @staticmethod
     def _arguments_as_mapping(arguments: Any) -> dict[str, Any] | None:
@@ -1077,7 +1097,11 @@ class FunctionTool(SerializationMixin):
         self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
         call_kwargs = dict(validated_arguments)
-        observable_kwargs = dict(validated_arguments)
+        observable_kwargs = (
+            dict(validated_arguments.serialized_arguments)
+            if isinstance(validated_arguments, _PreparedArguments)
+            else dict(validated_arguments)
+        )
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context
 

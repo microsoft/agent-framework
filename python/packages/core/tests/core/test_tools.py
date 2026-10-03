@@ -4,13 +4,14 @@ import copy
 import logging
 import threading
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 
 import agent_framework._tools as tools_module
 from agent_framework import (
@@ -19,7 +20,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import FunctionInvocationContext, MiddlewareFailure
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -455,6 +456,125 @@ async def test_invoke_omitted_optional_uses_function_default():
 
     result = await get_weather.invoke(arguments={"location": "Seattle"})
     assert result[0].text == "Seattle:C"
+
+
+@pytest.mark.parametrize("as_model", [False, True])
+async def test_invoke_preserves_nested_model_argument(as_model: bool) -> None:
+    """Nested models reach the tool with their type and defaults intact."""
+
+    class Customer(BaseModel):
+        name: str
+        category: str = "regular"
+
+    @tool
+    def describe_customer(customer: Customer, suffix: str = "!") -> str:
+        return f"{customer.name}:{customer.category}{suffix}"
+
+    assert describe_customer.input_model is not None
+    payload = {"customer": {"name": "Ada"}}
+    arguments = describe_customer.input_model.model_validate(payload) if as_model else payload
+
+    result = await describe_customer.invoke(arguments=arguments)
+
+    assert result[0].text == "Ada:regular!"
+
+
+@pytest.mark.parametrize("as_model", [False, True])
+async def test_invoke_preserves_nested_model_list_argument(as_model: bool) -> None:
+    """Collections retain their validated nested model instances."""
+
+    class Customer(BaseModel):
+        name: str
+
+    @tool
+    def describe_customers(customers: list[Customer]) -> str:
+        return ",".join(customer.name for customer in customers)
+
+    assert describe_customers.input_model is not None
+    payload = {"customers": [{"name": "Ada"}, {"name": "Grace"}]}
+    arguments = describe_customers.input_model.model_validate(payload) if as_model else payload
+
+    result = await describe_customers.invoke(arguments=arguments)
+
+    assert result[0].text == "Ada,Grace"
+
+
+@pytest.mark.parametrize("as_model", [False, True])
+async def test_invoke_preserves_nested_dataclass_argument(as_model: bool) -> None:
+    """Dataclass parameters retain their native type after validation."""
+
+    @dataclass
+    class Item:
+        name: str
+        quantity: int = 1
+
+    @tool
+    def describe_item(item: Item) -> str:
+        return f"{item.name}:{item.quantity}"
+
+    assert describe_item.input_model is not None
+    payload = {"item": {"name": "book"}}
+    arguments = describe_item.input_model.model_validate(payload) if as_model else payload
+
+    result = await describe_item.invoke(arguments=arguments)
+
+    assert result[0].text == "book:1"
+
+
+async def test_invoke_rejects_invalid_nested_model_argument() -> None:
+    """Invalid nested data never enters the tool body."""
+
+    class Customer(BaseModel):
+        name: str
+
+    executed = False
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        nonlocal executed
+        executed = True
+        return customer.name
+
+    with pytest.raises(TypeError, match="Invalid arguments"):
+        await describe_customer.invoke(arguments={"customer": {}})
+
+    assert not executed
+
+
+async def test_invoke_preserves_explicit_input_model_serialization() -> None:
+    """Explicit input models keep their existing serialized argument contract."""
+
+    class NameArgs(BaseModel):
+        name: str
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            return value.upper()
+
+    @tool(schema=NameArgs)
+    def describe_name(name: str) -> str:
+        return name
+
+    result = await describe_name.invoke(arguments={"name": "Ada"})
+
+    assert result[0].text == "ADA"
+
+
+@pytest.mark.parametrize("boundary", ["approval", "security policy"])
+@pytest.mark.parametrize("as_list", [False, True])
+def test_native_model_arguments_require_json_native_authority(boundary: str, as_list: bool) -> None:
+    """A model's serialization is not authority over its native object state."""
+
+    class Customer(BaseModel):
+        name: str
+
+    customer = Customer(name="Ada")
+    arguments = {"customer": [customer] if as_list else customer}
+
+    with pytest.raises(MiddlewareFailure, match="opaque mutable function arguments"):
+        tools_module._argument_authority_token(arguments, boundary=boundary)
+
+    tools_module._argument_authority_token({"customer": {"name": "Ada"}}, boundary=boundary)
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():

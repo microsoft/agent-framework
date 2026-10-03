@@ -5402,9 +5402,6 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
     @tool
     def greet_with_model(greeting: Greeting) -> str:
         """Greet with a message contained in a Pydantic model."""
-        # When invoked via the tool's input_model, greeting is passed as a dict
-        if isinstance(greeting, dict):
-            return f"Greeted: {greeting['message']}"
         return f"Greeted: {greeting.message}"
 
     span_exporter.clear()
@@ -5424,6 +5421,58 @@ async def test_tool_arguments_pydantic_preserves_non_ascii_characters(
     # Verify JSON is valid and contains the text
     tool_arguments = json.loads(tool_arguments_json)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     assert tool_arguments["greeting"]["message"] == japanese_text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_arguments_nested_types_remain_structured(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """Native nested arguments retain JSON structure without repeated validation."""
+    import json
+    from dataclasses import dataclass
+
+    from pydantic import BaseModel, field_serializer, field_validator
+
+    validation_count = 0
+    serialization_count = 0
+    text = "こんにちは"
+
+    class Greeting(BaseModel):
+        message: str
+
+        @field_validator("message")
+        @classmethod
+        def count_validation(cls, value: str) -> str:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+        @field_serializer("message")
+        def serialize_message(self, value: str) -> str:
+            nonlocal serialization_count
+            serialization_count += 1
+            return value
+
+    @dataclass
+    class Item:
+        message: str
+
+    @tool
+    def greet(greeting: Greeting, greetings: list[Greeting], item: Item) -> str:
+        return greeting.message + greetings[0].message + item.message
+
+    span_exporter.clear()
+    await greet.invoke(
+        arguments={"greeting": {"message": text}, "greetings": [{"message": text}], "item": {"message": text}}
+    )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes is not None
+    arguments = json.loads(str(spans[0].attributes[OtelAttr.TOOL_ARGUMENTS]))
+    assert arguments == {"greeting": {"message": text}, "greetings": [{"message": text}], "item": {"message": text}}
+    assert validation_count == 2
+    assert serialization_count == 2
 
 
 # region Test merged options for instructions
