@@ -142,22 +142,27 @@ class BackgroundTaskRuntimeStore(Protocol):
     :class:`BackgroundAgentsProvider` uses ``session.session_id`` directly;
     callers that need namespace isolation can wrap or subclass the store.
 
-    Cross-process lease timestamps use wall-clock ``time.time()`` so that
-    comparisons are valid across independent processes and hosts (unlike
-    ``time.monotonic()``, which is process-local and incomparable).
+    Distributed implementations should use the shared store's TTL or server
+    clock for lease expiry rather than storing owner-computed ``time.time()``
+    deadlines.  Client wall-clocks across hosts can be skewed, causing healthy
+    tasks to be expired early or dead tasks to be kept alive.  The built-in
+    :class:`_InMemoryBackgroundTaskRuntimeStore` uses ``time.time()`` safely
+    because all comparisons occur within a single process.
     """
 
     async def acquire(self, qualified_session_key: str, task_id: int, *, ttl_seconds: float) -> None:
         """Record that this process owns ``task_id`` and write an initial lease.
 
-        Must be called when a task is first started or continued.  The lease
-        expires after ``ttl_seconds`` wall-clock seconds unless :meth:`renew`
-        is called before then.
+        Must be called when a task is first started or continued.  Implementations
+        must **atomically** replace the lease and remove any previously published
+        outcome for this ``task_id`` so that a continuation can publish a fresh
+        result (first-write-wins is reset on re-acquire).  The lease expires after
+        ``ttl_seconds`` unless :meth:`renew` is called before then.
 
         Args:
             qualified_session_key: Unique session identifier.
             task_id: The task's integer ID.
-            ttl_seconds: Lease lifetime in seconds (wall-clock).
+            ttl_seconds: Lease lifetime in seconds.
         """
         ...
 
@@ -197,10 +202,13 @@ class BackgroundTaskRuntimeStore(Protocol):
         that the result is available to any process on the next turn, even when
         the owning process never handles another turn for this session.
 
-        Implementations must apply first-write-wins semantics: only the first
-        call for a given ``(qualified_session_key, task_id)`` pair should be
-        stored; subsequent calls must be silently ignored to prevent overwriting
-        a committed outcome.
+        Implementations must **atomically** store the first outcome and remove
+        the task's active lease.  Only the first call for a given
+        ``(qualified_session_key, task_id)`` pair should be stored; subsequent
+        calls must be silently ignored to prevent overwriting a committed outcome.
+        Removing the lease at publish time is required so that
+        :meth:`_refresh_task_state` does not report the task as still alive
+        while a result is already available.
 
         Args:
             qualified_session_key: Unique session identifier.
@@ -238,9 +246,10 @@ class BackgroundTaskRuntimeStore(Protocol):
         """Return ``True`` if :meth:`request_cancel` has been called for this session.
 
         Polled by :func:`_run_agent_with_renewal` on each renewal tick so that a
-        cancel signal from another process causes the owning process to abort the
-        task.  Implementations may clear the flag after returning ``True`` to
-        avoid repeated cancellations, or leave it set.
+        cancel signal from another process causes the owning process to abort all
+        tasks for this session.  Implementations **must not** clear the flag on
+        read: the flag is session-scoped and sticky so that every concurrently
+        polling task observes the cancellation, not just the first one to poll.
 
         Args:
             qualified_session_key: Unique session identifier.
@@ -320,11 +329,12 @@ class _InMemoryBackgroundTaskRuntimeStore:
         self._cancel_requests.add(qualified_session_key)
 
     async def is_cancel_requested(self, qualified_session_key: str) -> bool:
-        """Return ``True`` if a cancel has been requested; clear the flag after reading."""
-        if qualified_session_key in self._cancel_requests:
-            self._cancel_requests.discard(qualified_session_key)
-            return True
-        return False
+        """Return ``True`` if a cancel has been requested for this session.
+
+        The flag is sticky: it is never cleared so every concurrent task in
+        the session observes the cancellation on its next poll.
+        """
+        return qualified_session_key in self._cancel_requests
 
 
 @dataclass
@@ -593,7 +603,20 @@ def _make_done_callback(
             loop = asyncio.get_running_loop()
             pub_task = loop.create_task(store.publish_outcome(qualified_session_key, task_id, outcome))
             runtime.publish_tasks.add(pub_task)
-            pub_task.add_done_callback(runtime.publish_tasks.discard)
+
+            def _on_pub_done(t: asyncio.Task[None]) -> None:
+                runtime.publish_tasks.discard(t)
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc is not None:
+                        logger.warning(
+                            "Failed to publish outcome for task %s on session %s: %s",
+                            task_id,
+                            qualified_session_key,
+                            exc,
+                        )
+
+            pub_task.add_done_callback(_on_pub_done)
         except RuntimeError:
             logger.debug(
                 "No running event loop when publishing outcome for task %s; outcome not stored.",
@@ -626,9 +649,10 @@ async def _refresh_task_state(
           finalize from the stored outcome (fixes orphaned results).
        c. Neither — mark ``LOST``, same as before.
 
-    Store calls that raise are caught and logged; the fallback is to treat the
-    task as not alive so that a genuinely dead owner eventually yields ``LOST``
-    rather than leaving the record stuck as ``RUNNING`` forever.
+    Store calls that raise are caught and logged; on an outage the record is
+    left unchanged (``RUNNING`` or ``LOST``) so that a transient store failure
+    does not permanently corrupt task state.  Only successful liveness and
+    outcome queries trigger a state transition.
 
     Args:
         session: Current agent session (for persisting updated state).
@@ -662,11 +686,13 @@ async def _refresh_task_state(
             alive = await store.is_alive(qualified_session_key, task_info.id)
         except Exception:
             logger.debug(
-                "Store is_alive check failed for task %s on session %s",
+                "Store is_alive check failed for task %s on session %s — leaving status unchanged.",
                 task_info.id,
                 qualified_session_key,
             )
-            alive = False
+            # Do not transition to LOST on a store outage; preserve current status
+            # and retry on the next refresh to avoid false-LOST from a transient failure.
+            continue
 
         if alive:
             # Task is running on another process - leave RUNNING (or recover from LOST).
@@ -680,18 +706,20 @@ async def _refresh_task_state(
             stored_outcome = await store.fetch_outcome(qualified_session_key, task_info.id)
         except Exception:
             logger.debug(
-                "Store fetch_outcome failed for task %s on session %s",
+                "Store fetch_outcome failed for task %s on session %s — leaving status unchanged.",
                 task_info.id,
                 qualified_session_key,
             )
-            stored_outcome = None
+            # Same as above: preserve current status on outage rather than writing LOST.
+            continue
 
         if stored_outcome is not None:
             _finalize_task_from_info(task_info, stored_outcome, runtime)
-        else:
+            changed = True
+        elif task_info.status != BackgroundTaskStatus.LOST:
+            # Only write LOST on the first transition, not on every subsequent refresh.
             task_info.status = BackgroundTaskStatus.LOST
-
-        changed = True
+            changed = True
 
     if changed:
         _save_tasks(state, tasks)
@@ -978,6 +1006,14 @@ class BackgroundAgentsProvider(ContextProvider):
             except Exception:
                 logger.debug("Failed to acquire lease for task %s", task_id)
 
+            # Guard against a release_session that closed the runtime while
+            # the acquire awaited above.  If the session is now closed, cancel
+            # the task and clean up before reporting an error.
+            if runtime.closed:
+                async_task.cancel()
+                runtime.in_flight_tasks.pop(task_id, None)
+                return "Error: Session was released while starting the background task."
+
             # Attach a done-callback so the outcome is published to the store
             # the instant the task settles, even between turns or on a different process.
             async_task.add_done_callback(
@@ -1156,6 +1192,12 @@ class BackgroundAgentsProvider(ContextProvider):
                 await runtime_store.acquire(qualified_session_key, task_id, ttl_seconds=DEFAULT_LEASE_TTL_SECONDS)
             except Exception:
                 logger.debug("Failed to acquire lease for continued task %s", task_id)
+
+            # Guard against release_session closing the runtime during the acquire await.
+            if runtime.closed:
+                async_task.cancel()
+                runtime.in_flight_tasks.pop(task_id, None)
+                return "Error: Session was released while continuing the background task."
 
             async_task.add_done_callback(
                 _make_done_callback(
