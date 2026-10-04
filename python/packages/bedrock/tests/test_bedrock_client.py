@@ -238,6 +238,124 @@ def test_prepare_bedrock_messages_skips_reasoning_outside_assistant_messages() -
     assert conversation[0]["content"] == [{"text": "hi"}]
 
 
+async def test_stream_keeps_consecutive_reasoning_blocks_separate() -> None:
+    """Each streamed reasoning block must keep its own text and signature when replayed."""
+    stub = _StubBedrockStreamRuntime([
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "First "}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thought."}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Second thought."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-2"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "call-1", "name": "get_weather"}},
+                "contentBlockIndex": 2,
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"city": "Paris"}'}}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-sonnet-4",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="Weather in Paris?")])],
+        options={},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    reasoning = [content for content in response.messages[0].contents if content.type == "text_reasoning"]
+    assert [(content.text, content.protected_data) for content in reasoning] == [
+        ("First thought.", "sig-1"),
+        ("Second thought.", "sig-2"),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][:2] == [
+        {"reasoningContent": {"reasoningText": {"text": "First thought.", "signature": "sig-1"}}},
+        {"reasoningContent": {"reasoningText": {"text": "Second thought.", "signature": "sig-2"}}},
+    ]
+    assert "toolUse" in conversation[0]["content"][2]
+
+
+def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    client = _make_client()
+    redacted = b"\x00\x01encrypted-reasoning\xff"
+
+    response = client._process_converse_response({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"redactedContent": redacted}},
+                    {"toolUse": {"toolUseId": "call-1", "name": "get_weather", "input": {"city": "Paris"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    })
+
+    reasoning = response.messages[0].contents[0]
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text is None
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
+    assert "toolUse" in conversation[0]["content"][1]
+
+
+async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    stub = _StubBedrockStreamRuntime([
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"\x00\x01part"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"-two\xff"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Visible."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-3-7-sonnet",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hi")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"] == [
+        {"reasoningContent": {"redactedContent": b"\x00\x01part-two\xff"}},
+        {"reasoningContent": {"reasoningText": {"text": "Visible.", "signature": "sig-1"}}},
+        {"text": "Done."},
+    ]
+
+
 def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
         model="amazon.titan-text",
