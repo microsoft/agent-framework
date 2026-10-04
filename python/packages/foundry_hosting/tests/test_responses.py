@@ -3898,6 +3898,51 @@ class TestNonStreaming:
             "max_output_length": 4096,
         }
 
+    async def test_shell_result_preserves_outcomes(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_shell_tool_result(
+                                call_id="shell_1",
+                                outputs=[
+                                    Content.from_shell_command_output(
+                                        stdout="ok",
+                                        stderr="",
+                                        exit_code=0,
+                                        timed_out=False,
+                                    ),
+                                    Content.from_shell_command_output(
+                                        stdout="",
+                                        stderr="command failed",
+                                        exit_code=3,
+                                        timed_out=False,
+                                    ),
+                                    Content.from_shell_command_output(
+                                        stdout="partial",
+                                        stderr="timeout details",
+                                        timed_out=True,
+                                    ),
+                                ],
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        shell_item = next(item for item in resp.json()["output"] if item["type"] == "shell_call_output")
+        assert shell_item["output"] == [
+            {"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}},
+            {"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}},
+            {"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}},
+        ]
+
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -4865,8 +4910,8 @@ class TestOutputItemToMessage:
 
         output: FunctionShellCallOutputContent = {
             "stdout": "file.txt",
-            "stderr": "",
-            "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
+            "stderr": "warning",
+            "outcome": cast(FunctionShellCallOutputExitOutcome, {"type": "exit", "exit_code": 3}),
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -4880,6 +4925,40 @@ class TestOutputItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "file.txt"
+        assert msg.contents[0].outputs[0].stderr == "warning"
+        assert msg.contents[0].outputs[0].exit_code == 3
+        assert msg.contents[0].outputs[0].timed_out is False
+
+    async def test_shell_call_output_preserves_timeout(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContent,
+            FunctionShellCallOutputTimeoutOutcome,
+            OutputItemFunctionShellCallOutput,
+        )
+
+        output: FunctionShellCallOutputContent = {
+            "stdout": "partial",
+            "stderr": "timeout details",
+            "outcome": cast(FunctionShellCallOutputTimeoutOutcome, {"type": "timeout"}),
+        }
+        item: OutputItemFunctionShellCallOutput = {
+            "type": "shell_call_output",
+            "id": "sco-timeout",
+            "call_id": "call_timeout",
+            "status": "completed",
+            "output": [output],
+            "max_output_length": 1024,
+        }
+
+        msg = await _output_item_to_message(item)
+
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "partial"
+        assert msg.contents[0].outputs[0].stderr == "timeout details"
+        assert msg.contents[0].outputs[0].exit_code is None
+        assert msg.contents[0].outputs[0].timed_out is True
 
     async def test_local_shell_call(self) -> None:
         from azure.ai.agentserver.responses.models import LocalShellExecAction, OutputItemLocalShellToolCall
@@ -5463,8 +5542,8 @@ class TestItemToMessage:
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "file.txt",
-            "stderr": "",
-            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"exit_code": 0}),
+            "stderr": "warning",
+            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"type": "exit", "exit_code": 3}),
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -5477,6 +5556,38 @@ class TestItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "file.txt"
+        assert msg.contents[0].outputs[0].stderr == "warning"
+        assert msg.contents[0].outputs[0].exit_code == 3
+        assert msg.contents[0].outputs[0].timed_out is False
+
+    async def test_shell_call_output_preserves_timeout(self) -> None:
+        from azure.ai.agentserver.responses.models import (
+            FunctionShellCallOutputContentParam,
+            FunctionShellCallOutputItemParam,
+            FunctionShellCallOutputTimeoutOutcomeParam,
+        )
+
+        output: FunctionShellCallOutputContentParam = {
+            "stdout": "partial",
+            "stderr": "timeout details",
+            "outcome": cast(FunctionShellCallOutputTimeoutOutcomeParam, {"type": "timeout"}),
+        }
+        item: FunctionShellCallOutputItemParam = {
+            "type": "shell_call_output",
+            "call_id": "call_timeout",
+            "output": [output],
+            "max_output_length": 1024,
+        }
+
+        msg = await _item_to_message(item)
+
+        assert msg.contents[0].outputs is not None
+        assert msg.contents[0].outputs[0].stdout == "partial"
+        assert msg.contents[0].outputs[0].stderr == "timeout details"
+        assert msg.contents[0].outputs[0].exit_code is None
+        assert msg.contents[0].outputs[0].timed_out is True
 
     async def test_local_shell_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemLocalShellToolCall, LocalShellExecAction
