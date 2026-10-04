@@ -322,6 +322,26 @@ class TestChatMiddleware:
         assert not any("stream_buffer_updates" in record.message for record in caplog.records)
         assert updates
 
+    async def test_chat_result_gate_attached_directly_to_stream_logs_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate a middleware attaches straight to the final stream is detected too."""
+
+        @chat_middleware
+        async def direct_gate_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            if isinstance(context.result, ResponseStream):
+                context.result.with_result_gate(lambda result: None)
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, direct_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in chat_client_base.get_response(messages, stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
     async def test_run_level_middleware_isolation(self, chat_client_base: "MockBaseChatClient") -> None:
         """Test that run-level middleware is isolated and doesn't persist across calls."""
         execution_count = {"count": 0}

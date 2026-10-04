@@ -27,6 +27,7 @@ from agent_framework import (
     MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
+    ResponseStream,
     SupportsChatGetResponse,
     agent_middleware,
     chat_middleware,
@@ -421,6 +422,53 @@ class TestChatAgentStreamingMiddleware:
                 await call_next()
 
         agent = Agent(client=client, middleware=[BufferedResultGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [
+                update async for update in agent.run([Message(role="user", contents=["test message"])], stream=True)
+            ]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_result_gate_attached_directly_to_stream_logs_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate a middleware attaches straight to the final stream is detected too."""
+
+        class DirectGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+
+        agent = Agent(client=client, middleware=[DirectGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        client.streaming_responses = [
+            [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in agent.run([Message(role="user", contents=["test message"])], stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_direct_stream_gate_with_direct_buffer_logs_no_warning(
+        self, client: "MockChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Buffering enabled directly on the stream satisfies the gates, so no warning."""
+
+        class DirectBufferedGateMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if isinstance(context.result, ResponseStream):
+                    context.result.with_result_gate(lambda result: None)
+                    context.result.buffer_updates()
+
+        agent = Agent(client=client, middleware=[DirectBufferedGateMiddleware()])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         client.streaming_responses = [
             [ChatResponseUpdate(contents=[Content.from_text(text="chunk")], role="assistant")]
         ]
