@@ -3821,6 +3821,22 @@ def test_parse_result_nested_pydantic_model():
     assert "18.0" in parsed[0].text or "18" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+def test_parse_result_pydantic_model_uses_json_mode():
+    """Enum and datetime fields are serialized the way Pydantic writes them to JSON."""
+    from enum import Enum
+
+    class Status(Enum):
+        OPEN = "open"
+
+    class Ticket(BaseModel):
+        status: Status
+        created: datetime
+
+    parsed = FunctionTool.parse_result(Ticket(status=Status.OPEN, created=datetime(2024, 1, 1, 12)))
+
+    assert json.loads(parsed[0].text) == {"status": "open", "created": "2024-01-01T12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 
