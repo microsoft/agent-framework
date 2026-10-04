@@ -285,21 +285,22 @@ def test_sync_auth_flow_removes_call_id_from_reused_request_when_context_absent(
     assert "x-agent-foundry-call-id" not in prepared.headers
 
 
-async def test_close_closes_owned_http_client() -> None:
+async def test_close_closes_owned_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore
         url="https://h/toolboxes/tb/mcp",
     )
     client = toolbox._httpx_client
     assert client is not None
-    client.aclose = AsyncMock()  # zuban: ignore
+    aclose = AsyncMock()
+    monkeypatch.setattr(client, "aclose", aclose)
 
     await toolbox.close()
 
-    client.aclose.assert_awaited_once()
+    aclose.assert_awaited_once()
     # Idempotent: a second close does not re-close the client.
     await toolbox.close()
-    client.aclose.assert_awaited_once()
+    aclose.assert_awaited_once()
 
 
 def test_as_skills_provider_returns_provider() -> None:
@@ -540,7 +541,7 @@ def test_as_skills_provider_forwards_only_set_archive_options() -> None:
 
 
 class TestFoundryToolboxReconnection:
-    async def test_close_preserves_credential_for_reconnection(self) -> None:
+    async def test_close_preserves_credential_for_reconnection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After close(), get_mcp_client() should recreate an authenticated client."""
         cred = _FakeCredential("reconnect-token")
         toolbox = FoundryToolbox(
@@ -558,10 +559,11 @@ class TestFoundryToolboxReconnection:
         original_auth = toolbox._httpx_client.auth
 
         client = toolbox._httpx_client
-        client.aclose = AsyncMock()  # zuban: ignore
+        aclose = AsyncMock()
+        monkeypatch.setattr(client, "aclose", aclose)
         await toolbox.close()
 
-        client.aclose.assert_awaited_once()
+        aclose.assert_awaited_once()
         assert toolbox._httpx_client is None
 
         assert toolbox._credential is cred

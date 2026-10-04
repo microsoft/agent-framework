@@ -109,9 +109,10 @@ class _ToolboxAuth(httpx.Auth):
     asynchronous :class:`~azure.core.credentials_async.AsyncTokenCredential`
     credentials are supported: the async flow awaits an async credential's
     ``get_token``, while the sync flow requires a synchronous credential. The
-    per-request ``x-agent-foundry-call-id`` is read from the request-scoped context
-    populated by the hosting endpoint; it resolves to a fresh value on each request
-    and is absent (no header) for protocol ``1.0.0`` or local development.
+    ``x-agent-foundry-call-id`` is read from the hosting context inherited by the
+    MCP transport task. That task captures context at connection time, so hosted
+    callers must use a request-owned toolbox/connection rather than sharing one
+    across requests. The header is absent when no call ID is supplied.
     """
 
     def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
@@ -166,15 +167,17 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 
-    The call-id forwarding is transparent: it is read from the request-scoped context
-    the hosting endpoint binds on each request, so no per-request wiring is needed.
+    The call-id is read from the context inherited by the MCP connection's writer.
+    Construct this toolbox inside a request-scoped agent factory so it captures
+    the current caller's context, not a preceding request's.
     Because the toolbox endpoint is a first-party Foundry service, forwarding the
     opaque caller token to it is safe.
 
     Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
-    server enters the agent, which connects the toolbox on first use and closes it
-    (and the HTTP client it owns) at shutdown. Using it as an ``async with`` context
-    manager directly is supported but not required.
+    server enters a factory-created agent for its request and closes its toolbox
+    and owned HTTP client afterward. An instance-owned agent instead keeps that
+    connection until shutdown and is not appropriate for differing caller contexts.
+    Using it as an ``async with`` context manager directly is also supported.
 
     Examples:
         .. code-block:: python
@@ -185,14 +188,19 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             from azure.identity import DefaultAzureCredential
 
             credential = DefaultAzureCredential()
-            # The hosting server enters the agent, which connects/closes the toolbox.
-            toolbox = FoundryToolbox(credential)
-            agent = Agent(
-                client=FoundryChatClient(credential=credential),
-                tools=toolbox,
-                default_options={"store": False},
-            )
-            await ResponsesHostServer(agent).run_async()
+
+
+            def create_agent():
+                return Agent(
+                    client=FoundryChatClient(credential=credential),
+                    tools=FoundryToolbox(credential),
+                )
+
+
+            await ResponsesHostServer(agent=create_agent).run_async()
+
+        See the Responses Toolbox sample for explicit ownership and cleanup of
+        the request's project/model transports and credentials as well.
     """
 
     def __init__(

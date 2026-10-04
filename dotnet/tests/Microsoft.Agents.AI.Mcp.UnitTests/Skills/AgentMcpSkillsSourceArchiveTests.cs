@@ -243,6 +243,164 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     /// <summary>
+    /// Archive member aliases and ordering, content, and digest combinations for collision tests.
+    /// </summary>
+    public static TheoryData<string, bool, bool, bool> ArchiveCollisionCases
+    {
+        get
+        {
+            var aliases = new List<string>
+            {
+                "refs/policy.md",
+                ".//refs//policy.md",
+                "refs\\policy.md",
+                "refs/./policy.md",
+                "/refs/policy.md",
+            };
+            if (OperatingSystem.IsWindows())
+            {
+                aliases.Add("refs/POLICY.md");
+                aliases.Add("refs/policy.md.");
+            }
+
+            var cases = new TheoryData<string, bool, bool, bool>();
+            foreach (string alias in aliases)
+            {
+                foreach (bool aliasFirst in new[] { false, true })
+                {
+                    foreach (bool identical in new[] { false, true })
+                    {
+                        foreach (bool withDigest in new[] { false, true })
+                        {
+                            cases.Add(alias, aliasFirst, identical, withDigest);
+                        }
+                    }
+                }
+            }
+
+            return cases;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ArchiveCollisionCases))]
+    public async Task GetSkillsAsync_CollidingArchiveResources_KeepsFirstFileAndLogsWarningAsync(
+        string alias, bool aliasFirst, bool identical, bool withDigest)
+    {
+        // Arrange
+        string firstName = aliasFirst ? alias : "refs/policy.md";
+        string secondName = aliasFirst ? "refs/policy.md" : alias;
+        byte[] archive = BuildZip(
+            ("SKILL.md", ArchivedSkillMd),
+            ("refs/", ""),
+            (firstName, "First resource."),
+            (secondName, identical ? "First resource." : "Substituted resource."),
+            (".//refs//other.md", "Unaffected resource."));
+        string index = withDigest
+            ? ArchiveIndexWithDigest(ArchiveDigest(archive))
+            : ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip");
+        await using var server = CreateArchiveServer(index, new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentMcpSkillsSource(
+            client, new() { ArchiveSkillsDirectory = this._extractionRoot }, loggerFactory.Object);
+
+        // Act / Assert
+        for (int i = 0; i < 2; i++)
+        {
+            var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            string resourceName = aliasFirst && alias == "refs/POLICY.md" ? alias : "refs/policy.md";
+            var resource = await skill.GetResourceAsync(resourceName);
+            Assert.NotNull(resource);
+            Assert.Equal("First resource.", await resource.ReadAsync());
+            var other = await skill.GetResourceAsync("refs/other.md");
+            Assert.NotNull(other);
+            Assert.Equal("Unaffected resource.", await other.ReadAsync());
+        }
+
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.Contains("Skipping duplicate archive member", StringComparison.Ordinal) &&
+                    state.ToString()!.Contains("keeping the first file", StringComparison.Ordinal) &&
+                    !state.ToString()!.Contains("Substituted resource.", StringComparison.Ordinal)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("SKILL.md", false)]
+    [InlineData("SKILL.md", true)]
+    [InlineData(".//SKILL.md", false)]
+    [InlineData(".//SKILL.md", true)]
+    [InlineData("/SKILL.md", false)]
+    [InlineData("/SKILL.md", true)]
+    public async Task GetSkillsAsync_CollidingArchiveSkillMd_KeepsFirstFileAndLogsWarningAsync(string alias, bool aliasFirst)
+    {
+        // Arrange
+        byte[] archive = BuildZip(
+            (aliasFirst ? alias : "SKILL.md", ArchivedSkillMd),
+            (aliasFirst ? "SKILL.md" : alias, ArchivedSkillMd.Replace("name: archived-skill", "name: other-skill", StringComparison.Ordinal)),
+            ("reference.md", "Unaffected resource."));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        var source = new AgentMcpSkillsSource(
+            client, new() { ArchiveSkillsDirectory = this._extractionRoot }, loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        Assert.Equal("archived-skill", skill.Frontmatter.Name);
+        Assert.Contains("Body from the archive.", await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.Contains("Skipping duplicate archive member", StringComparison.Ordinal)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveCollision_DoesNotSkipOtherSkillsAsync()
+    {
+        // Arrange
+        byte[] archiveA = BuildZip(("SKILL.md", SkillAMd), ("reference.md", "First."), ("./reference.md", "Second."));
+        byte[] archiveB = BuildZip(("SKILL.md", SkillBMd));
+        JsonNode index = JsonNode.Parse(ArchiveIndex("skill-a", "skill://archives/skill-a.zip"))!;
+        index["skills"]!.AsArray().Add(
+            JsonNode.Parse(ArchiveIndex("skill-b", "skill://archives/skill-b.zip"))!["skills"]![0]!.DeepClone());
+        await using var server = CreateArchiveServer(
+            index.ToJsonString(), new Dictionary<string, byte[]> { ["skill-a"] = archiveA, ["skill-b"] = archiveB });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal(2, skills.Count);
+        Assert.Contains(skills, skill => skill.Frontmatter.Name == "skill-a");
+        Assert.Contains(skills, skill => skill.Frontmatter.Name == "skill-b");
+    }
+
+    /// <summary>
     /// Malformed, unsupported, and mismatched archive digests that must be rejected.
     /// </summary>
     public static TheoryData<string> RejectedDigests => new()
@@ -764,6 +922,72 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Fact]
+    public void Extract_DuplicateMembers_CountTowardFileLimit()
+    {
+        // Arrange
+        byte[] zip = BuildZip(("reference.md", "First."), ("reference.md", "Second."));
+        string target = Path.Combine(this._extractionRoot, "skill");
+
+        // Act / Assert
+        Assert.Throws<InvalidDataException>(
+            () => AgentMcpSkillArchiveExtractor.Extract(zip, ArchiveFormat.Zip, target, maxFileCount: 1));
+    }
+
+    [Fact]
+    public void Extract_SkippedDuplicate_IsNotDecompressed()
+    {
+        // Arrange
+        byte[] zip = BuildZip(("reference.md", "First."), ("./reference.md", new string('x', 100)));
+        string target = Path.Combine(this._extractionRoot, "skill");
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+
+        // Act
+        AgentMcpSkillArchiveExtractor.Extract(
+            zip, ArchiveFormat.Zip, target, maxUncompressedSizeBytes: Encoding.UTF8.GetByteCount("First."), logger: logger.Object);
+
+        // Assert
+        Assert.Equal("First.", File.ReadAllText(Path.Combine(target, "reference.md")));
+        VerifyArchiveMemberCollision(logger, "./reference.md", Times.Once());
+    }
+
+    [Fact]
+    public void Extract_ExistingFile_IsNotOverwritten()
+    {
+        // Arrange
+        string target = Path.Combine(this._extractionRoot, "skill");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "reference.md"), "Existing.");
+        byte[] zip = BuildZip(("reference.md", "Substituted."));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+
+        // Act
+        AgentMcpSkillArchiveExtractor.Extract(zip, ArchiveFormat.Zip, target, logger: logger.Object);
+
+        // Assert
+        Assert.Equal("Existing.", File.ReadAllText(Path.Combine(target, "reference.md")));
+        VerifyArchiveMemberCollision(logger, "reference.md", Times.Once());
+    }
+
+    [Fact]
+    public void Extract_FileDirectoryConflict_IsNotSkippedAsDuplicate()
+    {
+        // Arrange
+        string target = Path.Combine(this._extractionRoot, "skill");
+        Directory.CreateDirectory(Path.Combine(target, "reference.md"));
+        byte[] zip = BuildZip(("reference.md", "Content."));
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+
+        // Act / Assert
+        Exception? exception = Record.Exception(
+            () => AgentMcpSkillArchiveExtractor.Extract(zip, ArchiveFormat.Zip, target, logger: logger.Object));
+        Assert.True(exception is IOException or UnauthorizedAccessException);
+        VerifyArchiveMemberCollision(logger, "reference.md", Times.Never());
+    }
+
+    [Fact]
     public void Extract_ArchiveExceedsDefaultUncompressedSize_Throws()
     {
         // Arrange - a single file larger than the default uncompressed budget (1 MB).
@@ -1042,6 +1266,18 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
             // Best-effort cleanup.
         }
     }
+
+    private static void VerifyArchiveMemberCollision(Mock<ILogger> logger, string memberPath, Times times) =>
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    state.ToString()!.Contains($"Skipping duplicate archive member '{memberPath}'", StringComparison.Ordinal) &&
+                    state.ToString()!.Contains("keeping the first file", StringComparison.Ordinal)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times);
 
     private static byte[] BuildZip(params (string Path, string Content)[] entries)
     {

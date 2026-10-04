@@ -174,6 +174,23 @@ def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
     return forwarded_props_dict.get("resume")
 
 
+def _is_snapshot_hydration_request(
+    input_data: dict[str, Any],
+    *,
+    snapshot_enabled: bool,
+    supports_checkpoint_resume: bool,
+) -> bool:
+    """Return whether a request only replays the latest stored snapshot."""
+    if not snapshot_enabled or input_data.get("messages") or _extract_resume_payload(input_data) is not None:
+        return False
+    if not supports_checkpoint_resume:
+        return True
+    forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    if not isinstance(forwarded_props, Mapping):
+        return True
+    return not (forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId"))
+
+
 def _strict_resume_entries(resume_payload: Any) -> tuple[list[dict[str, Any]], str | None]:
     """Parse resume entries for pending interrupt contract validation."""
     if isinstance(resume_payload, list):
@@ -592,15 +609,35 @@ def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
     flow.snapshot_segments.append({"kind": "reasoning", "id": message_id})
 
 
+def _offset_annotation_text_spans(annotations: list[dict[str, Any]], offset: int) -> None:
+    """Rebase text spans from a delta to the accumulated message."""
+    if offset == 0:
+        return
+    for annotation in annotations:
+        regions = annotation.get("annotated_regions")
+        if not isinstance(regions, list):
+            continue
+        for region in regions:
+            if not isinstance(region, dict) or region.get("type") != "text_span":
+                continue
+            start_index = region.get("start_index")
+            end_index = region.get("end_index")
+            if isinstance(start_index, int):
+                region["start_index"] = start_index + offset
+            if isinstance(end_index, int):
+                region["end_index"] = end_index + offset
+
+
 def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> list[BaseEvent]:
-    """Emit TextMessage events for TextContent."""
-    if not content.text:
+    """Emit text deltas and message-linked annotation batches."""
+    if not content.text and not content.annotations:
         return []
 
     if skip_text or flow.waiting_for_approval:
         return []
 
     events: list[BaseEvent] = []
+    duplicate_text = False
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
@@ -609,7 +646,9 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     elif flow.accumulated_text and content.text == flow.accumulated_text:
         # Guard against full-message replay chunks that can appear after streaming deltas.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
-        return []
+        if not content.annotations:
+            return []
+        duplicate_text = True
 
     # A tool-only response may pre-open a message before its tool-call segment
     # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
@@ -631,9 +670,41 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if segment is None:
         segment = _open_text_segment(flow, flow.message_id)
 
-    events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
-    flow.accumulated_text += content.text
+    annotation_offset = len(flow.accumulated_text)
+    if content.text and not duplicate_text:
+        events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
+        flow.accumulated_text += content.text
     segment["text"] = flow.accumulated_text
+    if content.annotations:
+        annotations = cast(
+            "list[dict[str, Any]]",
+            make_json_safe(
+                [
+                    {key: value for key, value in annotation.items() if key != "raw_representation"}
+                    for annotation in content.annotations
+                ]
+            ),
+        )
+        if content.text and not duplicate_text:
+            _offset_annotation_text_spans(annotations, annotation_offset)
+        new_annotations = annotations
+        if duplicate_text:
+            # Reconcile replay by occurrence count, not source URL or dictionary uniqueness.
+            remaining_annotations = list(segment.get("annotations", []))
+            new_annotations = []
+            for annotation in annotations:
+                if annotation in remaining_annotations:
+                    remaining_annotations.remove(annotation)
+                else:
+                    new_annotations.append(annotation)
+        if new_annotations:
+            segment.setdefault("annotations", []).extend(new_annotations)
+            events.append(
+                CustomEvent(
+                    name="annotations",
+                    value={"messageId": flow.message_id, "annotations": new_annotations},
+                )
+            )
     return events
 
 
