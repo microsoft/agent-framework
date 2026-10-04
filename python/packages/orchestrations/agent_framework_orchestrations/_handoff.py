@@ -32,6 +32,7 @@ Key properties:
 import inspect
 import json
 import logging
+import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
@@ -122,9 +123,15 @@ class HandoffConfiguration:
         return hash(self.target_id)
 
 
+_INVALID_TOOL_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
 def get_handoff_tool_name(target_id: str) -> str:
-    """Get the standardized handoff tool name for a given target agent ID."""
-    return f"handoff_to_{target_id}"
+    """Get the standardized handoff tool name for a given target agent ID.
+
+    Characters that model providers reject in tool names, such as spaces, are replaced with underscores.
+    """
+    return f"handoff_to_{_INVALID_TOOL_NAME_CHARACTERS.sub('_', target_id)}"
 
 
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"
@@ -372,6 +379,7 @@ class HandoffAgentExecutor(AgentExecutor):
                     f"Handoff tool name '{handoff_tool.name}' conflicts with existing tool."
                     "Please rename the existing tool or modify the target agent ID to avoid conflicts."
                 )
+            existing_names.add(handoff_tool.name)
             new_tools.append(handoff_tool)
 
         if new_tools:
