@@ -50,6 +50,7 @@ from agent_framework._harness._file_access import (
     _run_search_with_timeout,
     _slice_lines,
     _split_lines_keepends,
+    _store_write_lock,
 )
 
 from .conftest import create_junction_or_skip
@@ -1802,6 +1803,20 @@ async def test_file_access_providers_sharing_a_store_keep_concurrent_edits(
     messages = [_text(result[0]) for result in results]
     assert all(message.startswith("Replaced 1 ") for message in messages), messages
     assert await store.read("notes.txt") == "A=1\nB=1\n"
+
+
+async def test_store_write_lock_folds_unicode_and_case_variants_of_a_folder() -> None:
+    """Spellings of a folder name that a store can treat as one folder share one lock.
+
+    macOS file systems resolve the NFC and NFD forms of a name to the same entry, and
+    case-insensitive stores ignore case, so the lock key folds both.
+    """
+    store = InMemoryAgentFileStore()
+    lock = _store_write_lock(store, "caf\u00e9")
+
+    assert _store_write_lock(store, "cafe\u0301") is lock
+    assert _store_write_lock(store, "CAF\u00c9") is lock
+    assert _store_write_lock(store, "cafe") is not lock
 
 
 def test_slice_lines_returns_inclusive_range() -> None:

@@ -28,6 +28,7 @@ import logging
 import os
 import threading
 import time
+import unicodedata
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
@@ -1726,16 +1727,21 @@ _STORE_WRITE_LOCKS: weakref.WeakValueDictionary[tuple[int, asyncio.AbstractEvent
 )
 
 
-def _store_write_lock(store: AgentFileStore, path: str) -> asyncio.Lock:
-    """Return the lock that serializes edits of ``path`` in ``store``.
+def _store_write_lock(store: AgentFileStore, folder: str) -> asyncio.Lock:
+    """Return the lock that serializes edits of the files directly inside ``folder`` in ``store``.
 
     Mutating tools hold it across their read-modify-write. It belongs to the store
     instance rather than to one provider, so two providers sharing a store cannot both
     read a file before either writes it back and silently drop one of the edits.
+    File-access tools lock the folder of the file they edit (see ``_parent_folder``) and
+    file-memory tools lock their working folder, so the two kinds of provider also wait
+    for each other when they edit the same file. Edits of different files in one folder
+    therefore run one at a time.
 
-    The path is lowercased because case-insensitive stores, such as
-    :class:`InMemoryAgentFileStore`, treat case variants as one file; elsewhere two
-    names that differ only in case merely share a lock.
+    The folder name is folded to NFC and lowercased because a store can treat such
+    spellings as one folder: :class:`InMemoryAgentFileStore` ignores case, and macOS
+    file systems resolve the NFC and NFD forms of a name to one entry. Elsewhere two
+    spellings merely share a lock.
 
     Locks are per event loop, because an :class:`asyncio.Lock` that has had a waiter on
     one loop raises when a caller has to wait for it on another. The key holds
@@ -1747,12 +1753,17 @@ def _store_write_lock(store: AgentFileStore, path: str) -> asyncio.Lock:
     The lock is process-local: other processes, and other store instances over the same
     backing storage, are not coordinated.
     """
-    key = (id(store), asyncio.get_running_loop(), path.lower())
+    key = (id(store), asyncio.get_running_loop(), unicodedata.normalize("NFC", folder).lower())
     lock = _STORE_WRITE_LOCKS.get(key)
     if lock is None:
         lock = asyncio.Lock()
         _STORE_WRITE_LOCKS[key] = lock
     return lock
+
+
+def _parent_folder(path: str) -> str:
+    """Return the folder of a normalized store path (``""`` for a file at the root)."""
+    return path.rpartition("/")[0]
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -2067,9 +2078,9 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                # Every mutating tool takes this per-file lock, which all providers on the
-                # store share, so a write cannot land between another edit's read and write.
-                async with _store_write_lock(self.store, store_path):
+                # Every mutating tool takes the lock of the file's folder, which all providers
+                # on the store share, so a write cannot land between another edit's read and write.
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     await self.store.write(store_path, content, overwrite=overwrite)
             except NotADirectoryError:
                 return f"Could not write file '{file_name}': a parent path is already a file. Choose a different path."
@@ -2124,7 +2135,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with _store_write_lock(self.store, store_path):
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     deleted = await self.store.delete(store_path)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
@@ -2165,7 +2176,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with _store_write_lock(self.store, store_path):
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
@@ -2187,7 +2198,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with _store_write_lock(self.store, store_path):
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."

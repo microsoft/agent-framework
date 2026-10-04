@@ -380,7 +380,8 @@ class FileMemoryProvider(ContextProvider):
             desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             # Every mutating tool locks the whole working folder, not just the file, because each
             # write and delete rebuilds the folder's memories.md index. The lock is shared by all
-            # providers on the store, so they cannot interleave edits or index rebuilds.
+            # providers on the store, including file-access tools editing a file in this folder, so
+            # they cannot interleave edits or index rebuilds.
             async with _store_write_lock(self.store, working_folder):
                 try:
                     await self.store.write(path, content)
