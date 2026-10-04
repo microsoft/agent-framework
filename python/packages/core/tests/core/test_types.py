@@ -5355,6 +5355,21 @@ def test_merge_chat_options_same_plain_callable_on_both_sides():
     assert [t.name for t in merged["tools"]] == ["my_func"]
 
 
+def test_merge_chat_options_keeps_distinct_tool_with_same_name():
+    """A different tool that shares a base tool's name is not dropped by the merge."""
+
+    @tool(name="lookup")
+    def base_lookup() -> str:
+        return "base"
+
+    @tool(name="lookup")
+    def override_lookup() -> str:
+        return "override"
+
+    merged = merge_chat_options({"tools": [base_lookup]}, {"tools": [override_lookup]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [base_lookup, override_lookup]
+
+
 def test_merge_chat_options_keeps_pydantic_provider_tool_whole():
     """A Pydantic provider-native tool spec is one tool, not spread into its fields."""
 
