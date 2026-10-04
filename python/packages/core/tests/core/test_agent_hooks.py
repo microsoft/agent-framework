@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
+from pydantic import BaseModel, ConfigDict, PrivateAttr, field_serializer
 
 import agent_framework
 import agent_framework._telemetry as telemetry
@@ -98,6 +103,41 @@ class CrashingGuard:
         if context["interception_point"] == self.point:
             raise RuntimeError("guard crashed")
         return ALLOW
+
+
+class _HookCustomer(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    _serialization_count: int = PrivateAttr(default=0)
+    _suffix: str = PrivateAttr(default="")
+    _opaque: Any = PrivateAttr(default=None)
+
+    @field_serializer("name")
+    def serialize_name(self, value: str) -> str:
+        self._serialization_count += 1
+        return f"{value.upper()}:{self._serialization_count}{self._suffix}"
+
+
+@dataclass
+class _HookCustomerRequest:
+    customer: _HookCustomer
+
+
+class _TemporalHookCustomer(_HookCustomer):
+    created_at: datetime
+    birthday: date = date(2000, 1, 2)
+    appointment: time = time(12, 30)
+    duration: timedelta = timedelta(hours=1)
+
+
+class _ScalarHookCustomer(_HookCustomer):
+    customer_id: UUID
+    balance: Decimal
+
+
+class _SlottedHookCustomer(_HookCustomer):
+    __slots__ = ("_custom_state",)
 
 
 @tool(approval_mode="never_require")
@@ -841,6 +881,135 @@ async def test_pre_model_call_transform_writes_back_into_request(chat_client_bas
     response = await agent.run("raw PII 123-45-6789")
 
     assert response.text == "test response - [masked]"
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("container", ["model", "list", "dataclass", "temporal", "temporal-offset", "scalars"])
+async def test_pre_tool_call_reuses_prepared_nested_serialization(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+    container: str,
+) -> None:
+    """Hooks use the preparation projection while tools retain their native arguments."""
+    executed: list[_HookCustomer] = []
+    arguments: dict[str, Any]
+    expected_args: dict[str, Any]
+
+    if container == "model":
+
+        @tool
+        def describe_customer(customer: _HookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        arguments = {"customer": {"name": "Ada"}}
+        expected_args = {"customer": {"name": "ADA:1"}}
+    elif container == "list":
+
+        @tool
+        def describe_customers(customers: list[_HookCustomer]) -> str:
+            executed.extend(customers)
+            return customers[0].name
+
+        function = describe_customers
+        arguments = {"customers": [{"name": "Ada"}]}
+        expected_args = {"customers": [{"name": "ADA:1"}]}
+    elif container == "dataclass":
+
+        @tool
+        def describe_request(request: _HookCustomerRequest) -> str:
+            executed.append(request.customer)
+            return request.customer.name
+
+        function = describe_request
+        arguments = {"request": {"customer": {"name": "Ada"}}}
+        expected_args = {"request": {"customer": {"name": "ADA:1"}}}
+    elif container == "scalars":
+
+        @tool
+        def describe_scalar_customer(customer: _ScalarHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_scalar_customer
+        arguments = {
+            "customer": {"name": "Ada", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
+        }
+        expected_args = {
+            "customer": {"name": "ADA:1", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
+        }
+    else:
+
+        @tool
+        def describe_temporal_customer(customer: _TemporalHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_temporal_customer
+        offset = "Z" if container == "temporal-offset" else ""
+        arguments = {
+            "customer": {
+                "name": "Ada",
+                "created_at": f"2026-10-04T00:00:00{offset}",
+                "birthday": "2000-01-02",
+                "appointment": "12:30:00",
+                "duration": "PT1H",
+            },
+        }
+        expected_args = {
+            "customer": {
+                "name": "ADA:1",
+                "created_at": "2026-10-04T00:00:00+00:00" if offset else "2026-10-04T00:00:00",
+                "birthday": "2000-01-02",
+                "appointment": "12:30:00",
+                "duration": "1:00:00",
+            },
+        }
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant",
+                [Content.from_function_call("nested-customer", function.name, arguments=arguments)],
+            ),
+        ),
+        final_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[function],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    if streaming:
+        response = await agent.run("describe the customer", stream=True).get_final_response()
+    else:
+        response = await agent.run("describe the customer")
+
+    assert response.text == "Final response"
+    assert len(executed) == 1
+    assert executed[0].name == "Ada"
+    assert executed[0]._serialization_count == 1
+    if isinstance(executed[0], _TemporalHookCustomer):
+        assert isinstance(executed[0].created_at, datetime)
+        assert isinstance(executed[0].birthday, date)
+        assert isinstance(executed[0].appointment, time)
+        assert isinstance(executed[0].duration, timedelta)
+    if isinstance(executed[0], _ScalarHookCustomer):
+        assert isinstance(executed[0].customer_id, UUID)
+        assert isinstance(executed[0].balance, Decimal)
+    assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
+    assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
 
 
 @requires_sdk
@@ -2988,6 +3157,124 @@ def test_tool_arguments_codec_merges_only_changed_keys() -> None:
 
     with pytest.raises(MiddlewareException, match="arguments object"):
         codecs._ToolArgumentsCodec.write_back(native, before, "oops")
+
+
+@pytest.mark.parametrize("change", ["field", "private", "extra", "mapping"])
+def test_tool_arguments_codec_invalidates_changed_prepared_projection(change: str) -> None:
+    """Changes to inspectable native state must reach the hook's current wire arguments."""
+
+    @tool
+    def describe_customer(customer: _HookCustomer, suffix: str = "") -> str:
+        return customer.name + suffix
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"name": "Ada"}})
+    describe_customer._prepare_context_arguments(context, context.arguments)
+    assert isinstance(context.arguments, dict)
+    customer = context.arguments["customer"]
+    assert isinstance(customer, _HookCustomer)
+    codec = _codecs()._ToolArgumentsCodec
+    assert codec.to_wire(context.arguments, context=context) == {"customer": {"name": "ADA:1"}}
+    assert customer._serialization_count == 1
+
+    expected: dict[str, Any] = {"customer": {"name": "ADA:2"}}
+    if change == "field":
+        customer.name = "Grace"
+        expected = {"customer": {"name": "GRACE:2"}}
+    elif change == "private":
+        customer._suffix = "!"
+        expected = {"customer": {"name": "ADA:2!"}}
+    elif change == "extra":
+        assert customer.model_extra is not None
+        customer.model_extra["tag"] = "extra"
+        expected = {"customer": {"name": "ADA:2", "tag": "extra"}}
+    else:
+        context.arguments["suffix"] = "!"
+        expected["suffix"] = "!"
+
+    assert codec.to_wire(context.arguments, context=context) == expected
+    assert customer._serialization_count == 2
+
+
+@pytest.mark.parametrize("change", ["value", "fold", "timezone"])
+def test_tool_arguments_codec_invalidates_changed_temporal_value(change: str) -> None:
+    @tool
+    def describe_customer(customer: _TemporalHookCustomer) -> str:
+        return customer.name
+
+    customer = _TemporalHookCustomer(name="Ada", created_at=datetime(2026, 10, 4, tzinfo=timezone.utc))
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": customer})
+    describe_customer._prepare_context_arguments(context, context.arguments)
+    codec = _codecs()._ToolArgumentsCodec
+    before = codec.to_wire(context.arguments, context=context)
+    assert before["customer"]["name"] == "ADA:1"
+    assert customer._serialization_count == 1
+
+    if change == "value":
+        customer.created_at = customer.created_at.replace(day=5)
+    elif change == "fold":
+        customer.created_at = customer.created_at.replace(fold=1)
+    else:
+        customer.created_at = customer.created_at.replace(tzinfo=timezone(timedelta(hours=1)))
+
+    after = codec.to_wire(context.arguments, context=context)
+    assert after["customer"]["created_at"] == customer.created_at.isoformat()
+    assert after["customer"]["name"] == "ADA:2"
+    assert customer._serialization_count == 2
+
+
+@pytest.mark.parametrize("change", ["uuid", "decimal"])
+def test_tool_arguments_codec_invalidates_changed_scalar_value(change: str) -> None:
+    @tool
+    def describe_customer(customer: _ScalarHookCustomer) -> str:
+        return customer.name
+
+    customer = _ScalarHookCustomer(
+        name="Ada", customer_id=UUID("12345678-1234-5678-1234-567812345678"), balance=Decimal("1.25")
+    )
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": customer})
+    describe_customer._prepare_context_arguments(context, context.arguments)
+    codec = _codecs()._ToolArgumentsCodec
+    assert codec.to_wire(context.arguments, context=context)["customer"]["name"] == "ADA:1"
+    assert customer._serialization_count == 1
+
+    if change == "uuid":
+        customer.customer_id = UUID("87654321-4321-8765-4321-876543218765")
+    else:
+        customer.balance = Decimal("2.50")
+
+    assert codec.to_wire(context.arguments, context=context) == {
+        "customer": {"name": "ADA:2", "customer_id": str(customer.customer_id), "balance": str(customer.balance)},
+    }
+    assert customer._serialization_count == 2
+
+
+def test_tool_arguments_codec_reuses_projection_for_equivalent_mapping() -> None:
+    @tool
+    def describe_customer(customer: _HookCustomer) -> str:
+        return customer.name
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"name": "Ada"}})
+    describe_customer._prepare_context_arguments(context, context.arguments)
+    context.arguments = dict(context.arguments)
+
+    assert _codecs()._ToolArgumentsCodec.to_wire(context.arguments, context=context) == {"customer": {"name": "ADA:1"}}
+    assert context.arguments["customer"]._serialization_count == 1
+
+
+@pytest.mark.parametrize("uninspectable", ["opaque", "slots"])
+def test_tool_arguments_codec_projects_uninspectable_state_live(uninspectable: str) -> None:
+    @tool
+    def describe_customer(customer: _HookCustomer) -> str:
+        return customer.name
+
+    customer = _SlottedHookCustomer(name="Ada") if uninspectable == "slots" else _HookCustomer(name="Ada")
+    if uninspectable == "opaque":
+        customer._opaque = object()
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": customer})
+    describe_customer._prepare_context_arguments(context, context.arguments)
+
+    assert _codecs()._ToolArgumentsCodec.to_wire(context.arguments, context=context) == {"customer": {"name": "ADA:2"}}
+    assert customer._serialization_count == 2
 
 
 def test_message_list_write_back_matches_by_identity_not_position() -> None:
