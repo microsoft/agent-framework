@@ -13,10 +13,10 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Awaitable, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Protocol, cast
 
 from .._agents import SupportsAgentRun
 from .._feature_stage import ExperimentalFeature, experimental
