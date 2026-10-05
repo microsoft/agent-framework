@@ -246,7 +246,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
         string conversationId = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
-            "conversation ID");
+            ConversationIdLocation);
         return conversationId.Length == 0 ? null : conversationId;
     }
 

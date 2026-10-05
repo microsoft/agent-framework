@@ -331,7 +331,7 @@ internal sealed class HttpRequestExecutor(
 
         string value = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
-            "conversation ID");
+            ConversationIdLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -347,7 +347,7 @@ internal sealed class HttpRequestExecutor(
             ? null
             : this.GetNonSensitiveValue(
                 this.Evaluator.GetValue(connection.Name),
-                "connection name");
+                ConnectionNameLocation);
 
         return string.IsNullOrEmpty(name) ? null : name;
     }

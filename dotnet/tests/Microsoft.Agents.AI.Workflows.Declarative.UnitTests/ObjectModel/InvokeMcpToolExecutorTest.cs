@@ -317,7 +317,17 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Assert
         DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("sensitive value", exception.Message);
         Assert.Contains(useConnectionName ? "connection name" : "conversation ID", exception.Message);
+        Assert.Contains(nameof(InvokeMcpTool), exception.Message);
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         mockAgentProvider.Verify(
             provider => provider.CreateMessageAsync(
                 It.IsAny<string>(),

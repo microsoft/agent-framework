@@ -25,6 +25,9 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
+    protected const string ConnectionNameLocation = "connection name";
+    protected const string ConversationIdLocation = "conversation ID";
+
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
@@ -153,7 +156,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     {
         if (result.Sensitivity == SensitivityLevel.Sensitive)
         {
-            throw new DeclarativeActionException($"Cannot use a protected value for {location}: {this.Id}.");
+            throw new DeclarativeActionException(
+                $"Cannot use a sensitive value for {location} in {this.Model.GetType().Name} [{this.Id}].");
         }
 
         return result.Value;

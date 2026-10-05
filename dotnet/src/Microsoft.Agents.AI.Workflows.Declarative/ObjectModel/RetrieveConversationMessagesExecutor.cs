@@ -23,7 +23,7 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
 
         string conversationId = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
-            "conversation ID");
+            ConversationIdLocation);
 
         List<ChatMessage> messages = [];
         await foreach (ChatMessage message in agentProvider.GetMessagesAsync(

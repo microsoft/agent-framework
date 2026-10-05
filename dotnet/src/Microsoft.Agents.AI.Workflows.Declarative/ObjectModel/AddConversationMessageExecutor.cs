@@ -23,7 +23,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
 
         string conversationId = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
-            "conversation ID");
+            ConversationIdLocation);
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };

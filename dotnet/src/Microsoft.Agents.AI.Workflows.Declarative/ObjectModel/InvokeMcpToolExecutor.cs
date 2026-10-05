@@ -90,6 +90,7 @@ internal sealed class InvokeMcpToolExecutor(
         bool requireApproval = this.GetRequireApproval();
         Dictionary<string, object?>? arguments = this.GetArguments();
         Dictionary<string, string>? headers = this.GetHeaders();
+        string? conversationId = this.GetConversationId();
         string? connectionName = this.GetConnectionName();
 
         if (requireApproval)
@@ -116,7 +117,7 @@ internal sealed class InvokeMcpToolExecutor(
             connectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
 
         // Signal completion so the workflow routes via RequiresNothing
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -181,6 +182,7 @@ internal sealed class InvokeMcpToolExecutor(
             headers = null;
         }
 
+        string? conversationId = this.GetConversationId();
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             snapshot.ServerUrl,
             snapshot.ServerLabel,
@@ -190,7 +192,7 @@ internal sealed class InvokeMcpToolExecutor(
             snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -296,10 +298,13 @@ internal sealed class InvokeMcpToolExecutor(
         await context.SendMessageAsync(new ExternalInputRequest(new AgentResponse([requestMessage])), cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
+    private async ValueTask ProcessResultAsync(
+        IWorkflowContext context,
+        McpServerToolResultContent resultContent,
+        string? conversationId,
+        CancellationToken cancellationToken)
     {
         bool autoSend = this.GetAutoSendValue();
-        string? conversationId = this.GetConversationId();
 
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
         ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
@@ -418,7 +423,7 @@ internal sealed class InvokeMcpToolExecutor(
 
         string value = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
-            "conversation ID");
+            ConversationIdLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -455,7 +460,7 @@ internal sealed class InvokeMcpToolExecutor(
 
         string value = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.Connection.Name),
-            "connection name");
+            ConnectionNameLocation);
         return value.Length == 0 ? null : value;
     }
 
