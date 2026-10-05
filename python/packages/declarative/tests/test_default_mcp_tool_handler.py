@@ -1477,9 +1477,10 @@ class TestAclose:
             release_connect.set()
 
             with pytest.raises(asyncio.CancelledError):
-                await invocation
+                _ = await invocation
+            await asyncio.wait({shutdown})
             with pytest.raises(asyncio.CancelledError):
-                await shutdown
+                shutdown.result()
 
         assert FakeTool.instances[0].close_count == 1
         assert not handler._inflight
