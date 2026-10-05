@@ -523,7 +523,10 @@ that manually replay messages own the equivalent rule: do not resend an approval
   `propagate_session=True`, child application-state changes merge back into the parent while framework approval and
   invocation-budget state remain isolated, including approval queues stored under custom child middleware
   `source_id` values. Parent and child `ToolApprovalMiddleware` instances must use distinct `source_id` values; an
-  overlap fails before the child runs.
+  overlap fails before the child runs. The automatic function loop also supplies the parent agent/client's declared
+  provider-owned state keys. A custom loop that directly invokes the agent tool must set
+  `FunctionInvocationContext.parent_service_session_state_keys` explicitly; when that ownership is unavailable, a
+  non-empty parent session fails before the child runs rather than propagating unknown provider state.
 
 ### Approval control content
 
@@ -592,6 +595,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
+| Direct delegated session propagation | A custom loop must explicitly identify parent provider-owned state before sharing a non-empty session; missing ownership fails before the child runs, while declared parent keys remain isolated and application state still propagates. | `packages/core/tests/core/test_agents.py::test_chat_agent_as_tool_direct_propagation_requires_parent_provider_ownership`, `test_chat_agent_as_tool_direct_propagation_uses_explicit_parent_provider_ownership` |
 | In-run compaction summaries | Summaries inserted for tool groups excluded by in-run compaction are returned in the final non-streaming response transcript before the group they replace, so history loaded with `skip_excluded` keeps the summarized content; summaries of caller-owned input messages are not added. | `packages/core/tests/core/test_clients.py::test_function_loop_returns_compaction_summaries_in_final_response`, `test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted`, `test_function_loop_reconciles_nested_compaction_summaries`, `test_function_loop_returns_compacted_transcript_on_early_terminal_exit`, `packages/core/tests/core/test_agents.py::test_agent_run_returns_and_persists_compaction_summaries` |
 | Per-service-call provider context | When framework-managed history is loaded around each model call, tools and instructions contributed by `HistoryProvider.before_run` remain available to the model and function loop without duplication in streaming or non-streaming execution. | `packages/core/tests/core/test_agents.py::test_vector_history_search_tool_is_available_with_per_service_call_persistence` |
 

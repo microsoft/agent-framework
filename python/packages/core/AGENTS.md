@@ -60,7 +60,9 @@ agent_framework/
 - Providers that store service-owned continuation handles in `AgentSession.state` declare their keys through
   `service_session_state_keys`. `as_tool(propagate_session=True)` combines declarations from the parent and child
   agents and their clients to isolate those handles in both directions while ordinary application-owned state
-  propagates. Parent declarations travel through private function-invocation metadata, not tool arguments.
+  propagates. The automatic function loop places parent declarations on `FunctionInvocationContext`; direct or
+  custom-loop invocation must set `parent_service_session_state_keys` explicitly for a non-empty shared session
+  and otherwise fails closed.
 
 ### Chat Clients (`_clients.py`)
 

@@ -1309,6 +1309,7 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
                     function=delegated_tool,
                     arguments={"task": "Run child"},
                     session=parent,
+                    parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
                 )
             )
             assert result[0].text == "done"

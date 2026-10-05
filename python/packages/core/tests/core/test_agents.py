@@ -2223,6 +2223,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
@@ -2507,6 +2508,7 @@ async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fres
                 function=delegated_tool,
                 arguments={"task": "First delegation"},
                 session=parent_session,
+                parent_service_session_state_keys=(),
             )
         )
 
@@ -2517,6 +2519,7 @@ async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fres
             function=delegated_tool,
             arguments={"task": "Fresh delegation"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
@@ -2580,9 +2583,73 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
+    assert parent_session.state["counter"] == 1
+
+
+async def test_chat_agent_as_tool_direct_propagation_requires_parent_provider_ownership(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Fail closed when a direct invocation cannot identify parent-owned provider state."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+    parent_session = AgentSession()
+    parent_session.state["parent_provider_session"] = "parent-handle"
+    child_run_called = False
+    original_run = agent.run
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal child_run_called
+        child_run_called = True
+        return original_run(*args, **kwargs)
+
+    with (
+        patch.object(agent, "run", side_effect=capturing_run),
+        raises(ToolExecutionException, match="parent provider-owned session state"),
+    ):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Run child"},
+                session=parent_session,
+            )
+        )
+
+    assert child_run_called is False
+    assert parent_session.state == {"parent_provider_session": "parent-handle"}
+
+
+async def test_chat_agent_as_tool_direct_propagation_uses_explicit_parent_provider_ownership(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Allow a direct host to declare parent-owned provider keys explicitly."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+    parent_session = AgentSession()
+    parent_session.state.update({"parent_provider_session": "parent-handle", "counter": 0})
+    original_run = agent.run
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        child_session = cast(AgentSession, kwargs["session"])
+        assert "parent_provider_session" not in child_session.state
+        child_session.state["counter"] += 1
+        child_session.state["parent_provider_session"] = "child-handle"
+        return original_run(*args, **kwargs)
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"task": "Run child"},
+        session=parent_session,
+        parent_service_session_state_keys={"parent_provider_session"},
+    )
+
+    with patch.object(agent, "run", side_effect=capturing_run):
+        await tool.invoke(context=context)
+
+    assert parent_session.state["parent_provider_session"] == "parent-handle"
     assert parent_session.state["counter"] == 1
 
 
@@ -2632,6 +2699,10 @@ async def test_chat_agent_as_tool_propagate_session_isolates_provider_owned_stat
                     function=delegated_tool,
                     arguments={"task": "Run child"},
                     session=parent_session,
+                    parent_service_session_state_keys={
+                        *ProviderStateAgent.service_session_state_keys,
+                        "client_provider_session",
+                    },
                 )
             )
 
@@ -2772,6 +2843,7 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 

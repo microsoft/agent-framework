@@ -694,6 +694,10 @@ class BaseAgent(SerializationMixin):
             values. The delegated call raises ToolExecutionException before running
             the child when their shared session-state keys overlap.
 
+            Direct or custom-loop invocation with ``propagate_session=True`` must set
+            :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
+            the parent session is non-empty. Automatic function calling supplies it.
+
         Examples:
             .. code-block:: python
 
@@ -747,17 +751,21 @@ class BaseAgent(SerializationMixin):
             parent_service_session_state_keys: frozenset[str] = frozenset()
 
             if propagate_session and parent_session is not None:
-                from ._tools import (
-                    _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
-                    _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
-                )
+                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
-                raw_parent_service_keys = ctx.metadata.get(_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY)
-                parent_service_session_state_keys = (
-                    cast("frozenset[str]", raw_parent_service_keys)
-                    if isinstance(raw_parent_service_keys, frozenset)
-                    else frozenset()
-                )
+                # A custom loop can bypass the framework seam that identifies the parent provider's state.
+                # Refuse a non-empty shared session rather than guessing which keys are safe to delegate.
+                if ctx.parent_service_session_state_keys is None:
+                    if parent_session.state:
+                        raise ToolExecutionException(
+                            f"Agent tool {tool_name!r} cannot safely propagate a non-empty parent session because "
+                            "the invocation path did not provide parent provider-owned session state keys. "
+                            "Use the automatic function-calling loop, set "
+                            "FunctionInvocationContext.parent_service_session_state_keys in a custom loop, "
+                            "or set propagate_session=False."
+                        )
+                else:
+                    parent_service_session_state_keys = ctx.parent_service_session_state_keys
                 raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
                 parent_approval_source_ids = (
                     cast("frozenset[str]", raw_parent_approval_source_ids)

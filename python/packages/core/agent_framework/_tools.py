@@ -2128,12 +2128,10 @@ async def _auto_invoke_function(
                     arguments=args,
                     session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
+                    parent_service_session_state_keys=parent_service_session_state_keys,
                     tools=live_tools,
                 )
                 direct_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
-                direct_context.metadata[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
-                    parent_service_session_state_keys
-                )
                 if host_payload_budget is not None:
                     direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
             function_result = await tool.invoke(
@@ -2170,10 +2168,10 @@ async def _auto_invoke_function(
         arguments=args,
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
+        parent_service_session_state_keys=parent_service_session_state_keys,
         tools=live_tools,
     )
     middleware_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
-    middleware_context.metadata[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = parent_service_session_state_keys
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
