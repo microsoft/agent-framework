@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     BaseChatClient,
@@ -31,6 +31,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
+    ToolMode,
     UsageDetails,
 )
 from agent_framework._settings import load_settings
@@ -455,7 +456,7 @@ class OllamaChatClient(
         # tools
         tools = options.get("tools")
         tool_choice = options.get("tool_choice")
-        tool_mode = tool_choice.get("mode") if isinstance(tool_choice, Mapping) else tool_choice
+        tool_mode = cast(ToolMode, tool_choice).get("mode") if isinstance(tool_choice, Mapping) else tool_choice
         if tool_mode != "none" and tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
