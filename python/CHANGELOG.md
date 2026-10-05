@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **agent-framework-core**: Add `AsyncRequestBroker` — a generic asyncio pause-and-wait utility for any server-side request/response pattern. Provides `request_async()`, `resolve()`, and `reject()` with timeout and race-condition handling.
+- **agent-framework-tools**: Add `ShellAuditLog` and `ShellCommandRecord` to `LocalShellTool`; every command evaluation is recorded with policy decision, exit code, and timestamp.
+
 ## [1.19.0] - 2026-09-18
 
 ### Added
