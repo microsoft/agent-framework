@@ -1810,6 +1810,29 @@ not valid JSON
 class TestPowerFxConditionalImport:
     """The _declarative_base module should be importable without dotnet/powerfx."""
 
+    @pytest.mark.parametrize("function", ["Concat", "Concatenate"])
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            ('"hello", " world"', "hello world"),
+            ('"", ""', ""),
+            ('"a""b", "c"', 'a"bc'),
+            ('"a,b(c)", "d"', "a,b(c)d"),
+            ("'legacy', ' strings'", "legacy strings"),
+        ],
+    )
+    def test_concatenation_literals_without_engine(
+        self, monkeypatch: pytest.MonkeyPatch, function: str, arguments: str, expected: str
+    ) -> None:
+        """String-only concatenation retains its engine-independent fast path."""
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        state = DeclarativeWorkflowState(State())
+        state.initialize()
+        monkeypatch.setattr(base_mod, "Engine", None)
+
+        assert state.eval(f"={function}({arguments})") == expected
+
     def test_import_guard_exists(self):
         """The powerfx import must be wrapped in try/except."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
