@@ -198,3 +198,80 @@ async def test_noncolliding_control_structure_name_is_unchanged(kind: str) -> No
 
     assert list(workflow.executors) == ["_workflow_entry", *expected_ids, explicit_id]
     assert (await workflow.run({})).get_outputs() == ["inside", "after"]
+
+
+@pytest.mark.parametrize("control_first", [False, True])
+@pytest.mark.parametrize(
+    "kind",
+    [pytest.param("If", marks=_requires_powerfx), pytest.param("ConditionGroup", marks=_requires_powerfx), "Foreach"],
+)
+async def test_authored_virtual_id_does_not_rename_an_ordinary_executor(kind: str, control_first: bool) -> None:
+    ordinary_id = "SendActivity_2" if control_first else "SendActivity_0"
+    child = {"kind": "SendActivity", "activity": "inside"}
+    control: dict[str, Any] = {"kind": kind, "id": ordinary_id}
+    if kind == "If":
+        control.update(condition=True, then=[child])
+        internal_ids = [f"{ordinary_id}_eval", f"{ordinary_id}_SendActivity_1", f"{ordinary_id}_else_pass"]
+    elif kind == "ConditionGroup":
+        control["conditions"] = [{"condition": "=true", "actions": [child]}]
+        internal_ids = [f"{ordinary_id}_eval", f"{ordinary_id}_case0_SendActivity_1", f"{ordinary_id}_default"]
+    else:
+        control.update(source=[1], actions=[child])
+        internal_ids = [f"{ordinary_id}_init", "SendActivity_1", f"{ordinary_id}_next", f"{ordinary_id}_exit"]
+    if not control_first:
+        internal_ids = [node.replace("SendActivity_1", "SendActivity_2") for node in internal_ids]
+    ordinary = {"kind": "SendActivity", "activity": "ordinary"}
+    actions = [control, ordinary] if control_first else [ordinary, control]
+    workflow = WorkflowFactory().create_workflow_from_definition({"actions": actions})
+
+    expected_ids = [*internal_ids, ordinary_id] if control_first else [ordinary_id, *internal_ids]
+    assert set(workflow.executors) == {"_workflow_entry", *expected_ids}
+    assert (await workflow.run({})).get_outputs() == (
+        ["inside", "ordinary"] if control_first else ["ordinary", "inside"]
+    )
+
+
+@pytest.mark.parametrize("skipped_first", [False, True])
+@pytest.mark.parametrize("kind", ["UnknownAction", "GotoAction"])
+async def test_skipped_action_id_does_not_rename_an_ordinary_executor(kind: str, skipped_first: bool) -> None:
+    skipped = {"kind": kind, "id": "SendActivity_0", "actionId": ""}
+    ordinary = {"kind": "SendActivity", "activity": "ordinary"}
+    actions = [skipped, ordinary] if skipped_first else [ordinary, skipped]
+    workflow = WorkflowFactory().create_workflow_from_definition({"actions": actions})
+
+    assert list(workflow.executors) == ["_workflow_entry", "SendActivity_0"]
+    assert (await workflow.run({})).get_outputs() == ["ordinary"]
+
+
+@pytest.mark.parametrize("kind", ["BreakLoop", "ContinueLoop"])
+def test_loop_terminators_outside_a_loop_still_raise(kind: str) -> None:
+    with pytest.raises(DeclarativeWorkflowError, match="can only be used inside a Foreach loop"):
+        WorkflowFactory().create_workflow_from_definition({
+            "actions": [
+                {"kind": "SendActivity", "activity": "ordinary"},
+                {"kind": kind, "id": "SendActivity_0"},
+            ]
+        })
+
+
+@_requires_powerfx
+@pytest.mark.parametrize("null_then", [False, True])
+async def test_nullable_inactive_if_branch_remains_supported(null_then: bool) -> None:
+    child = {"kind": "SendActivity", "id": "child", "activity": "inside"}
+    workflow = WorkflowFactory().create_workflow_from_definition({
+        "actions": [
+            {
+                "kind": "If",
+                "id": "branch",
+                "condition": not null_then,
+                "then": None if null_then else [child],
+                "else": [child] if null_then else None,
+            }
+        ]
+    })
+
+    expected_ids = {"_workflow_entry", "branch_eval", "child"}
+    if not null_then:
+        expected_ids.add("branch_else_pass")
+    assert set(workflow.executors) == expected_ids
+    assert (await workflow.run({})).get_outputs() == ["inside"]

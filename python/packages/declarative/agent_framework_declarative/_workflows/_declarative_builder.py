@@ -202,7 +202,7 @@ class DeclarativeWorkflowBuilder:
         if self._validate:
             self._validate_workflow(actions)
 
-        # Reserve nested and forward-declared action IDs before naming internal nodes.
+        # Reserve nested and forward-declared executor IDs before naming internal nodes.
         self._collect_explicit_ids(actions)
 
         # Create a stable entry node as the start executor, then wire it to the first action.
@@ -242,12 +242,19 @@ class DeclarativeWorkflowBuilder:
 
         return builder.build()
 
-    def _collect_explicit_ids(self, actions: list[dict[str, Any]]) -> None:
-        """Keep generated IDs separate from every authored action ID."""
+    def _collect_explicit_ids(self, actions: list[dict[str, Any]] | None) -> None:
+        """Reserve authored executor IDs, excluding virtual structures and skipped actions."""
+        if not actions:
+            return
         for action_def in actions:
-            if explicit_id := action_def.get("id"):
+            kind = action_def.get("kind", "")
+            creates_executor = (
+                kind in ALL_ACTION_EXECUTORS
+                or kind in ("BreakLoop", "ContinueLoop")
+                or (kind == "GotoAction" and bool(action_def.get("target") or action_def.get("actionId")))
+            )
+            if creates_executor and (explicit_id := action_def.get("id")):
                 self._seen_explicit_ids.add(explicit_id)
-            kind = action_def.get("kind")
             if kind == "If":
                 self._collect_explicit_ids(action_def.get("then", action_def.get("actions", [])))
                 self._collect_explicit_ids(action_def.get("else", []))
