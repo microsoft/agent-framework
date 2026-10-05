@@ -129,7 +129,7 @@ class IsMaliciousGate:
         if not api_key or not api_secret:
             raise ValueError("Both IsMalicious credential fields are required.")
         self.client = client
-        token = base64.b64encode(f"{api_key}:{api_secret}".encode("utf-8")).decode("ascii")
+        token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode("ascii")
         self.headers = {"X-API-KEY": token}
 
     async def check_url(self, url: str) -> UrlResponse:
