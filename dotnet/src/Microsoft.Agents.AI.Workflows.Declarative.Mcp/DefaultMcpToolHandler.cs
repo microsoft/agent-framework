@@ -551,7 +551,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
         catch (Exception exception)
         {
-            if (disposedException is not null)
+            if (disposedException is not null && !ReferenceEquals(exception, disposedException))
             {
                 clientCreation.TrySetException(exception);
                 clientCreationCleanupException = exception;

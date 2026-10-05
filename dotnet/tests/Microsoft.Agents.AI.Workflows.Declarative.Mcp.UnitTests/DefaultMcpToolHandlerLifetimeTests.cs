@@ -336,6 +336,36 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_DisposalDuringSuccessfulCreation_CleansUpOrphanAndCompletesDisposalAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationStarted = new(0);
+        using SemaphoreSlim releaseInitialization = new(0);
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationStarted.Release();
+            await releaseInitialization.WaitAsync(token);
+        };
+        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> invocation =
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task disposal = handler.DisposeAsync().AsTask();
+        releaseInitialization.Release();
+
+        // Assert
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => invocation);
+        await disposal;
+        Assert.Equal(1, stub.Terminations);
+        Assert.Single(stub.Handlers).Protected().Verify(
+            "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
     public async Task NoProvider_DisposalDuringSuccessfulCreation_ReportsOrphanCleanupCancellationAsync()
     {
         // Arrange
