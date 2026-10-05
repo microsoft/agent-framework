@@ -277,6 +277,47 @@ public class AgentFrameworkResponseHandlerResilienceTests
         Assert.True(store.SaveAttempts >= 2);
     }
 
+    [Fact]
+    public async Task CreateAsync_ResilientTurn_SavesFunctionCallsOnlyAfterAllResultsAsync()
+    {
+        // Arrange: two tool calls are emitted before either result is available.
+        var agent = new FunctionCallTrackingAgent(["call-1", "call-2"], emitResults: true);
+        var store = new FunctionCallSnapshotStore();
+        var handler = CreateHandler(agent, store, resilient: true);
+        var request = NewBackgroundStoreRequest("start");
+        var context = CreateContext(isRecovery: false);
+
+        // Act
+        var events = await CollectEventsAsync(handler, request, context);
+
+        // Assert: every durable session snapshot contains a result for each recorded call.
+        Assert.Contains(events, e => e is ResponseCompletedEvent);
+        Assert.NotEmpty(store.Snapshots);
+        Assert.Equal(2, store.Snapshots[0].FunctionCallIds.Length);
+        Assert.Equal(2, store.Snapshots[0].FunctionResultIds.Length);
+        Assert.All(store.Snapshots, snapshot =>
+            Assert.Equal(
+                snapshot.FunctionCallIds.OrderBy(id => id, StringComparer.Ordinal),
+                snapshot.FunctionResultIds.OrderBy(id => id, StringComparer.Ordinal)));
+    }
+
+    [Fact]
+    public async Task CreateAsync_ResilientTurn_DoesNotSaveAnUnansweredFunctionCallAsync()
+    {
+        // Arrange: the agent ends after emitting a call, before any tool result is appended.
+        var agent = new FunctionCallTrackingAgent(["call-1"], emitResults: false);
+        var store = new FunctionCallSnapshotStore();
+        var handler = CreateHandler(agent, store, resilient: true);
+        var request = NewBackgroundStoreRequest("start");
+        var context = CreateContext(isRecovery: false);
+
+        // Act
+        await CollectEventsAsync(handler, request, context);
+
+        // Assert: the final-save path must not persist a session ending with an unanswered call.
+        Assert.Empty(store.Snapshots);
+    }
+
     private static AgentFrameworkResponseHandler CreateHandler(AIAgent agent, AgentSessionStore store, bool resilient)
     {
         var services = new ServiceCollection();
@@ -469,6 +510,122 @@ public class AgentFrameworkResponseHandlerResilienceTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+    }
+
+    private sealed class FunctionCallSnapshotStore : AgentSessionStore
+    {
+        public List<FunctionCallSessionSnapshot> Snapshots { get; } = [];
+
+        public override ValueTask SaveSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            var functionCallSession = Assert.IsType<FunctionCallTrackingSession>(session);
+            this.Snapshots.Add(new(
+                functionCallSession.FunctionCallIds.ToArray(),
+                functionCallSession.FunctionResultIds.ToArray()));
+            return default;
+        }
+
+        public override ValueTask<AgentSession?> GetSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            new((AgentSession?)null);
+    }
+
+    private sealed record FunctionCallSessionSnapshot(
+        string[] FunctionCallIds,
+        string[] FunctionResultIds);
+
+    private sealed class FunctionCallTrackingSession : AgentSession
+    {
+        public List<string> FunctionCallIds { get; set; } = [];
+
+        public List<string> FunctionResultIds { get; set; } = [];
+    }
+
+    private sealed class FunctionCallTrackingAgent(string[] functionCallIds, bool emitResults) : AIAgent
+    {
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session,
+            AgentRunOptions? options,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var functionCallSession = Assert.IsType<FunctionCallTrackingSession>(session);
+            var functionCalls = functionCallIds
+                .Select(callId => new FunctionCallContent(callId, "tool", new Dictionary<string, object?>()))
+                .ToArray();
+
+            foreach (FunctionCallContent functionCall in functionCalls)
+            {
+                functionCallSession.FunctionCallIds.Add(functionCall.CallId);
+            }
+
+            yield return new AgentResponseUpdate
+            {
+                MessageId = "msg_function_calls",
+                Contents = [.. functionCalls],
+            };
+
+            if (emitResults)
+            {
+                foreach (FunctionCallContent functionCall in functionCalls)
+                {
+                    functionCallSession.FunctionResultIds.Add(functionCall.CallId);
+                    yield return new AgentResponseUpdate
+                    {
+                        MessageId = $"msg_result_{functionCall.CallId}",
+                        Contents = [new FunctionResultContent(functionCall.CallId, "result")],
+                    };
+                }
+
+                yield return new AgentResponseUpdate
+                {
+                    MessageId = "msg_after_function_calls",
+                    Contents = [new MeaiTextContent("complete")],
+                };
+            }
+
+            await Task.CompletedTask;
+        }
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session,
+            AgentRunOptions? options,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(
+            CancellationToken cancellationToken = default) =>
+            new(new FunctionCallTrackingSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
+            AgentSession session,
+            JsonSerializerOptions? jsonSerializerOptions,
+            CancellationToken cancellationToken = default)
+        {
+            var functionCallSession = Assert.IsType<FunctionCallTrackingSession>(session);
+            return new(JsonSerializer.SerializeToElement(
+                new
+                {
+                    functionCallSession.FunctionCallIds,
+                    functionCallSession.FunctionResultIds,
+                },
+                jsonSerializerOptions));
+        }
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+            JsonElement serializedState,
+            JsonSerializerOptions? jsonSerializerOptions,
+            CancellationToken cancellationToken = default) =>
+            new(JsonSerializer.Deserialize<FunctionCallTrackingSession>(
+                serializedState.GetRawText(),
+                jsonSerializerOptions)!);
     }
 
     private sealed class AlwaysLoadedSessionStore : AgentSessionStore

@@ -367,6 +367,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         ResponseStreamEvent? completedEvent = null;
         bool steeringDetected = false;
         bool deferredForRecovery = false;
+        HashSet<string>? pendingFunctionCallIds = isResilientTurn
+            && session is not null
+            && session.GetService<WorkflowSessionCheckpointRecovery>() is null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : null;
 
         var enumerator = OutputConverter.ConvertUpdatesToItemsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
@@ -427,6 +432,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     if (evt is ResponseCompletedEvent)
                     {
                         consentCts.Token.ThrowIfCancellationRequested();
+                    }
+
+                    if (pendingFunctionCallIds is not null && evt is ResponseOutputItemDoneEvent outputItemDone)
+                    {
+                        switch (outputItemDone.Item)
+                        {
+                            case OutputItemFunctionToolCall functionCall:
+                                pendingFunctionCallIds.Add(functionCall.CallId);
+                                break;
+
+                            case OutputItemFunctionToolCallOutput functionCallOutput:
+                                pendingFunctionCallIds.Remove(functionCallOutput.CallId);
+                                break;
+                        }
                     }
 
                     shutdownDetected =
@@ -552,11 +571,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 yield return evt!;
 
                 // Best-effort session snapshot for a non-workflow agent after a response output item
-                // closes. Workflow agents save only at the paired superstep boundary so their session
-                // cursor cannot advance independently of the response snapshot. The final save below
-                // remains authoritative for a turn that reaches normal completion.
+                // closes, once every emitted function call has a result. A crash with an unanswered
+                // function call in the saved session would make the restored history invalid for the
+                // next model request. Workflow agents save only at the paired superstep boundary so
+                // their session cursor cannot advance independently of the response snapshot. The
+                // final save below remains authoritative for a turn that reaches normal completion.
                 if (isResilientTurn
                     && evt is ResponseOutputItemDoneEvent
+                    && (pendingFunctionCallIds is null || pendingFunctionCallIds.Count == 0)
                     && session is not null
                     && session.GetService<WorkflowSessionCheckpointRecovery>() is null
                     && agentSessionKey is not null
@@ -596,8 +618,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
 
             // Persist the session for the next turn unless this turn failed or deferred after the
-            // agent advanced beyond the last event emitted to AgentServer.
-            if (session is not null && !turnFailed && !deferredForRecovery)
+            // agent advanced beyond the last event emitted to AgentServer, or an emitted function
+            // call still has no corresponding result.
+            if (session is not null
+                && !turnFailed
+                && !deferredForRecovery
+                && (pendingFunctionCallIds is null || pendingFunctionCallIds.Count == 0))
             {
                 await sessionStore.SaveSessionAsync(
                     agent,
