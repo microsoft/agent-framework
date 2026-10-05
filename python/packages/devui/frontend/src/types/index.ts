@@ -39,7 +39,7 @@ export interface AgentInfo {
   instructions?: string;
   model_id?: string;
   chat_client_type?: string;
-  context_provider?: string | undefined;
+  context_provider?: string[] | undefined;
   middleware?: string[] | undefined;
 }
 
