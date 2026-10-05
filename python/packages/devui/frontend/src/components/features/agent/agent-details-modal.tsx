@@ -203,7 +203,7 @@ export function AgentDetailsModal({
                 className={!agent.middleware || agent.middleware.length === 0 ? "md:col-start-2" : ""}
               >
                 <div className="font-mono text-xs text-foreground">
-                  {agent.context_provider}
+                  {agent.context_provider.join(", ")}
                 </div>
               </DetailCard>
             )}
