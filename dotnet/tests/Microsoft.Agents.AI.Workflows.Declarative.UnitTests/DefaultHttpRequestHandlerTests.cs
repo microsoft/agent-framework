@@ -139,6 +139,23 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
+    [Fact]
+    public async Task SendAsyncWithLoopbackUrlThrowsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using RawHttpServer server = new();
+        await using DefaultHttpRequestHandler handler = new();
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Null(await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(250)));
+    }
+
     #endregion
 
     #region Send Behavior Tests
