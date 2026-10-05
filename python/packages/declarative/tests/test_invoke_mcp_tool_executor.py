@@ -500,7 +500,14 @@ class TestApprovalFlow:
         assert "context-second" not in repr(checkpoints)
         assert "context-first" not in repr(approval.data)
         assert "context-second" not in repr(approval.data)
-        checkpoint = max(checkpoints, key=lambda item: item.timestamp)
+        # Wall-clock timestamps can tie on Windows. Select the checkpoint after
+        # the context change, where only the original approval remains pending.
+        checkpoint = next(
+            item
+            for item in checkpoints
+            if approval.request_id in item.pending_request_info_events
+            and change_request.request_id not in item.pending_request_info_events
+        )
         assert checkpoint.state[_HEADER_BINDING_KEY] not in repr(approval.data)
         if restore:
             workflow = build()
