@@ -8193,6 +8193,20 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
                 },
             )
 
+        if method == "tools/call":
+            return Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "resultType": "complete",
+                        "content": [{"type": "text", "text": "Hello!"}],
+                        "isError": False,
+                    },
+                },
+            )
+
         raise AssertionError(f"Unexpected MCP method: {method}")
 
     user_client = AsyncClient(transport=MockTransport(mcp_v2_server_mock_handler))
@@ -8209,8 +8223,13 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
         assert tool_a.session.protocol_version == "2026-07-28"
         assert [function.name for function in tool_a.functions] == ["greet"]
 
+        result = await tool_a.call_tool("greet")
+        assert isinstance(result, list)
+        assert [item.text for item in result if item.type == "text"] == ["Hello!"]
+
     assert "server/discover" in captured_methods
     assert "initialize" not in captured_methods
+    assert "tools/list" in captured_methods
 
 
 async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
@@ -8219,7 +8238,7 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
 
     captured_methods: list[str] = []
 
-    async def mcp_v2_server_mock_handler(request: Request) -> Response:
+    async def mcp_legacy_server_mock_handler(request: Request) -> Response:
         if request.method == "DELETE":
             return Response(200)
 
@@ -8274,9 +8293,22 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
                 },
             )
 
+        if method == "tools/call":
+            return Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "content": [{"type": "text", "text": "Hello!"}],
+                        "isError": False,
+                    },
+                },
+            )
+
         raise AssertionError(f"Unexpected MCP method: {method}")
 
-    user_client = AsyncClient(transport=MockTransport(mcp_v2_server_mock_handler))
+    user_client = AsyncClient(transport=MockTransport(mcp_legacy_server_mock_handler))
 
     tool_a = MCPStreamableHTTPTool(
         name="a",
@@ -8290,8 +8322,13 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
         assert tool_a.session.protocol_version == "2025-11-25"
         assert [function.name for function in tool_a.functions] == ["greet"]
 
+        result = await tool_a.call_tool("greet")
+        assert isinstance(result, list)
+        assert [item.text for item in result if item.type == "text"] == ["Hello!"]
+
     assert "server/discover" in captured_methods
     assert "initialize" in captured_methods
+    assert "tools/list" in captured_methods
 
 
 async def test_agent_context_manager_authenticates_connect_with_closure_provider(
