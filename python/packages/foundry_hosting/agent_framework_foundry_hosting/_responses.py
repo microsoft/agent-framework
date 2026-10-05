@@ -153,6 +153,15 @@ class _ContainerFileCitation:
     filename: str
 
 
+def _has_container_filename_boundaries(text: str, start_index: int, end_index: int) -> bool:
+    """Return whether a filename match is not embedded in another filename-like token."""
+    before = text[start_index - 1] if start_index > 0 else None
+    after = text[end_index] if end_index < len(text) else None
+    return (before is None or not (before.isalnum() or before in "._-")) and (
+        after is None or not (after.isalnum() or after in "._-")
+    )
+
+
 def _container_file_citations_from_function_result(content: Content) -> list[_ContainerFileCitation]:
     """Extract validated container file citations from a core-preserved MCP Host payload."""
     raw_payload = content.additional_properties.get(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY)
@@ -1264,6 +1273,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # selecting the terminal event. Same ``client_cancelled`` gate as above.
                 return
 
+            tracker.discard_pending_container_file_citations()
             incomplete_reason = tracker.incomplete_reason
             if tracker.oauth_consent_requested or incomplete_reason is not None:
                 yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
@@ -2197,6 +2207,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield from tracker.close()
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
+            tracker.discard_pending_container_file_citations()
         message = str(ex) or type(ex).__name__
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
@@ -2699,8 +2710,11 @@ class _OutputItemTracker:
             logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
     def close(self) -> Generator[ResponseStreamEvent]:
-        """Close any remaining active builder."""
+        """Flush any remaining active builder without discarding recoverable state."""
         yield from self._close()
+
+    def discard_pending_container_file_citations(self) -> None:
+        """Discard unmatched citations immediately before a terminal response event."""
         self._pending_container_file_citations.clear()
         self._persist_pending_container_file_citations()
 
@@ -2872,11 +2886,35 @@ class _OutputItemTracker:
         self._accumulated.clear()
 
     def _container_file_annotations_for_text(self, text: str) -> list[ContainerFileCitationBody]:
-        annotations: list[ContainerFileCitationBody] = []
-        for filename, citation in list(self._pending_container_file_citations.items()):
-            start_index = text.find(filename)
-            if start_index < 0:
+        candidates: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        for filename, citation in self._pending_container_file_citations.items():
+            search_index = 0
+            while True:
+                start_index = text.find(filename, search_index)
+                if start_index < 0:
+                    break
+                end_index = start_index + len(filename)
+                if _has_container_filename_boundaries(text, start_index, end_index):
+                    candidates.append((start_index, end_index, filename, citation))
+                search_index = start_index + 1
+
+        candidates.sort(key=lambda match: (-(match[1] - match[0]), match[0], match[2]))
+        selected: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        selected_filenames: set[str] = set()
+        for candidate in candidates:
+            start_index, end_index, filename, _ = candidate
+            if filename in selected_filenames:
                 continue
+            if any(
+                start_index < selected_end and selected_start < end_index
+                for selected_start, selected_end, _, _ in selected
+            ):
+                continue
+            selected.append(candidate)
+            selected_filenames.add(filename)
+
+        annotations: list[ContainerFileCitationBody] = []
+        for start_index, end_index, filename, citation in sorted(selected, key=lambda match: match[0]):
             annotations.append(
                 ContainerFileCitationBody(
                     type="container_file_citation",
@@ -2884,7 +2922,7 @@ class _OutputItemTracker:
                     file_id=citation.file_id,
                     filename=citation.filename,
                     start_index=start_index,
-                    end_index=start_index + len(citation.filename),
+                    end_index=end_index,
                 )
             )
             del self._pending_container_file_citations[filename]

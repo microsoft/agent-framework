@@ -3762,6 +3762,96 @@ class TestNonStreaming:
             _expected_container_file_citation(container_id="cntr_new", file_id="cfile_new")
         ]
 
+    async def test_container_file_citations_require_complete_non_overlapping_filename_matches(self) -> None:
+        updates: list[AgentResponseUpdate] = []
+        for suffix, filename in [
+            ("a", "a"),
+            ("data", "data.csv"),
+            ("metadata", "metadata.csv"),
+            ("report", "report.txt"),
+            ("my_report", "my report.txt"),
+        ]:
+            updates.extend([
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call(f"call_{suffix}", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        _container_file_result(
+                            f"call_{suffix}",
+                            container_id=f"cntr_{suffix}",
+                            file_id=f"cfile_{suffix}",
+                            filename=filename,
+                        )
+                    ],
+                    role="tool",
+                ),
+            ])
+        for suffix, text in [
+            ("preparing", "Preparing the download."),
+            ("metadata", "Download metadata.csv"),
+            ("data", "Download data.csv"),
+            ("a", "Download a"),
+            ("my_report", "Download my report.txt"),
+            ("report", "Download report.txt"),
+        ]:
+            updates.append(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text)],
+                    role="assistant",
+                    message_id=f"msg_{suffix}",
+                )
+            )
+
+        agent = _make_agent(stream_updates=updates)
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        parts_by_text = {
+            part["text"]: part
+            for item in resp.json()["output"]
+            if item["type"] == "message"
+            for part in item["content"]
+            if part["type"] == "output_text"
+        }
+        assert parts_by_text["Preparing the download."]["annotations"] == []
+        assert parts_by_text["Download metadata.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_metadata",
+                file_id="cfile_metadata",
+                filename="metadata.csv",
+            )
+        ]
+        assert parts_by_text["Download data.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_data",
+                file_id="cfile_data",
+                filename="data.csv",
+            )
+        ]
+        assert parts_by_text["Download a"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_a",
+                file_id="cfile_a",
+                filename="a",
+            )
+        ]
+        assert parts_by_text["Download my report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_my_report",
+                file_id="cfile_my_report",
+                filename="my report.txt",
+            )
+        ]
+        assert parts_by_text["Download report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_report",
+                file_id="cfile_report",
+                filename="report.txt",
+            )
+        ]
+
     async def test_native_computer_call_and_result(self) -> None:
         item_id = IdGenerator.new_computer_call_item_id()
         actions: list[dict[str, Any]] = [
@@ -4412,6 +4502,8 @@ class TestStreaming:
         function_call = Content.from_function_call("call_1", "code_interpreter", arguments={})
         _ = [event async for event in tracker.handle(function_call)]
         _ = [event async for event in tracker.handle(_container_file_result("call_1"))]
+        _ = list(tracker.close())
+        _ = stream.checkpoint()
 
         recovered = _OutputItemTracker(stream)
         events = [
