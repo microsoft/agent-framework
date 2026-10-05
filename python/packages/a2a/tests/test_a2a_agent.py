@@ -374,6 +374,54 @@ def test_parse_messages_from_task_with_artifacts(a2a_agent: A2AAgent) -> None:
     assert all(msg.role == "assistant" for msg in result)
 
 
+def test_parse_messages_from_task_with_terminal_status_message(a2a_agent: A2AAgent) -> None:
+    """Test _parse_messages_from_task falls back to a terminal task status message."""
+    status_message = A2AMessage(
+        message_id="status-message",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Final response")],
+    )
+    task = Task(
+        id="test",
+        context_id="test",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_COMPLETED,
+            message=status_message,
+        ),
+    )
+
+    result = a2a_agent._parse_messages_from_task(task)
+
+    assert len(result) == 1
+    assert result[0].role == "assistant"
+    assert result[0].text == "Final response"
+    assert result[0].raw_representation == status_message
+
+
+def test_parse_messages_from_failed_task_with_status_message(a2a_agent: A2AAgent) -> None:
+    """Test _parse_messages_from_task preserves a failed task status message."""
+    status_message = A2AMessage(
+        message_id="failure-message",
+        role=A2ARole.ROLE_AGENT,
+        parts=[Part(text="Task failed")],
+    )
+    task = Task(
+        id="test",
+        context_id="test",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_FAILED,
+            message=status_message,
+        ),
+    )
+
+    result = a2a_agent._parse_messages_from_task(task)
+
+    assert len(result) == 1
+    assert result[0].role == "assistant"
+    assert result[0].text == "Task failed"
+    assert result[0].raw_representation == status_message
+
+
 def test_parse_message_from_artifact(a2a_agent: A2AAgent) -> None:
     """Test _parse_message_from_artifact conversion."""
     artifact = Artifact(artifact_id="test-artifact", parts=[Part(text="Artifact content")])

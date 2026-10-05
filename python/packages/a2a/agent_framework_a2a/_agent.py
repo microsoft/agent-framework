@@ -1191,6 +1191,18 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raw_representation=history_item,
                 )
             )
+        elif task.status.message and task.status.message.parts:
+            status_message = task.status.message
+            contents = self._parse_contents_from_a2a(status_message.parts)
+            status_metadata = MessageToDict(status_message.metadata) if status_message.metadata else None
+            messages.append(
+                Message(
+                    role="assistant" if status_message.role == A2ARole.ROLE_AGENT else "user",
+                    contents=contents,
+                    additional_properties=status_metadata,
+                    raw_representation=status_message,
+                )
+            )
 
         return messages
 
