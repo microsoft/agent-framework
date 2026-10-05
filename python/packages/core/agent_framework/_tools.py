@@ -45,6 +45,7 @@ from uuid import uuid4
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic_core import PydanticSerializationError
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -1257,7 +1258,11 @@ class FunctionTool(SerializationMixin):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
             # JSON mode, so enums, datetimes and UUIDs come out as Pydantic serializes them.
-            return value.model_dump(mode="json")
+            # Arbitrary types have no JSON serializer, so those models keep the python dump.
+            try:
+                return value.model_dump(mode="json")
+            except PydanticSerializationError:
+                return value.model_dump()
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
