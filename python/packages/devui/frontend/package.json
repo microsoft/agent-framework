@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:agent-details": "node --test test/agent-details.test.mjs",
     "test:tracing": "node --test test/trace-polling.test.mjs",
     "preview": "vite preview"
   },
