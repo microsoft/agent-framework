@@ -12,7 +12,7 @@
 
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Expose only explicitly uploaded session files, with request-owned Toolbox connections."""
+"""Expose only explicitly uploaded session files with request-owned SDK resources."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def read_file(filename: str) -> str:
 
 
 def create_agent() -> Agent:
-    """Create the client and MCP connection inside the current request context."""
+    """Create the client and Toolbox as request-owned resources."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
