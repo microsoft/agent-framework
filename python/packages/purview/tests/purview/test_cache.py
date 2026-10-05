@@ -149,6 +149,20 @@ class TestInMemoryCacheProvider:
 
         assert cache._current_size_bytes != initial_size
 
+    async def test_cache_update_larger_entry_at_capacity_maintains_size_accounting(self) -> None:
+        """Test growing an existing entry at capacity maintains correct size accounting."""
+        cache = InMemoryCacheProvider(max_size_bytes=200)
+
+        await cache.set("key1", "a" * 50, ttl_seconds=10)
+        await cache.set("key2", "b" * 50, ttl_seconds=20)
+        await cache.set("key3", "c" * 50, ttl_seconds=30)
+
+        await cache.set("key1", "d" * 100, ttl_seconds=40)
+
+        assert await cache.get("key1") == "d" * 100
+        assert cache._current_size_bytes == sum(entry[2] for entry in cache._cache.values())
+        assert cache._current_size_bytes <= cache._max_size_bytes
+
     async def test_eviction_with_stale_heap_entries(self) -> None:
         """Test that eviction correctly handles stale heap entries."""
         cache = InMemoryCacheProvider(max_size_bytes=500)
