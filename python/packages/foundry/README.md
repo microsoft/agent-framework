@@ -8,6 +8,18 @@ This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Tool ownership for preconfigured Foundry agents
+
+`FoundryAgent` connects to a PromptAgent or HostedAgent whose instructions, tool declarations, and tool-selection
+behavior are configured in Microsoft Foundry. The `tools=` argument supplies only the local Python implementations
+for function declarations already present on that remote agent; it does not replace or restrict the remote tool
+inventory.
+
+Per-run `tool_choice` and `parallel_tool_calls` values cannot be sent with an agent reference and are ignored with a
+warning. Configure tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary
+per request. `FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do
+not change tools that execute inside the remote Foundry agent.
+
 ## Tracing an existing Foundry agent
 
 Install Azure Monitor to connect client and service traces:
