@@ -2329,14 +2329,18 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
                 for key, value in content.additional_properties.items():
                     additional_properties.setdefault(key, value)
 
-            annotation_groups = [content.annotations for content in run if content.annotations is not None]
+            annotation_groups = [
+                first.annotations,
+                *(content.annotations for content in run[1:] if content.annotations is not None),
+            ]
+            annotation_groups = [annotations for annotations in annotation_groups if annotations is not None]
+
             if not annotation_groups:
                 first.annotations = None
             elif len(annotation_groups) == 1:
                 first.annotations = annotation_groups[0]
             else:
                 first.annotations = [annotation for annotations in annotation_groups for annotation in annotations]
-
             # deepcopy(run[0]) intentionally discards the first chunk's raw
             # representation, matching the existing coalescing behavior.
             raw_representations = [

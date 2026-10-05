@@ -2483,6 +2483,27 @@ def test_text_coalescing_does_not_use_repeated_content_add(monkeypatch: pytest.M
     assert add_calls == 0
 
 
+def test_text_coalescing_does_not_alias_first_chunk_annotations() -> None:
+    """Coalescing should preserve the deep-copied annotations from the first chunk."""
+    from agent_framework._types import _coalesce_text_content
+
+    annotation: Annotation = {
+        "type": "citation",
+        "url": "https://example.com",
+    }
+    first = Content.from_text("Hello", annotations=[annotation])
+    second = Content.from_text(" world")
+    contents = [first, second]
+
+    _coalesce_text_content(contents, "text")
+
+    assert len(contents) == 1
+    assert contents[0].text == "Hello world"
+    assert contents[0].annotations == first.annotations
+    assert contents[0].annotations is not first.annotations
+    assert contents[0].annotations[0] is not first.annotations[0]
+
+
 def test_text_reasoning_content_add_coverage():
     """Test TextReasoningContent __add__ method for better coverage."""
 
