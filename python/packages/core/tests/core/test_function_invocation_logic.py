@@ -5967,6 +5967,49 @@ async def test_approval_change_that_json_cannot_represent_fails_closed(
     assert received == []
 
 
+@pytest.mark.parametrize("short_circuit", [False, True], ids=["middleware_calls_next", "middleware_short_circuits"])
+async def test_approval_change_that_cannot_be_serialized_fails_closed(short_circuit: bool) -> None:
+    """A change that cannot be serialized at all fails closed like one JSON cannot carry exactly.
+
+    The replacement approval request needs JSON arguments. For bytes that are not UTF-8,
+    ``to_jsonable_python`` raises ``UnicodeDecodeError`` rather than ``PydanticSerializationError``;
+    that must end in the same ``MiddlewareFailure`` instead of escaping as a raw error.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[bytes] = []
+
+    def capture(value: bytes) -> str:
+        received.append(value)
+        return "ok"
+
+    class ChangeToInvalidUtf8Middleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            context.arguments["value"] = b"\xff\xfe"
+            if short_circuit:
+                context.result = "handled by middleware"
+                return
+            await call_next()
+
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareFailure, match="cannot represent exactly") as exc_info:
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": "hello"}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeToInvalidUtf8Middleware()),
+        )
+
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+    assert received == []
+
+
 @pytest.mark.parametrize(
     ("value", "other"),
     [

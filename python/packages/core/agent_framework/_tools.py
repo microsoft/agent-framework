@@ -48,7 +48,7 @@ from uuid import UUID, uuid4
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
-from pydantic_core import PydanticSerializationError, to_jsonable_python
+from pydantic_core import to_jsonable_python
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -2042,7 +2042,10 @@ def _replacement_arguments(tool: FunctionTool, arguments: Mapping[str, Any]) -> 
     )
     try:
         json_arguments = cast(dict[str, Any], to_jsonable_python(dict(arguments)))
-    except PydanticSerializationError as exc:
+    except Exception as exc:
+        # Not only PydanticSerializationError: bytes that are not UTF-8 raise UnicodeDecodeError, a
+        # circular value raises ValueError, and a value that runs code while it is serialized can
+        # raise anything. None of them can be represented, so all of them fail closed the same way.
         raise MiddlewareFailure(message) from exc
     try:
         repaired = tool._prepare_arguments(arguments)  # pyright: ignore[reportPrivateUsage]
