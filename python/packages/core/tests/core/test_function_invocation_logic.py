@@ -7250,8 +7250,11 @@ async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_resul
     resume_stream: bool,
 ) -> None:
     """A session-backed Host batch releases local siblings once, in model order."""
-    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
-    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework._tools import (
+        _DEFERRED_BUDGET_STATE_KEY,
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _PENDING_MIXED_PAUSE_BATCH_KEY,
+    )
 
     execution_order: list[str] = []
 
@@ -7266,11 +7269,7 @@ async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_resul
         return "second result"
 
     host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
-    agent = Agent(
-        client=chat_client_base,
-        tools=[host_func, first_func, second_func],
-        middleware=[ToolApprovalMiddleware()],
-    )
+    agent = Agent(client=chat_client_base, tools=[host_func, first_func, second_func])
     session = AgentSession()
     chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -7320,14 +7319,20 @@ async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_resul
     ]
     assert [request.id for request in host_requests] == ["host-occurrence-1", "host-occurrence-2"]
     assert execution_order == []
-    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    pending_batch = session.state["tool_approval"][_PENDING_MIXED_PAUSE_BATCH_KEY]
+    assert isinstance(pending_batch, dict)
+    budget_snapshot = pending_batch[_DEFERRED_BUDGET_STATE_KEY]
+    assert isinstance(budget_snapshot, dict)
+    assert "start_time" not in budget_snapshot
+    assert budget_snapshot["attempt_count"] == 1
 
     first_result = Content.from_function_result(call_id="shared-host", result="first host result")
     first_result.id = "host-occurrence-1"
     partial_response = await agent.run(first_result, session=session)
     assert partial_response.messages == []
     assert execution_order == []
-    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
     session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
     second_result = Content.from_function_result(call_id="shared-host", result="second host result")
@@ -7350,6 +7355,7 @@ async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_resul
     assert execution_order == ["first", "second"]
     assert continuation_result_orders[-1] == ["shared-host", "first", "shared-host", "second"]
     assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert _PENDING_MIXED_PAUSE_BATCH_KEY not in session.state["tool_approval"]
 
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(messages=Message(role="assistant", contents=["replayed"]))
@@ -7357,6 +7363,269 @@ async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_resul
     replayed_response = await agent.run(second_result, session=session)
     assert replayed_response.text == "replayed"
     assert execution_order == ["first", "second"]
+
+
+async def test_mixed_declaration_only_deferred_call_keeps_ordinary_middleware_semantics(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Deferred ordinary calls let middleware repair arguments without approval authority."""
+    observed_arguments: list[dict[str, Any]] = []
+    executed_arguments: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            context.arguments["count"] = int(context.arguments.pop("count_text"))
+            await call_next()
+
+    @tool(name="count_items")
+    def count_items(count: int) -> str:
+        executed_arguments.append(count)
+        return str(count)
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(
+        client=chat_client_base,
+        tools=[host_func, count_items],
+        middleware=[RepairArgumentsMiddleware()],
+    )
+    session = AgentSession()
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(
+                        call_id="count",
+                        name="count_items",
+                        arguments='{"count_text": "3"}',
+                    ),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("run both", session=session)
+    host_request = next(content for content in first_response.user_input_requests if content.name == "host_func")
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"]))
+    ]
+
+    final_response = await agent.run(host_result, session=session)
+
+    assert final_response.text == "done"
+    assert observed_arguments == [{"count_text": "3"}]
+    assert executed_arguments == [3]
+    assert not any(content.type == "function_approval_request" for content in final_response.user_input_requests)
+
+
+async def test_mixed_declaration_only_deferred_call_reclassifies_changed_approval_policy(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A same-name replacement that now requires approval does not inherit authority."""
+    old_calls = 0
+    new_calls = 0
+
+    @tool(name="local_func")
+    def old_local_func() -> str:
+        nonlocal old_calls
+        old_calls += 1
+        return "old"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    session = AgentSession()
+    original_agent = Agent(client=chat_client_base, tools=[host_func, old_local_func])
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="local", name="local_func", arguments={}),
+                ],
+            )
+        )
+    ]
+    first_response = await original_agent.run("run both", session=session)
+    host_request = next(content for content in first_response.user_input_requests if content.name == "host_func")
+
+    @tool(name="local_func", approval_mode="always_require")
+    def new_local_func() -> str:
+        nonlocal new_calls
+        new_calls += 1
+        return "new"
+
+    upgraded_agent = Agent(client=chat_client_base, tools=[host_func, new_local_func])
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = host_request.id
+    approval_response = await upgraded_agent.run(host_result, session=session)
+    approval_request = next(
+        content for content in approval_response.user_input_requests if content.type == "function_approval_request"
+    )
+
+    assert old_calls == 0
+    assert new_calls == 0
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"]))
+    ]
+    final_response = await upgraded_agent.run(
+        approval_request.to_function_approval_response(approved=True),
+        session=session,
+    )
+
+    assert final_response.text == "done"
+    assert old_calls == 0
+    assert new_calls == 1
+
+
+async def test_mixed_declaration_only_deferred_call_does_not_execute_removed_tool(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A deferred call whose tool disappeared becomes an ordinary unknown-call result."""
+    calls = 0
+
+    @tool(name="local_func")
+    def local_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "local"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    session = AgentSession()
+    original_agent = Agent(client=chat_client_base, tools=[host_func, local_func])
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="local", name="local_func", arguments={}),
+                ],
+            )
+        )
+    ]
+    first_response = await original_agent.run("run both", session=session)
+    host_request = next(content for content in first_response.user_input_requests if content.name == "host_func")
+
+    @tool(name="other_func")
+    def other_func() -> str:
+        return "other"
+
+    agent_without_tool = Agent(client=chat_client_base, tools=[host_func, other_func])
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_result.id = host_request.id
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"]))
+    ]
+    final_response = await agent_without_tool.run(host_result, session=session)
+
+    assert final_response.text == "done"
+    assert calls == 0
+    error_result = next(
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "local"
+    )
+    assert error_result.exception is not None
+
+
+@pytest.mark.parametrize("resume_stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_mixed_declaration_only_budget_is_process_portable_without_approval_middleware(
+    chat_client_base: SupportsChatGetResponse,
+    resume_stream: bool,
+) -> None:
+    """A serialized Host pause restores elapsed budget across monotonic-clock origins."""
+    from agent_framework._tools import (
+        _DEFERRED_BUDGET_STATE_KEY,
+        _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+        _PENDING_MIXED_PAUSE_BATCH_KEY,
+    )
+
+    calls = 0
+
+    @tool(name="local_func")
+    def local_func() -> str:
+        nonlocal calls
+        calls += 1
+        return "local"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(client=chat_client_base, tools=[host_func, local_func])
+    session = AgentSession()
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="local", name="local_func", arguments={}),
+                ],
+            )
+        )
+    ]
+    monotonic_time = [1000.0]
+    wall_time = [10000.0]
+
+    def fake_perf_counter() -> float:
+        return monotonic_time[0]
+
+    def fake_time() -> float:
+        return wall_time[0]
+
+    from unittest.mock import patch
+
+    with (
+        patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter),
+        patch("agent_framework._tools.time", side_effect=fake_time),
+    ):
+        first_response = await agent.run("run both", session=session)
+        host_request = next(content for content in first_response.user_input_requests if content.name == "host_func")
+        pending_batch = session.state["tool_approval"][_PENDING_MIXED_PAUSE_BATCH_KEY]
+        assert isinstance(pending_batch, dict)
+        budget_snapshot = pending_batch[_DEFERRED_BUDGET_STATE_KEY]
+        assert isinstance(budget_snapshot, dict)
+        assert "start_time" not in budget_snapshot
+        assert budget_snapshot["attempt_count"] == 1
+        assert _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY in budget_snapshot
+
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        monotonic_time[0] = 50.0
+        wall_time[0] = 10006.0
+        host_result = Content.from_function_result(call_id="host", result="host result")
+        host_result.id = host_request.id
+        if resume_stream:
+            chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")]
+            ]
+            stream = agent.run(host_result, session=session, stream=True)
+            streamed_results: list[Content] = []
+            async for update in stream:
+                streamed_results.extend(content for content in update.contents if content.type == "function_result")
+            final_response = await stream.get_final_response()
+            limit_result = next(content for content in streamed_results if content.call_id == "local")
+        else:
+            final_response = await agent.run(host_result, session=session)
+            limit_result = next(
+                content
+                for message in final_response.messages
+                for content in message.contents
+                if content.type == "function_result" and content.call_id == "local"
+            )
+
+    assert calls == 0
+    assert limit_result.exception == "FunctionInvocationLimit"
+    assert _PENDING_MIXED_PAUSE_BATCH_KEY not in session.state["tool_approval"]
 
 
 async def test_sessionless_mixed_declaration_only_batch_executes_siblings_sequentially(
