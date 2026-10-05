@@ -1900,6 +1900,7 @@ class MCPTool:
                         tools=types.SamplingToolsCapability(),
                     )
                 mcp_client = await self._exit_stack.enter_async_context(
+                    # default "mode" is `auto` which automatically negotiates with the right protocol version
                     Client(
                         server=self.get_mcp_client(),
                         read_timeout_seconds=(
