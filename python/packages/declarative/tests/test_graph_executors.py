@@ -81,6 +81,71 @@ trigger:
         forbidden.assert_not_called()
 
 
+class TestFactoryTemplateInterpolation:
+    """Authored template tokens resolve once without rewriting substituted data."""
+
+    @pytest.mark.parametrize("mapping_activity", [False, True])
+    @pytest.mark.parametrize(
+        "local, template, expected",
+        [
+            ({"a": "{Local.b}", "b": "B"}, "{Local.a}|{Local.b}", "{Local.b}|B"),
+            ({"a": "prefix {Local.a}"}, "{Local.a}|{Local.a}", "prefix {Local.a}|prefix {Local.a}"),
+            (
+                {"a": "{Local.b}/{Local.b}", "b": "B"},
+                "{Local.a}|{Local.b}|{Local.b}",
+                "{Local.b}/{Local.b}|B|B",
+            ),
+            ({"a": "{Local.missing}"}, "{Local.a}|{Local.missing}", "{Local.missing}|"),
+            ({"a": ["{Local.b}"], "b": "B"}, "{Local.a}|{Local.b}", "['{Local.b}']|B"),
+            ({"a": {"text": "{Local.b}"}, "b": "B"}, "{Local.a}|{Local.b}", "{'text': '{Local.b}'}|B"),
+            ({"a": "safe"}, "{Local.a}|{Local.a}", "safe|safe"),
+            ({"a": "{Local.b}", "b": "B"}, "{Local.b}|{Local.a}", "B|{Local.b}"),
+            ({"a": "{Local.b}", "b": "B"}, "{Local.a}", "{Local.b}"),
+            ({}, "{Local.missing}|done", "|done"),
+            ({"a": None, "b": "B"}, "{Local.a}|{Local.b}", "|B"),
+            ({"a": False}, "{Local.a}|{Local.a}", "False|False"),
+            ({"a": 0}, "{Local.a}|{Local.a}", "0|0"),
+            ({"a": "文本"}, "{Local.a}|{Ctrl+C}|{foo-bar}", "文本|{Ctrl+C}|{foo-bar}"),
+            ({"a": r"\1\g<1>"}, "{Local.a}|{Local.a}", r"\1\g<1>|\1\g<1>"),
+            ({"a": "文本"}, "{{Local.a}}|{}|{Local. a}", "{文本}|{}|{Local. a}"),
+        ],
+        ids=[
+            "later-token",
+            "self-token",
+            "multiple-tokens",
+            "missing-later-token",
+            "list-value",
+            "dict-value",
+            "ordinary-repeat",
+            "reverse-order",
+            "single-token",
+            "missing-token",
+            "none-value",
+            "false-value",
+            "zero-value",
+            "unicode-and-literals",
+            "backslashes",
+            "brace-boundaries",
+        ],
+    )
+    async def test_factory_interpolates_only_authored_tokens(
+        self, mapping_activity: bool, local: dict[str, Any], template: str, expected: str
+    ) -> None:
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "kind": "Workflow",
+            "actions": [
+                *[{"kind": "SetVariable", "variable": f"Local.{key}", "value": value} for key, value in local.items()],
+                {"kind": "SendActivity", "activity": {"text": template} if mapping_activity else template},
+            ],
+        })
+
+        result = await workflow.run({})
+        assert result.get_outputs() == [expected]
+
+        streamed_result = await workflow.run({}, stream=True).get_final_response()
+        assert streamed_result.get_outputs() == [expected]
+
+
 class TestDeclarativeWorkflowState:
     """Tests for DeclarativeWorkflowState."""
 
