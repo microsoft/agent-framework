@@ -1917,7 +1917,14 @@ class MCPTool:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
                     raise
-                session_error_msg = f"Failed to create MCP session: {_describe_with_cleanup(ex, cleanup_error)}"
+                described = _describe_with_cleanup(ex, cleanup_error)
+                command = getattr(self, "command", None)
+                if command:
+                    args_str = " ".join(getattr(self, "args", []))
+                    full_command = f"{command} {args_str}".strip()
+                    session_error_msg = f"Failed to create MCP session for server '{full_command}': {described}"
+                else:
+                    session_error_msg = f"Failed to create MCP session: {described}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
