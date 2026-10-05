@@ -1,12 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Tests for Purview chat middleware."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import ChatContext, ChatResponse, Message, MiddlewareTermination
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ChatContext,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    InMemoryHistoryProvider,
+    Message,
+    MiddlewareTermination,
+    ResponseStream,
+)
 from azure.core.credentials import AccessToken
 
 from agent_framework_purview import PurviewChatPolicyMiddleware, PurviewSettings
@@ -100,7 +112,10 @@ class TestPurviewChatPolicyMiddleware:
             assert first_msg.role in ("system", "system")
             assert "blocked" in first_msg.text.lower()
 
-    async def test_streaming_skips_post_check(self, middleware: PurviewChatPolicyMiddleware) -> None:
+    async def test_streaming_response_is_evaluated_and_blocked(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
+        """Streamed content is evaluated in full and replaced when policy blocks it."""
         client = DummyChatClient()
         chat_options = MagicMock()
         chat_options.model = "test-model"
@@ -110,13 +125,181 @@ class TestPurviewChatPolicyMiddleware:
             options=chat_options,
             stream=True,
         )
-        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
+
+        async def updates() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="confidential")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ) as mock_proc:
 
             async def mock_next() -> None:
-                streaming_context.result = MagicMock()
+                streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=ChatResponse.from_updates))
 
-            await middleware.process(streaming_context, mock_next)
-            assert mock_proc.call_count == 1
+            await run_chat_middleware(middleware, streaming_context, mock_next)
+            released = [update async for update in cast(Any, streaming_context.result)]
+
+        assert mock_proc.call_count == 2
+        assert mock_proc.call_args_list[1][0][1] == Activity.DOWNLOAD_TEXT
+        released_text = "".join(update.text for update in released)
+        assert "confidential" not in released_text
+        assert "blocked" in released_text.lower()
+
+    async def test_streaming_response_passes_when_allowed(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
+        """Allowed streamed content is released unchanged, reusing the prompt-phase identity."""
+        client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        streaming_context = ChatContext(
+            client=cast(Any, client),
+            messages=[Message(role="user", contents=["Hello"])],
+            options=chat_options,
+            stream=True,
+        )
+
+        async def updates() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="all ")])
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="clear")])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ) as mock_proc:
+
+            async def mock_next() -> None:
+                streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=ChatResponse.from_updates))
+
+            await run_chat_middleware(middleware, streaming_context, mock_next)
+            released = [update async for update in cast(Any, streaming_context.result)]
+
+        assert mock_proc.call_count == 2
+        assert mock_proc.call_args_list[1].kwargs["user_id"] == "user-123"
+        assert "".join(update.text for update in released) == "all clear"
+
+    async def test_streaming_releases_the_evaluated_content_not_the_buffered_updates(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
+        """The released updates come from the response that was evaluated, not from the buffer."""
+        client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        streaming_context = ChatContext(
+            client=cast(Any, client),
+            messages=[Message(role="user", contents=["Hello"])],
+            options=chat_options,
+            stream=True,
+        )
+
+        async def updates() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="confidential")])
+
+        def diverging_finalizer(_updates: Any) -> ChatResponse[Any]:
+            return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text(text="benign")])])
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=diverging_finalizer))
+
+            await run_chat_middleware(middleware, streaming_context, mock_next)
+            released = [update async for update in cast(Any, streaming_context.result)]
+
+        released_text = "".join(update.text for update in released)
+        assert released_text == "benign"
+        assert "confidential" not in released_text
+
+    async def test_streaming_preserves_response_level_metadata(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
+        """Metadata carried by the response survives the buffered stream."""
+        client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        streaming_context = ChatContext(
+            client=cast(Any, client),
+            messages=[Message(role="user", contents=["Hello"])],
+            options=chat_options,
+            stream=True,
+        )
+
+        async def updates() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="all clear")])
+
+        def finalizer(_updates: Any) -> ChatResponse[Any]:
+            return ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text(text="all clear")])],
+                response_id="resp-1",
+                conversation_id="conv-1",
+                model="model-1",
+                continuation_token=cast(Any, {"token": "token-1"}),
+                additional_properties={"custom": "value"},
+            )
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                streaming_context.result = cast(Any, ResponseStream(updates(), finalizer=finalizer))
+
+            await run_chat_middleware(middleware, streaming_context, mock_next)
+            released = [update async for update in cast(Any, streaming_context.result)]
+
+        assert released[-1].response_id == "resp-1"
+        assert released[-1].conversation_id == "conv-1"
+        assert released[-1].model == "model-1"
+        assert released[-1].continuation_token == {"token": "token-1"}
+        assert released[-1].additional_properties is not None
+        assert released[-1].additional_properties["custom"] == "value"
+
+    async def test_streaming_closes_the_inner_stream_when_never_pulled(
+        self, middleware: PurviewChatPolicyMiddleware, run_chat_middleware: Any
+    ) -> None:
+        """Abandoning the gated stream before the first pull still releases the inner stream."""
+        client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        streaming_context = ChatContext(
+            client=cast(Any, client),
+            messages=[Message(role="user", contents=["Hello"])],
+            options=chat_options,
+            stream=True,
+        )
+        closed = False
+
+        async def updates() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text="all clear")])
+
+        def _mark_closed() -> None:
+            nonlocal closed
+            closed = True
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+
+            async def mock_next() -> None:
+                inner = ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+                inner.with_cleanup_hook(_mark_closed)
+                streaming_context.result = cast(Any, inner)
+
+            await run_chat_middleware(middleware, streaming_context, mock_next)
+            await cast(Any, streaming_context.result).close()
+
+        assert closed is True
 
     async def test_chat_middleware_handles_post_check_exception(
         self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
@@ -263,19 +446,32 @@ class TestPurviewChatPolicyMiddleware:
             # Next should have been called
             assert context.result is not None
 
-    async def test_chat_middleware_handles_result_without_messages_attribute(
+    async def test_chat_middleware_result_without_messages_attribute_is_not_silently_allowed(
         self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
     ) -> None:
-        """Test middleware handles result that doesn't have messages attribute."""
+        """A result shape that cannot be evaluated surfaces an error rather than passing unchecked."""
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
             async def mock_next() -> None:
                 # Set result to something without messages attribute
                 chat_context.result = cast(Any, "Some string result")
 
+            with pytest.raises(AttributeError):
+                await middleware.process(chat_context, mock_next)
+
+    async def test_chat_middleware_result_without_messages_attribute_tolerated_when_ignoring_exceptions(
+        self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
+    ) -> None:
+        """With ignore_exceptions enabled, an unevaluatable result is logged and left unchanged."""
+        middleware._settings["ignore_exceptions"] = True
+
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
+
+            async def mock_next() -> None:
+                chat_context.result = cast(Any, "Some string result")
+
             await middleware.process(chat_context, mock_next)
 
-            # Should not crash, result should be unchanged
             assert chat_context.result == "Some string result"
 
     async def test_chat_middleware_with_ignore_exceptions(self, mock_credential: AsyncMock) -> None:
@@ -423,3 +619,180 @@ class TestPurviewChatPolicyMiddleware:
             # Check post-check call includes session_id
             post_check_call = mock_proc.call_args_list[1]
             assert post_check_call[1]["session_id"] == "conv-999"
+
+
+class TestPurviewChatPolicyMiddlewareDurableHistory:
+    """How this middleware's response check relates to what is written to history.
+
+    An agent run that stores history once per run does so above this middleware, so the
+    evaluated response is what gets stored. Per-service-call history writes happen below
+    it, as each model call returns, so those are not covered.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewChatPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @staticmethod
+    def _build(middleware: PurviewChatPolicyMiddleware, client_factory: Any, per_service_call: bool) -> Any:
+        client = client_factory()
+        client.chat_middleware = [middleware]
+        provider = InMemoryHistoryProvider()
+        agent = Agent(
+            client=client,
+            context_providers=[provider],
+            require_per_service_call_history_persistence=per_service_call,
+        )
+        return agent, provider
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_blocked_response_is_replaced_before_the_turn_is_stored(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """With once-per-run history, the replacement is what becomes durable."""
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call=False)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert "Response blocked by policy" in text
+        assert stored_texts(session, provider) == ["hello there", "Response blocked by policy"]
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    async def test_blocked_response_stays_in_history_when_written_per_service_call(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+    ) -> None:
+        """Per-service-call writes happen below this middleware, so they keep the original.
+
+        Pinned so the documented behaviour cannot drift unnoticed: per-service-call history
+        persistence is not recommended alongside this middleware.
+        """
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call=True)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (True, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert "Response blocked by policy" in text
+        assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("per_service_call", [False, True], ids=["per_run", "per_service_call"])
+    async def test_allowed_response_still_becomes_history(
+        self,
+        middleware: PurviewChatPolicyMiddleware,
+        stub_chat_client: Any,
+        stored_texts: Any,
+        run_agent: Any,
+        stream: bool,
+        per_service_call: bool,
+    ) -> None:
+        """Evaluating the response must not disturb an allowed call's history write."""
+        agent, provider = self._build(middleware, stub_chat_client, per_service_call)
+        session = AgentSession()
+
+        with patch.object(
+            middleware._processor,
+            "process_messages",
+            side_effect=[(False, "user-123"), (False, "user-123")],
+        ):
+            text = await run_agent(agent, "hello there", session, stream=stream)
+
+        assert text == "model reply"
+        assert stored_texts(session, provider) == ["hello there", "model reply"]
+
+
+class TestPurviewChatPolicyMiddlewareBlockedResponseEnvelope:
+    """What a blocked response keeps from the response it replaced.
+
+    Blocking removes the content, not the call. The caller still needs to be able to
+    identify the call and resume it, so the control fields are carried over and only the
+    messages are replaced.
+    """
+
+    @pytest.fixture
+    def middleware(self) -> PurviewChatPolicyMiddleware:
+        credential = AsyncMock()
+        credential.get_token = AsyncMock(return_value=AccessToken("fake-token", 9999999999))
+        return PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="Test App", tenant_id="test-tenant"))
+
+    @pytest.fixture
+    def evaluated(self) -> ChatResponse[Any]:
+        return ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text(text="confidential")])],
+            response_id="resp-1",
+            conversation_id="conv-1",
+            model="model-1",
+            created_at="2024-01-01T00:00:00Z",
+            finish_reason="stop",
+            continuation_token=cast(Any, {"token": "resume-me"}),
+            additional_properties={"custom": "value"},
+            raw_representation={"provider_payload": "confidential"},
+        )
+
+    def test_control_fields_are_carried_over(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.response_id == "resp-1"
+        assert blocked.conversation_id == "conv-1"
+        assert blocked.model == "model-1"
+        assert blocked.created_at == evaluated.created_at
+        assert blocked.finish_reason == "stop"
+        assert blocked.continuation_token == {"token": "resume-me"}
+        assert blocked.additional_properties["custom"] == "value"
+
+    def test_only_the_messages_are_replaced(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+
+        assert len(blocked.messages) == 1
+        assert blocked.messages[0].role == "system"
+        assert "confidential" not in blocked.text
+
+    def test_the_provider_payload_is_not_carried_over(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        """It holds the content that was blocked, so carrying it would hand that content back."""
+        blocked = middleware._blocked_response(evaluated)
+
+        assert blocked.raw_representation is None
+
+    def test_properties_are_copied_rather_than_shared(
+        self, middleware: PurviewChatPolicyMiddleware, evaluated: ChatResponse[Any]
+    ) -> None:
+        blocked = middleware._blocked_response(evaluated)
+        blocked.additional_properties["custom"] = "tampered"
+
+        assert evaluated.additional_properties["custom"] == "value"
+
+    def test_a_blocked_prompt_has_no_response_to_carry_from(self, middleware: PurviewChatPolicyMiddleware) -> None:
+        """Nothing was produced, so there is no envelope to preserve."""
+        blocked = middleware._blocked_response()
+
+        assert blocked.response_id is None
+        assert blocked.continuation_token is None
+        assert blocked.messages[0].role == "system"

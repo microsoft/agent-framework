@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from redis.asyncio import Redis
 
 from agent_framework_redis._context_provider import RedisContextProvider
 from agent_framework_redis._feature_usage import FeatureIndex
@@ -64,6 +66,7 @@ def mock_redis_client():
     client.llen = AsyncMock(return_value=0)
     client.ltrim = AsyncMock()
     client.delete = AsyncMock()
+    client.aclose = AsyncMock()
 
     mock_pipeline = AsyncMock()
     mock_pipeline.rpush = AsyncMock()
@@ -383,7 +386,7 @@ class TestRedisHistoryProviderInit:
         assert provider.store_inputs is False
 
     def test_no_redis_url_or_credential_raises(self):
-        with pytest.raises(ValueError, match="Either redis_url or credential_provider must be provided"):
+        with pytest.raises(ValueError, match="Either redis_client, redis_url, or credential_provider"):
             RedisHistoryProvider("mem")
 
     def test_both_url_and_credential_raises(self):
@@ -395,6 +398,46 @@ class TestRedisHistoryProviderInit:
                 credential_provider=mock_cred,
                 host="myhost",
             )
+
+    def test_borrowed_client_is_used_directly(self):
+        borrowed = Redis(decode_responses=True)
+
+        provider = RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
+
+        assert provider._redis_client is borrowed
+        assert provider._owns_client is False
+
+    @pytest.mark.parametrize(
+        "connection_kwargs",
+        [
+            {"redis_url": "redis://localhost:6379"},
+            {"credential_provider": MagicMock(), "host": "myhost"},
+        ],
+    )
+    def test_borrowed_client_rejects_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+        borrowed = Redis(decode_responses=True)
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            RedisHistoryProvider(
+                "mem",
+                redis_client=borrowed,
+                application_id="test-app",
+                **connection_kwargs,
+            )
+
+    def test_borrowed_client_must_be_async_redis(self):
+        with pytest.raises(TypeError, match=r"redis\.asyncio\.Redis"):
+            RedisHistoryProvider(
+                "mem",
+                redis_client=cast(Any, MagicMock()),
+                application_id="test-app",
+            )
+
+    def test_borrowed_client_requires_decoded_responses(self):
+        borrowed = Redis(decode_responses=False)
+
+        with pytest.raises(ValueError, match="decode_responses=True"):
+            RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
 
     def test_credential_provider_without_host_raises(self):
         mock_cred = MagicMock()
@@ -422,6 +465,29 @@ class TestRedisHistoryProviderInit:
             decode_responses=True,
         )
         assert provider.redis_url is None
+
+
+class TestRedisHistoryProviderClose:
+    async def test_owned_client_is_closed(self, mock_redis_client: MagicMock):
+        with patch(
+            "agent_framework_redis._history_provider.redis.from_url",
+            return_value=mock_redis_client,
+        ):
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        await provider.aclose()
+
+        mock_redis_client.aclose.assert_awaited_once()
+
+    async def test_borrowed_client_is_not_closed(self):
+        borrowed = Redis(decode_responses=True)
+        with patch.object(borrowed, "aclose", new_callable=AsyncMock) as close:
+            provider = RedisHistoryProvider("mem", redis_client=borrowed, application_id="test-app")
+
+            await provider.aclose()
+
+            close.assert_not_awaited()
+        await borrowed.aclose()
 
 
 class TestRedisHistoryProviderRedisKey:
@@ -628,7 +694,13 @@ class TestRedisResultHelper:
         async def _coro() -> int:
             return 7
 
-        assert await _redis_result(_coro()) == 7
+        # Annotated as the union redis-py actually declares (``int | Awaitable[int]``),
+        # which is the shape ``_redis_result`` exists to normalise. Handing it a bare
+        # coroutine is outside that contract: the single union parameter solves ``_T``
+        # from the non-awaitable arm alone, so mypy rejects the awaitable, exactly as
+        # the helper's own docstring says it only covers ``Awaitable[T] | T``.
+        pending: int | Awaitable[int] = _coro()
+        assert await _redis_result(pending) == 7
 
     async def test_passes_through_a_plain_result(self):
         assert await _redis_result(7) == 7

@@ -5,10 +5,10 @@
 # /python and /dotnet; each language-specific rule replaces it for that tree.
 
 # Default owners for paths outside Python and .NET
-*        @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @TaoChenOSU @giles17 @baywet @peibekwe
+*        @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17 @baywet @peibekwe
 
 # Python owners
-/python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @TaoChenOSU @giles17
+/python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @sophia-ramsey @TaoChenOSU @giles17
 
 # .NET owners
 /dotnet/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @baywet @peibekwe

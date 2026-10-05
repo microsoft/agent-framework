@@ -656,6 +656,32 @@ async def test_cmc_with_invalid_data_content_media_type(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_with_image_and_non_image_data_content(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    mock_chat.return_value = mock_chat_completion_response
+    # An image must not let other data content (here a PDF) be sent to Ollama as an image
+    chat_history.append(
+        Message(
+            contents=[
+                Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png"),
+                Content.from_uri(uri="data:application/pdf;base64,abc", media_type="application/pdf"),
+            ],
+            role="user",
+        )
+    )
+
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ChatClientInvalidRequestException):
+        await ollama_client.get_response(messages=chat_history)
+    mock_chat.assert_not_called()
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_invalid_content_type(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],

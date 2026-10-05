@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "azure-ai-projects>=2.2.0,<2.8.0",
+#     "azure-identity",
+#     "python-dotenv",
+# ]
+# ///
+
 # Copyright (c) Microsoft. All rights reserved.
 
 """Provision the Microsoft Foundry Memory Store used by this sample.
@@ -19,7 +28,7 @@ Required env vars (also read from a local ``.env`` file if present):
     AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME      Embedding model deployment used by the memory store
     MEMORY_STORE_NAME                             Name of the memory store to create
 
-Your identity needs ``Azure AI User`` on the Foundry project scope.
+Your identity needs ``Foundry User`` (formerly ``Azure AI User``) on the project scope.
 """
 
 import asyncio
@@ -31,7 +40,7 @@ from azure.ai.projects.models import (
     MemoryStoreDefaultOptions,
 )
 from azure.core.exceptions import ResourceNotFoundError
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,7 +53,7 @@ async def main() -> None:
     embedding_model = os.environ["AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME"]
 
     async with (
-        DefaultAzureCredential() as credential,
+        AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential, allow_preview=True) as project,
     ):
         try:
