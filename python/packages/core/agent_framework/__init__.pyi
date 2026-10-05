@@ -90,6 +90,7 @@ from ._harness._file_access import (
 )
 from ._harness._file_memory import DEFAULT_FILE_MEMORY_INSTRUCTIONS, DEFAULT_FILE_MEMORY_SOURCE_ID, FileMemoryProvider
 from ._harness._loop import (
+    AgentBudget,
     AgentLoopMiddleware,
     JudgeVerdict,
     background_tasks_running,
@@ -106,6 +107,16 @@ from ._harness._memory import (
     MemoryTopicRecord,
 )
 from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent_mode, set_agent_mode
+from ._harness._signals import (
+    LOOP_EXIT_REASON_KEY,
+    LOOP_NEED_INPUT_KEY,
+    NEED_INPUT_TOKEN,
+    TASK_COMPLETE_TOKEN,
+    LoopExitReason,
+    SignalParser,
+    get_loop_exit_reason,
+    signal_should_continue,
+)
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
@@ -379,14 +390,19 @@ __all__ = [
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
     "INTERNAL_SOURCE_ID",
+    "LOOP_EXIT_REASON_KEY",
+    "LOOP_NEED_INPUT_KEY",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
+    "NEED_INPUT_TOKEN",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
+    "TASK_COMPLETE_TOKEN",
     "USER_AGENT_KEY",
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
+    "AgentBudget",
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
@@ -509,6 +525,7 @@ __all__ = [
     "InlineSkillScript",
     "JudgeVerdict",
     "LocalEvaluator",
+    "LoopExitReason",
     "MCPSkill",
     "MCPSkillResource",
     "MCPSkillsSource",
@@ -551,6 +568,7 @@ __all__ = [
     "ServiceSessionId",
     "SessionContext",
     "SessionStore",
+    "SignalParser",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
@@ -651,6 +669,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_agent_mode",
+    "get_loop_exit_reason",
     "get_run_context",
     "handler",
     "included_messages",
@@ -670,6 +689,7 @@ __all__ = [
     "resolve_agent_id",
     "response_handler",
     "set_agent_mode",
+    "signal_should_continue",
     "step",
     "todos_remaining",
     "todos_remaining_message",

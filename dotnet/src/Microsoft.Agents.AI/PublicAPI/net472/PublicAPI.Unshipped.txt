@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.DelegatingAgentSessionStore(Microsoft.Agents.AI.AgentSessionStore! innerStore) -> void
 [MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.InnerStore.get -> Microsoft.Agents.AI.AgentSessionStore!
@@ -24,3 +24,21 @@ Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 [MAAI001]Microsoft.Agents.AI.FunctionInvocationContextExtensions
 [MAAI001]static Microsoft.Agents.AI.FunctionInvocationContextExtensions.WrapWithPendingMiddleware(this Microsoft.Extensions.AI.FunctionInvocationContext! context, Microsoft.Extensions.AI.AIFunction! function) -> Microsoft.Extensions.AI.AIFunction!
+[MAAI001]Microsoft.Agents.AI.LoopExitReason
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.AdditionalPropertiesKey = "loop_exit_reason" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.Cancelled = "cancelled" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.TokenBudgetExceeded = "token_budget_exceeded" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.TimeBudgetExceeded = "time_budget_exceeded" -> string!
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxTokens.get -> long?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxTokens.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxDuration.get -> System.TimeSpan?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxDuration.set -> void
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.Completed = "completed" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.IterationCapReached = "iteration_cap_reached" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopExitReason.NeedInput = "need_input" -> string!
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>.AsyncRequestBroker(int settledQueueSize = 256) -> void
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>.PendingCount.get -> int
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>.Reject(string! requestId, System.Exception! exception) -> bool
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>.RequestAsync(string! requestId, System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResult>!
+[MAAI001]Microsoft.Agents.AI.AsyncRequestBroker<TResult>.Resolve(string! requestId, TResult result) -> bool
