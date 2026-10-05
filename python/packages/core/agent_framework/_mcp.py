@@ -2060,8 +2060,9 @@ class MCPTool:
             self._owns_session = True
         else:
             try:
-                if self.session._request_id == 0:  # type: ignore[attr-defined]
-                    # If the session is not initialized, we need to reinitialize it
+                if self.session.protocol_version is None:
+                    # Preserve old compatibility behavior for an
+                    # unnegotiated caller-supplied session: initialize it as legacy.
                     with create_mcp_client_span(
                         "initialize",
                         attributes=self._mcp_base_span_attributes(),
@@ -2073,9 +2074,9 @@ class MCPTool:
                             set_mcp_span_error(init_span, type(init_ex).__name__, str(init_ex))
                             raise
                         init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocol_version)
-                        self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
-                elif self._server_capabilities is None:
-                    self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
+
+                self._set_server_capabilities(self.session.server_capabilities)
+                self._ping_available = self.session.initialize_result is not None
             except (Exception, asyncio.CancelledError):
                 await self._close_on_owner()
                 raise
