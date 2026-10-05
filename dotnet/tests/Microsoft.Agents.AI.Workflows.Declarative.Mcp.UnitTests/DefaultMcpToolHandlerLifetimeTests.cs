@@ -235,6 +235,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_DisposalDuringActiveInvocation_ReportsCleanupCancellationAsync()
+    {
+        // Arrange
+        OperationCanceledException cleanupException = new("session cleanup cancelled");
+        ProtocolStub stub = new();
+        using SemaphoreSlim invocationStarted = new(0);
+        using SemaphoreSlim releaseInvocation = new(0);
+        stub.BeforeOperationAsync = async token =>
+        {
+            invocationStarted.Release();
+            await releaseInvocation.WaitAsync(token);
+        };
+        DefaultMcpToolHandler handler = new(
+            null,
+            stub.CreateMessageHandler,
+            clientConnectionDisposer: async connection =>
+            {
+                await connection.DisposeAsync();
+                throw cleanupException;
+            });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> invocation =
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await invocationStarted.WaitAsync(timeout.Token);
+        Task disposal = handler.DisposeAsync().AsTask();
+        releaseInvocation.Release();
+
+        // Assert
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => invocation));
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal));
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
     public async Task NoProvider_ConcurrentWorkflowSessionCreations_AreBoundedByCacheSizeAsync()
     {
         // Arrange
@@ -297,6 +333,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Single(stub.Handlers);
         stub.Handlers[0].Protected().Verify(
             "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
+    public async Task NoProvider_DisposalDuringSuccessfulCreation_ReportsOrphanCleanupCancellationAsync()
+    {
+        // Arrange
+        OperationCanceledException cleanupException = new("session cleanup cancelled");
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationStarted = new(0);
+        using SemaphoreSlim releaseInitialization = new(0);
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationStarted.Release();
+            await releaseInitialization.WaitAsync(token);
+        };
+        DefaultMcpToolHandler handler = new(
+            null,
+            stub.CreateMessageHandler,
+            clientConnectionDisposer: async connection =>
+            {
+                await connection.DisposeAsync();
+                throw cleanupException;
+            });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> invocation =
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task disposal = handler.DisposeAsync().AsTask();
+        releaseInitialization.Release();
+
+        // Assert
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => invocation));
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal));
+        Assert.Equal(1, stub.Terminations);
     }
 
     [Fact]

@@ -50,6 +50,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
+    private readonly Func<ClientConnection, ValueTask> _clientConnectionDisposer;
     private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), CachedClient> _clients = [];
     private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), TaskCompletionSource<CachedClient>> _clientCreations = [];
     private readonly HashSet<TaskCompletionSource<bool>> _clientCreationLifetimes = [];
@@ -94,7 +95,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     internal DefaultMcpToolHandler(
         Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider,
         Func<HttpMessageHandler> httpMessageHandlerFactory,
-        int clientCacheMaxSize = DefaultClientCacheMaxSize)
+        int clientCacheMaxSize = DefaultClientCacheMaxSize,
+        Func<ClientConnection, ValueTask>? clientConnectionDisposer = null)
     {
         if (clientCacheMaxSize <= 0)
         {
@@ -103,6 +105,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
         this._httpClientProvider = httpClientProvider;
         this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
+        this._clientConnectionDisposer = clientConnectionDisposer ?? (connection => connection.DisposeAsync());
         this._clientCacheMaxSize = clientCacheMaxSize;
         this._clientCreationSemaphore = new(clientCacheMaxSize, clientCacheMaxSize);
     }
@@ -283,9 +286,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             await providerInvocations.ConfigureAwait(false);
         }
 
-        foreach (Task<bool> clientCreationLifetime in clientCreationLifetimes)
+        Exception? clientCreationException = null;
+        try
         {
-            await clientCreationLifetime.ConfigureAwait(false);
+            await Task.WhenAll(clientCreationLifetimes).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatalException(exception))
+        {
+            clientCreationException = exception;
         }
 
         List<CachedClient> cachedClients;
@@ -313,16 +321,31 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             this._clientLock.Release();
         }
 
+        Exception? clientCleanupException = null;
         try
         {
             await DrainCleanupAsync(
                 clientsToDispose.Select(client => this.DisposeCachedClientAsync(client)),
                 cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
         }
+        catch (Exception exception) when (!IsFatalException(exception))
+        {
+            clientCleanupException = exception;
+        }
         finally
         {
             this._clientLock.Dispose();
             this._clientCreationSemaphore.Dispose();
+        }
+
+        if (clientCreationException is not null)
+        {
+            ExceptionDispatchInfo.Capture(clientCreationException).Throw();
+        }
+
+        if (clientCleanupException is not null)
+        {
+            ExceptionDispatchInfo.Capture(clientCleanupException).Throw();
         }
     }
 
@@ -465,6 +488,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
 
         ObjectDisposedException? disposedException = null;
+        Exception? clientCreationCleanupException = null;
         CachedClient? result = null;
         await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
@@ -511,7 +535,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         {
             if (connection is not null)
             {
-                await connection.DisposeAsync().ConfigureAwait(false);
+                await this._clientConnectionDisposer(connection).ConfigureAwait(false);
             }
 
             if (disposedException is not null)
@@ -530,6 +554,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             if (disposedException is not null)
             {
                 clientCreation.TrySetException(exception);
+                clientCreationCleanupException = exception;
             }
 
             if (result is not null)
@@ -546,7 +571,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
                 this._clientCreationSemaphore.Release();
             }
 
-            await this.CompleteClientCreationLifetimeAsync(ownedClientCreationLifetime).ConfigureAwait(false);
+            await this.CompleteClientCreationLifetimeAsync(
+                ownedClientCreationLifetime, clientCreationCleanupException).ConfigureAwait(false);
         }
 
         return result ?? throw new InvalidOperationException("Failed to acquire MCP client.");
@@ -596,7 +622,9 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
     }
 
-    private async Task CompleteClientCreationLifetimeAsync(TaskCompletionSource<bool> clientCreationLifetime)
+    private async Task CompleteClientCreationLifetimeAsync(
+        TaskCompletionSource<bool> clientCreationLifetime,
+        Exception? cleanupException = null)
     {
         await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
@@ -608,7 +636,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             this._clientLock.Release();
         }
 
-        clientCreationLifetime.TrySetResult(true);
+        if (cleanupException is not null)
+        {
+            clientCreationLifetime.TrySetException(cleanupException);
+        }
+        else
+        {
+            clientCreationLifetime.TrySetResult(true);
+        }
     }
 
     private async ValueTask ReleaseClientAsync(CachedClient client)
@@ -637,9 +672,15 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
     private async Task DisposeCachedClientAsync(CachedClient client)
     {
+        Exception? cleanupException = null;
         try
         {
-            await client.Connection.DisposeAsync().ConfigureAwait(false);
+            await this._clientConnectionDisposer(client.Connection).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+            throw;
         }
         finally
         {
@@ -653,7 +694,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
                 this._clientLock.Release();
             }
 
-            client.Disposed.TrySetResult(true);
+            if (cleanupException is not null)
+            {
+                client.Disposed.TrySetException(cleanupException);
+            }
+            else
+            {
+                client.Disposed.TrySetResult(true);
+            }
         }
     }
 

@@ -273,6 +273,7 @@ class DefaultMCPToolHandler:
         # tasks awaiting the same key will await the same future and share
         # the resulting cache entry.
         self._inflight: dict[tuple[str, str, str, str, str], asyncio.Future[_CacheEntry]] = {}
+        self._inflight_cleanup: dict[tuple[str, str, str, str, str], asyncio.Future[None]] = {}
         # Completion signals only: provider-backed calls never share entries.
         self._active_invocations: set[asyncio.Future[None]] = set()
         # Keep ancestry so a completed nested call cannot hide an active parent
@@ -498,9 +499,16 @@ class DefaultMCPToolHandler:
                         entry.disposal_claimed = True
                         entries_to_close.append(entry)
                 inflight_futures = list(self._inflight.values())
+                inflight_cleanup_futures = list(self._inflight_cleanup.values())
                 active_invocations = list(self._active_invocations)
                 self._shutdown_task = asyncio.create_task(
-                    self._drain_shutdown(entries, entries_to_close, inflight_futures, active_invocations)
+                    self._drain_shutdown(
+                        entries,
+                        entries_to_close,
+                        inflight_futures,
+                        inflight_cleanup_futures,
+                        active_invocations,
+                    )
                 )
             shutdown_task = self._shutdown_task
 
@@ -511,6 +519,7 @@ class DefaultMCPToolHandler:
         entries: list[_CacheEntry],
         entries_to_close: list[_CacheEntry],
         inflight_futures: list[asyncio.Future[_CacheEntry]],
+        inflight_cleanup_futures: list[asyncio.Future[None]],
         active_invocations: list[asyncio.Future[None]],
     ) -> None:
         if active_invocations:
@@ -534,6 +543,7 @@ class DefaultMCPToolHandler:
             except BaseException:
                 logger.debug("DefaultMCPToolHandler: in-flight future raised during aclose", exc_info=True)
                 continue
+        cleanup_results = await asyncio.gather(*inflight_cleanup_futures, return_exceptions=True)
 
         close_results = await asyncio.gather(
             *(self._close_claimed_entry(entry) for entry in entries_to_close),
@@ -544,6 +554,9 @@ class DefaultMCPToolHandler:
         for entry in entries:
             if entry.close_exception is not None:
                 raise entry.close_exception
+        for result in cleanup_results:
+            if isinstance(result, BaseException):
+                raise result
         for result in close_results:
             if isinstance(result, BaseException):
                 raise result
@@ -583,6 +596,7 @@ class DefaultMCPToolHandler:
             if inflight is None:
                 inflight = asyncio.get_running_loop().create_future()
                 self._inflight[key] = inflight
+                self._inflight_cleanup[key] = asyncio.get_running_loop().create_future()
                 creating = True
 
         if not creating:
@@ -645,13 +659,16 @@ class DefaultMCPToolHandler:
             # consistent "handler is closed" failure rather than receiving
             # an entry we are about to close behind their back.
             err = RuntimeError("DefaultMCPToolHandler is closed")
+            cleanup = self._inflight_cleanup.pop(key)
             try:
-                await self._close_invocation_entry(entry)
+                await self._close_invocation_entry(entry, cleanup)
             finally:
                 if not inflight.done():
                     inflight.set_exception(err)
                 inflight.exception()
             raise err
+        cleanup = self._inflight_cleanup.pop(key)
+        cleanup.set_result(None)
         try:
             if duplicate is not None:
                 await self._close_entry(duplicate)
@@ -670,8 +687,15 @@ class DefaultMCPToolHandler:
         exc: BaseException,
     ) -> None:
         async def cleanup() -> None:
+            cleanup_outcome = self._inflight_cleanup.pop(key)
             try:
                 await self._close_entry(entry)
+            except BaseException as cleanup_exc:
+                cleanup_outcome.set_exception(cleanup_exc)
+                cleanup_outcome.exception()
+                raise
+            else:
+                cleanup_outcome.set_result(None)
             finally:
                 async with self._cache_lock:
                     self._inflight.pop(key, None)
@@ -696,6 +720,8 @@ class DefaultMCPToolHandler:
         async def cleanup() -> None:
             async with self._cache_lock:
                 self._inflight.pop(key, None)
+                cleanup_outcome = self._inflight_cleanup.pop(key)
+            cleanup_outcome.set_result(None)
             if not inflight.done():
                 inflight.set_exception(self._entry_creation_exception(exc))
             inflight.exception()
@@ -798,7 +824,11 @@ class DefaultMCPToolHandler:
             owned_client = cast("httpx.AsyncClient | None", getattr(tool, "_httpx_client", None))
         return _CacheEntry(tool=tool, owned_httpx_client=owned_client)
 
-    async def _close_invocation_entry(self, entry: _CacheEntry) -> None:
+    async def _close_invocation_entry(
+        self,
+        entry: _CacheEntry,
+        cleanup_outcome: asyncio.Future[None] | None = None,
+    ) -> None:
         """Finish invocation cleanup even if the caller is cancelled again."""
         # MCPStreamableHTTPTool dispatches connect/close to its lifecycle owner,
         # keeping the SDK's cancel-scope entry and exit on that same task.
@@ -809,7 +839,16 @@ class DefaultMCPToolHandler:
                 await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 cancelled = True
-        cleanup.result()  # Propagate cancellation/errors from cleanup itself.
+        try:
+            cleanup.result()  # Propagate cancellation/errors from cleanup itself.
+        except BaseException as exc:
+            if cleanup_outcome is not None and not cleanup_outcome.done():
+                cleanup_outcome.set_exception(exc)
+                cleanup_outcome.exception()
+            raise
+        else:
+            if cleanup_outcome is not None and not cleanup_outcome.done():
+                cleanup_outcome.set_result(None)
         if cancelled:
             raise asyncio.CancelledError
 
