@@ -22,9 +22,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import suppress
-from dataclasses import dataclass, is_dataclass
-from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from dataclasses import dataclass
 from functools import partial, wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -42,12 +40,11 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import UUID, uuid4
-from zoneinfo import ZoneInfo
+from uuid import uuid4
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -130,8 +127,6 @@ _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payloa
 _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
-# Early Pydantic v2 did not export its immutable fixed-offset timezone type.
-_PYDANTIC_TZINFO_TYPE: Final = type(TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo)
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
@@ -169,6 +164,8 @@ class _OpaqueArgumentToken:
 
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
+    if isinstance(value, BaseModel):
+        return _argument_comparison_token(value.model_dump(exclude_unset=True))
     if isinstance(value, dict):
         return (
             "dict",
@@ -185,7 +182,6 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
-    # Serialized projections do not cover the full state of native objects, including Pydantic models.
     value_type = cast(type[object], type(value))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
@@ -207,104 +203,18 @@ def _argument_authority_token(value: Any, *, boundary: str) -> Any:
 
         raise MiddlewareFailure(
             f"Cannot safely bind {boundary} to opaque mutable function arguments. "
-            "Use JSON-native values at this boundary."
+            "Use JSON-native values or an immutable Pydantic representation."
         )
     return token
 
 
-def _argument_projection_token(value: Any, ancestors: set[int] | None = None, *, allow_models: bool = True) -> Any:
-    """Snapshot inspectable instance state without invoking argument serializers.
-
-    This only governs projection reuse, not approval or security authority. Unknown
-    values and custom slots remain opaque and must use the live projection codec.
-    """
-    value_type = cast(type[object], type(value))
-    if any(value_type is scalar_type for scalar_type in (type(None), bool, int, float, str, bytes)):
-        return _argument_comparison_token(value)
-    opaque = _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
-    if value_type is date:
-        return ("date", value.toordinal())
-    if value_type is timedelta:
-        return ("timedelta", value.days, value.seconds, value.microseconds)
-    if value_type is UUID:
-        return ("uuid", value.int, value.is_safe.name)
-    if value_type is Decimal:
-        return ("decimal", value.as_tuple())
-    if value_type is datetime or value_type is time:
-        tz = value.tzinfo
-        if tz is not None and not any(type(tz) is tz_type for tz_type in (timezone, ZoneInfo, _PYDANTIC_TZINFO_TYPE)):
-            return opaque
-        return (id(value_type), value.isoformat(), value.fold, id(tz), repr(tz))
-    ancestors = set() if ancestors is None else ancestors
-    if id(value) in ancestors:
-        return opaque
-    ancestors.add(id(value))
-    try:
-        if value_type is dict:
-            return (
-                "dict",
-                tuple(
-                    (
-                        _argument_projection_token(key, ancestors, allow_models=allow_models),
-                        _argument_projection_token(item, ancestors, allow_models=allow_models),
-                    )
-                    for key, item in cast(dict[Any, Any], value).items()
-                ),
-            )
-        if value_type is list or value_type is tuple:
-            return (
-                id(value_type),
-                tuple(_argument_projection_token(item, ancestors, allow_models=allow_models) for item in value),
-            )
-        if not allow_models:
-            return opaque
-        if isinstance(value, BaseModel):
-            known_slots = {
-                "__dict__",
-                "__pydantic_fields_set__",
-                "__pydantic_extra__",
-                "__pydantic_private__",
-                "__weakref__",
-            }
-            if any(slot not in known_slots for cls in value_type.__mro__ for slot in cls.__dict__.get("__slots__", ())):
-                return opaque
-            state = (
-                vars(value),
-                value.__pydantic_extra__,
-                value.__pydantic_private__,
-                tuple(sorted(value.model_fields_set)),
-            )
-            return ("model", id(value_type), id(value), _argument_projection_token(state, ancestors))
-        if is_dataclass(value) and not isinstance(value, type):
-            if not hasattr(value, "__dict__") or any(cls.__dict__.get("__slots__") for cls in value_type.__mro__):
-                return opaque
-            return ("dataclass", id(value_type), id(value), _argument_projection_token(vars(value), ancestors))
-        return opaque
-    except Exception:
-        # Failed inspection cannot establish that the live values still match.
-        return opaque
-    finally:
-        ancestors.remove(id(value))
-
-
-class _PreparedArguments(dict[str, Any]):
-    """Native arguments with the serialized projection produced during validation."""
-
-    def __init__(self, arguments: Mapping[str, Any], *, serialized_arguments: dict[str, Any]) -> None:
-        super().__init__(arguments)
-        self.serialized_arguments = serialized_arguments
-        native_token = _argument_projection_token(dict(arguments))
-        serialized_token = _argument_projection_token(serialized_arguments, allow_models=False)
-        token = (native_token, serialized_token)
-        self.projection_token = None if _contains_opaque_argument_token(token) else token
-
-
 @dataclass(frozen=True)
 class _PreparedArgumentsState:
-    """Exact prepared arguments and their immutable comparison token."""
+    """Normalized arguments, their comparison token, and private inferred invocation values."""
 
     arguments: dict[str, Any]
     token: Any
+    validated_model: BaseModel | None = None
 
 
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
@@ -920,8 +830,12 @@ class FunctionTool(SerializationMixin):
 
     def _prepare_arguments(self, arguments: BaseModel | Mapping[str, Any] | None) -> dict[str, Any]:
         """Validate and normalize arguments immediately before function execution."""
+        return self._prepare_arguments_state(arguments).arguments
+
+    def _prepare_arguments_state(self, arguments: BaseModel | Mapping[str, Any] | None) -> _PreparedArgumentsState:
+        """Prepare normalized framework arguments and retain inferred invocation values privately."""
         if arguments is None:
-            return {}
+            return _PreparedArgumentsState(arguments={}, token=_argument_comparison_token({}))
 
         validated_model: BaseModel | None = None
         try:
@@ -969,15 +883,11 @@ class FunctionTool(SerializationMixin):
         except TypeError as exc:
             raise _FunctionArgumentValidationError(str(exc)) from exc
 
-        if validated_model is not None and not self._input_model_explicitly_provided:
-            # Recursive dumping is for validation, not invocation: inferred nested
-            # models and dataclasses must reach the function as their declared types.
-            native_arguments = dict(validated_model)
-            return _PreparedArguments(
-                {name: native_arguments.get(name, value) for name, value in parsed_arguments.items()},
-                serialized_arguments=parsed_arguments,
-            )
-        return parsed_arguments
+        return _PreparedArgumentsState(
+            arguments=parsed_arguments,
+            token=_argument_comparison_token(parsed_arguments),
+            validated_model=validated_model if not self._input_model_explicitly_provided else None,
+        )
 
     @staticmethod
     def _arguments_as_mapping(arguments: Any) -> dict[str, Any] | None:
@@ -1018,32 +928,10 @@ class FunctionTool(SerializationMixin):
             context.arguments = prepared_state.arguments
             return prepared_state.arguments
 
-        validated_arguments = self._prepare_arguments(arguments)
-        context.arguments = validated_arguments
-        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
-            arguments=validated_arguments,
-            token=_argument_comparison_token(validated_arguments),
-        )
-        return validated_arguments
-
-    @staticmethod
-    def _prepared_arguments_projection(context: FunctionInvocationContext) -> dict[str, Any] | None:
-        """Reuse a preparation projection only while inspectable argument state is unchanged."""
-        prepared_state = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
-        if not isinstance(prepared_state, _PreparedArgumentsState):
-            return None
-        prepared = prepared_state.arguments
-        if not isinstance(prepared, _PreparedArguments) or prepared.projection_token is None:
-            return None
-        if type(context.arguments) not in (dict, _PreparedArguments):
-            return None
-        current_token = (
-            _argument_projection_token(dict(context.arguments)),
-            _argument_projection_token(prepared.serialized_arguments, allow_models=False),
-        )
-        if current_token != prepared.projection_token:
-            return None
-        return prepared.serialized_arguments
+        prepared_state = self._prepare_arguments_state(arguments)
+        context.arguments = prepared_state.arguments
+        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = prepared_state
+        return prepared_state.arguments
 
     @staticmethod
     def _ensure_security_arguments_unchanged(
@@ -1179,11 +1067,12 @@ class FunctionTool(SerializationMixin):
         current_arguments = self._arguments_as_mapping(arguments)
         approval_visible_arguments = self._approval_visible_arguments(arguments, context)
         self._ensure_security_arguments_unchanged(context, current_arguments)
-        validated_arguments = (
-            self._prepare_context_arguments(context, arguments)
-            if context is not None
-            else self._prepare_arguments(arguments)
-        )
+        if context is not None:
+            validated_arguments = self._prepare_context_arguments(context, arguments)
+            prepared_state = cast(_PreparedArgumentsState, context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY])
+        else:
+            prepared_state = self._prepare_arguments_state(arguments)
+            validated_arguments = prepared_state.arguments
 
         effective_context = context
         if effective_context is None and self._context_parameter_name is not None:
@@ -1199,12 +1088,12 @@ class FunctionTool(SerializationMixin):
 
         self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
-        call_kwargs = dict(validated_arguments)
-        observable_kwargs = (
-            dict(validated_arguments.serialized_arguments)
-            if isinstance(validated_arguments, _PreparedArguments)
-            else dict(validated_arguments)
-        )
+        if prepared_state.validated_model is not None:
+            native_arguments = dict(prepared_state.validated_model)
+            call_kwargs = {name: native_arguments.get(name, value) for name, value in validated_arguments.items()}
+        else:
+            call_kwargs = dict(validated_arguments)
+        observable_kwargs = dict(validated_arguments)
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context
 
@@ -2272,10 +2161,10 @@ async def _auto_invoke_function(
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
-    arguments_prepared = False
+    prepared_state: _PreparedArgumentsState | None = None
     try:
-        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
-        arguments_prepared = True
+        prepared_state = tool._prepare_arguments_state(args)  # pyright: ignore[reportPrivateUsage]
+        args = prepared_state.arguments
     except _FunctionArgumentValidationError:
         # Invalid provider arguments are intentionally exposed to middleware so
         # it has a supported opportunity to repair them before final validation.
@@ -2292,11 +2181,8 @@ async def _auto_invoke_function(
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
-    if arguments_prepared:
-        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
-            arguments=args,
-            token=_argument_comparison_token(args),
-        )
+    if prepared_state is not None:
+        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = prepared_state
 
     call_id = function_call_content.call_id
     if call_id is None:

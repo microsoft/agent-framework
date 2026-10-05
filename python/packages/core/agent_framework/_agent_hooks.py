@@ -127,7 +127,6 @@ from ._sessions import (
     _RunPersistenceGate,  # pyright: ignore[reportPrivateUsage]
 )
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._tools import FunctionTool
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -686,11 +685,7 @@ class _ToolArgumentsCodec:
     """``pre_tool_call``: the native tool arguments <-> the spec's args object."""
 
     @staticmethod
-    def to_wire(arguments: Any, *, context: FunctionInvocationContext | None = None) -> dict[str, Any]:
-        if context is not None and arguments is context.arguments and isinstance(context.function, FunctionTool):
-            projection = context.function._prepared_arguments_projection(context)  # pyright: ignore[reportPrivateUsage]
-            if projection is not None:
-                arguments = projection
+    def to_wire(arguments: Any) -> dict[str, Any]:
         return _arguments_to_wire(arguments)
 
     @staticmethod
@@ -1461,7 +1456,7 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             raw_call_id = context.metadata.get("call_id")
             call_id = str(raw_call_id) if raw_call_id else uuid.uuid4().hex
             name = str(getattr(context.function, "name", context.function))
-            args = _ToolArgumentsCodec.to_wire(context.arguments, context=context)
+            args = _ToolArgumentsCodec.to_wire(context.arguments)
             outcome: EmitOutcome = await state.emitter.emit(
                 state.builder.pre_tool_call(call_id=call_id, name=name, args=args)
             )

@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 import agent_framework._tools as tools_module
 from agent_framework import (
@@ -20,7 +20,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext, MiddlewareFailure
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -480,6 +480,39 @@ async def test_invoke_preserves_nested_model_argument(as_model: bool) -> None:
 
 
 @pytest.mark.parametrize("as_model", [False, True])
+async def test_invoke_preserves_nested_values_without_serialization_roundtrip(as_model: bool) -> None:
+    """Serialization must not erase excluded fields or reapply validators to invocation values."""
+    validations: list[str] = []
+
+    class Customer(BaseModel):
+        name: str
+        detail: str = Field(exclude=True)
+
+        @field_validator("name")
+        @classmethod
+        def validate_name(cls, value: str) -> str:
+            validations.append(value)
+            return value + "!"
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            return value.upper()
+
+    @tool
+    def describe_customer(customer: Customer, suffix: str = "?") -> str:
+        return f"{customer.name}:{customer.detail}{suffix}"
+
+    assert describe_customer.input_model is not None
+    payload = {"customer": {"name": "Ada", "detail": "regular"}}
+    arguments = describe_customer.input_model.model_validate(payload) if as_model else payload
+
+    result = await describe_customer.invoke(arguments=arguments)
+
+    assert result[0].text == "Ada!:regular?"
+    assert validations == ["Ada"]
+
+
+@pytest.mark.parametrize("as_model", [False, True])
 async def test_invoke_preserves_nested_model_list_argument(as_model: bool) -> None:
     """Collections retain their validated nested model instances."""
 
@@ -558,23 +591,6 @@ async def test_invoke_preserves_explicit_input_model_serialization() -> None:
     result = await describe_name.invoke(arguments={"name": "Ada"})
 
     assert result[0].text == "ADA"
-
-
-@pytest.mark.parametrize("boundary", ["approval", "security policy"])
-@pytest.mark.parametrize("as_list", [False, True])
-def test_native_model_arguments_require_json_native_authority(boundary: str, as_list: bool) -> None:
-    """A model's serialization is not authority over its native object state."""
-
-    class Customer(BaseModel):
-        name: str
-
-    customer = Customer(name="Ada")
-    arguments = {"customer": [customer] if as_list else customer}
-
-    with pytest.raises(MiddlewareFailure, match="opaque mutable function arguments"):
-        tools_module._argument_authority_token(arguments, boundary=boundary)
-
-    tools_module._argument_authority_token({"customer": {"name": "Ada"}}, boundary=boundary)
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():

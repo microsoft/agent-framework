@@ -5515,13 +5515,15 @@ async def test_function_middleware_repairs_raw_arguments_before_validation(
 
 
 @pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("replace_arguments", [False, True])
 async def test_function_middleware_preserves_nested_arguments(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
+    replace_arguments: bool,
 ) -> None:
-    """Nested values are normalized once and shared by middleware and the tool."""
+    """Middleware keeps normalized mappings while the tool receives validated native values."""
     validation_count = 0
-    observed_arguments: list[BaseModel] = []
+    observed_arguments: list[dict[str, Any]] = []
     executed_arguments: list[BaseModel] = []
 
     class Customer(BaseModel):
@@ -5542,14 +5544,16 @@ async def test_function_middleware_preserves_nested_arguments(
         ) -> None:
             assert isinstance(context.arguments, dict)
             customer = context.arguments["customer"]
-            assert isinstance(customer, Customer)
+            assert customer == {"name": "ADA"}
             observed_arguments.append(customer)
+            if replace_arguments:
+                context.arguments = {"customer": {"name": "Grace"}}
             await call_next()
 
     @tool
     async def describe_customer(customer: Customer, ctx: FunctionInvocationContext) -> str:
         assert isinstance(ctx.arguments, dict)
-        assert ctx.arguments["customer"] is customer
+        assert ctx.arguments["customer"] == {"name": customer.name}
         executed_arguments.append(customer)
         return customer.name
 
@@ -5593,10 +5597,10 @@ async def test_function_middleware_preserves_nested_arguments(
         content for message in response.messages for content in message.contents if content.type == "function_result"
     ]
     assert len(results) == 1
-    assert results[0].result == "ADA"
+    assert results[0].result == ("GRACE" if replace_arguments else "ADA")
     assert len(observed_arguments) == len(executed_arguments) == 1
-    assert observed_arguments[0] is executed_arguments[0]
-    assert validation_count == 1
+    assert observed_arguments == [{"name": "ADA"}]
+    assert validation_count == (2 if replace_arguments else 1)
 
 
 async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
