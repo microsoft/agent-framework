@@ -4585,59 +4585,45 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
 
 
 async def test_connect_sampling_capabilities_with_client():
-    """Test connect() passes sampling_capabilities to ClientSession when client is set."""
+    """Test connect() passes sampling_capabilities to mcp.Client"""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
     tool.client = Mock()
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    with patch("mcp.Client") as mock_client_class:
+        sdk_client = AsyncMock()
+        sdk_client.__aenter__.return_value = sdk_client
+        sdk_client.session = Mock(initialize_result=None)
+        sdk_client.protocol_version = "2026-07-28"
+        sdk_client.server_capabilities = types.ServerCapabilities()
+        mock_client_class.return_value = sdk_client
 
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session = AsyncMock()
-        mock_session._request_id = 1
-
-        session_cm = AsyncMock()
-        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-        session_cm.__aexit__ = AsyncMock(return_value=None)
-        mock_session_class.return_value = session_cm
-
-        await tool.connect()
-
-        call_kwargs = mock_session_class.call_args.kwargs
-        sampling_caps = call_kwargs.get("sampling_capabilities")
-        assert sampling_caps is not None
-        assert isinstance(sampling_caps, types.SamplingCapability)
-        assert sampling_caps.tools is not None
-        assert isinstance(sampling_caps.tools, types.SamplingToolsCapability)
+        async with tool:
+            call_kwargs = mock_client_class.call_args.kwargs
+            sampling_caps = call_kwargs.get("sampling_capabilities")
+            assert sampling_caps is not None
+            assert isinstance(sampling_caps, types.SamplingCapability)
+            assert sampling_caps.tools is not None
+            assert isinstance(sampling_caps.tools, types.SamplingToolsCapability)
 
 
 async def test_connect_no_sampling_capabilities_without_client():
     """Test connect() does not pass sampling_capabilities when no client is set."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
-    # No client set
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    with patch("mcp.Client") as mock_client_class:
+        sdk_client = AsyncMock()
+        sdk_client.__aenter__.return_value = sdk_client
+        sdk_client.session = Mock(initialize_result=None)
+        sdk_client.protocol_version = "2026-07-28"
+        sdk_client.server_capabilities = types.ServerCapabilities()
+        mock_client_class.return_value = sdk_client
 
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session = AsyncMock()
-        mock_session._request_id = 1
-
-        session_cm = AsyncMock()
-        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-        session_cm.__aexit__ = AsyncMock(return_value=None)
-        mock_session_class.return_value = session_cm
-
-        await tool.connect()
-
-        call_kwargs = mock_session_class.call_args.kwargs
-        assert call_kwargs.get("sampling_capabilities") is None
+        try:
+            await tool.connect()
+            call_kwargs = mock_client_class.call_args.kwargs
+            assert call_kwargs.get("sampling_capabilities") is None
+        finally:
+            await tool.close()
 
 
 # Test error handling in connect() method
