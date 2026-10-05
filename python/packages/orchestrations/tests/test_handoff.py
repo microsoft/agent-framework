@@ -1538,7 +1538,16 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
 def test_get_handoff_tool_name_sanitizes_target_id() -> None:
     """Handoff tool names should be valid when target IDs contain spaces or punctuation."""
     assert get_handoff_tool_name("Billing Agent") == "handoff_to_Billing_Agent"
-    assert get_handoff_tool_name("Order-Support.Agent") == "handoff_to_Order_Support_Agent"
+    assert get_handoff_tool_name("Order-Support.Agent") == "handoff_to_Order-Support_Agent"
+
+
+def test_auto_handoff_middleware_rejects_sanitized_name_collisions() -> None:
+    """Middleware should reject targets that sanitize to the same handoff tool name."""
+    with pytest.raises(ValueError, match="produce the same tool name"):
+        _AutoHandoffMiddleware([
+            HandoffConfiguration(target="Billing Agent"),
+            HandoffConfiguration(target="Billing.Agent"),
+        ])
 
 
 async def test_auto_handoff_with_sanitized_target_id() -> None:

@@ -125,7 +125,7 @@ class HandoffConfiguration:
 
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID."""
-    sanitized_target_id = re.sub(r"[^a-zA-Z0-9_]", "_", target_id)
+    sanitized_target_id = re.sub(r"[^a-zA-Z0-9_-]", "_", target_id)
     return f"handoff_to_{sanitized_target_id}"
 
 
@@ -136,9 +136,17 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
     """Intercept handoff tool invocations and short-circuit execution with synthetic results."""
 
     def __init__(self, handoffs: Sequence[HandoffConfiguration]) -> None:
-        """Initialise middleware with the mapping from tool name to specialist id."""
-        self._handoff_functions = {get_handoff_tool_name(handoff.target_id): handoff.target_id for handoff in handoffs}
         self._invoked_handoffs: list[tuple[str, str]] = []
+        self._handoff_functions: dict[str, str] = {}
+        for handoff in handoffs:
+            tool_name = get_handoff_tool_name(handoff.target_id)
+            existing_target = self._handoff_functions.get(tool_name)
+            if existing_target is not None and existing_target != handoff.target_id:
+                raise ValueError(
+                    f"Handoff targets {existing_target!r} and {handoff.target_id!r} "
+                    f"produce the same tool name {tool_name!r}."
+                )
+            self._handoff_functions[tool_name] = handoff.target_id
 
     async def process(
         self,
