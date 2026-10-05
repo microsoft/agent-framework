@@ -2236,6 +2236,88 @@ def _make_content_chunk(text: str) -> Any:
     })
 
 
+async def test_streaming_final_response_preserves_latest_logprobs_across_null_chunks(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """The final aggregate keeps the latest token logprobs when later chunks omit them."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    first_logprobs = {"content": [{"token": "hel", "bytes": [104, 101, 108], "logprob": -0.1, "top_logprobs": []}]}
+    latest_logprobs = {"content": [{"token": "lo", "bytes": [108, 111], "logprob": -0.2, "top_logprobs": []}]}
+
+    def make_chunk(
+        *,
+        delta: dict[str, str],
+        logprobs: dict[str, Any] | None,
+        finish_reason: str | None = None,
+    ) -> ChatCompletionChunk:
+        return ChatCompletionChunk.model_validate({
+            "id": "stream-logprobs",
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                    "logprobs": logprobs,
+                }
+            ],
+        })
+
+    sdk_stream = _FakeAsyncStream([
+        make_chunk(delta={"role": "assistant"}, logprobs=None),
+        make_chunk(delta={"content": "hel"}, logprobs=first_logprobs),
+        make_chunk(delta={}, logprobs=None),
+        make_chunk(delta={"content": "lo"}, logprobs=latest_logprobs),
+        make_chunk(delta={}, logprobs=None, finish_reason="stop"),
+    ])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+            options={"logprobs": True},
+        ).get_final_response()
+
+    assert response.text == "hello"
+    assert response.additional_properties["logprobs"].model_dump(exclude_none=True) == latest_logprobs
+
+
+async def test_streaming_final_response_without_logprobs_has_no_logprobs_metadata(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A stream without token probabilities completes normally and exposes no logprobs metadata."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    terminal_chunk = ChatCompletionChunk.model_validate({
+        "id": "stream-no-logprobs",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop", "logprobs": None}],
+    })
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("ordinary "), _make_content_chunk("text"), terminal_chunk])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response = await client.get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+        ).get_final_response()
+
+    assert response.text == "ordinary text"
+    assert "logprobs" not in response.additional_properties
+
+
 async def test_streaming_closes_provider_stream_when_consumer_stops_early(
     openai_unit_test_env: dict[str, str],
 ) -> None:
