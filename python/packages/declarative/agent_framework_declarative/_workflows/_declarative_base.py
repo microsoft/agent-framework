@@ -1149,6 +1149,15 @@ class DeclarativeActionExecutor(Executor):
         """Get the declarative workflow state wrapper."""
         return DeclarativeWorkflowState(state, env_config=self._declarative_env_config)
 
+    @staticmethod
+    def _is_agent_continuation(state: DeclarativeWorkflowState, trigger: Any) -> bool:
+        """Return whether an agent-facing message list continues initialized state."""
+        return (
+            isinstance(trigger, list)
+            and all(isinstance(message, Message) for message in trigger)  # pyright: ignore[reportUnknownVariableType]
+            and state.is_initialized()
+        )
+
     async def _ensure_state_initialized(
         self,
         ctx: WorkflowContext[Any, Any],
@@ -1201,7 +1210,7 @@ class DeclarativeActionExecutor(Executor):
             # reuse this workflow instance across unrelated conversations.
             # State left on the instance is not evidence of session ownership.
             # Explicit checkpoint/HIL restores use the runner's resume path.
-            is_continuation = not isinstance(trigger, Message) and state.is_initialized()
+            is_continuation = self._is_agent_continuation(state, trigger)
 
             # Locate the trailing user message in the trigger.
             last_user_index = -1

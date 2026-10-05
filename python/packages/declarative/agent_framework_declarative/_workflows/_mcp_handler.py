@@ -687,7 +687,8 @@ class DefaultMCPToolHandler:
         exc: BaseException,
     ) -> None:
         async def cleanup() -> None:
-            cleanup_outcome = self._inflight_cleanup.pop(key)
+            async with self._cache_lock:
+                cleanup_outcome = self._inflight_cleanup[key]
             try:
                 await self._close_entry(entry)
             except BaseException as cleanup_exc:
@@ -699,6 +700,7 @@ class DefaultMCPToolHandler:
             finally:
                 async with self._cache_lock:
                     self._inflight.pop(key, None)
+                    self._inflight_cleanup.pop(key, None)
                 if not inflight.done():
                     inflight.set_exception(self._entry_creation_exception(exc))
                 inflight.exception()

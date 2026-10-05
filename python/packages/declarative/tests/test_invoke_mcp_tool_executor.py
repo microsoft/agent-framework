@@ -195,6 +195,20 @@ class TestFieldForwarding:
         assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
 
     @pytest.mark.asyncio
+    async def test_as_agent_continuation_reuses_workflow_session_id(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+
+        await agent.run("first turn")
+        await agent.run("second turn")
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
+
+    @pytest.mark.asyncio
     async def test_continuation_reuses_workflow_session_id(self) -> None:
         from agent_framework_declarative._workflows import ToolApprovalResponse
         from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
@@ -210,6 +224,32 @@ class TestFieldForwarding:
 
         assert handler.last_invocation is not None
         assert handler.last_invocation.workflow_session_id == workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_pending_approval_uses_originating_workflow_session_id(self) -> None:
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+
+        first = await workflow.run({})
+        [first_approval] = first.get_request_info_events()
+        first_session_id = first_approval.data.workflow_session_id
+
+        second = await workflow.run({})
+        [second_approval] = [
+            event for event in second.get_request_info_events() if event.request_id != first_approval.request_id
+        ]
+
+        assert first_session_id
+        assert second_approval.data.workflow_session_id
+        assert first_session_id != second_approval.data.workflow_session_id
+
+        await workflow.run(responses={first_approval.request_id: ToolApprovalResponse(approved=True)})
+
+        assert handler.last_invocation is not None
+        assert handler.last_invocation.workflow_session_id == first_session_id
 
     @pytest.mark.asyncio
     async def test_arguments_evaluated_and_preserves_none(self) -> None:
@@ -491,6 +531,8 @@ class TestApprovalFlow:
         requests = paused.get_request_info_events()
         approval = next(event for event in requests if isinstance(event.data, MCPToolApprovalRequest))
         change_request = next(event for event in requests if event is not approval)
+        approval_session_id = approval.data.workflow_session_id
+        assert approval_session_id
         selector = "second" if change_context else "first"
         await workflow.run(responses={change_request.request_id: ExternalInputResponse(user_input=selector)})
         assert handler.call_count == 0
@@ -519,6 +561,7 @@ class TestApprovalFlow:
             assert not resumed.get_request_info_events()
             assert handler.last_invocation is not None
             assert handler.last_invocation.headers == {"Authorization": "context-first"}
+            assert handler.last_invocation.workflow_session_id == approval_session_id
             return
         assert handler.call_count == 0
         [replacement] = resumed.get_request_info_events()
@@ -531,6 +574,7 @@ class TestApprovalFlow:
         assert handler.last_invocation is not None
         assert handler.last_invocation.headers == {"Authorization": "context-second"}
         assert handler.last_invocation.arguments == {"q": "reviewed"}
+        assert handler.last_invocation.workflow_session_id == approval_session_id
 
     @pytest.mark.asyncio
     async def test_approval_required_emits_request_and_yields(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
