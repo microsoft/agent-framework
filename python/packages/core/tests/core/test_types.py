@@ -5939,3 +5939,23 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
 
 
 # endregion
+
+
+def test_get_data_bytes_as_str_ignores_base64_marker_inside_the_payload():
+    """A ';base64,' sequence inside the payload is data, not the encoding marker."""
+    content = Content.from_uri(uri="data:text/plain,a;base64,QUJD")
+    with raises(ContentError, match="base64 encoding"):
+        _get_data_bytes_as_str(content)
+
+
+def test_data_uri_readers_agree_on_the_base64_marker():
+    """Validation, media type detection and payload extraction share one reading of a data URI."""
+    png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
+    uri = f"data:image/png;charset=utf-8;base64,{png_b64}"
+    content = Content.from_uri(uri=uri)
+    assert content.media_type == "image/png"
+    assert _get_data_bytes_as_str(content) == png_b64
+    assert detect_media_type_from_base64(data_uri=uri) == "image/png"
+    payload_marker = f"data:image/png,x;base64,{png_b64}"
+    with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
+        detect_media_type_from_base64(data_uri=payload_marker)

@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, cast, overload
 
 from typing_extensions import Required, TypedDict
 
@@ -80,6 +80,44 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
 # region Internal Helper functions for unified Content
 
 
+class _ParsedDataUri(NamedTuple):
+    """The parts of an RFC 2397 data URI."""
+
+    media_type: str
+    is_base64: bool
+    payload: str
+
+
+def _parse_data_uri(uri: str) -> _ParsedDataUri:
+    """Parse a ``data:`` URI once, so every caller reads it the same way.
+
+    RFC 2397: ``data:[<media-type>][;parameter[=value]]...[;base64],<data>``. The media type is
+    everything between ``data:`` and the first ``;`` and defaults to ``text/plain`` when empty.
+    ``base64`` is the only encoding marker and is only valid once, as the last parameter; other
+    parameters such as ``charset=utf-8`` are metadata. Only the metadata before the first comma
+    is inspected, so a ``;base64,`` sequence inside the payload is never treated as a marker.
+
+    Raises:
+        ContentError: If the URI has no comma or carries an unsupported encoding marker.
+    """
+    if "," not in uri:
+        raise ContentError("Data URI must contain a comma separating metadata and data")
+    prefix, payload = uri.split(",", 1)
+    parts = prefix.split(";")
+    parameters = parts[1:]
+    for index, parameter in enumerate(parameters):
+        if parameter == "base64":
+            if index != len(parameters) - 1:
+                raise ContentError("Data URI 'base64' marker must be the last parameter")
+        elif parameter and "=" not in parameter:
+            raise ContentError(f"Unsupported data URI encoding: {parameter}")
+    return _ParsedDataUri(
+        media_type=parts[0][5:] or "text/plain",  # Remove 'data:'
+        is_base64=bool(parameters) and parameters[-1] == "base64",
+        payload=payload,
+    )
+
+
 def detect_media_type_from_base64(
     *,
     data_bytes: bytes | None = None,
@@ -132,9 +170,13 @@ def detect_media_type_from_base64(
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
             raise ValueError("Invalid data URI format.")
-        prefix, data_str = data_uri.split(",", 1)
-        if not prefix.endswith(";base64"):
+        try:
+            parsed = _parse_data_uri(data_uri)
+        except ContentError as exc:
+            raise ValueError(str(exc)) from exc
+        if not parsed.is_base64:
             raise ValueError("Data URI must use base64 encoding.")
+        data_str = parsed.payload
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -212,11 +254,10 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     if not uri.startswith("data:"):
         return None
 
-    if ";base64," not in uri:
+    parsed = _parse_data_uri(uri)
+    if not parsed.is_base64:
         raise ContentError("Data URI must use base64 encoding")
-
-    _, data = uri.split(";base64,", 1)
-    return data
+    return parsed.payload
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -259,24 +300,9 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
 
     # Check for data URI
     if uri.startswith("data:"):
-        if "," not in uri:
-            raise ContentError("Data URI must contain a comma separating metadata and data")
-        prefix, _ = uri.split(",", 1)
-        # RFC 2397: data:[<media-type>][;parameter[=value]]...[;base64],<data>.
-        # The media type is everything between "data:" and the first ";" and defaults
-        # to "text/plain" when empty. "base64" is the only encoding marker; other
-        # parameters such as charset=... are metadata, not encodings.
-        parts = prefix.split(";")
+        parsed = _parse_data_uri(uri)
         if media_type is None:
-            media_type = parts[0][5:] or "text/plain"  # Remove 'data:'
-        parameters = parts[1:]
-        for index, parameter in enumerate(parameters):
-            if parameter == "base64":
-                # base64 is only valid as the last parameter, and only once.
-                if index != len(parameters) - 1:
-                    raise ContentError("Data URI 'base64' marker must be the last parameter")
-            elif parameter and "=" not in parameter:
-                raise ContentError(f"Unsupported data URI encoding: {parameter}")
+            media_type = parsed.media_type
         return {"type": "data", "uri": uri, "media_type": media_type}
 
     # Check for common URI schemes
