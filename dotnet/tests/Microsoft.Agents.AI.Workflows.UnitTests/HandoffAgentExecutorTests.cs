@@ -607,6 +607,46 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
     }
 
     [Fact]
+    public async Task Test_HandoffAgentExecutor_CancelsHandoffAcrossMessageWhenResultOmitsResponseIdAsync()
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "request-message", "response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, TestAgentId, "result-message", null, new FunctionResultContent(CallId, "Completed")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, _) = await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Null(sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_AllowsReusedCallIdAfterCompletedOccurrenceAsync()
+    {
+        // Arrange
+        const string CallId = "handoff-call";
+        StreamingUpdatesReplayAgent agent = new(
+        [
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "first-request", "response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+            CreateUpdate(ChatRole.Tool, TestAgentId, "first-result", "response", new FunctionResultContent(CallId, "Completed")),
+            CreateUpdate(ChatRole.Assistant, TestAgentId, "second-request", "response", new FunctionCallContent(CallId, $"{HandoffWorkflowBuilder.FunctionPrefix}1")),
+        ], TestAgentId, TestAgentName);
+
+        // Act
+        (TestRunContext testContext, HandoffAgentExecutor executor, TestEchoAgent targetAgent) =
+            await RunHandoffAgentAsync(agent);
+
+        // Assert
+        HandoffState sentState = Assert.IsType<HandoffState>(Assert.Single(testContext.QueuedMessages[executor.Id]).Message);
+        Assert.Equal(targetAgent.Id, sentState.RequestedHandoffTargetAgentId);
+    }
+
+    [Fact]
     public async Task Test_HandoffAgentExecutor_CancelsAnonymousHandoffAfterMetadataOnlyDeltaAsync()
     {
         // Arrange

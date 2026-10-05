@@ -430,7 +430,8 @@ internal sealed class HandoffAgentExecutor :
         string? requestedHandoff = null;
         List<AgentResponseUpdate> updates = [];
         List<(FunctionCallContent Request, string ProducerId, string? ResponseId)> candidateRequests = [];
-        HashSet<(string CallId, string ProducerId, string? ResponseId)> completedRequests = [];
+        Dictionary<(string CallId, string ProducerId, string? ResponseId), int> pendingRequestOccurrences = [];
+        Dictionary<(string CallId, string ProducerId, string? ResponseId), int> unmatchedCompletionOccurrences = [];
         bool hasMessageScope = false;
         string? scopedMessageId = null;
         string? scopedResponseId = null;
@@ -461,7 +462,9 @@ internal sealed class HandoffAgentExecutor :
                 scopedRole = null;
                 scopedAgentId = null;
                 scopedMessageId = update.MessageId;
-                scopedResponseId = update.ResponseId;
+                // One response may contain multiple messages. Preserve its identity when a new
+                // message omits ResponseId, but replace it when an explicit new response arrives.
+                scopedResponseId = update.ResponseId ?? scopedResponseId;
                 hasMessageScope = true;
             }
             else
@@ -488,11 +491,34 @@ internal sealed class HandoffAgentExecutor :
                 {
                     (string CallId, string ProducerId, string? ResponseId) completion =
                         (functionResult.CallId, effectiveAgentId, effectiveResponseId);
-                    _ = completedRequests.Add(completion);
-                    _ = candidateRequests.RemoveAll(
-                        candidate => string.Equals(candidate.Request.CallId, completion.CallId, StringComparison.Ordinal)
-                                     && string.Equals(candidate.ProducerId, completion.ProducerId, StringComparison.Ordinal)
-                                     && string.Equals(candidate.ResponseId, completion.ResponseId, StringComparison.Ordinal));
+
+                    if (pendingRequestOccurrences.TryGetValue(completion, out int pendingCount))
+                    {
+                        if (pendingCount == 1)
+                        {
+                            _ = pendingRequestOccurrences.Remove(completion);
+                        }
+                        else
+                        {
+                            pendingRequestOccurrences[completion] = pendingCount - 1;
+                        }
+
+                        int candidateIndex = candidateRequests.FindIndex(
+                            candidate => string.Equals(candidate.Request.CallId, completion.CallId, StringComparison.Ordinal)
+                                         && string.Equals(candidate.ProducerId, completion.ProducerId, StringComparison.Ordinal)
+                                         && string.Equals(candidate.ResponseId, completion.ResponseId, StringComparison.Ordinal));
+                        if (candidateIndex >= 0)
+                        {
+                            candidateRequests.RemoveAt(candidateIndex);
+                        }
+                    }
+                    else
+                    {
+                        unmatchedCompletionOccurrences[completion] =
+                            unmatchedCompletionOccurrences.TryGetValue(completion, out int completionCount)
+                                ? completionCount + 1
+                                : 1;
+                    }
                 }
 
                 collector.ProcessAIContents([content], CollectHandoffRequestsFilter);
@@ -500,6 +526,29 @@ internal sealed class HandoffAgentExecutor :
 
             bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
             {
+                (string CallId, string ProducerId, string? ResponseId) request =
+                    (candidateHandoffRequest.CallId, effectiveAgentId, effectiveResponseId);
+
+                bool wasAlreadyCompleted = unmatchedCompletionOccurrences.TryGetValue(request, out int completionCount);
+                if (wasAlreadyCompleted)
+                {
+                    if (completionCount == 1)
+                    {
+                        _ = unmatchedCompletionOccurrences.Remove(request);
+                    }
+                    else
+                    {
+                        unmatchedCompletionOccurrences[request] = completionCount - 1;
+                    }
+                }
+                else
+                {
+                    pendingRequestOccurrences[request] =
+                        pendingRequestOccurrences.TryGetValue(request, out int pendingCount)
+                            ? pendingCount + 1
+                            : 1;
+                }
+
                 // A handoff is an unresolved assistant request for a declaration owned by this
                 // executor. Other roles, other agents, malformed IDs, and already-completed calls
                 // are provider lifecycle events rather than application routing decisions.
@@ -507,7 +556,7 @@ internal sealed class HandoffAgentExecutor :
                     effectiveRole == ChatRole.Assistant
                     && string.Equals(effectiveAgentId, this._agent.Id, StringComparison.Ordinal)
                     && !string.IsNullOrWhiteSpace(candidateHandoffRequest.CallId)
-                    && !completedRequests.Contains((candidateHandoffRequest.CallId, effectiveAgentId, effectiveResponseId))
+                    && !wasAlreadyCompleted
                     && this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
                 if (isHandoffRequest)
                 {
