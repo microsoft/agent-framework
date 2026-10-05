@@ -8131,7 +8131,7 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
 
     from httpx2 import AsyncClient, MockTransport, Request, Response
 
-    captured_methods: list[str] = []
+    captured_requests: list[tuple[dict[str, Any], dict[str, str]]] = []
 
     async def mcp_v2_server_mock_handler(request: Request) -> Response:
         if request.method == "DELETE":
@@ -8139,7 +8139,8 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
 
         body = json.loads(request.content)
         method = body["method"]
-        captured_methods.append(method)
+        headers = {name.lower(): value for name, value in request.headers.items()}
+        captured_requests.append((body, headers))
 
         if method == "initialize":
             return Response(
@@ -8213,9 +8214,21 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
         assert isinstance(result, list)
         assert [item.text for item in result if item.type == "text"] == ["Hello!"]
 
+    captured_methods = [body["method"] for body, _ in captured_requests]
     assert "server/discover" in captured_methods
     assert "initialize" not in captured_methods
     assert "tools/list" in captured_methods
+    assert "tools/call" in captured_methods
+
+    tool_calls = [(body, headers) for body, headers in captured_requests if body["method"] == "tools/call"]
+    assert len(tool_calls) == 1
+    body, headers = tool_calls[0]
+    params = body["params"]
+    meta = params["_meta"]
+    assert headers["mcp-protocol-version"] == meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+    assert headers["mcp-method"] == body["method"] == "tools/call"
+    assert headers["mcp-name"] == params["name"] == "greet"
+    assert isinstance(meta["io.modelcontextprotocol/clientCapabilities"], dict)
 
 
 async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
