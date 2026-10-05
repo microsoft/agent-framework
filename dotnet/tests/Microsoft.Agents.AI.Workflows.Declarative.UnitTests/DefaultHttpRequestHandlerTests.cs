@@ -152,7 +152,8 @@ public sealed class DefaultHttpRequestHandlerTests
         async Task actAsync() => await handler.SendAsync(request, cancellationToken);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Contains("loopback", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Null(await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(250)));
     }
 
