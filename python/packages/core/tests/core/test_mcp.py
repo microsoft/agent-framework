@@ -4585,20 +4585,17 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
 
 
 async def test_connect_sampling_capabilities_with_client():
-    """Test connect() passes sampling_capabilities to mcp.Client"""
+    """Test connect() uses legacy mode and advertises sampling when a chat client is configured."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
     tool.client = Mock()
 
     with patch("mcp.Client") as mock_client_class:
-        sdk_client = AsyncMock()
-        sdk_client.__aenter__.return_value = sdk_client
-        sdk_client.session = Mock(initialize_result=None)
-        sdk_client.protocol_version = "2026-07-28"
-        sdk_client.server_capabilities = types.ServerCapabilities()
+        sdk_client = _mock_sdk_client()
         mock_client_class.return_value = sdk_client
 
         async with tool:
             call_kwargs = mock_client_class.call_args.kwargs
+            assert call_kwargs["mode"] == "legacy"
             sampling_caps = call_kwargs.get("sampling_capabilities")
             assert sampling_caps is not None
             assert isinstance(sampling_caps, types.SamplingCapability)
@@ -4607,20 +4604,17 @@ async def test_connect_sampling_capabilities_with_client():
 
 
 async def test_connect_no_sampling_capabilities_without_client():
-    """Test connect() does not pass sampling_capabilities when no client is set."""
+    """Test connect() keeps auto mode and omits sampling capabilities without a chat client."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
 
     with patch("mcp.Client") as mock_client_class:
-        sdk_client = AsyncMock()
-        sdk_client.__aenter__.return_value = sdk_client
-        sdk_client.session = Mock(initialize_result=None)
-        sdk_client.protocol_version = "2026-07-28"
-        sdk_client.server_capabilities = types.ServerCapabilities()
+        sdk_client = _mock_sdk_client(protocol_version="2026-07-28")
         mock_client_class.return_value = sdk_client
 
         try:
             await tool.connect()
             call_kwargs = mock_client_class.call_args.kwargs
+            assert call_kwargs["mode"] == "auto"
             assert call_kwargs.get("sampling_capabilities") is None
         finally:
             await tool.close()
