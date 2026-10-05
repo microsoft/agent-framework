@@ -154,7 +154,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
         Assert.Contains("loopback", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Null(await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(250)));
+        Assert.Null(await server.TryReadRequestAsync());
     }
 
     #endregion
@@ -297,7 +297,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Act
         Exception? exception = await Record.ExceptionAsync(() => handler.SendAsync(request, cancellationToken));
-        string? rawRequest = await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
+        string? rawRequest = await server.TryReadRequestAsync();
 
         // Assert
         Assert.Null(rawRequest);
@@ -1387,6 +1387,9 @@ public sealed class DefaultHttpRequestHandlerTests
         }
 
         public string Url { get; }
+
+        public Task<string?> TryReadRequestAsync() =>
+            this.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
 
         public async Task<string?> TryReadRequestAsync(TimeSpan timeout)
         {
