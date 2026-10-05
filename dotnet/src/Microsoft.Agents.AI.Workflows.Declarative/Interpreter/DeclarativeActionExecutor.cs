@@ -27,6 +27,9 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 {
     protected const string ConnectionNameLocation = "connection name";
     protected const string ConversationIdLocation = "conversation ID";
+    protected const string MessageAfterLocation = "message-after cursor";
+    protected const string MessageBeforeLocation = "message-before cursor";
+    protected const string MessageIdLocation = "message ID";
 
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)

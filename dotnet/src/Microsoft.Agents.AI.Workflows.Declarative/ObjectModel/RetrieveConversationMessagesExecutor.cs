@@ -29,8 +29,8 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
         await foreach (ChatMessage message in agentProvider.GetMessagesAsync(
             conversationId,
             limit: this.GetLimit(),
-            after: this.GetMessage(this.Model.MessageAfter),
-            before: this.GetMessage(this.Model.MessageBefore),
+            after: this.GetMessage(this.Model.MessageAfter, MessageAfterLocation),
+            before: this.GetMessage(this.Model.MessageBefore, MessageBeforeLocation),
             newestFirst: this.IsDescending(),
             cancellationToken).ConfigureAwait(false))
         {
@@ -48,14 +48,14 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
         return Convert.ToInt32(Math.Min(limit, 100));
     }
 
-    private string? GetMessage(StringExpression? messagExpression)
+    private string? GetMessage(StringExpression? messageExpression, string location)
     {
-        if (messagExpression is null)
+        if (messageExpression is null)
         {
             return null;
         }
 
-        return this.Evaluator.GetValue(messagExpression).Value;
+        return this.GetNonSensitiveValue(this.Evaluator.GetValue(messageExpression), location);
     }
 
     private bool IsDescending()

@@ -22,7 +22,9 @@ internal sealed class RetrieveConversationMessageExecutor(RetrieveConversationMe
         string conversationId = this.GetNonSensitiveValue(
             this.Evaluator.GetValue(this.Model.ConversationId),
             ConversationIdLocation);
-        string messageId = this.Evaluator.GetValue(Throw.IfNull(this.Model.MessageId, $"{nameof(this.Model)}.{nameof(this.Model.MessageId)}")).Value;
+        string messageId = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(Throw.IfNull(this.Model.MessageId, $"{nameof(this.Model)}.{nameof(this.Model.MessageId)}")),
+            MessageIdLocation);
 
         ChatMessage message = await agentProvider.GetMessageAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
 

@@ -761,6 +761,59 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #region CaptureResponseAsync Tests
 
     [Fact]
+    public async Task InvokeMcpToolCaptureResponseWithNewlySensitiveConversationIdThrowsBeforeInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("ConversationId", FormulaValue.New("conversation-id"));
+        this.State.Bind();
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolCaptureResponseWithNewlySensitiveConversationIdThrowsBeforeInvocationAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            ConversationId = new StringExpression.Builder(
+                StringExpression.Variable(PropertyPath.TopicVariable("ConversationId"))),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act
+        Task CaptureResponseAsync() => action.CaptureResponseAsync(
+            mockContext.Object,
+            response,
+            CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(CaptureResponseAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolCaptureResponseWithApprovalApprovedAsync()
     {
         // Arrange

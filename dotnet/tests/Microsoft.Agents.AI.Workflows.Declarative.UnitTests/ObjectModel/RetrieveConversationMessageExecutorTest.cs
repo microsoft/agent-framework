@@ -26,6 +26,37 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
     }
 
     [Fact]
+    public async Task RetrieveMessageWithSensitiveMessageIdThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("MessageId", FormulaValue.New("sensitive-message"), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        RetrieveConversationMessage.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(RetrieveMessageWithSensitiveMessageIdThrowsAsync)),
+            Message = PropertyPath.Create(FormatVariablePath("TestMessage")),
+            ConversationId = StringExpression.Literal("DefaultConversationId"),
+            MessageId = StringExpression.Variable(PropertyPath.TopicVariable("MessageId")),
+        };
+        RetrieveConversationMessage model = AssignParent<RetrieveConversationMessage>(builder);
+        RetrieveConversationMessageExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("message ID", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.GetMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task RetrieveMessageWithSensitiveConversationIdThrowsAsync()
     {
         // Arrange
