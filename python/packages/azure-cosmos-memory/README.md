@@ -56,7 +56,9 @@ The provider supports the same authentication modes as other Azure integrations:
 
 - **Managed identity / RBAC** (recommended): Pass `DefaultAzureCredential()`
 - **Connection string**: Set environment variables
-- **Environment variables**: `COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `FOUNDRY_ENDPOINT`
+- **Environment variables**: `COSMOS_ENDPOINT`, `COSMOS_DATABASE`, `FOUNDRY_PROJECT_ENDPOINT`
+
+Existing configurations can continue using `FOUNDRY_ENDPOINT`; the provider treats it as a legacy fallback.
 
 ### Development Setup
 
@@ -148,14 +150,14 @@ Ensure your virtual environment is activated, then:
 ```bash
 # Bash/Linux/macOS
 export COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-export FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
+export FOUNDRY_PROJECT_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
 python samples/basic_usage.py
 ```
 
 ```powershell
 # PowerShell
 $env:COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-$env:FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
 python samples/basic_usage.py
 ```
 
@@ -188,7 +190,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
 
 3. **Configure environment variables** - Set these in your activated virtual environment.
 
-   > **Note:** A **single** `FOUNDRY_ENDPOINT` powers everything:
+   > **Note:** A **single** `FOUNDRY_PROJECT_ENDPOINT` powers everything:
    > - The **memory provider** uses it internally for embeddings + memory extraction.
    > - The **chat agent** you talk to uses it via `FoundryChatClient`.
    >
@@ -201,7 +203,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    export COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   export FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
+   export FOUNDRY_PROJECT_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
    export EMBEDDING_MODEL="text-embedding-3-large"
    export CHAT_MODEL="gpt-4o-mini"
    ```
@@ -213,7 +215,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    $env:COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   $env:FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
+   $env:FOUNDRY_PROJECT_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
    $env:EMBEDDING_MODEL="text-embedding-3-large"
    $env:CHAT_MODEL="gpt-4o-mini"
    ```
@@ -445,7 +447,7 @@ All configuration can be provided via environment variables:
 ```bash
 COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 COSMOS_DATABASE=ai_memory
-FOUNDRY_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
 EMBEDDING_MODEL=text-embedding-3-large
 CHAT_MODEL=gpt-4o-mini
 
@@ -462,14 +464,14 @@ Bash/Linux/macOS:
 ```bash
 export COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 export COSMOS_DATABASE=ai_memory
-export FOUNDRY_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+export FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
 ```
 
 PowerShell:
 ```powershell
 $env:COSMOS_ENDPOINT="https://<account>.documents.azure.com:443/"
 $env:COSMOS_DATABASE="ai_memory"
-$env:FOUNDRY_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 ```
 
 ## See Also

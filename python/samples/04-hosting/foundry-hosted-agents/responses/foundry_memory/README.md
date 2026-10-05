@@ -90,6 +90,9 @@ $env:MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
 
+Existing configurations can continue using `AZURE_AI_MODEL_DEPLOYMENT_NAME` and
+`AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME` as compatibility fallbacks.
+
 Expected output (first run):
 
 ```text

@@ -34,8 +34,8 @@ Env.TraversePath().Load();
 string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;
 string toolboxName = FirstNonBlank(
     System.Environment.GetEnvironmentVariable("TOOLBOX_NAME"),

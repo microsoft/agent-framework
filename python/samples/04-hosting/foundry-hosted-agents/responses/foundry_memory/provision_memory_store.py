@@ -50,7 +50,9 @@ async def main() -> None:
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     memory_store_name = os.environ["MEMORY_STORE_NAME"]
     chat_model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
-    embedding_model = os.environ["FOUNDRY_EMBEDDING_MODEL"]
+    embedding_model = (
+        os.environ.get("FOUNDRY_EMBEDDING_MODEL") or os.environ["AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME"]
+    )
 
     async with (
         AzureCliCredential() as credential,
