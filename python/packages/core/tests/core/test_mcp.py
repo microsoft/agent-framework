@@ -934,8 +934,12 @@ def test_parse_tool_result_content_modes_for_complementary_and_duplicate_payload
 
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
     """The generated FunctionTool path retains one complete, persistent Host payload."""
+    file_meta = {
+        "container_id": "cntr_123",
+        "container_file_citations": '[{"file_id":"cfile_123","filename":"result.txt"}]',
+    }
     mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Summary")],
+        content=[types.TextContent(type="text", text="Summary", _meta=file_meta)],
         structuredContent={"image_url": "https://example.test/widget.png"},
         isError=False,
         _meta={"widget": "image"},
@@ -948,7 +952,7 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
     assert function_result.items is not None
     expected_host_payload = {
         "_meta": {"widget": "image"},
-        "content": [{"type": "text", "text": "Summary"}],
+        "content": [{"type": "text", "text": "Summary", "_meta": file_meta}],
         "structuredContent": {"image_url": "https://example.test/widget.png"},
         "isError": False,
     }

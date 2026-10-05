@@ -978,7 +978,7 @@ def test_mixed_batch_server_tool_runs_through_middleware_pipeline():
 
 
 async def test_mixed_batch_preserves_effective_middleware_order_session_and_invocation_kwargs(
-    streaming_chat_client_stub,
+    streaming_chat_client_stub, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from collections.abc import AsyncIterator
 
@@ -1017,8 +1017,11 @@ async def test_mixed_batch_preserves_effective_middleware_order_session_and_invo
     bundle_middleware = _RecordingMiddleware("bundle")
     repeated_run_middleware = _RecordingMiddleware("run")
     provider_middleware = _RecordingMiddleware("provider")
+    import agent_framework._feature_stage as feature_stage
     from agent_framework._feature_stage import ExperimentalWarning
 
+    # Feature-stage warnings are process-deduplicated; isolate this first-use assertion.
+    monkeypatch.setattr(feature_stage, "_WARNED_FEATURES", set())
     with pytest.warns(ExperimentalWarning, match="AGENT_HOOKS"):
         agent_bundle = MiddlewareBundle([bundle_middleware])
 
