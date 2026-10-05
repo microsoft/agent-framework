@@ -1535,6 +1535,38 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
     assert "specialist_b" in workflow.executors
 
 
+def test_get_handoff_tool_name_sanitizes_target_id() -> None:
+    """Handoff tool names should be valid when target IDs contain spaces or punctuation."""
+    assert get_handoff_tool_name("Billing Agent") == "handoff_to_Billing_Agent"
+    assert get_handoff_tool_name("Order-Support.Agent") == "handoff_to_Order_Support_Agent"
+
+
+async def test_auto_handoff_with_sanitized_target_id() -> None:
+    """Handoff tools should sanitize names while preserving the original target ID for routing."""
+    target_id = "Billing Agent"
+    executor = HandoffAgentExecutor(
+        MockHandoffAgent(name="triage"),
+        [HandoffConfiguration(target=target_id)],
+    )
+    executor_agent = _as_handoff_agent(executor._agent)  # pyright: ignore[reportPrivateUsage]
+
+    handoff_tool = next(
+        tool
+        for tool in executor_agent.default_options["tools"]
+        if isinstance(tool, FunctionTool) and tool.name == "handoff_to_Billing_Agent"
+    )
+
+    context = FunctionInvocationContext(function=handoff_tool, arguments={})
+    context.metadata["call_id"] = "handoff-call"
+
+    with pytest.raises(MiddlewareTermination):
+        await executor._auto_handoff_middleware.process(context, AsyncMock())  # pyright: ignore[reportPrivateUsage]
+
+    assert executor._auto_handoff_middleware.consume_invoked_handoffs() == [  # pyright: ignore[reportPrivateUsage]
+        ("handoff-call", target_id)
+    ]
+
+
 async def test_auto_handoff_middleware_intercepts_handoff_tool_call() -> None:
     """Middleware should short-circuit matching handoff tool calls with a synthetic result."""
     target_id = "specialist"

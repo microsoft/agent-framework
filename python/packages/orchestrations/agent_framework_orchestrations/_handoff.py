@@ -32,6 +32,7 @@ Key properties:
 import inspect
 import json
 import logging
+import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
@@ -124,7 +125,8 @@ class HandoffConfiguration:
 
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID."""
-    return f"handoff_to_{target_id}"
+    sanitized_target_id = re.sub(r"[^a-zA-Z0-9_]", "_", target_id)
+    return f"handoff_to_{sanitized_target_id}"
 
 
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"
