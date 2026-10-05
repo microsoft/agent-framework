@@ -2304,35 +2304,106 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
-    coalesced_contents: list[Content] = []
+
+    if type_str == "text":
+        coalesced_contents: list[Content] = []
+        run: list[Content] = []
+
+        def flush_run() -> None:
+            if not run:
+                return
+
+            first = deepcopy(run[0])
+
+            if len(run) == 1:
+                coalesced_contents.append(first)
+                run.clear()
+                return
+
+            first.text = "".join(content.text for content in run)
+
+            # Earlier chunks take precedence for duplicate properties, matching
+            # _combine_additional_props and the existing repeated-add behavior.
+            additional_properties = first.additional_properties
+            for content in run[1:]:
+                for key, value in content.additional_properties.items():
+                    additional_properties.setdefault(key, value)
+
+            annotation_groups = [content.annotations for content in run if content.annotations is not None]
+            if not annotation_groups:
+                first.annotations = None
+            elif len(annotation_groups) == 1:
+                first.annotations = annotation_groups[0]
+            else:
+                first.annotations = [annotation for annotations in annotation_groups for annotation in annotations]
+
+            # deepcopy(run[0]) intentionally discards the first chunk's raw
+            # representation, matching the existing coalescing behavior.
+            raw_representations = [
+                content.raw_representation for content in run[1:] if content.raw_representation is not None
+            ]
+
+            if not raw_representations:
+                first.raw_representation = None
+            elif len(raw_representations) == 1:
+                first.raw_representation = raw_representations[0]
+            else:
+                first.raw_representation = [
+                    item for raw in raw_representations for item in (raw if isinstance(raw, list) else [raw])
+                ]
+
+            coalesced_contents.append(first)
+            run.clear()
+
+        current_output_kind: Any = None
+
+        for content in contents:
+            if content.type != "text":
+                flush_run()
+                coalesced_contents.append(content)
+                current_output_kind = None
+                continue
+
+            output_kind = content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY)
+
+            if run and current_output_kind != output_kind:
+                flush_run()
+
+            if not run:
+                current_output_kind = output_kind
+
+            run.append(content)
+
+        flush_run()
+
+        contents.clear()
+        contents.extend(coalesced_contents)
+        return
+
+    # Preserve the existing reasoning-content behavior. Reasoning chunks have
+    # additional merge boundaries involving ids, summaries and protected data.
+    coalesced_contents = []
     first_new_content: Any | None = None
+
     for content in contents:
         if content.type == type_str:
             if first_new_content is None:
-                first_new_content = deepcopy(content)
-            elif type_str == "text" and first_new_content.additional_properties.get(
-                _MODEL_OUTPUT_KIND_KEY
-            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
-                coalesced_contents.append(first_new_content)
                 first_new_content = deepcopy(content)
             else:
                 try:
                     first_new_content += content
                 except AdditionItemMismatch:
-                    # Different IDs means a new logical segment; flush the current one
                     coalesced_contents.append(first_new_content)
                     first_new_content = deepcopy(content)
         else:
-            # skip this content, it is not of the right type
-            # so write the existing one to the list and start a new one,
-            # once the right type is found again
             if first_new_content:
                 coalesced_contents.append(first_new_content)
             first_new_content = None
-            # but keep the other content in the new list
             coalesced_contents.append(content)
+
     if first_new_content:
         coalesced_contents.append(first_new_content)
+
     contents.clear()
     contents.extend(coalesced_contents)
 

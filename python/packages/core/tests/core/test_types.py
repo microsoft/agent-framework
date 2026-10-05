@@ -2453,6 +2453,36 @@ def test_chat_response_from_updates_coalesces_text_update_without_text() -> None
         assert [content.text for content in response.messages[0].contents] == ["Hello world"]
 
 
+def test_text_coalescing_does_not_use_repeated_content_add(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Coalescing many text chunks should aggregate them without repeated Content addition."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text(
+            str(index),
+            additional_properties={"chunk": index},
+        )
+        for index in range(100)
+    ]
+
+    add_calls = 0
+    original_add = Content.__add__
+
+    def counting_add(self: Content, other: Content) -> Content:
+        nonlocal add_calls
+        add_calls += 1
+        return original_add(self, other)
+
+    monkeypatch.setattr(Content, "__add__", counting_add)
+
+    _coalesce_text_content(contents, "text")
+
+    assert len(contents) == 1
+    assert contents[0].text == "".join(str(index) for index in range(100))
+    assert contents[0].additional_properties == {"chunk": 0}
+    assert add_calls == 0
+
+
 def test_text_reasoning_content_add_coverage():
     """Test TextReasoningContent __add__ method for better coverage."""
 
