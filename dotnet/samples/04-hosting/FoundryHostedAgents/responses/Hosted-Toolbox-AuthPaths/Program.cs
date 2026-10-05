@@ -10,10 +10,8 @@
 // README.md.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT (local-dev) OR FOUNDRY_PROJECT_ENDPOINT (hosted runtime)
-//                                     - Foundry project endpoint. The Foundry hosted
-//                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
-//                                       set AZURE_AI_PROJECT_ENDPOINT (the AF-repo convention).
+//   FOUNDRY_PROJECT_ENDPOINT           - Foundry project endpoint. The Foundry hosted
+//                                       runtime auto-injects it; set it locally for `dotnet run`.
 //   TOOLBOX_NAME                      - Name of the Foundry Toolbox to load
 //                                       (default: auth-paths-toolbox)
 //
@@ -40,17 +38,8 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-// Project endpoint resolution order:
-//   1. FOUNDRY_PROJECT_ENDPOINT — auto-injected by the Foundry hosted runtime.
-//   2. AZURE_AI_PROJECT_ENDPOINT — the convention developers set locally for `dotnet run`.
-// When deployed, only (1) is available; the AF-repo sample convention to set (2) at
-// deploy time fails silently because the platform reserves all FOUNDRY_* env-var names
-// and rejects them at agent-create time. Read both, prefer the platform-injected one.
 string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? System.Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException(
-        "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
-        "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
     System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;

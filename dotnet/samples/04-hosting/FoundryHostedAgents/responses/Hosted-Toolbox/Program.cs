@@ -6,10 +6,8 @@
 // call tools provided by the Foundry platform's managed MCP proxy.
 //
 // Required environment variables:
-//   FOUNDRY_PROJECT_ENDPOINT (hosted runtime) OR AZURE_AI_PROJECT_ENDPOINT (local-dev)
-//                                     - Foundry project endpoint. The Foundry hosted
-//                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
-//                                       set AZURE_AI_PROJECT_ENDPOINT.
+//   FOUNDRY_PROJECT_ENDPOINT           - Foundry project endpoint. The Foundry hosted
+//                                       runtime auto-injects it; set it locally for `dotnet run`.
 //
 // Optional:
 //   FOUNDRY_MODEL (or AZURE_AI_MODEL_DEPLOYMENT_NAME)
@@ -34,10 +32,7 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 Env.TraversePath().Load();
 
 string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? System.Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException(
-        "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
-        "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
     System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),

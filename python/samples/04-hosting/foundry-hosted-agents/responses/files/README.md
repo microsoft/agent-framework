@@ -19,7 +19,7 @@ to an unsafe sandbox reader. The hosted-upload helper can run on Windows.
 
 ## Prerequisites and lifecycle
 
-Set `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`, plus either
+Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, plus either
 `TOOLBOX_ENDPOINT` or `TOOLBOX_NAME`. The Toolbox needs a code-interpreter tool;
 see the [Toolbox sample](../foundry_toolbox/). Authenticate local runs with
 `az login`. Deployed runs use the sandbox's managed identity.

@@ -123,7 +123,7 @@ When running the host with plain `python`, put the same value in a `.env` file n
 
 ## Running the agent host
 
-Follow the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the parent README to run the host with either `azd ai agent run` or plain `python main.py`. This sample requires `TOOLBOX_ENDPOINT` to be set (see Step 3) in addition to the standard `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` variables.
+Follow the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the parent README to run the host with either `azd ai agent run` or plain `python main.py`. This sample requires `TOOLBOX_ENDPOINT` to be set (see Step 3) in addition to the standard `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` variables.
 
 ## Interacting with the agent
 

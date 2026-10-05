@@ -17,7 +17,7 @@ from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 provider = CosmosMemoryContextProvider(
     cosmos_endpoint="https://<account>.documents.azure.com:443/",
     cosmos_database="ai_memory",
-    foundry_endpoint="https://<project>.services.ai.azure.com",
+    foundry_endpoint="https://<account>.services.ai.azure.com/api/projects/<project>",
     credential=DefaultAzureCredential(),
 )
 ```

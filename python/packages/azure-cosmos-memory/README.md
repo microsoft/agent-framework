@@ -24,7 +24,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 # A single AI Foundry endpoint powers both memory and the chat agent
-foundry_endpoint = "https://<project>.services.ai.azure.com"
+foundry_endpoint = "https://<account>.services.ai.azure.com/api/projects/<project>"
 
 # Create the memory provider
 memory_provider = CosmosMemoryContextProvider(
@@ -148,14 +148,14 @@ Ensure your virtual environment is activated, then:
 ```bash
 # Bash/Linux/macOS
 export COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-export FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+export FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
 python samples/basic_usage.py
 ```
 
 ```powershell
 # PowerShell
 $env:COSMOS_ENDPOINT="https://<your-account>.documents.azure.com:443/"
-$env:FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+$env:FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
 python samples/basic_usage.py
 ```
 
@@ -201,7 +201,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    export COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   export FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+   export FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
    export EMBEDDING_MODEL="text-embedding-3-large"
    export CHAT_MODEL="gpt-4o-mini"
    ```
@@ -213,7 +213,7 @@ This sample shows **real-world usage** with Agent Framework. It demonstrates:
    $env:COSMOS_DATABASE="ai_memory"
 
    # AI Foundry - used by BOTH the memory provider and the chat agent
-   $env:FOUNDRY_ENDPOINT="https://<your-project>.services.ai.azure.com"
+   $env:FOUNDRY_ENDPOINT="https://<your-account>.services.ai.azure.com/api/projects/<your-project>"
    $env:EMBEDDING_MODEL="text-embedding-3-large"
    $env:CHAT_MODEL="gpt-4o-mini"
    ```
@@ -445,7 +445,7 @@ All configuration can be provided via environment variables:
 ```bash
 COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 COSMOS_DATABASE=ai_memory
-FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
+FOUNDRY_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
 EMBEDDING_MODEL=text-embedding-3-large
 CHAT_MODEL=gpt-4o-mini
 
@@ -462,14 +462,14 @@ Bash/Linux/macOS:
 ```bash
 export COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 export COSMOS_DATABASE=ai_memory
-export FOUNDRY_ENDPOINT=https://<project>.services.ai.azure.com
+export FOUNDRY_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
 ```
 
 PowerShell:
 ```powershell
 $env:COSMOS_ENDPOINT="https://<account>.documents.azure.com:443/"
 $env:COSMOS_DATABASE="ai_memory"
-$env:FOUNDRY_ENDPOINT="https://<project>.services.ai.azure.com"
+$env:FOUNDRY_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
 ```
 
 ## See Also
