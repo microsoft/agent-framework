@@ -7243,6 +7243,276 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     assert len(function_results) == 0
 
 
+@pytest.mark.parametrize("resume_stream", [False, True], ids=["non-streaming", "streaming"])
+async def test_mixed_declaration_only_batch_defers_siblings_until_all_host_results(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    resume_stream: bool,
+) -> None:
+    """A session-backed Host batch releases local siblings once, in model order."""
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    execution_order: list[str] = []
+
+    @tool(name="first_func")
+    def first_func() -> str:
+        execution_order.append("first")
+        return "first result"
+
+    @tool(name="second_func")
+    def second_func() -> str:
+        execution_order.append("second")
+        return "second result"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    agent = Agent(
+        client=chat_client_base,
+        tools=[host_func, first_func, second_func],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    session = AgentSession()
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    continuation_result_orders: list[list[str | None]] = []
+    original_inner_get_response = chat_client_base._inner_get_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    def capture_inner_get_response(**kwargs: Any) -> Any:
+        continuation_result_orders.append([
+            content.call_id
+            for message in kwargs["messages"]
+            for content in message.contents
+            if content.type == "function_result"
+        ])
+        return original_inner_get_response(**kwargs)
+
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", capture_inner_get_response)
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="shared-host",
+                        name="host_func",
+                        arguments={},
+                        id="host-occurrence-1",
+                    ),
+                    Content.from_function_call(call_id="first", name="first_func", arguments={}),
+                    Content.from_function_call(
+                        call_id="shared-host",
+                        name="host_func",
+                        arguments={},
+                        id="host-occurrence-2",
+                    ),
+                    Content.from_function_call(call_id="second", name="second_func", arguments={}),
+                ],
+            )
+        )
+    ]
+
+    first_response = await agent.run("run everything", session=session)
+    host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [request.id for request in host_requests] == ["host-occurrence-1", "host-occurrence-2"]
+    assert execution_order == []
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+
+    first_result = Content.from_function_result(call_id="shared-host", result="first host result")
+    first_result.id = "host-occurrence-1"
+    partial_response = await agent.run(first_result, session=session)
+    assert partial_response.messages == []
+    assert execution_order == []
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    second_result = Content.from_function_result(call_id="shared-host", result="second host result")
+    second_result.id = "host-occurrence-2"
+    if resume_stream:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")]
+        ]
+        stream = agent.run(second_result, session=session, stream=True)
+        async for _ in stream:
+            pass
+        final_response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=["done"]))
+        ]
+        final_response = await agent.run(second_result, session=session)
+
+    assert final_response.text == "done"
+    assert execution_order == ["first", "second"]
+    assert continuation_result_orders[-1] == ["shared-host", "first", "shared-host", "second"]
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["replayed"]))
+    ]
+    replayed_response = await agent.run(second_result, session=session)
+    assert replayed_response.text == "replayed"
+    assert execution_order == ["first", "second"]
+
+
+async def test_sessionless_mixed_declaration_only_batch_executes_siblings_sequentially(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Without an authoritative session, local siblings execute on the same turn."""
+    execution_order: list[str] = []
+
+    @tool(name="first_func")
+    async def first_func() -> str:
+        execution_order.append("first_start")
+        await asyncio.sleep(0)
+        execution_order.append("first_end")
+        return "first result"
+
+    @tool(name="second_func")
+    async def second_func() -> str:
+        execution_order.append("second_start")
+        await asyncio.sleep(0)
+        execution_order.append("second_end")
+        return "second result"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="first", name="first_func", arguments={}),
+                    Content.from_function_call(call_id="second", name="second_func", arguments={}),
+                ],
+            )
+        )
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run everything"])],
+        options={"tool_choice": "auto", "tools": [host_func, first_func, second_func]},
+    )
+
+    assert execution_order == ["first_start", "first_end", "second_start", "second_end"]
+    contents = [content for message in response.messages for content in message.contents]
+    host_pauses = [content for content in contents if content.type == "function_call" and content.user_input_request]
+    results = [content for content in contents if content.type == "function_result"]
+    assert [content.call_id for content in host_pauses] == ["host"]
+    assert [(content.call_id, content.result) for content in results] == [
+        ("first", "first result"),
+        ("second", "second result"),
+    ]
+
+
+async def test_sessionless_mixed_declaration_only_batch_executes_siblings_concurrently(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The mixed path keeps the default concurrent local invocation behavior."""
+    started: list[str] = []
+    both_started = asyncio.Event()
+
+    async def wait_for_sibling(name: str) -> str:
+        started.append(name)
+        if len(started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=0.5)
+        return f"{name} result"
+
+    @tool(name="first_func")
+    async def first_func() -> str:
+        return await wait_for_sibling("first")
+
+    @tool(name="second_func")
+    async def second_func() -> str:
+        return await wait_for_sibling("second")
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="first", name="first_func", arguments={}),
+                    Content.from_function_call(call_id="second", name="second_func", arguments={}),
+                ],
+            )
+        )
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run everything"])],
+        options={"tool_choice": "auto", "tools": [host_func, first_func, second_func]},
+    )
+
+    assert started == ["first", "second"]
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in results] == [
+        ("first", "first result"),
+        ("second", "second result"),
+    ]
+
+
+async def test_streaming_sessionless_mixed_declaration_only_batch_returns_pause_and_result(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Streaming exposes the Host pause once and the local sibling result once."""
+    executions = 0
+
+    @tool(name="local_func")
+    def local_func() -> str:
+        nonlocal executions
+        executions += 1
+        return "local result"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="local", name="local_func", arguments={}),
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ]
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["run both"])],
+        options={"tool_choice": "auto", "tools": [host_func, local_func]},
+        stream=True,
+    )
+    pause_updates: list[Content] = []
+    result_updates: list[Content] = []
+    async for update in stream:
+        pause_updates.extend(
+            content for content in update.contents if content.type == "function_call" and content.user_input_request
+        )
+        result_updates.extend(content for content in update.contents if content.type == "function_result")
+    final_response = await stream.get_final_response()
+
+    assert executions == 1
+    assert [content.call_id for content in pause_updates] == ["host"]
+    assert [(content.call_id, content.result) for content in result_updates] == [("local", "local result")]
+    final_contents = [content for message in final_response.messages for content in message.contents]
+    assert [
+        content.call_id for content in final_contents if content.type == "function_call" and content.user_input_request
+    ] == ["host"]
+    assert [(content.call_id, content.result) for content in final_contents if content.type == "function_result"] == [
+        ("local", "local result")
+    ]
+
+
 @pytest.mark.parametrize(
     "argument_chunks",
     [
