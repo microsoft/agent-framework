@@ -220,6 +220,10 @@ class ForeachNextExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[LoopIterationResult],
     ) -> None:
         """Advance to next item and send result."""
+        if isinstance(trigger, LoopControl):
+            await self.handle_loop_control(trigger, ctx)
+            return
+
         state = await self._ensure_state_initialized(ctx, trigger)
 
         loop_id = self._init_executor_id
