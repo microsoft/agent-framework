@@ -2142,6 +2142,129 @@ class TestParseMessagesFromKbResponse:
 class TestBeforeRunAgentic:
     """Tests for before_run in agentic mode."""
 
+    @pytest.mark.parametrize("effort", ["low", "medium"])
+    @pytest.mark.parametrize("role", ["user", "assistant"])
+    @pytest.mark.parametrize("image_kind", ["uri", "data", "whitespace_uri"])
+    async def test_image_only_messages_reach_agentic_retrieval(
+        self, effort: RetrievalReasoningEffortLiteral, role: str, image_kind: str
+    ) -> None:
+        image = (
+            Content.from_data(data=b"\x89PNG", media_type="image/png")
+            if image_kind == "data"
+            else Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
+        )
+        contents = [Content.from_text("   "), image] if image_kind == "whitespace_uri" else [image]
+        session = AgentSession(session_id="image-session")
+        context = SessionContext(input_messages=[Message(role=role, contents=contents)], session_id=session.session_id)
+        retrieval_client = AsyncMock()
+        retrieval_client.retrieve.return_value = SimpleNamespace(response=[], references=None)
+
+        with force_preview_features():
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                retrieval_reasoning_effort=effort,
+            )
+            provider._retrieval_client = retrieval_client
+            with patch.object(provider, "_ensure_knowledge_base", new_callable=AsyncMock):
+                await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+        retrieval_client.retrieve.assert_awaited_once()
+        request = retrieval_client.retrieve.await_args.kwargs["retrieval_request"]
+        assert len(request.messages) == 1
+        assert request.messages[0].role == role
+        assert request.messages[0].content[-1].image.url == image.uri
+
+    @pytest.mark.parametrize("history_count", [1, 2])
+    async def test_latest_image_counts_toward_agentic_message_history(self, history_count: int) -> None:
+        image = Content.from_uri(uri="https://example.com/latest.png", media_type="image/png")
+        previous = Message(role="user", contents=["previous question"])
+        latest = Message(role="user", contents=[image])
+        session = AgentSession(session_id="image-session")
+        context = SessionContext(
+            input_messages=[
+                previous,
+                Message(role="system", contents=["system instructions"]),
+                latest,
+                Message(role="user", contents=["   "]),
+                Message(
+                    role="user",
+                    contents=[Content.from_uri(uri="https://example.com/a.pdf", media_type="application/pdf")],
+                ),
+            ],
+            session_id=session.session_id,
+        )
+        with force_preview_features():
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                retrieval_reasoning_effort="medium",
+                agentic_message_history_count=history_count,
+            )
+            with patch.object(provider, "_agentic_search", new_callable=AsyncMock, return_value=[]) as search:
+                await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+        search.assert_awaited_once_with([previous, latest][-history_count:])
+
+    @pytest.mark.parametrize("agentic", [False, True])
+    async def test_text_based_modes_ignore_image_only_input(self, agentic: bool) -> None:
+        image = Content.from_uri(uri="https://example.com/photo.png", media_type="image/png")
+        session = AgentSession(session_id="image-session")
+        context = SessionContext(input_messages=[Message(role="user", contents=[image])], session_id=session.session_id)
+        provider = (
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                retrieval_reasoning_effort="minimal",
+            )
+            if agentic
+            else _make_provider()
+        )
+        with (
+            patch.object(provider, "_agentic_search", new_callable=AsyncMock) as agentic_search,
+            patch.object(provider, "_semantic_search", new_callable=AsyncMock) as semantic_search,
+        ):
+            await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+        agentic_search.assert_not_awaited()
+        semantic_search.assert_not_awaited()
+
+    @pytest.mark.parametrize("effort", ["minimal", "low", "medium"])
+    @pytest.mark.parametrize("input_kind", ["system_image", "pdf", "whitespace", "empty"])
+    async def test_agentic_unsupported_messages_do_not_trigger_retrieval(
+        self, effort: RetrievalReasoningEffortLiteral, input_kind: str
+    ) -> None:
+        message = {
+            "system_image": Message(
+                role="system", contents=[Content.from_uri(uri="https://example.com/a.png", media_type="image/png")]
+            ),
+            "pdf": Message(
+                role="user", contents=[Content.from_uri(uri="https://example.com/a.pdf", media_type="application/pdf")]
+            ),
+            "whitespace": Message(role="user", contents=["   "]),
+            "empty": Message(role="user", contents=[]),
+        }[input_kind]
+        session = AgentSession(session_id="image-session")
+        context = SessionContext(input_messages=[message], session_id=session.session_id)
+        with force_preview_features():
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="kb",
+                api_key="key",
+                mode="agentic",
+                retrieval_reasoning_effort=effort,
+            )
+            with patch.object(provider, "_agentic_search", new_callable=AsyncMock) as search:
+                await provider.before_run(agent=cast(Any, None), session=session, context=context, state={})
+
+        search.assert_not_awaited()
+
     async def test_query_source_credential_requires_preview_sdk_before_transport(self) -> None:
         query_source_credential = AsyncMock()
         query_source_credential.get_token = AsyncMock(return_value=SimpleNamespace(token="user-token"))
