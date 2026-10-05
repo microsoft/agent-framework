@@ -4160,6 +4160,24 @@ def _append_instructions(
     return combined
 
 
+def _wrap_plain_callables_once(tools: Any, wrapped: dict[int, Any]) -> Any:
+    """Wrap each plain callable in ``tools`` in a FunctionTool, reusing the wrapper for a repeated callable."""
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool
+    from ._tools import tool as make_tool
+
+    if isinstance(tools, (str, bytes, bytearray, Mapping)) or not isinstance(tools, Sequence):
+        tools = [tools]
+    items: list[Any] = []
+    for item in tools:  # type: ignore[reportUnknownVariableType]
+        if callable(item) and not isinstance(item, (FunctionTool, MCPTool, dict)):
+            if id(item) not in wrapped:
+                wrapped[id(item)] = make_tool(item)  # type: ignore[reportUnknownArgumentType]
+            item = wrapped[id(item)]
+        items.append(item)
+    return items
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -4216,18 +4234,13 @@ def merge_chat_options(
             base_tools = result.get("tools")
             if base_tools and value:
                 # Add tools that aren't already present. normalize_tools wraps a plain
-                # callable in a new FunctionTool each time, so the same function given on
-                # both sides is matched by the function it wraps.
-                from ._tools import FunctionTool
-
-                merged_tools = normalize_tools(base_tools)
-                funcs = {id(t.func) for t in merged_tools if isinstance(t, FunctionTool) and t.func is not None}
-                for tool in normalize_tools(value):
-                    if tool in merged_tools or (
-                        isinstance(tool, FunctionTool) and tool.func is not None and id(tool.func) in funcs
-                    ):
-                        continue
-                    merged_tools.append(tool)
+                # callable in a new FunctionTool each time, so wrap each plain function
+                # once here and the same function given on both sides is one tool.
+                wrapped: dict[int, Any] = {}
+                merged_tools = normalize_tools(_wrap_plain_callables_once(base_tools, wrapped))
+                for tool in normalize_tools(_wrap_plain_callables_once(value, wrapped)):
+                    if tool not in merged_tools:
+                        merged_tools.append(tool)
                 result["tools"] = merged_tools
             elif value:
                 result["tools"] = value if isinstance(value, list) else [value]

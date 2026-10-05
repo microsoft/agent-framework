@@ -5370,6 +5370,22 @@ def test_merge_chat_options_keeps_distinct_tool_with_same_name():
     assert merged["tools"] == [base_lookup, override_lookup]
 
 
+def test_merge_chat_options_keeps_tools_that_wrap_the_same_function():
+    """Two decorated tools over one function are different tools and both kept."""
+
+    def lookup() -> str:
+        return "result"
+
+    tool_a = tool(name="a")(lookup)
+    tool_b = tool(name="b")(lookup)
+
+    merged = merge_chat_options({"tools": [tool_a]}, {"tools": [tool_b]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [tool_a, tool_b]
+
+    merged = merge_chat_options({"tools": [lookup]}, {"tools": [tool_a]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["lookup", "a"]
+
+
 def test_merge_chat_options_keeps_pydantic_provider_tool_whole():
     """A Pydantic provider-native tool spec is one tool, not spread into its fields."""
 
