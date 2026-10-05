@@ -455,7 +455,8 @@ class OllamaChatClient(
         # tools
         tools = options.get("tools")
         tool_choice = options.get("tool_choice")
-        if tool_choice != "none" and tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tool_mode = tool_choice.get("mode") if isinstance(tool_choice, Mapping) else tool_choice
+        if tool_mode != "none" and tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options

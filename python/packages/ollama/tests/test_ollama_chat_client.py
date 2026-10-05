@@ -943,6 +943,40 @@ def test_prepare_options_omits_tools_when_tool_choice_is_none(
     assert "tools" not in request
 
 
+def test_prepare_options_omits_tools_when_tool_choice_mode_is_none(
+    ollama_unit_test_env: dict[str, str],
+) -> None:
+    """Tools are omitted when ToolMode mapping explicitly disables tool use."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather for a city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string"},
+                    },
+                    "required": ["city"],
+                },
+            },
+        }
+    ]
+
+    request = client._prepare_options(
+        messages,
+        {
+            "tools": tools,
+            "tool_choice": {"mode": "none"},
+        },
+    )
+
+    assert "tools" not in request
+
+
 def test_prepare_options_includes_tools_when_tool_choice_is_auto(
     ollama_unit_test_env: dict[str, str],
 ) -> None:
