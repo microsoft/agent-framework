@@ -469,6 +469,22 @@ def test_type_compatibility_bare_container() -> None:
     assert not is_type_compatible(list[str], str)
 
 
+def test_type_compatibility_bare_container_and_protocol() -> None:
+    """A Protocol that is not runtime_checkable is reported as incompatible, not raised."""
+    from typing import Generic, Protocol, TypeVar
+
+    T = TypeVar("T")
+
+    class SupportsClose(Protocol):
+        def close(self) -> None: ...
+
+    class Box(Protocol, Generic[T]):
+        def get(self) -> T: ...
+
+    assert not is_type_compatible(list[str], SupportsClose)
+    assert not is_type_compatible(list, Box[int])
+
+
 def test_type_compatibility_unions() -> None:
     """Test type compatibility with Union types."""
     # Source matches target union member
