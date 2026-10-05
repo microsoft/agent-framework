@@ -124,14 +124,16 @@ class HandoffConfiguration:
 
 
 _INVALID_TOOL_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]")
+_MAX_TOOL_NAME_LENGTH = 64
 
 
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID.
 
-    Characters that model providers reject in tool names, such as spaces, are replaced with underscores.
+    Characters that model providers reject in tool names, such as spaces, are replaced with underscores,
+    and the name is cut to the 64 characters that providers allow.
     """
-    return f"handoff_to_{_INVALID_TOOL_NAME_CHARACTERS.sub('_', target_id)}"
+    return f"handoff_to_{_INVALID_TOOL_NAME_CHARACTERS.sub('_', target_id)}"[:_MAX_TOOL_NAME_LENGTH]
 
 
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"

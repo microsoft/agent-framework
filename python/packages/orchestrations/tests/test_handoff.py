@@ -1529,6 +1529,27 @@ def test_handoff_tool_name_uses_only_valid_tool_name_characters(target_id: str, 
     assert get_handoff_tool_name(target_id) == expected
 
 
+def test_handoff_tool_name_stays_within_provider_length_limit() -> None:
+    long_name = "customer_billing_and_refund_escalation_specialist_for_enterprise_accounts"
+
+    tool_name = get_handoff_tool_name(long_name)
+
+    assert len(tool_name) == 64
+    assert tool_name == f"handoff_to_{long_name}"[:64]
+
+
+def test_handoff_builder_rejects_long_targets_with_the_same_tool_name() -> None:
+    prefix = "customer_billing_and_refund_escalation_specialist_for_enterprise"
+    triage = MockHandoffAgent(name="triage")
+    first = MockHandoffAgent(name=f"{prefix}_north")
+    second = MockHandoffAgent(name=f"{prefix}_south")
+
+    with pytest.raises(ValueError, match="conflicts with existing tool"):
+        HandoffBuilder(participants=_as_handoff_agents(triage, first, second)).with_start_agent(
+            _as_handoff_agent(triage)
+        ).build()
+
+
 class ToolNameRecordingClient(MockChatClient):
     """Mock chat client that records the tool names offered to the model."""
 
