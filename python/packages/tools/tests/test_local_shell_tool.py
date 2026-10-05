@@ -534,6 +534,131 @@ async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
 
 
+@pytest.mark.parametrize("failure", ["timeout", "overflow"])
+async def test_persistent_queued_command_restarts_after_session_recovery(failure: str) -> None:
+    if sys.platform == "win32":
+        command = (
+            "[System.Threading.Thread]::Sleep(30000)"
+            if failure == "timeout"
+            else "while ($true) { [Console]::Write('overflow') }"
+        )
+        followup = "Write-Output recovered"
+    else:
+        command = "trap '' INT; sleep 30" if failure == "timeout" else "while :; do printf 'overflow'; done"
+        followup = "printf 'recovered'"
+
+    async with LocalShellTool(
+        mode="persistent",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        max_output_bytes=128,
+    ) as tool:
+        failed, recovered = await asyncio.gather(
+            tool.run(command, timeout=0.5 if failure == "timeout" else 10.0),
+            tool.run(followup, timeout=10.0),
+            return_exceptions=True,
+        )
+
+    assert isinstance(failed, ShellResult)
+    assert failed.timed_out if failure == "timeout" else failed.truncated
+    assert isinstance(recovered, ShellResult), recovered
+    assert recovered.stdout.strip() == "recovered"
+    assert recovered.exit_code == 0
+
+
+@pytest.mark.parametrize("queue_during_close", [False, True])
+async def test_persistent_close_rejects_queued_commands(queue_during_close: bool) -> None:
+    if sys.platform == "win32":
+        command = "[Console]::WriteLine('running'); [Console]::Out.Flush(); [System.Threading.Thread]::Sleep(30000)"
+        followup = "Write-Output queued"
+        reopened = "Write-Output reopened"
+    else:
+        command = "printf 'running\\n'; sleep 30"
+        followup = "printf 'queued'"
+        reopened = "printf 'reopened'"
+
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    tasks = [asyncio.create_task(tool.run(command, timeout=10.0))]
+    try:
+
+        async def wait_until_running() -> None:
+            while b"running" not in session._stdout_buf:
+                session._stdout_event.clear()
+                await session._stdout_event.wait()
+
+        await asyncio.wait_for(wait_until_running(), timeout=10.0)
+        if not queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        closing = asyncio.create_task(tool.close())
+        await asyncio.sleep(0)
+        assert tool._get_session_lock().locked()
+        if queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        await asyncio.wait_for(closing, timeout=10.0)
+        _, queued = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15.0)
+        assert isinstance(queued, RuntimeError), queued
+        assert tool._session is None
+        assert session._proc is None
+
+        result = await session.run(reopened, timeout=10.0)
+        assert result.stdout.strip() == "reopened"
+        assert result.exit_code == 0
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await tool.close()
+        await session.close()
+
+
+async def test_persistent_close_during_start_does_not_dispatch_command() -> None:
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    await tool.close()
+    created = asyncio.Event()
+    finish_start = asyncio.Event()
+    create_process = asyncio.create_subprocess_exec
+
+    async def delayed_create_process(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        proc = await create_process(*args, **kwargs)
+        created.set()
+        await finish_start.wait()
+        return proc
+
+    command = "Write-Output unexpected" if sys.platform == "win32" else "printf unexpected"
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        with (
+            patch("agent_framework_tools.shell._session.asyncio.create_subprocess_exec", delayed_create_process),
+            patch.object(session, "_run_locked", wraps=session._run_locked) as run_command,
+        ):
+            tasks.append(asyncio.create_task(session.run(command, timeout=10.0)))
+            await asyncio.wait_for(created.wait(), timeout=10.0)
+            tasks.append(asyncio.create_task(session.close()))
+            await asyncio.sleep(0)
+            finish_start.set()
+            result, _ = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+
+        assert isinstance(result, RuntimeError), result
+        run_command.assert_not_awaited()
+        assert session._proc is None
+    finally:
+        finish_start.set()
+        await session.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell persistent reanchor test")
 async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.PathLike[str]) -> None:
     """PowerShell counterpart of the POSIX confinement check."""
