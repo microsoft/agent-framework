@@ -189,12 +189,14 @@ class WorkflowViz:
             A string representation of the workflow in Mermaid flowchart syntax.
         """
         lines: list[str] = ["flowchart TD"]
+        node_ids = self._mermaid_node_ids()
 
         # Emit top-level workflow
         self._emit_workflow_mermaid(
             self._workflow,
             lines,
             indent="  ",
+            node_ids=node_ids,
             include_internal_executors=include_internal_executors,
         )
 
@@ -203,6 +205,7 @@ class WorkflowViz:
             self._workflow,
             lines,
             indent="  ",
+            node_ids=node_ids,
             include_internal_executors=include_internal_executors,
         )
 
@@ -343,24 +346,60 @@ class WorkflowViz:
 
     # region Internal emitters (Mermaid)
 
+    @staticmethod
+    def _sanitize_mermaid_id(value: str) -> str:
+        sanitized = re.sub(r"[^0-9A-Za-z_]", "_", value)
+        return sanitized if sanitized and sanitized[0].isalpha() else f"n_{sanitized}"
+
+    def _mermaid_node_ids(self) -> dict[tuple[str, ...], str]:
+        """Allocate graph-wide aliases without consuming another node's ordinary ID."""
+        from ._workflow_executor import WorkflowExecutor
+
+        candidates: dict[tuple[str, ...], str] = {}
+
+        def collect(workflow: Workflow, ns: tuple[str, ...] = ()) -> None:
+            prefix = f"{self._sanitize_mermaid_id(ns[-1])}__" if ns else ""
+            for executor_id, executor in workflow.executors.items():
+                candidates[("executor", *ns, executor_id)] = prefix + self._sanitize_mermaid_id(executor_id)
+                if isinstance(executor, WorkflowExecutor) and executor.workflow:
+                    if ns:
+                        candidates[("subgraph", *ns, executor_id)] = self._sanitize_mermaid_id(executor_id)
+                    collect(executor.workflow, (*ns, executor_id))
+            for dot_node_id, _, target in self._compute_fan_in_descriptors(workflow):
+                digest = dot_node_id.split("::")[-1]
+                candidates[("fan-in", *ns, dot_node_id)] = (
+                    f"fan_in__{prefix}{self._sanitize_mermaid_id(f'{target}__{digest}')}"
+                )
+
+        collect(self._workflow)
+        reserved = set(candidates.values())
+        used: set[str] = set()
+        node_ids: dict[tuple[str, ...], str] = {}
+        # Prefer unchanged executor IDs, then allocate deterministically by original scope.
+        for key in sorted(candidates, key=lambda key: (candidates[key] != key[-1], key)):
+            candidate = candidates[key]
+            alias = candidate
+            if alias in used:
+                suffix = 2
+                alias = f"{candidate}_{suffix}"
+                while alias in reserved or alias in used:
+                    suffix += 1
+                    alias = f"{candidate}_{suffix}"
+            used.add(alias)
+            node_ids[key] = alias
+        return node_ids
+
     def _emit_workflow_mermaid(
         self,
         workflow: Workflow,
         lines: list[str],
         indent: str,
-        ns: str | None = None,
+        node_ids: dict[tuple[str, ...], str],
+        ns: tuple[str, ...] = (),
         include_internal_executors: bool = False,
     ) -> None:
-        def _san(s: str) -> str:
-            s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
-            if not s2 or not s2[0].isalpha():
-                s2 = f"n_{s2}"
-            return s2
-
         def map_id(x: str) -> str:
-            if ns:
-                return f"{_san(ns)}__{_san(x)}"
-            return _san(x)
+            return node_ids[("executor", *ns, x)]
 
         # Nodes
         start_executor_id = workflow.start_executor_id
@@ -374,9 +413,7 @@ class WorkflowViz:
         fan_in_nodes_dot = self._compute_fan_in_descriptors(workflow)
         fan_in_nodes: list[tuple[str, list[str], str]] = []
         for dot_node_id, sources, target in fan_in_nodes_dot:
-            digest = dot_node_id.split("::")[-1]
-            base = f"{target}__{digest}"
-            fan_node_id = f"fan_in__{_san(ns) + '__' if ns else ''}{_san(base)}"
+            fan_node_id = node_ids[("fan-in", *ns, dot_node_id)]
             fan_in_nodes.append((fan_node_id, sources, target))
 
         for fan_node_id, _, _ in fan_in_nodes:
@@ -405,6 +442,8 @@ class WorkflowViz:
         workflow: Workflow,
         lines: list[str],
         indent: str,
+        node_ids: dict[tuple[str, ...], str],
+        ns: tuple[str, ...] = (),
         include_internal_executors: bool = False,
     ) -> None:
         try:
@@ -412,22 +451,17 @@ class WorkflowViz:
         except ImportError:  # pragma: no cover
             return
 
-        def _san(s: str) -> str:
-            s2 = re.sub(r"[^0-9A-Za-z_]", "_", s)
-            if not s2 or not s2[0].isalpha():
-                s2 = f"n_{s2}"
-            return s2
-
         for exec_id, exec_obj in workflow.executors.items():
             if isinstance(exec_obj, WorkflowExecutor) and hasattr(exec_obj, "workflow") and exec_obj.workflow:
-                sg_id = _san(exec_id)
+                sg_id = node_ids[("subgraph", *ns, exec_id)] if ns else node_ids["executor", exec_id]
                 lines.append(f"{indent}subgraph {sg_id}")
                 # Render nested workflow within this subgraph using namespacing
                 self._emit_workflow_mermaid(
                     exec_obj.workflow,
                     lines,
                     indent=f"{indent}  ",
-                    ns=exec_id,
+                    node_ids=node_ids,
+                    ns=(*ns, exec_id),
                     include_internal_executors=include_internal_executors,
                 )
                 # Recurse into deeper sub-workflows
@@ -435,6 +469,8 @@ class WorkflowViz:
                     exec_obj.workflow,
                     lines,
                     indent=f"{indent}  ",
+                    node_ids=node_ids,
+                    ns=(*ns, exec_id),
                     include_internal_executors=include_internal_executors,
                 )
                 lines.append(f"{indent}end")

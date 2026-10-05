@@ -2,6 +2,7 @@
 
 """Tests for the workflow visualization module."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -410,3 +411,128 @@ def test_workflow_viz_nested_sub_workflows():
     # Should have multiple subgraphs for nested structure
     subgraph_count = dot_content.count("subgraph cluster_")
     assert subgraph_count >= 2  # At least one for each level of nesting
+
+
+@pytest.mark.parametrize(
+    "executor_ids",
+    [
+        ("step-a", "step_a"),
+        ("step a", "step-a", "step_a", "step_a_2"),
+        ("步骤甲", "步骤乙"),
+        ("1step", "n_1step"),
+        ("_step", "n__step"),
+        ("step-a", "step_b"),
+        ("step_a", "step_b"),
+    ],
+)
+def test_workflow_viz_mermaid_distinct_executor_ids(executor_ids: tuple[str, ...]) -> None:
+    """Distinct executors must keep distinct diagram nodes and their original edges."""
+    executors = [MockExecutor(id=executor_id) for executor_id in executor_ids]
+    builder = WorkflowBuilder(start_executor=executors[0])
+    for source, target in zip(executors, executors[1:]):
+        builder.add_edge(source, target)
+    workflow = builder.build()
+    viz = WorkflowViz(workflow)
+    mermaid = viz.to_mermaid()
+    declarations = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["([^"\n]*)"\];$', mermaid, re.MULTILINE)
+    node_ids = [node_id for node_id, _ in declarations]
+
+    assert len(node_ids) == len(executor_ids)
+    assert len(set(node_ids)) == len(executor_ids)
+    assert [label for _, label in declarations] == [f"{executor_ids[0]} (Start)", *executor_ids[1:]]
+    for source, target in zip(node_ids, node_ids[1:]):
+        assert f"{source} --> {target};" in mermaid
+    assert mermaid == viz.to_mermaid()
+    # Ordinary identifiers must not be consumed by aliases generated for other nodes.
+    for executor_id, node_id in zip(executor_ids, node_ids):
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", executor_id):
+            assert node_id == executor_id
+
+
+def test_workflow_viz_empty_executor_id_rejected() -> None:
+    """Visualization does not relax the existing non-empty executor ID contract."""
+    with pytest.raises(ValueError, match="Executor ID must be a non-empty string"):
+        MockExecutor(id="")
+
+
+def test_workflow_viz_mermaid_subgraph_id_collisions() -> None:
+    """Colliding wrapper aliases must keep separate subgraphs and scoped edges."""
+    wrappers = []
+    for wrapper_id in ("container-a", "container_a"):
+        source, target = MockExecutor(id="step-a"), MockExecutor(id="step_a")
+        sub_workflow = WorkflowBuilder(start_executor=source).add_edge(source, target).build()
+        wrappers.append(WorkflowExecutor(sub_workflow, id=wrapper_id))
+    start = MockExecutor(id="start")
+    workflow = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
+    mermaid = WorkflowViz(workflow).to_mermaid()
+    nodes = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["', mermaid, re.MULTILINE)
+    subgraphs = re.findall(r"  subgraph ([A-Za-z][A-Za-z0-9_]*)\n(.*?)\n  end", mermaid, re.DOTALL)
+
+    assert len(nodes) == len(set(nodes)) == 7
+    assert len(subgraphs) == len({node_id for node_id, _ in subgraphs}) == 2
+    for wrapper_id, (_, content) in zip(("container-a", "container_a"), subgraphs):
+        wrapper_match = re.search(rf'([A-Za-z][A-Za-z0-9_]*)\["{re.escape(wrapper_id)}"\];', mermaid)
+        assert wrapper_match is not None
+        child_ids = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["', content, re.MULTILINE)
+        assert len(child_ids) == 2
+        assert f"{child_ids[0]} --> {child_ids[1]};" in content
+        assert f"start --> {wrapper_match.group(1)};" in mermaid
+
+
+def test_workflow_viz_mermaid_namespace_collision() -> None:
+    """A namespaced child cannot reuse an ordinary top-level executor ID."""
+    child = MockExecutor(id="child")
+    wrapper = WorkflowExecutor(WorkflowBuilder(start_executor=child).build(), id="container")
+    start = MockExecutor(id="container__child")
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, wrapper).build()
+    mermaid = WorkflowViz(workflow).to_mermaid()
+    nodes = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["', mermaid, re.MULTILINE)
+
+    assert len(nodes) == len(set(nodes)) == 3
+    assert 'container__child["container__child (Start)"];' in mermaid
+    assert "container__child --> container;" in mermaid
+
+
+def test_workflow_viz_mermaid_nested_namespace_collision() -> None:
+    """Full parent scopes distinguish equal inner wrapper and child names."""
+    wrappers = []
+    for wrapper_id in ("left", "right"):
+        leaf = MockExecutor(id="leaf")
+        inner = WorkflowExecutor(WorkflowBuilder(start_executor=leaf).build(), id="inner")
+        wrappers.append(WorkflowExecutor(WorkflowBuilder(start_executor=inner).build(), id=wrapper_id))
+    start = MockExecutor(id="start")
+    workflow = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
+    viz = WorkflowViz(workflow)
+    mermaid = viz.to_mermaid()
+    nodes = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["', mermaid, re.MULTILINE)
+    subgraphs = re.findall(r"^\s*subgraph ([A-Za-z][A-Za-z0-9_]*)$", mermaid, re.MULTILINE)
+
+    assert len(nodes) == len(set(nodes)) == 7
+    assert len(subgraphs) == len(set(subgraphs)) == 4
+    assert mermaid == viz.to_mermaid()
+
+
+def test_workflow_viz_mermaid_fan_in_id_collision() -> None:
+    """A generated fan-in node cannot reuse a legal executor ID."""
+    start, source = MockExecutor(id="start"), MockExecutor(id="source")
+    target = ListStrTargetExecutor(id="target")
+    digest = WorkflowViz(WorkflowBuilder(start_executor=start).build())._fan_in_digest("target", ["start", "source"])
+    ordinary_id = f"fan_in__target__{digest}"
+    ordinary = MockExecutor(id=ordinary_id)
+    workflow = (
+        WorkflowBuilder(start_executor=start)
+        .add_edge(start, source)
+        .add_edge(start, ordinary)
+        .add_fan_in_edges([start, source], target)
+        .build()
+    )
+    mermaid = WorkflowViz(workflow).to_mermaid()
+    fan_in_ids = re.findall(r"^\s*([A-Za-z][A-Za-z0-9_]*)\(\(fan-in\)\)$", mermaid, re.MULTILINE)
+    nodes = re.findall(r'^\s*([A-Za-z][A-Za-z0-9_]*)\["', mermaid, re.MULTILINE)
+
+    assert len(fan_in_ids) == 1
+    assert len({*nodes, *fan_in_ids}) == 5
+    assert f'{ordinary_id}["{ordinary_id}"];' in mermaid
+    assert f"start --> {fan_in_ids[0]};" in mermaid
+    assert f"source --> {fan_in_ids[0]};" in mermaid
+    assert f"{fan_in_ids[0]} --> target;" in mermaid
