@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
 from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
     BaseChatClient,
     ChatResponse,
     ChatResponseUpdate,
@@ -30,7 +32,7 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
-from ._event_converters import AGUIEventConverter, _finalize_agui_response
+from ._event_converters import AGUIEventConverter, _finalize_agui_agent_response, _finalize_agui_response
 from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
@@ -402,6 +404,26 @@ class AGUIChatClient(
             thread_id = f"thread_{uuid.uuid4().hex}"
 
         return thread_id
+
+    @override
+    def _finalize_function_invocation_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Keep message-linked annotations attached across the complete tool loop."""
+        return _finalize_agui_response(updates, response_format=response_format)
+
+    @override
+    def _finalize_agent_response_updates(
+        self,
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> AgentResponse[Any]:
+        """Preserve message-linked annotations after chat updates are mapped to an agent."""
+        return _finalize_agui_agent_response(updates, response_format=response_format)
 
     @override
     def _inner_get_response(

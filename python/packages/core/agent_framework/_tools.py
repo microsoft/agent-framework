@@ -4910,6 +4910,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
 
+    def _finalize_function_invocation_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Aggregate all model turns and tool results without reapplying per-turn processing."""
+        from ._types import ChatResponse
+
+        return ChatResponse.from_updates(updates, output_format_type=response_format)
+
     def _update_function_invocation_continuation_state(
         self,
         kwargs: dict[str, Any],
@@ -5582,10 +5593,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
-        from ._types import (
-            ChatResponse,
-            ResponseStream,
-        )
+        from ._types import ResponseStream
 
         super_get_response = cast(
             Callable[..., Any],
@@ -5708,7 +5716,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             if invalidation_error:
                 raise invalidation_error[0]
-            return ChatResponse.from_updates(updates, output_format_type=response_format)
+            return self._finalize_function_invocation_updates(updates, response_format=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
