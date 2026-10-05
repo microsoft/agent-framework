@@ -376,7 +376,12 @@ class ShellSession:
                 " $__af_last = $LASTEXITCODE;"
                 " try {"
                 f"   $__af_cmd = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'));"
-                "   Invoke-Expression $__af_cmd;"
+                # Format the output inside the try. Left to the host, pwsh
+                # formats a script block's output only after the block has
+                # returned, so the sentinel written in finally would overtake
+                # anything rendered as a table or list (Get-Location,
+                # Select-Object, custom objects) and that output would be lost.
+                "   Invoke-Expression $__af_cmd | Out-Default;"
                 # $? has to be read on the very next statement: anything else
                 # in between overwrites it.
                 "   $__af_ok = $?;"

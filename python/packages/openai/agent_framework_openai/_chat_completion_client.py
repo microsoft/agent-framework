@@ -923,7 +923,9 @@ class RawOpenAIChatCompletionClient(
             )
 
         for choice in chunk.choices:
-            chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
+            # Missing per-chunk logprobs must not clear the most recent token metadata.
+            if choice.logprobs is not None:
+                chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
             if choice.finish_reason:
                 finish_reason = "tool_calls" if choice.finish_reason == "function_call" else choice.finish_reason  # type: ignore[assignment]
 
