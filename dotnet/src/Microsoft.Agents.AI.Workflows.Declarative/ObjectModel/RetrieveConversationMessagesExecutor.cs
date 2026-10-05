@@ -21,7 +21,9 @@ internal sealed class RetrieveConversationMessagesExecutor(RetrieveConversationM
         Throw.IfNull(this.Model.Messages);
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
 
-        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string conversationId = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            "conversation ID");
 
         List<ChatMessage> messages = [];
         await foreach (ChatMessage message in agentProvider.GetMessagesAsync(

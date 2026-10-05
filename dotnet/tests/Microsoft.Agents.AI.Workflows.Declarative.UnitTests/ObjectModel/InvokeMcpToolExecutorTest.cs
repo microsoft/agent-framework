@@ -281,6 +281,51 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokeMcpToolWithProtectedIdentifierThrowsAsync(bool useConnectionName)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        StringExpression protectedExpression = StringExpression.Expression("Env.PROTECTED_SETTING");
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolWithProtectedIdentifierThrowsAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            ConversationId = useConnectionName ? null : new StringExpression.Builder(protectedExpression),
+            Connection = useConnectionName
+                ? new RemoteConnection.Builder { Name = new StringExpression.Builder(protectedExpression) }
+                : null,
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        MockMcpToolProvider mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(useConnectionName ? "connection name" : "conversation ID", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [Fact]
     public async Task InvokeMcpToolExecuteWithRequireApprovalAndHeadersAsync()
     {

@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx;
@@ -146,6 +147,16 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             VALUE:{valuePosition}{resultValue} ({result.GetType().Name})
             """);
 #endif
+    }
+
+    protected T GetNonSensitiveValue<T>(EvaluationResult<T> result, string location)
+    {
+        if (result.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot use a protected value for {location}: {this.Id}.");
+        }
+
+        return result.Value;
     }
 
     protected DeclarativeActionException Exception(string text, Exception? exception = null)

@@ -416,7 +416,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            "conversation ID");
         return value.Length == 0 ? null : value;
     }
 
@@ -451,7 +453,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.Connection.Name).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.Connection.Name),
+            "connection name");
         return value.Length == 0 ? null : value;
     }
 

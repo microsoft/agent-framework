@@ -471,7 +471,9 @@ internal sealed class InvokeFunctionToolExecutor(
             return null;
         }
 
-        string conversationIdValue = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string conversationIdValue = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            "conversation ID");
         return conversationIdValue.Length == 0 ? null : conversationIdValue;
     }
 
