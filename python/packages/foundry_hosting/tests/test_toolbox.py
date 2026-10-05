@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
-from agent_framework.exceptions import ToolException
+from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -499,7 +499,7 @@ async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
         _FakeCredential(),  # type: ignore
         url="https://loopback.invalid/mcp",
         load_tools=False,
-        header_provider=lambda kwargs: {"X-Custom-Header": kwargs["custom"]},
+        header_provider=lambda _kwargs: {"X-Custom-Header": "resource-value"},
     )
     await _attach_loopback_transport(toolbox, server)
     source = toolbox.as_skills_provider()._source
@@ -534,6 +534,28 @@ async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
         request.headers["mcp-session-id"].endswith(f"-{request.headers['x-agent-foundry-call-id']}")
         for request in resource_requests
     )
+    assert all(request.headers["X-Custom-Header"] == "resource-value" for request in resource_requests)
+
+
+async def test_toolbox_skills_reject_header_provider_that_requires_runtime_kwargs() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_tools=False,
+        header_provider=lambda kwargs: {"X-Custom-Header": kwargs["custom"]},
+    )
+    await _attach_loopback_transport(toolbox, server)
+    source = toolbox.as_skills_provider()._source
+
+    try:
+        await _run_with_request_context("CALL-X", toolbox.connect)
+        with pytest.raises(ToolExecutionException, match="cannot use a header_provider"):
+            await _run_with_request_context("CALL-X", lambda: source.get_skills(_source_context()))
+    finally:
+        await toolbox.close()
+
+    assert server.requests_for("resources/read") == []
 
 
 async def test_close_closes_owned_http_client(monkeypatch: pytest.MonkeyPatch) -> None:

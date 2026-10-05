@@ -23,6 +23,7 @@ from agent_framework import (
     SkillsSourceContext,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import ToolExecutionException
 from azure.ai.agentserver.core import get_request_context
 from typing_extensions import override
 
@@ -53,10 +54,6 @@ _TOOLSET_FEATURES_ENV_VAR = "FOUNDRY_AGENT_TOOLSET_FEATURES"
 _MANDATORY_TOOLBOX_FEATURE = "Toolboxes=V1Preview"
 _strict_toolbox_header_provider: ContextVar[bool] = ContextVar(
     "strict_toolbox_header_provider",
-    default=False,
-)
-_allow_missing_toolbox_header_provider: ContextVar[bool] = ContextVar(
-    "allow_missing_toolbox_header_provider",
     default=False,
 )
 
@@ -251,6 +248,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 mapping configures names per remote function, with ``"*"`` as the global key.
             timeout: Request timeout in seconds for the underlying HTTP client.
             kwargs: Additional options forwarded to :class:`~agent_framework.MCPStreamableHTTPTool`.
+                A custom ``header_provider`` used with :meth:`as_skills_provider`
+                must resolve without runtime kwargs; skill/resource reads do not
+                have a function invocation context.
         """
         endpoint = url or _resolve_toolbox_endpoint()
         tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
@@ -273,9 +273,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 try:
                     headers.update(caller_header_provider(runtime_kwargs))
                 except KeyError:
-                    if _strict_toolbox_header_provider.get() or (
-                        self._connection_kwargs is not None and not _allow_missing_toolbox_header_provider.get()
-                    ):
+                    if _strict_toolbox_header_provider.get() or self._connection_kwargs is not None:
                         raise
                     logger.debug(
                         "Caller header_provider needs runtime values unavailable to an ambient Toolbox request; "
@@ -379,11 +377,18 @@ class FoundryToolbox(MCPStreamableHTTPTool):
 
     def _effective_resource_headers(self) -> dict[str, str]:
         """Resolve headers for a resource operation without caller runtime kwargs."""
-        token = _allow_missing_toolbox_header_provider.set(True)
+        token = _strict_toolbox_header_provider.set(True)
         try:
-            return self._effective_headers({})
+            try:
+                return self._effective_headers({})
+            except KeyError as ex:
+                raise ToolExecutionException(
+                    "FoundryToolbox skill and resource reads cannot use a header_provider "
+                    "that requires runtime kwargs. Read required values from a closure or "
+                    "ContextVar, or use a request-owned Toolbox."
+                ) from ex
         finally:
-            _allow_missing_toolbox_header_provider.reset(token)
+            _strict_toolbox_header_provider.reset(token)
 
     def as_skills_provider(
         self,
@@ -407,6 +412,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         them from the well-known ``skill://index.json`` resource on the toolbox's MCP
         session and exposes them through a provider you can pass to an agent via
         ``context_providers=[...]``.
+
+        A custom Toolbox ``header_provider`` used with skills must resolve from
+        ambient state such as a closure or :class:`~contextvars.ContextVar`.
+        Skill/resource reads do not receive function runtime kwargs, so a provider
+        that requires them fails explicitly instead of sending incomplete headers.
 
         The toolbox must be **connected** before its skills are discovered (which
         happens lazily on the first agent run). Connect it by passing the toolbox to
