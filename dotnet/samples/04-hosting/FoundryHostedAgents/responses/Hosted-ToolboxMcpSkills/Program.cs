@@ -13,7 +13,6 @@
 // Optional:
 //   FOUNDRY_MODEL (or AZURE_AI_MODEL_DEPLOYMENT_NAME)
 //                                   - Model deployment name (default: gpt-5)
-//   FOUNDRY_MODEL                    - Legacy local-development fallback
 //
 // NOTE: All FOUNDRY_* and AGENT_* env-var prefixes (other than the platform-injected ones
 // listed above) are reserved by the Foundry container platform and rejected at agent-create.
