@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import logging
 import os
 import re
 from pathlib import Path
@@ -1129,13 +1130,12 @@ async def test_prepare_options_basic(mock_anthropic_client: MagicMock) -> None:
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=["Hello"])]
-    chat_options = ChatOptions(max_tokens=100, temperature=0.7)
+    chat_options = ChatOptions(max_tokens=100)
 
     run_options = client._prepare_options(messages, chat_options)
 
     assert run_options["model"] == client.model
     assert run_options["max_tokens"] == 100
-    assert run_options["temperature"] == 0.7
     assert "messages" in run_options
 
 
@@ -1479,16 +1479,23 @@ async def test_prepare_options_with_stop_sequences(
     assert run_options["stop_sequences"] == ["STOP", "END"]
 
 
-async def test_prepare_options_with_top_p(mock_anthropic_client: MagicMock) -> None:
-    """Test _prepare_options with top_p."""
+def test_prepare_options_ignores_unsupported_sampling_options(
+    mock_anthropic_client: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unsupported sampling options are dropped before calling Anthropic SDK 1.x."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=["Hello"])]
-    chat_options = ChatOptions(top_p=0.9)
+    chat_options = {"temperature": 0.7, "top_p": 0.9, "top_k": 40}
 
-    run_options = client._prepare_options(messages, chat_options)
+    with caplog.at_level(logging.WARNING, logger="agent_framework.anthropic"):
+        run_options = client._prepare_options(messages, chat_options)
 
-    assert run_options["top_p"] == 0.9
+    assert "temperature" not in run_options
+    assert "top_p" not in run_options
+    assert "top_k" not in run_options
+    assert "Ignoring unsupported Anthropic sampling options: temperature, top_p, top_k" in caplog.text
 
 
 async def test_prepare_options_excludes_stream_option(
