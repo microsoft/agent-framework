@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 def create_agent() -> Agent:
     """Keep skill caches, credentials and the MCP lifecycle request-owned."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
         ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
         if AgentConfig.from_env().is_hosted
