@@ -82,6 +82,14 @@ class TestMessagesFromResponsesInput:
         assert [m.role for m in msgs] == ["system", "user"]
         assert msgs[0].text == "be brief"
 
+    def test_message_envelope_without_type(self) -> None:
+        msgs = messages_from_responses_input([
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ])
+        assert [m.role for m in msgs] == ["developer", "user"]
+        assert [m.text for m in msgs] == ["be brief", "hi"]
+
     def test_message_envelope_with_content_parts(self) -> None:
         msgs = messages_from_responses_input([
             {
