@@ -473,13 +473,13 @@ def test_type_compatibility_bare_container_and_protocol() -> None:
     """A Protocol that is not runtime_checkable is reported as incompatible, not raised."""
     from typing import Generic, Protocol, TypeVar
 
-    T = TypeVar("T")
+    T_co = TypeVar("T_co", covariant=True)
 
     class SupportsClose(Protocol):
         def close(self) -> None: ...
 
-    class Box(Protocol, Generic[T]):
-        def get(self) -> T: ...
+    class Box(Protocol, Generic[T_co]):
+        def get(self) -> T_co: ...
 
     assert not is_type_compatible(list[str], SupportsClose)
     assert not is_type_compatible(list, Box[int])
