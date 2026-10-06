@@ -40,12 +40,11 @@ IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
         Name = name,
         ChatOptions = new ChatOptions
         {
-            ModelId = model,
             Instructions = "You are a helpful assistant. Answer concisely.",
         },
         ChatHistoryProvider = historyProvider,
     }))
-    // The session stores the database history key that belongs to the OpenAI conversation ID.
+    // The SessionStore stores the session associated with the OpenAI conversation ID / Response ID provided on the request to this service.
     .WithSessionStore(store, withIsolation: false);
 AIAgent chatCompletionsAgent = CreateChatClient().AsAIAgent(
     instructions: "You are a helpful assistant. Answer concisely.",

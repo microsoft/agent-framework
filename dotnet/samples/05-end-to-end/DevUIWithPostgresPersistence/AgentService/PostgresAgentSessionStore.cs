@@ -59,24 +59,6 @@ internal sealed class PostgresAgentSessionStore : AgentSessionStore, IDisposable
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public override async ValueTask<AgentSession> GetOrCreateSessionAsync(
-        AIAgent agent,
-        AgentSessionStoreKey key,
-        CancellationToken cancellationToken = default)
-    {
-        AgentSession? session = await this.GetSessionAsync(agent, key, cancellationToken).ConfigureAwait(false);
-        if (session is not null)
-        {
-            return session;
-        }
-
-        session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-        session.StateBag.SetValue(
-            DatabaseChatHistoryProvider.StateKey,
-            new DatabaseChatHistoryProvider.State { HistoryId = CreateHistoryId(agent, key) });
-        return session;
-    }
-
     public override async ValueTask<AgentSession?> GetSessionAsync(
         AIAgent agent,
         AgentSessionStoreKey key,
@@ -176,18 +158,6 @@ internal sealed class PostgresAgentSessionStore : AgentSessionStore, IDisposable
     private static string GetAgentName(AIAgent agent)
         => agent.Name ?? throw new InvalidOperationException(
             "The sample requires a stable agent name for session persistence.");
-
-    private static string CreateHistoryId(AIAgent agent, AgentSessionStoreKey key)
-    {
-        string scopedIdentity = string.Join(
-            '\n',
-            GetAgentName(agent),
-            key.SessionId,
-            SerializePartitions(key.Partitions));
-        byte[] hash = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(scopedIdentity));
-        return $"{key.SessionId}:{Convert.ToHexString(hash)}";
-    }
 
     private static string SerializePartitions(IReadOnlyDictionary<string, string>? partitions)
     {

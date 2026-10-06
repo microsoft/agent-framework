@@ -11,10 +11,7 @@ internal sealed class DatabaseChatHistoryProvider : ChatHistoryProvider
 
     private readonly PostgresAgentSessionStore _store;
     private readonly ProviderSessionState<State> _sessionState =
-        new(
-            _ => throw new InvalidOperationException(
-                "The PostgreSQL session store must initialize the conversation history ID."),
-            StateKey);
+        new(_ => new State { HistoryId = Guid.NewGuid().ToString("N") }, StateKey);
 
     public DatabaseChatHistoryProvider(PostgresAgentSessionStore store)
     {

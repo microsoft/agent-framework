@@ -65,9 +65,8 @@ completed response objects are reset when the agent service restarts, even
 though the PostgreSQL records remain. A client that retained the last response
 ID can continue after restart with `previous_response_id`; the restored session
 still points the `DatabaseChatHistoryProvider` at the matching immutable
-history snapshot. The initial snapshot ID is derived from the agent name,
-OpenAI conversation ID, and any caller-isolation partitions; later snapshots
-use internal IDs stored in the corresponding `AgentSession`.
+history snapshot. The provider generates opaque history IDs and stores them in
+the corresponding scoped `AgentSession`.
 
 Chat Completions is mapped to match a typical API host, but that protocol is
 stateless and does not carry a conversation ID, so it uses a separate stateless
