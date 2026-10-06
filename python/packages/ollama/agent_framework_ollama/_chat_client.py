@@ -217,9 +217,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     """For thinking models: whether the model should think before responding."""
 
     # ChatOptions fields not supported in Ollama
-    tool_choice: None  # type: ignore[misc]
-    """Not supported. Ollama only supports auto tool choice, but ``none`` is honored by omitting the tools."""
-
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Not configurable in Ollama."""
 
