@@ -78,6 +78,8 @@ The built-in AG-UI and A2A wiring adds isolation decorators where absent. With a
 
 OpenAI Responses/Conversations use the registered provider to scope their own storage and lookup operations. This protection is needed even if no agent session store is configured. Unlike the AG-UI and A2A wiring, the Responses mapping does not add an isolation decorator to a configured agent session store. Register that store with one of the isolation-enabled helpers below, or wrap it in `IsolationKeyScopedAgentSessionStore`, so session and approval state is also scoped to the caller; a store registered directly as a keyed `AgentSessionStore` is used as-is.
 
+`AddOpenAIResponses()` and `AddOpenAIConversations()` use in-memory conversation storage by default. Call `UseOpenAIConversationStore(...)` with an `IOpenAIConversationStore` implementation to persist conversation metadata, items, and the per-agent conversation index used by DevUI. Persist the agent's `AgentSession` separately with `WithSessionStore(...)`.
+
 The generic `WithSessionStore(...)`, `WithInMemorySessionStore(...)`, and `WithAzureBlobSessionStore(...)` helpers enable isolation by default. Their default strict wrapper requires a key, including when no provider is registered. Existing decorators retain their configured behavior. Do not disable strict isolation merely to make an authenticated multi-user application accept requests with missing identity claims.
 
 ### Authenticate every client request

@@ -56,6 +56,7 @@ dotnet/samples/
 │   ├── AgentWithPurview/              # Purview integration
 │   ├── AGUIClientServer/              # AG-UI client/server demo
 │   ├── AGUIWebChat/                   # AG-UI web chat
+│   ├── DevUIWithSqlitePersistence/    # Durable DevUI conversations and chat history
 │   ├── HostedAgents/                  # Hosted agent scenarios
 │   └── M365Agent/                     # Microsoft 365 agent
 ```
