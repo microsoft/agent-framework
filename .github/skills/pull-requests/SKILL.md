@@ -62,6 +62,14 @@ change is warranted only when the PR intentionally changes normative behavior,
 the scenario inventory, an acknowledged coverage gap, or the authoritative
 scenario-to-test mapping; keep any such edit to the smallest affected sections.
 
+### Community project listings
+
+When either `python/samples/community-projects.md` or
+`dotnet/samples/community-projects.md` changes, load and apply the
+[`community-projects`](../community-projects/SKILL.md) skill before reviewing
+or approving the change. Load it as well when an issue or pull request proposes
+an external project listing, even if neither catalog file has changed yet.
+
 ### Creating the PR
 Open new PRs as **drafts** until they are ready for review. Example:
 

@@ -12,6 +12,9 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`04-hosting/`](./04-hosting/) | Deployment: A2A, self-hosted protocol helpers, and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos, including the [AG-UI single-agent demo](./05-end-to-end/ag_ui_single_agent/) using `FoundryChatClient` |
 
+For published integrations maintained outside the Agent Framework team, see
+[Community projects](./community-projects.md).
+
 ## Getting Started
 
 Start with `01-get-started/` and work through the numbered files:
