@@ -1110,6 +1110,8 @@ class MCPTool:
                                 default=str,
                             )
                         )
+            elif isinstance(content, types.ResourceLink):
+                parts.append(json.dumps(content.model_dump(by_alias=True, exclude_none=True), default=str))
             else:
                 parts.append(str(content))
         if not parts:
