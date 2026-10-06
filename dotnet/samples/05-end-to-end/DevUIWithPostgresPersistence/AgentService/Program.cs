@@ -25,26 +25,31 @@ string connectionString = builder.Configuration.GetConnectionString("conversatio
 PostgresConversationStore store = await PostgresConversationStore.CreateAsync(connectionString);
 var historyProvider = new DatabaseChatHistoryProvider(store);
 
-IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
+IChatClient CreateChatClient() =>
     // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
     // In production, consider using a specific credential (e.g. ManagedIdentityCredential) to avoid
     // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
     new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
         .GetProjectOpenAIClient()
         .GetProjectResponsesClient()
-        .AsIChatClientWithStoredOutputDisabled(model)
-        .AsAIAgent(new ChatClientAgentOptions
+        .AsIChatClientWithStoredOutputDisabled(model);
+
+IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
+    CreateChatClient().AsAIAgent(new ChatClientAgentOptions
+    {
+        Name = name,
+        ChatOptions = new ChatOptions
         {
-            Name = name,
-            ChatOptions = new ChatOptions
-            {
-                ModelId = model,
-                Instructions = "You are a helpful assistant. Answer concisely.",
-            },
-            ChatHistoryProvider = historyProvider,
-        }))
+            ModelId = model,
+            Instructions = "You are a helpful assistant. Answer concisely.",
+        },
+        ChatHistoryProvider = historyProvider,
+    }))
     // The session stores the database history key that belongs to the OpenAI conversation ID.
     .WithSessionStore(store, withIsolation: false);
+AIAgent chatCompletionsAgent = CreateChatClient().AsAIAgent(
+    instructions: "You are a helpful assistant. Answer concisely.",
+    name: "assistant");
 
 builder.Services.AddOpenAIChatCompletions();
 builder.Services.AddOpenAIResponses();
@@ -55,7 +60,7 @@ app.Lifetime.ApplicationStopped.Register(store.Dispose);
 
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();
-app.MapOpenAIChatCompletions(agentBuilder);
+app.MapOpenAIChatCompletions(chatCompletionsAgent);
 app.MapDevUI();
 
 await app.RunAsync();

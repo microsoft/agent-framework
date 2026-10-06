@@ -13,8 +13,8 @@ The agent service uses:
 
 - `DatabaseChatHistoryProvider` to append and restore `ChatMessage` records;
 - `PostgresConversationStore`, an `AgentSessionStore`, to persist the small
-  provider state that associates the hosting conversation ID with its database
-  history ID;
+  provider state that associates the agent, hosting conversation ID, and caller
+  isolation partitions with its database history ID;
 - the standard `AddDevUI`, `MapOpenAIResponses`, `MapOpenAIConversations`, and
   `MapOpenAIChatCompletions` hosting flow.
 
@@ -65,12 +65,14 @@ completed response objects are reset when the agent service restarts, even
 though the PostgreSQL records remain. A client that retained the last response
 ID can continue after restart with `previous_response_id`; the restored session
 still points the `DatabaseChatHistoryProvider` at the matching immutable
-history snapshot. The initial snapshot ID is the OpenAI conversation ID; later
-snapshots use internal IDs stored in the corresponding `AgentSession`.
+history snapshot. The initial snapshot ID is derived from the agent name,
+OpenAI conversation ID, and any caller-isolation partitions; later snapshots
+use internal IDs stored in the corresponding `AgentSession`.
 
 Chat Completions is mapped to match a typical API host, but that protocol is
-stateless and does not carry a conversation ID. The database-backed multi-turn
-path demonstrated here is the Responses plus Conversations flow used by DevUI.
+stateless and does not carry a conversation ID, so it uses a separate stateless
+agent without `DatabaseChatHistoryProvider`. The database-backed multi-turn path
+demonstrated here is the Responses plus Conversations flow used by DevUI.
 
 ## Deployment boundaries
 

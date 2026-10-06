@@ -73,7 +73,7 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
         session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         session.StateBag.SetValue(
             DatabaseChatHistoryProvider.StateKey,
-            new DatabaseChatHistoryProvider.State { HistoryId = key.SessionId });
+            new DatabaseChatHistoryProvider.State { HistoryId = CreateHistoryId(agent, key) });
         return session;
     }
 
@@ -176,6 +176,18 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
     private static string GetAgentName(AIAgent agent)
         => agent.Name ?? throw new InvalidOperationException(
             "The sample requires a stable agent name for session persistence.");
+
+    private static string CreateHistoryId(AIAgent agent, AgentSessionStoreKey key)
+    {
+        string scopedIdentity = string.Join(
+            '\n',
+            GetAgentName(agent),
+            key.SessionId,
+            SerializePartitions(key.Partitions));
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(scopedIdentity));
+        return $"{key.SessionId}:{Convert.ToHexString(hash)}";
+    }
 
     private static string SerializePartitions(IReadOnlyDictionary<string, string>? partitions)
     {
