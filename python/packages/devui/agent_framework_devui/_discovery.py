@@ -558,9 +558,15 @@ class EntityDiscovery:
             # Look for module-level assignments of 'agent' or 'workflow'
             for node in ast.walk(tree):
                 if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id in ("agent", "workflow"):
-                            return True
+                    targets = node.targets
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    # Annotated assignment, e.g. `agent: Agent = Agent(...)`
+                    targets = [node.target]
+                else:
+                    continue
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id in ("agent", "workflow"):
+                        return True
         except Exception as e:
             logger.debug(f"Could not parse {file_path} for entity exports: {e}")
             return False

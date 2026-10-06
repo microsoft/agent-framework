@@ -56,6 +56,18 @@ async def test_empty_directory():
         assert len(entities) == 0
 
 
+async def test_discover_file_entity_with_annotated_export():
+    """A file exporting `agent: Agent = ...` is discovered like `agent = ...`."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        (Path(temp_dir) / "typed_agent.py").write_text("agent: object = object()\n")
+        (Path(temp_dir) / "declared_only.py").write_text("agent: object\n")
+
+        discovery = EntityDiscovery(temp_dir)
+        entities = await discovery.discover_entities()
+
+        assert [entity.id for entity in entities] == ["typed_agent"]
+
+
 async def test_discovery_accepts_agents_with_only_run():
     """Test that discovery accepts agents with only run() method.
 
