@@ -19,7 +19,7 @@ There are XML tags in all of the get started samples, those are used to display 
 async def main() -> None:
     # <create_agent>
     client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
+        project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
         model="gpt-4o",
         credential=AzureCliCredential(),
     )

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import shutil
 import sys
 from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any
@@ -24,6 +25,7 @@ from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_s
 _TEST_SHELL = "agent-framework-test-shell"
 _APPROVED_COMMAND = "printf '%s' approved-value"
 _ALTERNATE_COMMAND = "printf '%s' alternate-value"
+_POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell") if sys.platform == "win32" else None)
 
 
 class _FakeExecProcess:
@@ -354,6 +356,33 @@ async def test_persistent_powershell_utf8_roundtrip() -> None:
     async with LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True) as tool:
         result = await tool.run("Write-Output 'café'")
         assert "café" in result.stdout
+
+
+@pytest.mark.skipif(_POWERSHELL is None, reason="PowerShell is not installed")
+async def test_persistent_powershell_returns_formatted_object_output(tmp_path: os.PathLike[str]) -> None:
+    """Output that pwsh renders as a table must arrive before the sentinel.
+
+    The host formats a script block's output only after the block returns,
+    which is after the sentinel has been written, so this output used to be
+    dropped, along with any plain string written after the first object.
+    Runs wherever PowerShell is installed, not just on Windows.
+    """
+    assert _POWERSHELL is not None
+    async with LocalShellTool(
+        mode="persistent",
+        shell=[_POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        result = await tool.run("[pscustomobject]@{ Marker = 'af-object' }; Write-Output 'af-trailing'")
+        assert result.exit_code == 0
+        assert "af-object" in result.stdout
+        assert "af-trailing" in result.stdout
+
+        selected = await tool.run(f"Get-Item -LiteralPath '{tmp_path}' | Select-Object Name")
+        assert selected.exit_code == 0
+        assert os.path.basename(str(tmp_path)) in selected.stdout
 
 
 async def test_concurrent_first_calls_do_not_spawn_two_sessions() -> None:
