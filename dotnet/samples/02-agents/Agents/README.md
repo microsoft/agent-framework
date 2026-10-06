@@ -51,6 +51,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Switching agent operating mode](./Agent_Step22_AgentMode/)|This sample demonstrates how to use the AgentModeProvider to track and switch an agent's operating mode at runtime, including the built-in plan/execute modes and custom modes, with a simple input loop that switches mode using a slash command.|
 |[Tracking work with a todo list](./Agent_Step23_TodoList/)|This sample demonstrates how to use the TodoProvider to let an agent plan and track multi-step work using a todo list that persists across turns, printing the evolving todo list after each turn.|
 |[Routing turns across multiple models](./Agent_Step24_MultiModelRouting/)|This sample demonstrates how to use the RoutePersistingRoutingChatClient to route each agent turn to one of several named chat clients, switching the active model mid-conversation while preserving the conversation history.|
+|[Classification with Jev](./Agent_Step25_ClassificationWithJev/)|This sample demonstrates how to give an agent a Jev tool built with JevAIToolBuilder, so the agent's model asks Jev typed choice, score, and noul questions and uses the calibrated answers to route support tickets.|
 
 ## Running the samples from the console
 
