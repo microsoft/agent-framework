@@ -22,7 +22,7 @@ string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
 string connectionString = builder.Configuration.GetConnectionString("conversations")
     ?? throw new InvalidOperationException("Connection string 'conversations' is required.");
 
-PostgresConversationStore store = await PostgresConversationStore.CreateAsync(connectionString);
+PostgresAgentSessionStore store = await PostgresAgentSessionStore.CreateAsync(connectionString);
 var historyProvider = new DatabaseChatHistoryProvider(store);
 
 IChatClient CreateChatClient() =>

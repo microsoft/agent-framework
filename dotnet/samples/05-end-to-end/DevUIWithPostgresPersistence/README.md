@@ -12,7 +12,7 @@ PostgreSQL installation is required.
 The agent service uses:
 
 - `DatabaseChatHistoryProvider` to append and restore `ChatMessage` records;
-- `PostgresConversationStore`, an `AgentSessionStore`, to persist the small
+- `PostgresAgentSessionStore` to persist the small
   provider state that associates the agent, hosting conversation ID, and caller
   isolation partitions with its database history ID;
 - the standard `AddDevUI`, `MapOpenAIResponses`, `MapOpenAIConversations`, and

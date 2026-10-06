@@ -7,23 +7,23 @@ using Npgsql;
 
 namespace DevUIWithPostgresPersistence.AgentService;
 
-internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
+internal sealed class PostgresAgentSessionStore : AgentSessionStore, IDisposable
 {
     private readonly NpgsqlDataSource _dataSource;
 
-    private PostgresConversationStore(NpgsqlDataSource dataSource)
+    private PostgresAgentSessionStore(NpgsqlDataSource dataSource)
     {
         this._dataSource = dataSource;
     }
 
-    public static async Task<PostgresConversationStore> CreateAsync(
+    public static async Task<PostgresAgentSessionStore> CreateAsync(
         string connectionString,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         NpgsqlDataSource dataSource = NpgsqlDataSource.Create(connectionString);
-        var store = new PostgresConversationStore(dataSource);
+        var store = new PostgresAgentSessionStore(dataSource);
         try
         {
             await store.InitializeAsync(cancellationToken).ConfigureAwait(false);

@@ -9,14 +9,14 @@ internal sealed class DatabaseChatHistoryProvider : ChatHistoryProvider
 {
     internal const string StateKey = "DevUIWithPostgresPersistence.ChatHistory";
 
-    private readonly PostgresConversationStore _store;
+    private readonly PostgresAgentSessionStore _store;
     private readonly ProviderSessionState<State> _sessionState =
         new(
             _ => throw new InvalidOperationException(
                 "The PostgreSQL session store must initialize the conversation history ID."),
             StateKey);
 
-    public DatabaseChatHistoryProvider(PostgresConversationStore store)
+    public DatabaseChatHistoryProvider(PostgresAgentSessionStore store)
     {
         this._store = store;
     }
