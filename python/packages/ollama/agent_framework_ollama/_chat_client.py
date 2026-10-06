@@ -408,7 +408,7 @@ class OllamaChatClient(
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Keys to exclude from processing
-        exclude_keys = {"instructions", "tool_choice"}
+        exclude_keys = {"instructions", "tool_choice", "tools"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}
@@ -454,13 +454,11 @@ class OllamaChatClient(
             run_options["model"] = self.model
 
         # tools
+        # Ollama has no tool_choice parameter, so "none" is honored by not sending the tools at all.
         tools = options.get("tools")
         tool_mode = validate_tool_mode(options.get("tool_choice"))
-        if tool_mode and tool_mode.get("mode") == "none":
-            # Ollama has no tool_choice parameter.
-            # Omit tools entirely so the model won't attempt tool calls.
-            run_options.pop("tools", None)
-        elif tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tools_disabled = tool_mode is not None and tool_mode.get("mode") == "none"
+        if tools is not None and not tools_disabled and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options

@@ -16,7 +16,12 @@ from agent_framework import (
     chat_middleware,
     tool,
 )
-from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException, SettingNotFoundError
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+    ContentError,
+    SettingNotFoundError,
+)
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
@@ -953,3 +958,12 @@ async def test_cmc_function_invocation_limit_final_request_omits_tools(
     assert "tools" in mock_chat.call_args_list[0].kwargs
     assert "tools" not in mock_chat.call_args_list[1].kwargs
     assert result.text == "test"
+
+
+def test_prepare_options_invalid_tool_choice_raises(ollama_unit_test_env: dict[str, str]) -> None:
+    """An invalid tool_choice is rejected instead of being silently ignored."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    with pytest.raises(ContentError):
+        client._prepare_options(messages, {"tools": [hello_world], "tool_choice": "bogus"})
