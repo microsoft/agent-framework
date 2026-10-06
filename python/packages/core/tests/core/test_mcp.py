@@ -8,8 +8,12 @@ import logging
 import os
 import sys
 import warnings
-from contextlib import _AsyncGeneratorContextManager  # type: ignore
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
+from datetime import timedelta
+from textwrap import dedent
+from types import TracebackType
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -71,6 +75,83 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
         return result
     text = "\n".join(content.text for content in result if content.type == "text" and content.text)
     return text or str(result)
+
+
+def _mock_sdk_client(
+    *,
+    session: Mock | None = None,
+    capabilities: types.ServerCapabilities | None = None,
+    protocol_version: str = "2025-11-25",
+) -> AsyncMock:
+    """Model the SDK client's connected session and negotiated metadata."""
+    capabilities = capabilities if capabilities is not None else types.ServerCapabilities()
+    session = session if session is not None else Mock(spec=ClientSession)
+    session.protocol_version = protocol_version
+    session.server_capabilities = capabilities
+    session.initialize_result = (
+        types.InitializeResult(
+            protocol_version=protocol_version,
+            capabilities=capabilities,
+            server_info=types.Implementation(name="mock-server", version="1.0"),
+        )
+        if protocol_version == "2025-11-25"
+        else None
+    )
+
+    client = AsyncMock()
+    client.session = session
+    client.protocol_version = protocol_version
+    client.server_capabilities = capabilities
+    client.__aenter__.return_value = client
+
+    return client
+
+
+def _mock_unnegotiated_session(capabilities: types.ServerCapabilities | None) -> Mock:
+    """Model a caller-owned session that becomes legacy-negotiated on initialize."""
+    initialize_result = (
+        types.InitializeResult(
+            protocol_version="2025-11-25",
+            capabilities=capabilities,
+            server_info=types.Implementation(name="mock-server", version="1.0"),
+        )
+        if capabilities is not None
+        else Mock(protocol_version="2025-11-25", capabilities=None)
+    )
+    session = Mock(spec=ClientSession)
+    session.protocol_version = None
+    session.server_capabilities = None
+    session.initialize_result = None
+
+    async def initialize() -> Any:
+        session.protocol_version = "2025-11-25"
+        session.server_capabilities = capabilities
+        session.initialize_result = initialize_result
+        return initialize_result
+
+    session.initialize = AsyncMock(side_effect=initialize)
+    return session
+
+
+class _TransportBoundClientContext:
+    """Model SDK-owned transport entry and exit without running a protocol dispatcher."""
+
+    def __init__(self, transport: AbstractAsyncContextManager[Any], client: AsyncMock) -> None:
+        self.transport = transport
+        self.client = client
+        self.exit_stack = contextlib.AsyncExitStack()
+
+    async def __aenter__(self) -> AsyncMock:
+        async with contextlib.AsyncExitStack() as stack:
+            await stack.enter_async_context(self.transport)
+            client = await stack.enter_async_context(self.client)
+            self.exit_stack = stack.pop_all()
+        return client
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+    ) -> bool | None:
+        return await self.exit_stack.__aexit__(exc_type, exc, tb)
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
@@ -278,6 +359,7 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
     original_functions = list(tool._functions)
     original_meta = dict(tool._tool_call_meta_by_name)
     original_params = dict(tool._tool_param_names_by_name)
+    original_tasks = dict(tool._tool_task_support_by_name)
 
     async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
         assert tool._functions == original_functions
@@ -298,6 +380,7 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
     assert tool.functions == original_functions
     assert tool._tool_call_meta_by_name == original_meta
     assert tool._tool_param_names_by_name == original_params
+    assert tool._tool_task_support_by_name == original_tasks
 
 
 @pytest.mark.parametrize(
@@ -391,55 +474,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
         assert kept_function.result_parser is parser
     assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
-
-
-async def test_load_tools_skips_only_tools_that_require_tasks(caplog: pytest.LogCaptureFixture) -> None:
-    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    mock_session = AsyncMock()
-    tool.session = mock_session
-    mock_session.list_tools = AsyncMock(
-        return_value=types.ListToolsResult(
-            tools=[
-                types.Tool(
-                    name="required",
-                    input_schema={"type": "object", "properties": {"secret": {"type": "string"}}},
-                    execution=types.ToolExecution(task_support="required"),
-                    _meta={"must-not-leak": True},
-                ),
-                types.Tool(
-                    name="optional",
-                    input_schema={"type": "object", "properties": {}},
-                    execution=types.ToolExecution(task_support="optional"),
-                    _meta={"mode": "optional"},
-                ),
-                types.Tool(
-                    name="forbidden",
-                    input_schema={"type": "object", "properties": {}},
-                    execution=types.ToolExecution(task_support="forbidden"),
-                ),
-                types.Tool(name="ordinary", input_schema={"type": "object", "properties": {}}),
-            ]
-        )
-    )
-    mock_session.call_tool = AsyncMock(
-        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
-    )
-
-    with caplog.at_level(logging.WARNING, logger=logger.name):
-        await tool.load_tools()
-
-    assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
-    assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
-    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
-    assert (
-        "Skipping MCP tool 'required' because it requires the Tasks extension, "
-        "which MCP Python SDK 2.2 does not implement."
-    ) in caplog.messages
-
-    for function in tool.functions:
-        await function.invoke(arguments={})
-
-    assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
+    assert tool._tool_task_support_by_name == {}
 
 
 async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
@@ -3705,6 +3740,275 @@ async def test_mcp_tool_message_handler_notification():
     assert result is None
 
 
+async def test_mcp_tool_refreshes_catalogs_from_modern_subscription() -> None:
+    from mcp.client.subscriptions import PromptsListChanged, ToolsListChanged
+    from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
+
+    tools_refreshed = asyncio.Event()
+    prompts_refreshed = asyncio.Event()
+    listen_entered = asyncio.Event()
+    listen_exited = asyncio.Event()
+    tool_load_count = 0
+    prompt_load_count = 0
+
+    async def load_tools() -> None:
+        nonlocal tool_load_count
+        tool_load_count += 1
+        if tool_load_count == 2:
+            tools_refreshed.set()
+
+    async def load_prompts() -> None:
+        nonlocal prompt_load_count
+        prompt_load_count += 1
+        if prompt_load_count == 2:
+            prompts_refreshed.set()
+
+    async def events() -> AsyncIterator[ToolsListChanged | PromptsListChanged]:
+        yield ToolsListChanged()
+        yield PromptsListChanged()
+
+    @contextlib.asynccontextmanager
+    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+        listen_entered.set()
+        try:
+            yield events()
+        finally:
+            listen_exited.set()
+
+    capabilities = types.ServerCapabilities(
+        tools=types.ToolsCapability(list_changed=True),
+        prompts=types.PromptsCapability(list_changed=True),
+    )
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(return_value=listen_context())
+    tool = MCPStdioTool(name="test_tool", command="unused")
+    tool.load_tools = load_tools  # type: ignore[method-assign]
+    tool.load_prompts = load_prompts  # type: ignore[method-assign]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            await asyncio.wait_for(listen_entered.wait(), timeout=1)
+            sdk_client.listen.assert_called_once_with(
+                tools_list_changed=True,
+                prompts_list_changed=True,
+            )
+            await asyncio.wait_for(tools_refreshed.wait(), timeout=1)
+            await asyncio.wait_for(prompts_refreshed.wait(), timeout=1)
+
+            subscription_meta = {SUBSCRIPTION_ID_META_KEY: "listen-1"}
+            await tool.message_handler(
+                types.ToolListChangedNotification(params=types.NotificationParams(_meta=subscription_meta))
+            )
+            await tool.message_handler(
+                types.PromptListChangedNotification(params=types.NotificationParams(_meta=subscription_meta))
+            )
+            await asyncio.sleep(0)
+            assert tool_load_count == 2
+            assert prompt_load_count == 2
+
+    assert listen_exited.is_set()
+
+
+async def test_mcp_tool_reuses_and_closes_modern_catalog_subscription() -> None:
+    from mcp.client.subscriptions import PromptsListChanged, ToolsListChanged
+
+    listen_entered = asyncio.Event()
+    never_set = asyncio.Event()
+    enter_count = 0
+    exit_count = 0
+
+    async def events() -> AsyncIterator[ToolsListChanged | PromptsListChanged]:
+        await never_set.wait()
+        yield ToolsListChanged()
+
+    @contextlib.asynccontextmanager
+    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+        nonlocal enter_count, exit_count
+        enter_count += 1
+        listen_entered.set()
+        try:
+            yield events()
+        finally:
+            exit_count += 1
+
+    capabilities = types.ServerCapabilities(
+        tools=types.ToolsCapability(list_changed=True),
+        prompts=types.PromptsCapability(list_changed=True),
+    )
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(side_effect=lambda **_: listen_context())
+    tool = MCPStdioTool(name="test_tool", command="unused")
+    tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            await asyncio.wait_for(listen_entered.wait(), timeout=1)
+            subscription_task = tool._capability_list_subscription_task
+            assert subscription_task is not None
+
+            await tool.connect()
+
+            sdk_client.listen.assert_called_once_with(
+                tools_list_changed=True,
+                prompts_list_changed=True,
+            )
+            assert tool._capability_list_subscription_task is subscription_task
+            assert not subscription_task.done()
+
+    assert subscription_task.done()
+    assert tool._capability_list_subscription_task is None
+    assert enter_count == 1
+    assert exit_count == 1
+
+
+async def test_mcp_tool_replaces_modern_catalog_subscription_on_reset() -> None:
+    from mcp.client.subscriptions import PromptsListChanged, ToolsListChanged
+
+    second_listen_entered = asyncio.Event()
+    never_set = asyncio.Event()
+    enter_count = 0
+    exit_count = 0
+
+    async def events() -> AsyncIterator[ToolsListChanged | PromptsListChanged]:
+        await never_set.wait()
+        yield ToolsListChanged()
+
+    @contextlib.asynccontextmanager
+    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+        nonlocal enter_count, exit_count
+        enter_count += 1
+        if enter_count == 2:
+            second_listen_entered.set()
+        try:
+            yield events()
+        finally:
+            exit_count += 1
+
+    capabilities = types.ServerCapabilities(
+        tools=types.ToolsCapability(list_changed=True),
+        prompts=types.PromptsCapability(list_changed=True),
+    )
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(side_effect=lambda **_: listen_context())
+    tool = MCPStdioTool(name="test_tool", command="unused")
+    tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+    tool.load_prompts = AsyncMock()  # type: ignore[method-assign]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            first_task = tool._capability_list_subscription_task
+            assert first_task is not None
+
+            await tool.connect(reset=True)
+            await asyncio.wait_for(second_listen_entered.wait(), timeout=1)
+
+            second_task = tool._capability_list_subscription_task
+            assert second_task is not None
+            assert second_task is not first_task
+            assert first_task.done()
+            assert enter_count == 2
+            assert exit_count == 1
+
+    assert second_task.done()
+    assert tool._capability_list_subscription_task is None
+    assert exit_count == 2
+
+
+async def test_mcp_tool_uses_legacy_catalog_notifications_when_subscription_is_unsupported() -> None:
+    from mcp.client.subscriptions import ListenNotSupportedError
+
+    listen_attempted = asyncio.Event()
+    tools_refreshed = asyncio.Event()
+    prompts_refreshed = asyncio.Event()
+    tool_load_count = 0
+    prompt_load_count = 0
+
+    async def load_tools() -> None:
+        nonlocal tool_load_count
+        tool_load_count += 1
+        if tool_load_count == 2:
+            tools_refreshed.set()
+
+    async def load_prompts() -> None:
+        nonlocal prompt_load_count
+        prompt_load_count += 1
+        if prompt_load_count == 2:
+            prompts_refreshed.set()
+
+    @contextlib.asynccontextmanager
+    async def unsupported_listen() -> AsyncIterator[Any]:
+        listen_attempted.set()
+        raise ListenNotSupportedError("2025-11-25")
+        yield None  # pragma: no cover
+
+    capabilities = types.ServerCapabilities(
+        tools=types.ToolsCapability(list_changed=True),
+        prompts=types.PromptsCapability(list_changed=True),
+    )
+    sdk_client = _mock_sdk_client(capabilities=capabilities)
+    sdk_client.listen = Mock(return_value=unsupported_listen())
+    tool = MCPStdioTool(name="test_tool", command="unused")
+    tool.load_tools = load_tools  # type: ignore[method-assign]
+    tool.load_prompts = load_prompts  # type: ignore[method-assign]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            await asyncio.wait_for(listen_attempted.wait(), timeout=1)
+            await tool.message_handler(types.ToolListChangedNotification())
+            await tool.message_handler(types.PromptListChangedNotification())
+            await asyncio.wait_for(tools_refreshed.wait(), timeout=1)
+            await asyncio.wait_for(prompts_refreshed.wait(), timeout=1)
+
+    assert tool_load_count == 2
+    assert prompt_load_count == 2
+
+
+async def test_mcp_tool_cleans_up_when_catalog_subscription_setup_fails() -> None:
+    @contextlib.asynccontextmanager
+    async def rejected_listen() -> AsyncIterator[Any]:
+        raise RuntimeError("subscription rejected")
+        yield None  # pragma: no cover
+
+    capabilities = types.ServerCapabilities(tools=types.ToolsCapability(list_changed=True))
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(return_value=rejected_listen())
+    tool = MCPStdioTool(name="test_tool", command="unused", load_prompts=False)
+
+    with (
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(RuntimeError, match="subscription rejected"),
+    ):
+        await tool._connect_on_owner()
+
+    sdk_client.__aexit__.assert_awaited_once()
+    assert tool.session is None
+    assert tool.is_connected is False
+
+
+async def test_mcp_tool_closes_subscription_before_reload_tasks_and_exit_stack() -> None:
+    tool = MCPStdioTool(name="test_tool", command="unused")
+    cleanup_order: list[str] = []
+
+    async def cancel_subscription() -> None:
+        cleanup_order.append("subscription")
+
+    async def cancel_reloads() -> None:
+        cleanup_order.append("reloads")
+
+    async def close_stack() -> None:
+        cleanup_order.append("exit_stack")
+
+    with (
+        patch.object(tool, "_cancel_capability_list_subscription", side_effect=cancel_subscription),
+        patch.object(tool, "_cancel_pending_reload_tasks", side_effect=cancel_reloads),
+        patch.object(tool, "_safe_close_exit_stack", side_effect=close_stack),
+    ):
+        await tool._close_on_owner()
+
+    assert cleanup_order == ["subscription", "reloads", "exit_stack"]
+
+
 async def test_mcp_tool_message_handler_error():
     """Test that message_handler gracefully handles exceptions by logging and returning None."""
     tool = MCPStdioTool(name="test_tool", command="python")
@@ -4624,53 +4928,37 @@ async def test_connect_no_sampling_capabilities_without_client():
 
 
 async def test_connect_session_creation_failure():
-    """Test connect() raises ToolException when ClientSession creation fails."""
+    """Test connect() preserves the cause when SDK client construction fails."""
     tool = MCPStdioTool(name="test", command="test-command")
 
-    # Mock successful transport creation
-    mock_transport = (Mock(), Mock())  # (read_stream, write_stream)
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    # Mock ClientSession to raise an exception
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.side_effect = RuntimeError("Session creation failed")
-
+    with patch("mcp.Client", side_effect=RuntimeError("Client creation failed")):
         with pytest.raises(ToolException) as exc_info:
             await tool.connect()
 
         assert "Failed to create MCP session" in str(exc_info.value)
-        assert "Session creation failed" in str(exc_info.value)  # exception text is now part of the message
-        assert "Session creation failed" in str(exc_info.value.__cause__)
+        assert "Client creation failed" in str(exc_info.value)
+        assert "Client creation failed" in str(exc_info.value.__cause__)
+    await tool.close()
 
 
 async def test_connect_initialization_failure_http_no_command():
-    """Test connect() when session.initialize() fails for HTTP tool (no command attribute)."""
+    """SDK negotiation fails during client entry, before a connected session is available."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    failure = ConnectionError("Server not ready")
+    sdk_client.__aenter__.side_effect = failure
 
-    # Mock successful transport creation
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    # Mock successful session creation but failed initialization
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=ConnectionError("Server not ready"))
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    with patch("mcp.Client", return_value=sdk_client):
         with pytest.raises(ToolException) as exc_info:
             await tool.connect()
 
-        # Should use generic error message since HTTP tool doesn't have command
-        assert "MCP server failed to initialize" in str(exc_info.value)
+        assert "Failed to create MCP session" in str(exc_info.value)
         assert "Server not ready" in str(exc_info.value)
+        assert exc_info.value.__cause__ is failure
+        assert tool.session is None
+        assert tool.is_connected is False
+    await tool.close()
 
 
 async def test_connect_cleanup_on_transport_failure():
@@ -4688,6 +4976,7 @@ async def test_connect_cleanup_on_transport_failure():
 
     # Verify cleanup was called
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_connect_cleanup_on_transport_failure_http_uses_generic_message():
@@ -4696,39 +4985,30 @@ async def test_connect_cleanup_on_transport_failure_http_uses_generic_message():
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
     tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))  # type: ignore[method-assign]
 
-    with pytest.raises(ToolException, match="Failed to connect to MCP server: Transport failed"):
+    with pytest.raises(ToolException, match="Failed to create MCP session: Transport failed"):
         await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_connect_cleanup_on_initialization_failure():
-    """Test that _exit_stack.aclose() is called when initialization fails."""
+    """Test that framework cleanup runs when SDK negotiation fails during entry."""
     tool = MCPStdioTool(name="test", command="test-command")
 
     # Mock _exit_stack.aclose to verify it's called
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock successful transport creation
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = RuntimeError("Init failed")
 
-    # Mock successful session creation but failed initialization
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=RuntimeError("Init failed"))
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    with patch("mcp.Client", return_value=sdk_client):
         with pytest.raises(ToolException):
             await tool.connect()
 
         # Verify cleanup was called
         tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_transport_creation_raises_tool_exception():
@@ -4737,10 +5017,11 @@ async def test_connect_cancelled_error_during_transport_creation_raises_tool_exc
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
     tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
-    with pytest.raises(ToolException, match="Failed to connect to MCP server"):
+    with pytest.raises(ToolException, match="Failed to create MCP session"):
         await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_transport_creation_stdio_raises_tool_exception():
@@ -4749,32 +5030,30 @@ async def test_connect_cancelled_error_during_transport_creation_stdio_raises_to
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
     tool.get_mcp_client = Mock(side_effect=asyncio.CancelledError("cancel scope"))  # type: ignore[method-assign]
 
-    with pytest.raises(ToolException, match="Failed to start MCP server 'my-server'"):
+    with pytest.raises(ToolException, match="Failed to create MCP session for server 'my-server'"):
         await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_session_creation_raises_tool_exception():
-    """Test that CancelledError from session creation is wrapped in ToolException."""
+    """Test that an SDK client-entry CancelledError is wrapped in ToolException."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("cancel scope")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        with pytest.raises(ToolException, match="Failed to create MCP session"):
-            await tool.connect()
+    with (
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(ToolException, match="Failed to create MCP session"),
+    ):
+        await tool.connect()
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_initialize_raises_tool_exception():
-    """Test that CancelledError from session.initialize() is wrapped in ToolException.
+    """Test that CancelledError from SDK negotiation is wrapped in ToolException.
 
     This is the primary regression test for the bug: when an MCP server is unreachable,
     the MCP library raises asyncio.CancelledError internally, which previously escaped
@@ -4782,42 +5061,31 @@ async def test_connect_cancelled_error_during_initialize_raises_tool_exception()
     """
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
 
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        with pytest.raises(ToolException, match="MCP server failed to initialize"):
-            await tool.connect()
+    with (
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(ToolException, match="Failed to create MCP session"),
+    ):
+        await tool.connect()
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_exception():
-    """Test that CancelledError from session.initialize() uses the command-specific message for MCPStdioTool."""
+    """SDK negotiation failures retain the full stdio command in the diagnostic."""
     tool = MCPStdioTool(name="test", command="my-server", args=["--port", "8080"])
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
 
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        with pytest.raises(ToolException, match="MCP server 'my-server --port 8080' failed to initialize"):
-            await tool.connect()
+    with (
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(ToolException, match="Failed to create MCP session for server 'my-server --port 8080'"),
+    ):
+        await tool.connect()
+    await tool.close()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
@@ -4835,65 +5103,55 @@ async def test_connect_genuine_cancellation_during_transport_creation_propagates
             await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
-    """Test that genuine task cancellation during initialize() propagates as CancelledError."""
+    """Test that genuine task cancellation during SDK negotiation propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("task cancelled"))
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("task cancelled")
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
 
     with (
         patch("asyncio.current_task", return_value=mock_cancelled_task),
-        patch("mcp.client.session.ClientSession") as mock_session_class,
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(asyncio.CancelledError),
     ):
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        with pytest.raises(asyncio.CancelledError):
-            await tool.connect()
+        await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
-    """Test that genuine task cancellation during session creation propagates as CancelledError."""
+    """Test that genuine task cancellation during SDK client entry propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("task cancelled")
 
     mock_cancelled_task = Mock()
     mock_cancelled_task.cancelling.return_value = 1
 
     with (
         patch("asyncio.current_task", return_value=mock_cancelled_task),
-        patch("mcp.client.session.ClientSession") as mock_session_class,
+        patch("mcp.Client", return_value=sdk_client),
+        pytest.raises(asyncio.CancelledError),
     ):
-        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("task cancelled"))
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-        with pytest.raises(asyncio.CancelledError):
-            await tool.connect()
+        await tool.connect()
 
     tool._exit_stack.aclose.assert_called_once()
+    await tool.close()
 
 
 async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception():
@@ -4904,19 +5162,11 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
     """
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    with patch("mcp.Client", return_value=sdk_client):
         caught = None
         try:
             async with tool:
@@ -4926,6 +5176,7 @@ async def test_aenter_cancelled_error_during_connect_is_catchable_as_exception()
 
         assert caught is not None, "Expected an exception to be caught by except Exception"
         assert isinstance(caught, ToolException)
+    await tool.close()
 
 
 # Tests for _should_propagate_cancelled_error helper
@@ -4957,26 +5208,19 @@ def test_should_propagate_cancelled_error_returns_false_when_task_not_cancelling
 
 
 async def test_connect_cancelled_error_during_session_creation_includes_exception_in_message():
-    """Test that CancelledError from session creation includes exception details in ToolException message."""
+    """Test that an SDK client-entry CancelledError retains its exception details."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("cancel scope detail")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(
-            side_effect=asyncio.CancelledError("cancel scope detail")
-        )
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    with patch("mcp.Client", return_value=sdk_client):
         with pytest.raises(ToolException) as exc_info:
             await tool.connect()
 
         assert "Failed to create MCP session" in str(exc_info.value)
         assert "cancel scope detail" in str(exc_info.value)
+    await tool.close()
 
 
 # Tests for _describe_error helper (cancel-scope / exception-group unmasking)
@@ -5014,20 +5258,15 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
     """A 401 swallowed by the MCP client's cancel scope must be named in the ToolException."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
 
     real = RuntimeError("401 Client Error: Unauthorized")
     masked = asyncio.CancelledError("Cancelled via cancel scope")
     masked.__context__ = real
 
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=masked)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = masked
+    with patch("mcp.Client", return_value=sdk_client):
         with pytest.raises(ToolException) as exc_info:
             await tool.connect()
 
@@ -5035,13 +5274,12 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
         assert "Failed to create MCP session" in message
         assert "401 Client Error: Unauthorized" in message
         assert "Cancelled via cancel scope" not in message
+    await tool.close()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
-    """The reported 401 path: initialize() raises a bare CancelledError and the
-    real HTTP failure only surfaces from the exit-stack close. The ToolException
-    must name that close-time error, not the cancellation."""
+    """SDK entry raises a bare cancellation and cleanup reveals the actual HTTP failure."""
     import builtins
 
     exception_group_type = getattr(builtins, "ExceptionGroup", None)
@@ -5050,46 +5288,37 @@ async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
 
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
 
     cleanup_group = exception_group_type(
         "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
     )
 
-    mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
+    tool._exit_stack.aclose = AsyncMock(side_effect=cleanup_group)  # type: ignore[method-assign]
 
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(side_effect=cleanup_group)
-
+    with patch("mcp.Client", return_value=sdk_client):
         with pytest.raises(ToolException) as exc_info:
             await tool.connect()
 
         message = str(exc_info.value)
-        assert "MCP server failed to initialize" in message
+        assert "Failed to create MCP session" in message
         assert "401 Client Error: Unauthorized" in message
         assert "Cancelled via cancel scope" not in message
+        tool._exit_stack.aclose.assert_awaited_once()
+    tool._exit_stack.aclose.side_effect = None
+    await tool.close()
 
 
 async def test_connect_cancelled_error_during_session_creation_logs_with_exc_info():
-    """Test that CancelledError from session creation is logged with exc_info=True."""
+    """Test that an SDK client-entry cancellation is logged with exc_info=True."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+    tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
+    sdk_client = _mock_sdk_client()
+    sdk_client.__aenter__.side_effect = asyncio.CancelledError("cancel scope")
 
-    mock_transport = (Mock(), Mock())
-    mock_context_manager = Mock()
-    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
-    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
-
-    with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
+    with patch("mcp.Client", return_value=sdk_client):
         from agent_framework._mcp import logger as mcp_logger
 
         with patch.object(mcp_logger, "debug") as mock_debug:
@@ -5102,6 +5331,7 @@ async def test_connect_cancelled_error_during_session_creation_logs_with_exc_inf
             assert cancel_calls, "Expected a debug log for the cancelled session creation"
             _, kwargs = cancel_calls[0]
             assert kwargs.get("exc_info") is True
+    await tool.close()
 
 
 def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
@@ -5304,8 +5534,8 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
 
     # Mock the streamable_http_client to avoid actual connections
     with (
-        patch("mcp.client.streamable_http.streamable_http_client") as mock_client,
-        patch("mcp.client.session.ClientSession") as mock_session_class,
+        patch("agent_framework._mcp.streamable_http_client") as mock_client,
+        patch("mcp.Client", side_effect=lambda **_: _mock_sdk_client()),
     ):
         # Setup mock context manager for streamable_http_client
         mock_transport = (Mock(), Mock())
@@ -5313,12 +5543,6 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
         mock_context_manager.__aexit__ = AsyncMock(return_value=None)
         mock_client.return_value = mock_context_manager
-
-        # Setup mock session
-        mock_session = Mock()
-        mock_session.initialize = AsyncMock()
-        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
         tool1 = MCPStreamableHTTPTool(
             name="test",
@@ -5884,7 +6108,6 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     # Mock the session
     mock_session = MagicMock()
-    mock_session._request_id = 1
     mock_session.call_tool = AsyncMock()
 
     # Mock _exit_stack.aclose to track cleanup calls
@@ -5983,7 +6206,6 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
 
     # Mock the session
     mock_session = MagicMock()
-    mock_session._request_id = 1
     mock_session.get_prompt = AsyncMock()
 
     # Mock _exit_stack.aclose to track cleanup calls
@@ -6208,17 +6430,11 @@ async def test_mcp_tool_close_cleans_up_in_original_task(caplog):
     )
 
     transport_context = TaskBoundTransportContext()
-    mock_session = Mock()
-    mock_session._request_id = 1
-    mock_session.initialize = AsyncMock()
-
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_context.__aexit__ = AsyncMock(return_value=None)
+    sdk_client = _mock_sdk_client()
 
     with (
         patch.object(tool, "get_mcp_client", return_value=transport_context),
-        patch("mcp.client.session.ClientSession", return_value=mock_session_context),
+        patch("mcp.Client", return_value=_TransportBoundClientContext(transport_context, sdk_client)),
     ):
         await asyncio.create_task(tool.connect())
 
@@ -6228,6 +6444,7 @@ async def test_mcp_tool_close_cleans_up_in_original_task(caplog):
 
     assert transport_context.closed_cleanly is True
     assert transport_context.exit_task is transport_context.enter_task
+    sdk_client.__aexit__.assert_awaited_once()
     assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
 
 
@@ -6261,37 +6478,39 @@ async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
 
     transport_contexts = [TaskBoundTransportContext(), TaskBoundTransportContext()]
     sessions = []
-    session_contexts = []
-    for _ in range(2):
-        session = Mock()
-        session._request_id = 1
-        session.initialize = AsyncMock()
-        session.set_logging_level = AsyncMock()
+    clients = []
+    client_contexts = []
+    for transport_context in transport_contexts:
+        session = Mock(spec=ClientSession)
         sessions.append(session)
-
-        session_context = AsyncMock()
-        session_context.__aenter__ = AsyncMock(return_value=session)
-        session_context.__aexit__ = AsyncMock(return_value=None)
-        session_contexts.append(session_context)
+        client = _mock_sdk_client(session=session)
+        clients.append(client)
+        client_contexts.append(_TransportBoundClientContext(transport_context, client))
 
     with (
         patch.object(tool, "get_mcp_client", side_effect=transport_contexts),
-        patch("mcp.client.session.ClientSession", side_effect=session_contexts),
+        patch("mcp.Client", side_effect=client_contexts),
     ):
-        await tool.connect()
+        try:
+            await tool.connect()
 
-        caplog.clear()
-        with caplog.at_level(logging.WARNING, logger=logger.name):
-            await asyncio.create_task(tool.connect(reset=True))
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger=logger.name):
+                await asyncio.create_task(tool.connect(reset=True))
 
-        assert transport_contexts[0].closed_cleanly is True
-        assert transport_contexts[0].exit_task is transport_contexts[0].enter_task
-        assert transport_contexts[1].enter_task is transport_contexts[0].enter_task
-        assert tool.session is sessions[1]
-        assert tool.is_connected is True
-        assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+            assert transport_contexts[0].closed_cleanly is True
+            assert transport_contexts[0].exit_task is transport_contexts[0].enter_task
+            assert transport_contexts[1].enter_task is transport_contexts[0].enter_task
+            assert tool.session is sessions[1]
+            assert tool.is_connected is True
+            clients[0].__aexit__.assert_awaited_once()
+            clients[1].__aenter__.assert_awaited_once()
+            assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+        finally:
+            await tool.close()
 
-        await tool.close()
+    assert transport_contexts[1].closed_cleanly is True
+    assert transport_contexts[1].exit_task is transport_contexts[1].enter_task
 
 
 async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> None:
@@ -6468,30 +6687,18 @@ async def test_connect_sets_logging_level_when_logger_level_is_set():
         load_prompts=False,
     )
 
-    # Mock the transport and session
-    mock_transport = (Mock(), Mock())
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context.__aexit__ = AsyncMock()
-
-    mock_session = Mock()
-    mock_session._request_id = 1
-    mock_session.initialize = AsyncMock()
+    mock_session = Mock(spec=ClientSession)
     mock_session.set_logging_level = AsyncMock()
-
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_context.__aexit__ = AsyncMock()
+    sdk_client = _mock_sdk_client(
+        session=mock_session, capabilities=types.ServerCapabilities(logging=types.LoggingCapability())
+    )
 
     with (
-        patch.object(tool, "get_mcp_client", return_value=mock_context),
-        patch("mcp.client.session.ClientSession", return_value=mock_session_context),
+        patch("mcp.Client", return_value=sdk_client),
         patch.object(logger, "level", logging.DEBUG),  # Set logger level to DEBUG
     ):
-        await tool.connect()
-
-        # Verify set_logging_level was called with "debug"
-        mock_session.set_logging_level.assert_called_once_with("debug")
+        async with tool:
+            mock_session.set_logging_level.assert_awaited_once_with("debug")
 
 
 async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
@@ -6505,30 +6712,18 @@ async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
         load_prompts=False,
     )
 
-    # Mock the transport and session
-    mock_transport = (Mock(), Mock())
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context.__aexit__ = AsyncMock()
-
-    mock_session = Mock()
-    mock_session._request_id = 1
-    mock_session.initialize = AsyncMock()
+    mock_session = Mock(spec=ClientSession)
     mock_session.set_logging_level = AsyncMock()
-
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_context.__aexit__ = AsyncMock()
+    sdk_client = _mock_sdk_client(
+        session=mock_session, capabilities=types.ServerCapabilities(logging=types.LoggingCapability())
+    )
 
     with (
-        patch.object(tool, "get_mcp_client", return_value=mock_context),
-        patch("mcp.client.session.ClientSession", return_value=mock_session_context),
+        patch("mcp.Client", return_value=sdk_client),
         patch.object(logger, "level", logging.NOTSET),  # Set logger level to NOTSET
     ):
-        await tool.connect()
-
-        # Verify set_logging_level was NOT called
-        mock_session.set_logging_level.assert_not_called()
+        async with tool:
+            mock_session.set_logging_level.assert_not_called()
 
 
 async def test_connect_handles_set_logging_level_exception():
@@ -6542,46 +6737,115 @@ async def test_connect_handles_set_logging_level_exception():
         load_prompts=False,
     )
 
-    # Mock the transport and session
-    mock_transport = (Mock(), Mock())
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context.__aexit__ = AsyncMock()
-
-    mock_session = Mock()
-    mock_session._request_id = 1
-    mock_session.initialize = AsyncMock()
+    mock_session = Mock(spec=ClientSession)
     # Make set_logging_level raise an exception
     mock_session.set_logging_level = AsyncMock(side_effect=RuntimeError("Server doesn't support logging level"))
 
-    mock_session_context = AsyncMock()
-    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_context.__aexit__ = AsyncMock()
+    sdk_client = _mock_sdk_client(
+        session=mock_session, capabilities=types.ServerCapabilities(logging=types.LoggingCapability())
+    )
 
     with (
-        patch.object(tool, "get_mcp_client", return_value=mock_context),
-        patch("mcp.client.session.ClientSession", return_value=mock_session_context),
+        patch("mcp.Client", return_value=sdk_client),
         patch.object(logger, "level", logging.INFO),  # Set logger level to INFO
         patch.object(logger, "warning") as mock_warning,
     ):
-        # Should NOT raise - the exception should be caught and logged
-        await tool.connect()
+        async with tool:
+            mock_session.set_logging_level.assert_awaited_once_with("info")
+            mock_warning.assert_called_once()
+            call_args = mock_warning.call_args
+            assert "Failed to set log level" in call_args[0][0]
 
-        # Verify set_logging_level was called
-        mock_session.set_logging_level.assert_called_once_with("info")
 
-        # Verify warning was logged
-        mock_warning.assert_called_once()
-        call_args = mock_warning.call_args
-        assert "Failed to set log level" in call_args[0][0]
+@pytest.mark.parametrize(
+    ("mode", "expected_version"),
+    [
+        ("auto", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_mcp_tool_reuses_supplied_session(mode: str, expected_version: str) -> None:
+    from mcp import Client
+    from mcp.server import Server, ServerRequestContext
+
+    async def list_tools(
+        _ctx: ServerRequestContext[Any],
+        _params: types.PaginatedRequestParams | None,
+    ) -> types.ListToolsResult:
+        return types.ListToolsResult(
+            result_type="complete",
+            tools=[
+                types.Tool(
+                    name="greet",
+                    input_schema={"type": "object", "properties": {}},
+                )
+            ],
+        )
+
+    async def call_tool(
+        _ctx: ServerRequestContext[Any],
+        params: types.CallToolRequestParams,
+    ) -> types.CallToolResult:
+        assert params.name == "greet"
+        return types.CallToolResult(
+            result_type="complete",
+            content=[types.TextContent(type="text", text="Hello!")],
+            is_error=False,
+        )
+
+    server = Server(
+        "test-server",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+
+    async with Client(server, mode=mode) as client:
+        session = client.session
+        assert session.protocol_version == expected_version
+
+        initialize = AsyncMock(wraps=session.initialize)
+        discover = AsyncMock(wraps=session.discover)
+        send_ping = AsyncMock(wraps=session.send_ping)
+
+        with (
+            patch.object(session, "initialize", initialize),
+            patch.object(session, "discover", discover),
+            patch.object(session, "send_ping", send_ping),
+        ):
+            wrapper = MCPStdioTool(
+                name="test",
+                command="unused",
+                session=session,
+                load_prompts=False,
+            )
+
+            async with wrapper:
+                assert wrapper.session is session
+                assert [function.name for function in wrapper.functions] == ["greet"]
+                assert _mcp_result_to_text(await wrapper.call_tool("greet")) == "Hello!"
+
+            initialize.assert_not_awaited()
+            discover.assert_not_awaited()
+            if mode == "auto":
+                send_ping.assert_not_awaited()
+
+        # The wrapper has closed, but the caller-owned session must still work.
+        result = await session.call_tool("greet")
+        assert isinstance(result.content[0], types.TextContent)
+        assert result.content[0].text == "Hello!"
 
 
 async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompts() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    session = _mock_unnegotiated_session(
+        types.ServerCapabilities(tools=types.ToolsCapability(), prompts=types.PromptsCapability())
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        load_tools=True,
+        load_prompts=True,
+        session=session,
+    )
     tool.is_connected = True
-    tool.session = Mock()
-    tool.session._request_id = 0
-    tool.session.initialize = AsyncMock()
 
     with (
         patch.object(tool, "load_tools", AsyncMock()) as mock_load_tools,
@@ -6590,7 +6854,7 @@ async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompt
     ):
         await tool._connect_on_owner()
 
-    tool.session.initialize.assert_awaited_once()
+    session.initialize.assert_awaited_once()
     mock_load_tools.assert_awaited_once()
     mock_load_prompts.assert_awaited_once()
     assert tool._tools_loaded is True
@@ -6598,28 +6862,25 @@ async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompt
 
 
 async def test_connect_skips_tools_and_prompts_when_server_does_not_advertise_capabilities() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.is_connected = True
-    tool.session = Mock()
-    tool.session._request_id = 0
-    tool.session.initialize = AsyncMock(
-        return_value=types.InitializeResult(
-            protocol_version=types.LATEST_PROTOCOL_VERSION,
-            capabilities=types.ServerCapabilities(),
-            server_info=types.Implementation(name="test", version="1.0"),
-        )
+    session = _mock_unnegotiated_session(types.ServerCapabilities())
+    session.list_tools = AsyncMock()
+    session.list_prompts = AsyncMock()
+    session.set_logging_level = AsyncMock()
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        load_tools=True,
+        load_prompts=True,
+        session=session,
     )
-    tool.session.list_tools = AsyncMock()
-    tool.session.list_prompts = AsyncMock()
-    tool.session.set_logging_level = AsyncMock()
+    tool.is_connected = True
 
     with patch.object(logger, "level", logging.INFO):
         await tool._connect_on_owner()
 
-    tool.session.initialize.assert_awaited_once()
-    tool.session.list_tools.assert_not_called()
-    tool.session.list_prompts.assert_not_called()
-    tool.session.set_logging_level.assert_not_called()
+    session.initialize.assert_awaited_once()
+    session.list_tools.assert_not_called()
+    session.list_prompts.assert_not_called()
+    session.set_logging_level.assert_not_called()
     assert tool.is_connected is True
     assert tool._supports_tools is False
     assert tool._supports_prompts is False
@@ -6629,42 +6890,42 @@ async def test_connect_skips_tools_and_prompts_when_server_does_not_advertise_ca
 
 
 async def test_connect_treats_missing_capabilities_as_unsupported() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    session = _mock_unnegotiated_session(None)
+    session.list_tools = AsyncMock()
+    session.list_prompts = AsyncMock()
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        load_tools=True,
+        load_prompts=True,
+        session=session,
+    )
     tool.is_connected = True
-    tool.session = Mock()
-    tool.session._request_id = 0
-    tool.session.initialize = AsyncMock(return_value=Mock(capabilities=None))
-    tool.session.list_tools = AsyncMock()
-    tool.session.list_prompts = AsyncMock()
 
     with patch.object(logger, "level", logging.NOTSET):
         await tool._connect_on_owner()
 
-    tool.session.list_tools.assert_not_called()
-    tool.session.list_prompts.assert_not_called()
+    session.list_tools.assert_not_called()
+    session.list_prompts.assert_not_called()
     assert tool._supports_tools is False
     assert tool._supports_prompts is False
     assert tool._supports_logging is False
 
 
 async def test_connect_sets_logging_level_when_server_advertises_logging() -> None:
-    tool = MCPTool(name="test_tool", load_tools=False, load_prompts=False)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.is_connected = True
-    tool.session = Mock()
-    tool.session._request_id = 0
-    tool.session.initialize = AsyncMock(
-        return_value=types.InitializeResult(
-            protocol_version=types.LATEST_PROTOCOL_VERSION,
-            capabilities=types.ServerCapabilities(logging=types.LoggingCapability()),
-            server_info=types.Implementation(name="test", version="1.0"),
-        )
+    session = _mock_unnegotiated_session(types.ServerCapabilities(logging=types.LoggingCapability()))
+    session.set_logging_level = AsyncMock()
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        load_tools=False,
+        load_prompts=False,
+        session=session,
     )
-    tool.session.set_logging_level = AsyncMock()
+    tool.is_connected = True
 
     with patch.object(logger, "level", logging.INFO):
         await tool._connect_on_owner()
 
-    tool.session.set_logging_level.assert_awaited_once_with("info")
+    session.set_logging_level.assert_awaited_once_with("info")
     assert tool._supports_logging is True
 
 
@@ -8324,6 +8585,84 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
     assert "tools/list" in captured_methods
 
 
+@pytest.mark.parametrize(
+    ("era", "expected_version"),
+    [
+        ("modern", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_mcp_stdio_tool_connects_to_both_protocol_eras(era: str, expected_version: str) -> None:
+    server_script = dedent(
+        """
+        import json
+        import sys
+
+        era = sys.argv[1]
+        for line in sys.stdin:
+            request = json.loads(line)
+            if "id" not in request:
+                continue
+
+            request_id = request["id"]
+            method = request["method"]
+            result = None
+            error = None
+
+            if method == "server/discover":
+                if era == "modern":
+                    result = {
+                        "supportedVersions": ["2026-07-28"],
+                        "capabilities": {"tools": {}},
+                    }
+                else:
+                    error = {"code": -32601, "message": "Method not found"}
+            elif method == "initialize":
+                if era == "legacy":
+                    result = {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "legacy-test-server", "version": "1.0"},
+                    }
+                else:
+                    error = {"code": -32601, "message": "Method not found"}
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
+                result = {
+                    "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
+                }
+                if era == "modern":
+                    result.update({"resultType": "complete", "cacheScope": "private", "ttlMs": 0})
+            elif method == "tools/call":
+                result = {
+                    "content": [{"type": "text", "text": "Hello!"}],
+                    "isError": False,
+                }
+                if era == "modern":
+                    result["resultType"] = "complete"
+            else:
+                error = {"code": -32601, "message": f"Unexpected method: {method}"}
+
+            response = {"jsonrpc": "2.0", "id": request_id}
+            response["error" if error is not None else "result"] = error if error is not None else result
+            print(json.dumps(response), flush=True)
+        """
+    )
+    tool = MCPStdioTool(
+        name=f"{era}-stdio",
+        command=sys.executable,
+        args=["-c", server_script, era],
+        load_prompts=False,
+    )
+
+    async with tool:
+        assert tool.session is not None
+        assert tool.session.protocol_version == expected_version
+        assert [function.name for function in tool.functions] == ["greet"]
+        assert _mcp_result_to_text(await tool.call_tool("greet")) == "Hello!"
+
+
 async def test_agent_context_manager_authenticates_connect_with_closure_provider(
     client: SupportsChatGetResponse,
 ) -> None:
@@ -8641,6 +8980,1275 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         await asyncio.gather(first, second)
 
     assert server._active_call_headers is None
+
+
+# endregion
+
+
+# region: MCP long-running task (SEP-2663) tests
+
+
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _make_task_snapshot(
+    *,
+    task_id: str = "task-1",
+    status: str = "working",
+    status_message: str | None = None,
+    poll_interval_ms: int | None = None,
+) -> types.GetTaskResult:
+    now = _utc_now()
+    return types.GetTaskResult(
+        task_id=task_id,
+        status=status,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        status_message=status_message,
+        created_at=now,
+        last_updated_at=now,
+        ttl=None,
+        poll_interval=poll_interval_ms,
+    )
+
+
+def _make_create_task_result(task_id: str = "task-1") -> types.CreateTaskResult:
+    now = _utc_now()
+    return types.CreateTaskResult(
+        task=types.Task(
+            task_id=task_id,
+            status="working",
+            status_message=None,
+            created_at=now,
+            last_updated_at=now,
+            ttl=None,
+        )
+    )
+
+
+def _make_payload(
+    text: str = "done!",
+    is_error: bool = False,
+    structured_content: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+) -> types.GetTaskPayloadResult:
+    payload: dict[str, Any] = {
+        "content": [{"type": "text", "text": text}],
+        "isError": is_error,
+    }
+    if structured_content is not None:
+        payload["structuredContent"] = structured_content
+    if meta is not None:
+        payload["_meta"] = meta
+    return types.GetTaskPayloadResult.model_validate(payload)
+
+
+def _make_task_tool(
+    tool_name: str = "slow_op",
+    *,
+    task_support: str | None = "required",
+    task_options: Any = None,
+) -> MCPTool:
+    from agent_framework import MCPTaskOptions
+
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="lro",
+        task_options=task_options if task_options is not None else MCPTaskOptions(),
+    )
+    tool.session = AsyncMock(spec=ClientSession)
+    if task_support is not None:
+        tool._tool_task_support_by_name[tool_name] = task_support
+    return tool
+
+
+def _send_request_dispatcher(*responses_by_method: tuple[str, Any]) -> Any:
+    """Build a send_request side_effect that returns responses keyed by request method.
+
+    Each tuple is ``(method_name, response_or_exception_or_callable)``. The dispatcher
+    advances a per-method queue on every call. A callable response is invoked with no
+    args so tests can raise exceptions deterministically.
+    """
+    from collections import defaultdict
+
+    queues: dict[str, list[Any]] = defaultdict(list)
+    for method, response in responses_by_method:
+        queues[method].append(response)
+
+    async def _dispatch(request: Any, _result_type: Any, *_args: Any, **_kw: Any) -> Any:
+        method = getattr(request, "method", None) or getattr(request, "method", None)
+        queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]
+        if not queue:
+            raise AssertionError(f"No mocked send_request response for method '{method}'.")
+        item = queue.pop(0)
+        if callable(item):
+            return item()
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    return _dispatch
+
+
+async def test_task_options_defaults_are_sane() -> None:
+    from agent_framework import MCPTaskOptions
+
+    opts = MCPTaskOptions()
+    assert opts.default_ttl is None
+    assert opts.cancel_remote_task_on_local_cancellation is True
+
+
+async def test_task_options_rejects_non_positive_default_ttl() -> None:
+    from datetime import timedelta
+
+    from agent_framework import MCPTaskOptions
+
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(default_ttl=timedelta(seconds=-1))
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(default_ttl=timedelta(0))
+
+
+async def test_load_tools_captures_task_support() -> None:
+    tool = MCPTool(name="lro")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock()
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="slow_op",
+            description="slow",
+            input_schema={"type": "object", "properties": {}},
+            execution=types.ToolExecution(task_support="required"),
+        ),
+        types.Tool(
+            name="fast_op",
+            description="fast",
+            input_schema={"type": "object", "properties": {}},
+        ),
+    ]
+    page.next_cursor = None
+    tool.session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert tool._tool_task_support_by_name == {"slow_op": "required"}
+
+
+async def test_call_tool_routes_required_through_task_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+    tool.parse_tool_results = lambda _: "custom task summary"
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="working")),
+            ("tasks/get", _make_task_snapshot(status="completed")),
+            (
+                "tasks/result",
+                _make_payload(
+                    "hello task",
+                    structured_content={"widget": "task"},
+                    meta={"source": "completed-task"},
+                ),
+            ),
+        )
+    )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op", x=1)
+
+    assert function_result.result == "custom task summary"
+    assert function_result.items is not None
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": "task"
+    }
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "completed-task"}
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {
+        "source": "completed-task"
+    }
+    # Plain session.call_tool must NOT be used for required tools.
+    tool.session.call_tool.assert_not_called()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+async def test_call_tool_routes_required_through_public_task_override() -> None:
+    class OverriddenTaskTool(MCPTool):
+        def __init__(self) -> None:
+            super().__init__(name="override")
+            self.override_called = False
+
+        async def call_tool_as_task(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+            self.override_called = True
+            return await super().call_tool_as_task(tool_name, **kwargs)
+
+    tool = OverriddenTaskTool()  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock(spec=ClientSession)
+    tool._tool_task_support_by_name["slow_op"] = "required"
+    fallback_result = types.CallToolResult(content=[types.TextContent(type="text", text="fallback")])
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=types.Result.model_validate(fallback_result.model_dump(by_alias=True, exclude_none=True))
+    )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert function_result.result == "fallback"
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY in function_result.additional_properties
+    assert tool.override_called is True
+
+
+async def test_call_tool_as_task_fallback_preserves_custom_parser_host_payload() -> None:
+    """A legacy non-task response retains the Host payload after custom parsing."""
+    tool = _make_task_tool()
+    tool.parse_tool_results = lambda _: "custom fallback summary"
+    fallback_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="fallback")],
+        structured_content={"widget": "fallback"},
+        _meta={"source": "fallback"},
+    )
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=types.Result.model_validate(fallback_result.model_dump(by_alias=True, exclude_none=True))
+    )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert function_result.result == "custom fallback summary"
+    assert function_result.items is not None
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": "fallback"
+    }
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "fallback"}
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {"source": "fallback"}
+
+
+@pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
+async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str) -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    tool = _make_task_tool()
+    result_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+    structured_content = {"widget": result_path}
+    if result_path == "fallback":
+        raw_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="fallback")],
+            structured_content=structured_content,
+            _meta=result_meta,
+        )
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.Result.model_validate(raw_result.model_dump(by_alias=True, exclude_none=True))
+        )
+    else:
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            side_effect=_send_request_dispatcher(
+                ("tools/call", _make_create_task_result()),
+                ("tasks/get", _make_task_snapshot(status="completed")),
+                (
+                    "tasks/result",
+                    _make_payload(
+                        "completed",
+                        structured_content=structured_content,
+                        meta=result_meta,
+                    ),
+                ),
+            )
+        )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "slow_op",
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("untrusted", "private"),
+    )
+
+    assert function_result.items is not None
+    assert len(function_result.items) == 1
+    for item in function_result.items:
+        assert item.additional_properties["_variable_reference"] is True
+        assert item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert item.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == (
+        structured_content
+    )
+
+
+@pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
+async def test_task_parser_failure_preserves_complete_host_payload(result_path: str) -> None:
+    tool = _make_task_tool()
+    tool.parse_tool_results = _raise_result_parser
+    result_meta = {"source": result_path}
+    if result_path == "fallback":
+        raw_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="fallback")],
+            structured_content={"widget": result_path},
+            _meta=result_meta,
+        )
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.Result.model_validate(raw_result.model_dump(by_alias=True, exclude_none=True))
+        )
+    else:
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            side_effect=_send_request_dispatcher(
+                ("tools/call", _make_create_task_result()),
+                ("tasks/get", _make_task_snapshot(status="completed")),
+                (
+                    "tasks/result",
+                    _make_payload(
+                        "completed",
+                        structured_content={"widget": result_path},
+                        meta=result_meta,
+                    ),
+                ),
+            )
+        )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert function_result.result == "Error: Function failed."
+    assert function_result.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": result_path
+    }
+
+
+async def test_call_tool_as_task_default_ttl_propagates() -> None:
+    from datetime import timedelta
+
+    from agent_framework import MCPTaskOptions
+
+    tool = _make_task_tool(task_options=MCPTaskOptions(default_ttl=timedelta(minutes=7)))
+
+    captured: list[Any] = []
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        captured.append(request)
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result()
+        if method == "tasks/get":
+            return _make_task_snapshot(status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    await tool.call_tool("slow_op")
+
+    create_req = captured[0]
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl == 7 * 60 * 1000
+
+
+async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> None:
+    # Without a TTL we still mark the call as task-augmented (servers require
+    # the `task` field to route through the lifecycle).
+    tool = _make_task_tool()
+
+    captured: list[Any] = []
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        captured.append(request)
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result()
+        if method == "tasks/get":
+            return _make_task_snapshot(status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    await tool.call_tool("slow_op")
+
+    create_req = captured[0]
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl is None
+
+
+async def test_call_tool_skips_task_path_for_optional_and_forbidden() -> None:
+    for support in ("optional", "forbidden", None):
+        tool = _make_task_tool(task_support=support)
+        tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.CallToolResult(content=[types.TextContent(type="text", text="plain")])
+        )
+        tool.session.send_request = AsyncMock(side_effect=AssertionError("task path should not be used"))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+        result = await tool.call_tool("slow_op")
+        assert _mcp_result_to_text(result) == "plain"
+
+
+async def test_call_tool_as_task_cancelled_status_raises() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="cancelled", status_message="server stop")),
+        )
+    )
+
+    with pytest.raises(ToolExecutionException, match="cancelled.*server stop"):
+        await tool.call_tool("slow_op")
+
+
+async def test_call_tool_as_task_failed_status_raises() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="failed", status_message="boom")),
+        )
+    )
+
+    with pytest.raises(ToolExecutionException, match="failed.*boom"):
+        await tool.call_tool("slow_op")
+
+
+async def test_call_tool_as_task_input_required_raises() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="input_required", status_message="need more")),
+        )
+    )
+
+    with pytest.raises(ToolExecutionException, match="input_required.*need more"):
+        await tool.call_tool("slow_op")
+
+
+async def test_call_tool_as_task_payload_iserror_raises() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="completed")),
+            (
+                "tasks/result",
+                _make_payload(
+                    "payload exploded",
+                    is_error=True,
+                    structured_content={"reason": "task failed"},
+                    meta={"source": "failed-task"},
+                ),
+            ),
+        )
+    )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert function_result.exception is not None
+    assert function_result.additional_properties["_meta"] == {"source": "failed-task"}
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "reason": "task failed"
+    }
+
+
+async def test_call_tool_as_task_malformed_payload_raises() -> None:
+    tool = _make_task_tool()
+    bad_payload = types.GetTaskPayloadResult.model_validate({"random": "stuff"})
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result(task_id="abc")),
+            ("tasks/get", _make_task_snapshot(task_id="abc", status="completed")),
+            ("tasks/result", bad_payload),
+        )
+    )
+
+    with pytest.raises(ToolExecutionException, match="task 'abc' result payload"):
+        await tool.call_tool("slow_op")
+
+
+async def test_call_tool_as_task_method_not_found_falls_back() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=MCPError(types.METHOD_NOT_FOUND, "no tasks here")
+    )
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="fell back")])
+    )
+
+    result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "fell back"
+    tool.session.call_tool.assert_awaited_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+async def test_call_tool_as_task_invalid_params_falls_back() -> None:
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=MCPError(types.INVALID_PARAMS, "unknown field")
+    )
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="plain ok")])
+    )
+
+    result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "plain ok"
+
+
+async def test_call_tool_as_task_legacy_calltoolresult_response_used_directly() -> None:
+    """Server may ignore augmentation and return CallToolResult; treat it as the result."""
+    # Build a lenient Result whose extras match a CallToolResult shape.
+    legacy_payload = types.Result.model_validate({
+        "content": [{"type": "text", "text": "legacy ok"}],
+        "isError": False,
+    })
+
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(return_value=legacy_payload)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "legacy ok"
+    # Polling must not occur: a single tools/call was enough.
+    assert tool.session.send_request.call_count == 1  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+async def test_call_tool_as_task_poll_interval_is_clamped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta as _td
+
+    from agent_framework import _mcp as _mcp_module
+
+    # Stub asyncio.sleep so we can capture delays without actually sleeping.
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(_mcp_module.asyncio, "sleep", fake_sleep)
+
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=_send_request_dispatcher(
+            ("tools/call", _make_create_task_result()),
+            ("tasks/get", _make_task_snapshot(status="working", poll_interval_ms=50)),  # below 500ms min
+            ("tasks/get", _make_task_snapshot(status="working", poll_interval_ms=10_000)),  # above 5s max
+            ("tasks/get", _make_task_snapshot(status="working", poll_interval_ms=None)),  # default to min
+            ("tasks/get", _make_task_snapshot(status="working", poll_interval_ms=0)),  # invalid -> min
+            ("tasks/get", _make_task_snapshot(status="working", poll_interval_ms=2_000)),  # in-band
+            ("tasks/get", _make_task_snapshot(status="completed")),
+            ("tasks/result", _make_payload("ok")),
+        )
+    )
+
+    await tool.call_tool("slow_op")
+
+    expected = [
+        _td(milliseconds=500).total_seconds(),  # clamp up
+        _td(seconds=5).total_seconds(),  # clamp down
+        _td(milliseconds=500).total_seconds(),  # missing -> min
+        _td(milliseconds=500).total_seconds(),  # zero    -> min
+        _td(milliseconds=2_000).total_seconds(),
+    ]
+    assert delays == expected
+
+
+async def test_call_tool_as_task_local_cancellation_fires_remote_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    cancel_seen = asyncio.Event()
+    create_seen = asyncio.Event()
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        method = request.method
+        if method == "tools/call":
+            create_seen.set()
+            return _make_create_task_result()
+        if method == "tasks/get":
+            await asyncio.sleep(0)
+            return _make_task_snapshot(status="working")
+        if method == "tasks/cancel":
+            cancel_seen.set()
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    task = asyncio.create_task(tool.call_tool("slow_op"))
+    await asyncio.wait_for(create_seen.wait(), timeout=1.0)
+    # Let polling iterate a few times.
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Wait for the fire-and-forget cancel to complete.
+    await asyncio.wait_for(cancel_seen.wait(), timeout=1.0)
+    # Drain any tracked background tasks.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def test_call_tool_as_task_cancellation_suppressed_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool(
+        task_options=MCPTaskOptions(cancel_remote_task_on_local_cancellation=False),
+    )
+
+    cancel_called = False
+    create_seen = asyncio.Event()
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            create_seen.set()
+            return _make_create_task_result()
+        if method == "tasks/get":
+            await asyncio.sleep(0)
+            return _make_task_snapshot(status="working")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    task = asyncio.create_task(tool.call_tool("slow_op"))
+    await asyncio.wait_for(create_seen.wait(), timeout=1.0)
+    await asyncio.sleep(0.02)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Let any (incorrect) background work settle, then verify cancel was NOT sent.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_call_tool_as_task_reconnects_during_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    from anyio import ClosedResourceError
+
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    poll_calls = 0
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal poll_calls
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="abc")
+        if method == "tasks/get":
+            poll_calls += 1
+            assert request.params.task_id == "abc"
+            if poll_calls == 1:
+                raise ClosedResourceError
+            return _make_task_snapshot(task_id="abc", status="completed")
+        if method == "tasks/result":
+            return _make_payload("recovered")
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    reconnect_calls = 0
+
+    async def fake_connect(reset: bool = False) -> None:
+        nonlocal reconnect_calls
+        reconnect_calls += 1
+        assert reset is True
+
+    with patch.object(MCPTool, "connect", side_effect=fake_connect):
+        result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "recovered"
+    assert reconnect_calls == 1
+    # Critically, tools/call must NOT be re-issued after task_id is known.
+    assert (
+        sum(
+            1  # type: ignore[misc]
+            for c in tool.session.send_request.await_args_list  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+            if c.args[0].method == "tools/call"
+        )
+        == 1
+    )
+
+
+async def test_call_tool_as_task_second_disconnect_raises_connection_lost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from anyio import ClosedResourceError
+
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="abc")
+        if method == "tasks/get":
+            raise ClosedResourceError
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with (
+        patch.object(MCPTool, "connect", new=AsyncMock(return_value=None)),
+        pytest.raises(ToolExecutionException, match="task state unknown"),
+    ):
+        await tool.call_tool("slow_op")
+
+
+async def test_call_tool_as_task_create_disconnect_does_not_retry() -> None:
+    """A connection loss during the augmented tools/call must NOT retry.
+
+    Retrying could spawn a duplicate long-running task on the server, because the
+    first request may have been accepted before the response was lost.
+    """
+    from anyio import ClosedResourceError
+
+    tool = _make_task_tool()
+
+    send_calls = 0
+
+    async def fake_send(_request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal send_calls
+        send_calls += 1
+        raise ClosedResourceError
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    reconnect_mock = AsyncMock(return_value=None)
+    with (
+        patch.object(MCPTool, "connect", new=reconnect_mock),
+        pytest.raises(ToolExecutionException, match="task state unknown"),
+    ):
+        await tool.call_tool("slow_op")
+
+    # Exactly one tools/call was issued — the server-side task state is unknown,
+    # so retry is unsafe and must be skipped.
+    assert send_calls == 1
+    reconnect_mock.assert_not_awaited()
+
+
+async def test_fetch_task_result_reconnects_during_fetch() -> None:
+    from anyio import ClosedResourceError
+
+    tool = _make_task_tool()
+
+    fetch_calls = 0
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal fetch_calls
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="r1")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="r1", status="completed")
+        if method == "tasks/result":
+            fetch_calls += 1
+            if fetch_calls == 1:
+                raise ClosedResourceError
+            return _make_payload("fetched after reconnect")
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    reconnect_calls = 0
+
+    async def fake_connect(reset: bool = False) -> None:
+        nonlocal reconnect_calls
+        reconnect_calls += 1
+        assert reset is True
+
+    with patch.object(MCPTool, "connect", side_effect=fake_connect):
+        result = await tool.call_tool("slow_op")
+
+    assert _mcp_result_to_text(result) == "fetched after reconnect"
+    assert reconnect_calls == 1
+    assert fetch_calls == 2
+
+
+async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and_cancels() -> None:
+    from anyio import ClosedResourceError
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="r2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="r2", status="completed")
+        if method == "tasks/result":
+            raise ClosedResourceError
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with (
+        patch.object(MCPTool, "connect", new=AsyncMock(return_value=None)),
+        pytest.raises(ToolExecutionException, match="task state unknown"),
+    ):
+        await tool.call_tool("slow_op")
+
+    # Drain the fire-and-forget cancel so the assertion is deterministic.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_create_unparseable_success_raises() -> None:
+    """An unparseable success-shaped response must NOT silently retry tools/call."""
+    # Result with neither task.taskId nor a valid CallToolResult shape.
+    unparseable = types.Result.model_validate({"foo": "bar"})
+
+    tool = _make_task_tool()
+    tool.session.send_request = AsyncMock(return_value=unparseable)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(return_value=types.CallToolResult(content=[]))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="unparseable response"):
+        await tool.call_tool("slow_op")
+
+    # Critically: no plain tools/call fallback (would risk double execution).
+    tool.session.call_tool.assert_not_called()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+async def test_call_tool_as_task_max_wait_exceeded_raises_and_cancels(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=50)))
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="mw")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="mw", status="working")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_max_wait_cancels_even_when_local_cancel_option_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locks contract: max_task_wait abandonment ignores the local-cancel option."""
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool(
+        task_options=MCPTaskOptions(
+            cancel_remote_task_on_local_cancellation=False,
+            max_task_wait=timedelta(milliseconds=50),
+        ),
+    )
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="mw2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="mw2", status="working")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_poll_transient_request_timeout_keeps_polling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    poll_calls = 0
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal poll_calls, cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t1")
+        if method == "tasks/get":
+            poll_calls += 1
+            if poll_calls == 1:
+                raise MCPError(int(httpx.codes.REQUEST_TIMEOUT), "slow poll")
+            return _make_task_snapshot(task_id="t1", status="completed")
+        if method == "tasks/result":
+            return _make_payload("recovered after transient")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    result = await tool.call_tool("slow_op")
+    assert _mcp_result_to_text(result) == "recovered after transient"
+    assert poll_calls == 2
+    # Transient retry must not fire cancel.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is False
+
+
+async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="h1")
+        if method == "tasks/get":
+            raise MCPError(types.INVALID_PARAMS, "bad task id")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="bad task id"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_malformed_tasks_get_response_cancels_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed tasks/get response counts as abandonment (task may still be running)."""
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    # Result without a valid GetTaskResult shape (no taskId/status/etc.).
+    malformed = types.Result.model_validate({"some": "junk"})
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="m1")
+        if method == "tasks/get":
+            return malformed
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="malformed tasks/get"):
+        await tool.call_tool("slow_op")
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    assert cancel_called is True
+
+
+async def test_call_tool_as_task_failed_terminal_does_not_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Terminal failures (server already done) must NOT fire tasks/cancel."""
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="f1")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="f1", status="failed", status_message="boom")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="task failed: boom"):
+        await tool.call_tool("slow_op")
+
+    # Let any (incorrect) background work settle, then verify no cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_try_cancel_task_logs_warning_on_timeout(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework import _mcp as _mcp_module
+
+    # Shorten cancel timeout so the test is fast.
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_CANCEL_TIMEOUT", _mcp_module.timedelta(milliseconds=20))
+
+    tool = _make_task_tool()
+
+    async def hang(*_a: Any, **_kw: Any) -> Any:
+        await asyncio.sleep(10.0)
+
+    tool.session.send_request = AsyncMock(side_effect=hang)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with caplog.at_level(logging.WARNING, logger=_mcp_module.logger.name):
+        await tool._try_cancel_task("hang-1")
+
+    assert any("timed out" in r.getMessage() and "hang-1" in r.getMessage() for r in caplog.records)
+
+
+async def test_mcp_task_options_is_frozen() -> None:
+    from dataclasses import FrozenInstanceError
+
+    from agent_framework import MCPTaskOptions
+
+    opts = MCPTaskOptions()
+    with pytest.raises(FrozenInstanceError):
+        opts.default_ttl = timedelta(seconds=5)  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+
+
+async def test_mcp_task_options_max_task_wait_rejects_non_positive() -> None:
+    from agent_framework import MCPTaskOptions
+
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(max_task_wait=timedelta(0))
+    with pytest.raises(ValueError, match="positive"):
+        MCPTaskOptions(max_task_wait=timedelta(seconds=-1))
+
+
+async def test_fetch_task_result_hard_mcperror_raises_without_cancel() -> None:
+    """tasks/result hard MCPError must wrap as ToolExecutionException without cancel (server done)."""
+    tool = _make_task_tool()
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="hf")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="hf", status="completed")
+        if method == "tasks/result":
+            raise MCPError(types.INTERNAL_ERROR, "payload vanished")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ToolExecutionException, match="payload vanished"):
+        await tool.call_tool("slow_op")
+
+    # No raw MCPError leak and no cancel — server already reported the task as done.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_completion_wait_timeout_without_max_wait_is_not_translated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stray asyncio.TimeoutError during the completion wait must not pretend the deadline
+    expired when max_task_wait is None (and must not fire a spurious tasks/cancel).
+    """
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    tool = _make_task_tool()
+
+    def boom_parser(_: Any) -> list[Content]:
+        raise asyncio.TimeoutError
+
+    tool.parse_tool_results = boom_parser
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t2")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="t2", status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await tool.call_tool("slow_op")
+
+    # Must NOT translate to max_task_wait expiry and must NOT cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_completion_wait_inner_timeout_with_max_wait_set_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An asyncio.TimeoutError raised by the completion wait itself must propagate
+    unchanged even when max_task_wait IS set, and must NOT fire a spurious cancel.
+    """
+    from agent_framework import MCPTaskOptions
+    from agent_framework import _mcp as _mcp_module
+
+    monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
+
+    # Deadline set comfortably above the actual test run time.
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(seconds=5)))
+
+    def boom_parser(_: Any) -> list[Content]:
+        raise asyncio.TimeoutError("inner parser timeout")
+
+    tool.parse_tool_results = boom_parser
+
+    cancel_called = False
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        nonlocal cancel_called
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="t3")
+        if method == "tasks/get":
+            return _make_task_snapshot(task_id="t3", status="completed")
+        if method == "tasks/result":
+            return _make_payload("ok")
+        if method == "tasks/cancel":
+            cancel_called = True
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(asyncio.TimeoutError, match="inner parser timeout"):
+        await tool.call_tool("slow_op")
+
+    # Inner TimeoutError must NOT be translated into "exceeded max_task_wait" and must NOT cancel.
+    await asyncio.sleep(0.02)
+    assert cancel_called is False
+
+
+async def test_max_wait_interrupts_long_poll_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deadline must cancel through a long ``asyncio.sleep`` (clamped to MAX), not wait it out."""
+    from agent_framework import MCPTaskOptions
+
+    tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=100)))
+
+    async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
+        method = request.method
+        if method == "tools/call":
+            return _make_create_task_result(task_id="ds")
+        if method == "tasks/get":
+            # Suggest a 5s poll interval (gets clamped to MAX=5s); wait_for must cut through it.
+            return _make_task_snapshot(task_id="ds", status="working", poll_interval_ms=5000)
+        if method == "tasks/cancel":
+            return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
+        raise AssertionError(method)
+
+    tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(ToolExecutionException, match="exceeded max_task_wait"):
+        await tool.call_tool("slow_op")
+    elapsed = loop.time() - started
+
+    # Should fire near the 100ms deadline, well below the 5s clamped sleep.
+    assert elapsed < 1.0, f"deadline did not interrupt long sleep (elapsed={elapsed:.3f}s)"
+
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 # endregion

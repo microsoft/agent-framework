@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     # TODO(jpalvarezl): clean up and consolidate under httpx2
     import httpx2
     from httpx import Request
-    from mcp import types
+    from mcp import Client, types
     from mcp.client.context import ClientRequestContext
     from mcp.client.session import ClientSession
 
@@ -992,6 +992,7 @@ class MCPTool:
         self._supports_logging: bool | None = None
         self._ping_available: bool = True
         self._pending_reload_tasks: set[asyncio.Task[None]] = set()
+        self._capability_list_subscription_task: asyncio.Task[None] | None = None
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -1527,6 +1528,64 @@ class MCPTool:
             })
         return tools
 
+    async def _listen_capability_list_changes(self, mcp_client: Client) -> None:
+        """Tool and Prompt update handler for MCP Clients."""
+        from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ToolsListChanged
+
+        if self._capability_list_subscription_task is not None:
+            return
+
+        capabilities = self._server_capabilities
+        if capabilities is None:
+            return
+
+        tools_changed = self.load_tools_flag and bool(capabilities.tools and capabilities.tools.list_changed)
+        prompts_changed = self.load_prompts_flag and bool(capabilities.prompts and capabilities.prompts.list_changed)
+
+        if not tools_changed and not prompts_changed:
+            return
+
+        listen_context = mcp_client.listen(
+            tools_list_changed=tools_changed,
+            prompts_list_changed=prompts_changed,
+        )
+
+        # v2 introduces `mcp_client.listen`, but messages are teed via the message_handler passed in
+        # in the constructor anyway, so we check for the feature availability an fallback to legacy behaviour
+        try:
+            subscription = await self._exit_stack.enter_async_context(listen_context)
+        except ListenNotSupportedError:
+            logger.debug("Listen not supported, falling back to legacy behaviour.")
+            return
+
+        async def consume() -> None:
+            async for event in subscription:
+                match event:
+                    case ToolsListChanged():
+                        self._schedule_reload(self.load_tools())
+                    case PromptsListChanged():
+                        self._schedule_reload(self.load_prompts())
+                    case _:
+                        logger.debug("Unhandled event: %s", event)
+
+        self._capability_list_subscription_task = asyncio.create_task(
+            consume(),
+            name=f"mcp-capability-list-subscription:{self.name}",
+        )
+
+    async def _cancel_capability_list_subscription(self) -> None:
+        """Cancel the capability list subscription task, if it exists."""
+        task = self._capability_list_subscription_task
+        self._capability_list_subscription_task = None
+
+        if task is None:
+            return
+
+        if not task.done():
+            task.cancel()
+
+        await asyncio.gather(task, return_exceptions=True)
+
     async def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str | Sequence[str]) -> str:
         """Load an allowed MCP tool into the live function-calling tool list."""
         if ctx.tools is None:
@@ -1873,6 +1932,7 @@ class MCPTool:
             ToolException: If connection or session initialization fails.
         """
         if reset:
+            await self._cancel_capability_list_subscription()
             if reset_discovery:
                 await self._cancel_pending_reload_tasks()
             await self._safe_close_exit_stack()
@@ -1955,6 +2015,11 @@ class MCPTool:
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
             self._owns_session = True
+            try:
+                await self._listen_capability_list_changes(mcp_client)
+            except (Exception, asyncio.CancelledError):
+                await self._close_on_owner()
+                raise
         else:
             try:
                 if self.session.protocol_version is None:
@@ -2238,22 +2303,34 @@ class MCPTool:
         self,
         message: IncomingMessage,
     ) -> None:
-        """Handle messages from the MCP server.
+        """Handle messages from the MCP server ("legacy"). Kept for backward compatibility.
 
         By default this function will handle exceptions on the server by logging them,
         and it will trigger a reload of the tools and prompts when the list changed
         notification is received.
 
         Note:
-            If you want to extend this behavior, you can subclass MCPTool and override
+            If you want to extend the legacy behavior, you can subclass MCPTool and override
             this function. If you want to keep the default behavior, make sure to call
             ``super().message_handler(message)``.
+
+            Alternatively for newer server versions, please see the `_listen_capability_list_changes` method.
 
         Args:
             message: The message from the MCP server (request responder, notification, or exception).
         """
+        from mcp.shared.subscriptions import SUBSCRIPTION_ID_META_KEY
+
         if isinstance(message, Exception):
             logger.error("Error from MCP server: %s", message, exc_info=message)
+            return
+
+        params = getattr(message, "params", None)
+        meta = getattr(params, "meta", None)
+
+        # MCP v2 uses subscription directly with Client.listen and attaches the subscription ID to the message meta.
+        # To avoid double handling we skip at the message_handler level.
+        if isinstance(meta, Mapping) and SUBSCRIPTION_ID_META_KEY in meta:
             return
 
         match message.method:
@@ -2613,8 +2690,8 @@ class MCPTool:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _close_on_owner(self) -> None:
+        await self._cancel_capability_list_subscription()
         await self._cancel_pending_reload_tasks()
-
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         if self._owns_session:
