@@ -128,7 +128,7 @@ Alternatively, set environment variables globally:
 
 ```bash
 # Foundry-backed samples
-export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 export FOUNDRY_MODEL="gpt-4o"
 
 # Azure OpenAI workflow_with_agents sample

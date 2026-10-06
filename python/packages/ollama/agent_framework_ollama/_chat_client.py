@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 import uuid
+from collections import deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -459,7 +460,19 @@ class OllamaChatClient(
         return run_options
 
     def _prepare_messages_for_ollama(self, messages: Sequence[Message]) -> list[OllamaMessage]:
-        ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
+        # Function results don't carry the tool name, but Ollama expects it on tool messages.
+        # Walk the messages in order and give each result the name of the earliest unanswered
+        # call with the same call_id, so a call_id reused later still maps correctly.
+        pending_calls: dict[str, deque[str]] = {}
+        ollama_messages: list[list[OllamaMessage]] = []
+        for msg in messages:
+            if msg.role == "tool":
+                ollama_messages.append(self._format_tool_message(msg, pending_calls))
+                continue
+            for content in msg.contents:
+                if content.type == "function_call" and content.call_id and content.name:
+                    pending_calls.setdefault(content.call_id, deque()).append(content.name)
+            ollama_messages.append(self._prepare_message_for_ollama(msg))
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
@@ -487,7 +500,8 @@ class OllamaChatClient(
         user_message = OllamaMessage(role="user", content=message.text)
         data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
-            if not any(c.has_top_level_media_type("image") for c in data_contents):
+            # Every data item is sent in `images`, so reject the message if any of them is not an image.
+            if not all(c.has_top_level_media_type("image") for c in data_contents):
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
@@ -518,7 +532,9 @@ class OllamaChatClient(
             ]
         return [assistant_message]
 
-    def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
+    def _format_tool_message(
+        self, message: Message, pending_calls: dict[str, deque[str]] | None = None
+    ) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
         messages: list[OllamaMessage] = []
         for item in message.contents:
@@ -535,8 +551,11 @@ class OllamaChatClient(
                 else:
                     tool_text = str(item.result) if item.result is not None else ""
 
-                # Get the tool name directly from the content item.
-                tool_name = getattr(item, "name", "") or ""
+                tool_name = getattr(item, "name", None) or ""
+                pending = (pending_calls or {}).get(item.call_id or "")
+                if pending:
+                    queued_name = pending.popleft()
+                    tool_name = tool_name or queued_name
                 messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 

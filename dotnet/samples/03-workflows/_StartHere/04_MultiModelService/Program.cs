@@ -14,7 +14,7 @@ IChatClient google = new Client(vertexAI: false, apiKey: Environment.GetEnvironm
 
 IChatClient anthropic = new Anthropic.AnthropicClient(
     new() { ApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") })
-    .AsIChatClient("claude-sonnet-4-20250514");
+    .AsIChatClient("claude-sonnet-4-6");
 
 IChatClient openai = new OpenAI.OpenAIClient(
     Environment.GetEnvironmentVariable("OPENAI_API_KEY"))
