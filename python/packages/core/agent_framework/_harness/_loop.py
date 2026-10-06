@@ -629,7 +629,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         finally:
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
-        if cap_fired and final_result is not None:
+        if cap_fired:
             final_result.additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
 
         if not self.return_final_only:

@@ -1760,7 +1760,9 @@ def test_get_loop_exit_reason_need_input_from_text() -> None:
 
 
 def test_get_loop_exit_reason_cap_from_additional_properties() -> None:
-    response = _make_signal_response("still going", additional_properties={LOOP_EXIT_REASON_KEY: "iteration_cap_reached"})
+    response = _make_signal_response(
+        "still going", additional_properties={LOOP_EXIT_REASON_KEY: "iteration_cap_reached"}
+    )
     assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
 
 
