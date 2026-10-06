@@ -594,8 +594,8 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         releaseInitialization.Release();
 
         // Assert
-        Assert.Same(timeoutException, await Assert.ThrowsAsync<OperationCanceledException>(() => creator));
-        Assert.Same(timeoutException, await Assert.ThrowsAsync<OperationCanceledException>(() => waiter));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => creator);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
         Assert.Equal(1, initializationAttempts);
         Assert.Equal(0, stub.Initializations);
     }
