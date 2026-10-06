@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.PowerFx;
@@ -24,6 +25,12 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
+    protected const string ConnectionNameLocation = "connection name";
+    protected const string ConversationIdLocation = "conversation ID";
+    protected const string MessageAfterLocation = "message-after cursor";
+    protected const string MessageBeforeLocation = "message-before cursor";
+    protected const string MessageIdLocation = "message ID";
+
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
         : base(model.Id.Value)
     {
@@ -148,6 +155,17 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             VALUE:{valuePosition}{resultValue} ({result.GetType().Name})
             """);
 #endif
+    }
+
+    protected T GetNonSensitiveValue<T>(EvaluationResult<T> result, string location)
+    {
+        if (result.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException(
+                $"Cannot use a sensitive value for {location} in {this.Model.GetType().Name} [{this.Id}].");
+        }
+
+        return result.Value;
     }
 
     protected DeclarativeActionException Exception(string text, Exception? exception = null)

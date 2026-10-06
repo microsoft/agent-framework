@@ -181,7 +181,13 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
 
             foreach (KeyValuePair<string, ValueExpression> argument in this.AgentInput.Arguments)
             {
-                inputs[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+                EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(argument.Value);
+                if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+                {
+                    throw new DeclarativeActionException($"Cannot send sensitive agent input argument '{argument.Key}': {this.Id}.");
+                }
+
+                inputs[argument.Key] = expressionResult.Value.ToObject();
             }
         }
 
@@ -238,20 +244,42 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
             return null;
         }
 
-        EvaluationResult<string> conversationIdResult = this.Evaluator.GetValue(this.Model.ConversationId);
-        return conversationIdResult.Value.Length == 0 ? null : conversationIdResult.Value;
+        string conversationId = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
+        return conversationId.Length == 0 ? null : conversationId;
     }
 
-    private string GetAgentName() =>
-        this.Evaluator.GetValue(
+    private string GetAgentName()
+    {
+        EvaluationResult<string> expressionResult =
+            this.Evaluator.GetValue(
             Throw.IfNull(
                 this.AgentUsage.Name,
-                $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
+                $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}"));
+        if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive agent name: {this.Id}.");
+        }
 
-    private string? GetAgentVersion() =>
-        this.AgentUsage.Version is null
-            ? null
-            : this.Evaluator.GetValue(this.AgentUsage.Version).Value.ToString(CultureInfo.InvariantCulture);
+        return expressionResult.Value;
+    }
+
+    private string? GetAgentVersion()
+    {
+        if (this.AgentUsage.Version is null)
+        {
+            return null;
+        }
+
+        EvaluationResult<long> expressionResult = this.Evaluator.GetValue(this.AgentUsage.Version);
+        if (expressionResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive agent version: {this.Id}.");
+        }
+
+        return expressionResult.Value.ToString(CultureInfo.InvariantCulture);
+    }
 
     private bool GetAutoSendValue()
     {

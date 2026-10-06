@@ -1286,7 +1286,7 @@ async def test_agent_run_preserves_structured_system_blocks(with_skills: bool) -
 
     agent = Agent(
         client=AnthropicClient(anthropic_client=transport, model="claude-3-5-sonnet-20241022"),
-        default_options=cast(
+        default_options=cast(  # type: ignore[arg-type]
             AnthropicChatOptions,
             {"model": "claude-3-5-sonnet-20241022", "max_tokens": 64, "instructions": system_blocks},
         ),
@@ -1961,7 +1961,7 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
-    async for chunk in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+    async for chunk in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
         messages=messages, options=chat_options, stream=True
     ):
         if chunk:
@@ -1987,7 +1987,7 @@ async def test_inner_get_response_ignores_options_stream_streaming(
     messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": False}
 
-    async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+    async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
         messages=messages,
         options=options,
         stream=True,
@@ -2051,7 +2051,7 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
         anthropic_sdk.AuthenticationError, 401, "invalid api key"
     )
     with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
-        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
             messages=messages, options=chat_options, stream=True
         ):
             pass
@@ -2066,7 +2066,7 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
     mock_anthropic_client.beta.messages.create.side_effect = None
     mock_anthropic_client.beta.messages.create.return_value = _raise_after_first_event()
     with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
-        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
             messages=messages, options=chat_options, stream=True
         ):
             pass
@@ -3660,6 +3660,23 @@ def test_prepare_options_user_metadata_no_override(
 
     # Existing user_id should be preserved
     assert result["metadata"]["user_id"] == "existing_user"
+
+
+def test_prepare_options_user_does_not_mutate_caller_metadata(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test mapping user to metadata.user_id leaves the caller's metadata dict untouched."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+    metadata = {"trace": "t1"}
+
+    first = client._prepare_options(messages, {"user": "alice", "metadata": metadata})
+    second = client._prepare_options(messages, {"user": "bob", "metadata": metadata})
+
+    assert metadata == {"trace": "t1"}
+    assert first["metadata"] == {"trace": "t1", "user_id": "alice"}
+    assert second["metadata"] == {"trace": "t1", "user_id": "bob"}
 
 
 def test_process_stream_event_message_stop(mock_anthropic_client: MagicMock) -> None:

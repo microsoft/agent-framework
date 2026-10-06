@@ -63,7 +63,15 @@ settings loader. Connection precedence is an explicit `redis_url`, then
 `redis://localhost:6379` as the default. Settings mask credential-bearing URLs
 with `SecretString`; use `rediss://` when your server requires TLS.
 
-You may supply a standalone `redis.asyncio.Redis` client using
+`RedisHistoryProvider` can create its own client from a URL or credential
+provider, or borrow a standalone `redis.asyncio.Redis` client configured with
+`decode_responses=True`. A borrowed client lets the application configure
+connection policy such as bounded timeouts and health checks. It remains
+caller-owned and must not be combined with `redis_url` or `credential_provider`.
+Retry behavior also remains caller-controlled; transcript appends are not
+idempotent if a client replays a write after an ambiguous connection loss.
+
+For vector storage, you may supply a standalone `redis.asyncio.Redis` client using
 `decode_responses=False` and RESP2. Both URL-created and supplied clients must use
 strict UTF-8 encoding (`encoding="utf-8"`, `encoding_errors="strict"`, the defaults)
 so Unicode keys and string fields round-trip without lossy conversions.
@@ -96,6 +104,25 @@ history_provider = RedisHistoryProvider(
     agent_id="triage-agent",
 )
 ```
+
+To bound transcript I/O with a caller-configured client:
+
+```python
+from redis.asyncio import Redis
+
+redis_client = Redis.from_url(
+    "redis://localhost:6379",
+    decode_responses=True,
+    socket_connect_timeout=3,
+    socket_timeout=5,
+)
+history_provider = RedisHistoryProvider(
+    redis_client=redis_client,
+    application_id="support-app",
+)
+```
+
+The application remains responsible for closing `redis_client`.
 
 Scoped mode rejects missing application or session identifiers rather than
 placing unrelated conversations under a shared fallback key. Identifiers are
