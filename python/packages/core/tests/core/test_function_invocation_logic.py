@@ -7487,6 +7487,97 @@ async def test_mixed_declaration_only_deferred_call_reclassifies_changed_approva
     assert new_calls == 1
 
 
+async def test_mixed_declaration_only_budget_survives_reclassification_to_approval(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Host budget remains authoritative after a deferred call starts a new approval."""
+    from agent_framework._tools import (
+        _BUDGET_ELAPSED_SECONDS_KEY,
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+    )
+
+    new_calls = 0
+
+    @tool(name="local_func")
+    def old_local_func() -> str:
+        return "old"
+
+    host_func = FunctionTool(name="host_func", func=None, description="Handled by the caller")
+    session = AgentSession()
+    original_agent = Agent(client=chat_client_base, tools=[host_func, old_local_func])
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="host", name="host_func", arguments={}),
+                    Content.from_function_call(call_id="local", name="local_func", arguments={}),
+                ],
+            )
+        )
+    ]
+    monotonic_time = [1000.0]
+    wall_time = [10000.0]
+
+    def fake_perf_counter() -> float:
+        return monotonic_time[0]
+
+    def fake_time() -> float:
+        return wall_time[0]
+
+    @tool(name="local_func", approval_mode="always_require")
+    def new_local_func() -> str:
+        nonlocal new_calls
+        new_calls += 1
+        return "new"
+
+    upgraded_agent = Agent(client=chat_client_base, tools=[host_func, new_local_func])
+    observed_tool_choices: list[str | None] = []
+    original_inner_get_response = chat_client_base._inner_get_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    def capture_inner_get_response(**kwargs: Any) -> Any:
+        observed_tool_choices.append(kwargs["options"].get("tool_choice"))
+        return original_inner_get_response(**kwargs)
+
+    monkeypatch.setattr(chat_client_base, "_inner_get_response", capture_inner_get_response)
+
+    from unittest.mock import patch
+
+    with (
+        patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter),
+        patch("agent_framework._tools.time", side_effect=fake_time),
+    ):
+        first_response = await original_agent.run("run both", session=session)
+        host_request = next(content for content in first_response.user_input_requests if content.name == "host_func")
+        host_result = Content.from_function_result(call_id="host", result="host result")
+        host_result.id = host_request.id
+        approval_response = await upgraded_agent.run(host_result, session=session)
+        approval_request = next(
+            content for content in approval_response.user_input_requests if content.type == "function_approval_request"
+        )
+
+        root_budget = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(root_budget, dict)
+        assert "start_time" not in root_budget
+        assert _BUDGET_ELAPSED_SECONDS_KEY in root_budget
+
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        monotonic_time[0] = 50.0
+        wall_time[0] = 10006.0
+        observed_tool_choices.clear()
+        final_response = await upgraded_agent.run(
+            approval_request.to_function_approval_response(approved=True),
+            session=session,
+        )
+
+    assert new_calls == 0
+    assert final_response.text
+    assert observed_tool_choices == ["none"]
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
 async def test_mixed_declaration_only_deferred_call_does_not_execute_removed_tool(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

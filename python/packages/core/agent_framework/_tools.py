@@ -4383,6 +4383,12 @@ def _restore_session_budget_state(
         if isinstance(raw_batch, Mapping):
             raw_snapshot = cast(Mapping[str, Any], raw_batch).get(_DEFERRED_BUDGET_STATE_KEY)
     if not isinstance(raw_snapshot, Mapping):
+        root_snapshot = invocation_session.state.get(_FUNCTION_INVOCATION_BUDGET_STATE_KEY)
+        if isinstance(root_snapshot, Mapping):
+            typed_root_snapshot = cast(Mapping[str, Any], root_snapshot)
+            if _BUDGET_ELAPSED_SECONDS_KEY in typed_root_snapshot or _BUDGET_PAUSED_AT_KEY in typed_root_snapshot:
+                raw_snapshot = typed_root_snapshot
+    if not isinstance(raw_snapshot, Mapping):
         return
 
     snapshot = copy.deepcopy(dict(cast(Mapping[str, Any], raw_snapshot)))
@@ -4740,6 +4746,7 @@ async def _resolve_deferred_mixed_pause_calls(
     options: dict[str, Any] | None,
     errors_in_a_row: int,
     max_errors: int,
+    budget_state: dict[str, Any],
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None,
     host_result_ids: set[int],
@@ -4793,6 +4800,8 @@ async def _resolve_deferred_mixed_pause_calls(
     pending_requests = [content for content in terminal_contents if content.type == "function_approval_request"]
     if pending_requests:
         _store_pending_approval_requests(invocation_session, pending_requests)
+        if invocation_session is not None:
+            invocation_session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = _portable_budget_snapshot(budget_state)
 
     errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
         errors_in_a_row,
@@ -4825,6 +4834,7 @@ async def _resolve_approval_responses(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
+    budget_state: dict[str, Any] | None = None,
     invocation_session: AgentSession | None = None,
     approval_session_is_authoritative: bool = True,
     disable_approval_response_binding: bool = False,
@@ -4892,6 +4902,7 @@ async def _resolve_approval_responses(
                 options=options,
                 errors_in_a_row=errors_in_a_row,
                 max_errors=max_errors,
+                budget_state=budget_state if budget_state is not None else {},
                 execute_function_calls=execute_function_calls,
                 invocation_session=approval_session,
                 host_result_ids=host_result_ids,
@@ -5381,6 +5392,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             options=options,
             errors_in_a_row=errors_in_a_row,
             max_errors=max_errors,
+            budget_state=budget_state,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
@@ -5602,6 +5614,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             options=options,
             errors_in_a_row=errors_in_a_row,
             max_errors=max_errors,
+            budget_state=budget_state,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
