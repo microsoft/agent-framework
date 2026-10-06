@@ -2360,6 +2360,60 @@ def test_sanitize_history_ending_with_tool_call_closes_pending_call():
     assert all("skipped" in str(msg.contents[0].result).lower() for msg in result[1:])
 
 
+def test_sanitize_history_keeps_every_result_for_reused_call_id():
+    """Each function call occurrence sharing a provider call ID keeps its own result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    for call_ids in [("shared",) * 3, ("call-a", "call-b", "call-c")]:
+        messages = [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(id=f"occurrence-{n}", call_id=call_id, name=f"tool_{n}", arguments="{}")
+                    for n, call_id in enumerate(call_ids)
+                ],
+            )
+        ]
+        messages += [
+            Message(role="tool", contents=[Content.from_function_result(call_id=call_id, result=f"result-{n}")])
+            for n, call_id in enumerate(call_ids)
+        ]
+        messages.append(Message(role="user", contents=[Content.from_text(text="Thanks")]))
+
+        result = _sanitize_tool_history(messages)
+
+        assert [msg.role for msg in result] == ["assistant", "tool", "tool", "tool", "user"]
+        assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+            "result-0",
+            "result-1",
+            "result-2",
+        ]
+
+
+def test_sanitize_history_drops_results_beyond_reused_call_id_occurrences():
+    """Results for a reused call ID beyond the declared occurrences are still dropped."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="shared", name="tool_a", arguments="{}"),
+            Content.from_function_call(call_id="shared", name="tool_b", arguments="{}"),
+        ],
+    )
+    tool_msgs = [
+        Message(role="tool", contents=[Content.from_function_result(call_id="shared", result=f"result-{n}")])
+        for n in range(3)
+    ]
+
+    result = _sanitize_tool_history([assistant_msg, *tool_msgs])
+
+    assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+        "result-0",
+        "result-1",
+    ]
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
@@ -2433,6 +2487,29 @@ def test_deduplicate_tool_results():
 
     result = _deduplicate_messages([msg1, msg2])
     assert len(result) == 1
+
+
+def test_deduplicate_keeps_one_tool_result_per_reused_call_id_occurrence():
+    """Results for a call ID reused by several function calls are kept once per occurrence."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="shared", name=f"tool_{n}", arguments="{}") for n in range(3)],
+    )
+    tool_msgs = [
+        Message(role="tool", contents=[Content.from_function_result(call_id="shared", result=f"result-{n}")])
+        for n in range(3)
+    ]
+    replayed = Message(role="tool", contents=[Content.from_function_result(call_id="shared", result="result-0")])
+
+    result = _deduplicate_messages([assistant_msg, *tool_msgs, replayed])
+
+    assert [content.result for msg in result for content in msg.contents if content.type == "function_result"] == [
+        "result-0",
+        "result-1",
+        "result-2",
+    ]
 
 
 def test_deduplicate_assistant_tool_calls():
