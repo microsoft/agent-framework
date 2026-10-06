@@ -21,20 +21,20 @@ internal static class ClientHeaderValidation
         }
 
         // Reject transport delimiters before using the name in exception text or a transport API.
-        if (ContainsProhibitedCharacter(name))
-        {
-            throw new ArgumentException("Header name must not contain NUL, carriage-return, or line-feed characters.", nameof(name));
-        }
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            name,
+            nameof(name),
+            "Header name must not contain NUL, carriage-return, or line-feed characters.");
 
         if (value.Length == 0)
         {
             throw new ArgumentException("Header value must not be empty.", nameof(value));
         }
 
-        if (ContainsProhibitedCharacter(value))
-        {
-            throw new ArgumentException("Header value must not contain NUL, carriage-return, or line-feed characters.", nameof(value));
-        }
+        HttpHeaderValidation.ValidateNoProhibitedCharacters(
+            value,
+            nameof(value),
+            "Header value must not contain NUL, carriage-return, or line-feed characters.");
 
         if (!name.StartsWith(ClientHeaderPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -43,7 +43,4 @@ internal static class ClientHeaderValidation
                 nameof(name));
         }
     }
-
-    private static bool ContainsProhibitedCharacter(string value) =>
-        value.IndexOf('\0') >= 0 || value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0;
 }

@@ -1,52 +1,93 @@
-# What this sample demonstrates
+# Responses agents: history, storage, and options
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted using the **Responses protocol**.
+The **outer** Responses request decides whether the hosted response is stored. The developer separately selects
+who supplies the agent's model history:
 
-## How It Works
+| Entry point | `history_source` | Model history |
+| --- | --- | --- |
+| [main.py](main.py) | `"agent_server"` | The outer Responses transcript; the inner client runs with `store=False`. |
+| [service_history.py](service_history.py) | `"service"` | Only new input goes to the model; its private `service_session_id` persists for later turns. |
+| [agent_history.py](agent_history.py) | `"agent"` | This agent opts into `InMemoryHistoryProvider` with `default_options={"store": False}`; another `"agent"` configuration with `store=True` can use service history instead. |
+| [options.py](options.py) | `"agent_server"` | The hook removes the caller's token limit so the agent default is used. |
+| [provider_background.py](provider_background.py) | `"service"` | `background_source="provider"` opts into provider background with a private recovery token. |
 
-### Model Integration
+For the same two stored requests—first **"My name is Ada"**, then **"What is my name?"** with the first
+response's `previous_response_id`—the modes differ at the *model* boundary. `main.py` replays both
+the first user message and the first assistant output before the follow-up. `service_history.py`
+sends only the follow-up and privately resumes the service thread returned by the first call.
+`agent_history.py` sends the follow-up plus earlier messages loaded from `InMemoryHistoryProvider`
+inside the persisted MAF session. With `history_source="agent"`, the agent's storage default determines
+whether it uses that provider or downstream service storage; the host does not force either one on
+stored requests. In none of these cases is the caller's `response.id` the
+downstream service ID.
 
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. The agent supports both streaming (SSE events) and non-streaming (JSON) response modes.
+Run one entry point at a time. The deployment manifest targets `main.py`; select another script to deploy a different
+mode. Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` in `.env`, then run `python main.py`.
+Follow the [parent hosting guide](../../README.md) for local and deployed setup.
 
-See [main.py](main.py) for the full implementation.
+## Outer response storage and background
 
-### Agent Hosting
-
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](../../README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../../README.md) for more details. Use this README for sample queries you can send to the agent.
-
-Send a POST request to the server with a JSON body containing an `"input"` field to interact with the agent. For example:
-
-```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hi"}'
-```
-
-The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
-
-### Multi-turn conversation
-
-To have a multi-turn conversation with the agent, include the previous response id in the request body. For example:
+`store=True` makes a response retrievable at `GET /responses/{response.id}` and available for continuation using
+`previous_response_id` or a `conversation`. For a local two-turn example, capture the `"id"` returned by the
+first request and use it in the second; keep the same Foundry sandbox when deployed:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "My name is Ada", "store": true}'
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "What is my name?", "store": true, "previous_response_id": "REPLACE_WITH_FIRST_RESPONSE_ID"}'
 ```
 
-When deployed to Foundry, reuse the same platform-provided agent session to continue
-the agent's private state. The request's `previous_response_id` selects a Responses
-continuation; it does not identify the Foundry sandbox. Hosted state is isolated by
-the platform's user and sandbox IDs, so putting those IDs in the JSON body cannot
-recover a different sandbox's state. After upgrading from unscoped hosted state,
-start a fresh conversation: older MAF session data is not read by the new default
-stores. See [State store](../../../../../packages/foundry_hosting/README.md#state-store)
-for the ID mapping and migration implications.
+The *same* outer request works with any of the three host entry points above; only the source of
+inner model history changes. `store=True` does **not** choose inner history. With `store=False`, the response
+is one-shot: the host writes no MAF session, approval, or conversation state, and it does not request inner service
+storage. Application-owned tools and other external services can still have their own side effects. If a custom
+agent or external history provider cannot guarantee that boundary, the host rejects the unstored request.
 
-## Deploying the Agent to Foundry
+`background=True` requires `store=True` and returns the **outer** `response.id` as the polling handle. Normal agent
+background runs inside AgentServer even if the chat client cannot run in the background. Without durable inner
+continuation, a process crash can leave such a response unfinished. The optional
+[provider_background.py](provider_background.py) opts a storing Responses client into its *separate* background
+mode: only this mode persists the provider's private token and polls it until completion/recovery. It is incompatible
+with steering. Polls keep the original model options and `background=True`, including when a tool loop submits
+its next leg. Each new private token is saved with the completed tool transcript and usage; recovery replays only
+output that was not checkpointed. Saved final output can finish an interrupted outer response without another
+provider call, even if that response already committed the conversation head. A crash between a local tool side
+effect and saving the next private token can still replay that tool; use idempotent tools or avoid this mode for
+side-effecting local tools. The deployed identity
+needs Foundry User permission on the project for private provider polling.
 
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
+[client.py](client.py) shows stored conversation turns, an unstored request, and background polling. It also needs
+`FOUNDRY_AGENT_NAME` and Azure CLI authentication. For a local host, a simple multi-turn request is:
+
+```bash
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input": "Hello", "store": true, "conversation": "my-conversation"}'
+```
+
+Send another request with the same `conversation` to continue. When deployed, keep the same Foundry sandbox:
+`agent_session_id` is a **platform** session, not the outer `response.id` or the private
+`AgentSession.service_session_id`. A `conversation` binds that sandbox; with a bare `previous_response_id`, also
+forward the earlier response's `agent_session_id`. Older unscoped hosted MAF state is not migrated; start a new
+conversation after upgrading (see the [package state guide](../../../../../packages/foundry_hosting/README.md#state-store)).
+For `"service"` and `"agent"` history, a stored named turn claims the conversation before inner dispatch: concurrent
+turns fail rather than mutating the same service thread. An invalid input does not consume a
+`previous_response_id` parent. If a named turn fails or is cancelled after dispatch, start a new conversation;
+the existing thread may have changed even if its outer response did not complete.
+
+## Options and compatibility
+
+Native CreateResponse generation fields become MAF run options (`max_output_tokens` becomes `max_tokens` and
+`parallel_tool_calls` becomes `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` values overlay translated
+keys **last**. The developer's `prepare_options(request, options)` hook can then remove or replace *caller* options;
+removing one exposes the agent's own unchanged `default_options`. In [options.py](options.py),
+`max_output_tokens=300` plus `extra_body={"max_tokens": 150}` becomes `max_tokens=150` before the hook removes it;
+the model receives the agent's `max_tokens=256` default instead. Platform IDs, storage flags, and private
+continuation tokens are never caller model options; the hook cannot add them back.
+
+`history_source="agent_server"` and `history_source="agent"` retain their existing meaning without a
+deprecation warning. For **stored** requests, `"agent"` passes only new input to the agent, whose
+developer-owned defaults may choose either a HistoryProvider **or downstream service storage**.
+`history_source="service"` explicitly requires service-managed history and overrides the agent's
+`store` default on stored requests. `store=` as a constructor parameter remains a deprecated alias
+for `response_store=` (the outer storage *backend*, not the caller's `store` flag).

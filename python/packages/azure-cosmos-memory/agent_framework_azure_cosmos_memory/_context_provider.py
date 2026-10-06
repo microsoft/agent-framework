@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
@@ -111,7 +112,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             cosmos_database: Cosmos DB database name.
                 Can be set via ``COSMOS_DATABASE``.
             foundry_endpoint: Azure AI Foundry project endpoint for LLM and embeddings.
-                Can be set via ``FOUNDRY_ENDPOINT``.
+                Can be set via ``FOUNDRY_PROJECT_ENDPOINT``. The legacy
+                ``FOUNDRY_ENDPOINT`` name remains supported as a fallback.
             embedding_model: Embedding model deployment name. Required (no default) when the
                 provider builds the client; can be set via ``EMBEDDING_MODEL``. There is no safe
                 long-term default, so an unset value raises rather than silently targeting a model
@@ -194,7 +196,9 @@ class CosmosMemoryContextProvider(ContextProvider):
                 CosmosMemorySettings,
                 cosmos_endpoint=cosmos_endpoint,
                 cosmos_database=cosmos_database,
-                foundry_endpoint=foundry_endpoint,
+                # Prefer the repository-wide project endpoint name. ``load_settings`` still
+                # resolves the legacy FOUNDRY_ENDPOINT variable when this override is absent.
+                foundry_endpoint=foundry_endpoint or os.getenv("FOUNDRY_PROJECT_ENDPOINT"),
                 embedding_model=embedding_model,
                 chat_model=chat_model,
                 required_fields=["cosmos_endpoint", "foundry_endpoint", "embedding_model", "chat_model"],
