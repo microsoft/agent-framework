@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
 from datetime import timedelta
@@ -18,6 +18,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from httpx2 import AsyncClient, MockTransport, Request, Response
 from mcp import MCPError, types
 from mcp.client.session import ClientSession
 from pydantic import BaseModel
@@ -8382,13 +8383,22 @@ async def test_agent_run_supplies_mcp_connect_headers(
     assert initialize_headers[0].get("x-api-key") == "connect-token"
 
 
-async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
+_MCPProtocolEndpoint = dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]]
 
-    from httpx2 import AsyncClient, MockTransport, Request, Response
+
+def _make_mcp_protocol_server_mock(
+    *,
+    era: str,
+    capabilities: Mapping[str, Any],
+    endpoints: Mapping[str, _MCPProtocolEndpoint],
+) -> tuple[MockTransport, list[tuple[dict[str, Any], dict[str, str]]]]:
+    """Create a protocol-era mock while keeping feature endpoints explicit in each test."""
+    if era not in {"modern", "legacy"}:
+        raise ValueError(f"Unsupported MCP protocol era: {era}")
 
     captured_requests: list[tuple[dict[str, Any], dict[str, str]]] = []
 
-    async def mcp_v2_server_mock_handler(request: Request) -> Response:
+    async def handler(request: Request) -> Response:
         if request.method == "DELETE":
             return Response(200)
 
@@ -8397,61 +8407,62 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
         headers = {name.lower(): value for name, value in request.headers.items()}
         captured_requests.append((body, headers))
 
-        if method == "initialize":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "error": {"code": -32601, "message": "Method not found"},
-                },
-            )
-
+        error: dict[str, Any] | None = None
         if method == "server/discover":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "supportedVersions": ["2026-07-28"],
-                        "capabilities": {"tools": {}},
-                    },
-                },
-            )
+            if era == "modern":
+                result = {
+                    "supportedVersions": ["2026-07-28"],
+                    "capabilities": dict(capabilities),
+                }
+            else:
+                error = {"code": -32601, "message": "Method not found"}
+                result = None
+        elif method == "initialize":
+            if era == "legacy":
+                result = {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": dict(capabilities),
+                    "serverInfo": {"name": "legacy-server", "version": "1.0.0"},
+                }
+            else:
+                error = {"code": -32601, "message": "Method not found"}
+                result = None
+        elif era == "legacy" and method == "notifications/initialized":
+            return Response(202)
+        elif era == "legacy" and method == "ping":
+            result = {}
+        elif method in endpoints:
+            endpoint = endpoints[method]
+            result = endpoint(body) if callable(endpoint) else endpoint
+        else:
+            raise AssertionError(f"Unexpected MCP method: {method}")
 
-        if method == "tools/list":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "cacheScope": "private",
-                        "resultType": "complete",
-                        "ttlMs": 0,
-                        "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
-                    },
-                },
-            )
+        response: dict[str, Any] = {"jsonrpc": "2.0", "id": body["id"]}
+        response["error" if error is not None else "result"] = error if error is not None else result
+        return Response(200, json=response)
 
-        if method == "tools/call":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "resultType": "complete",
-                        "content": [{"type": "text", "text": "Hello!"}],
-                        "isError": False,
-                    },
-                },
-            )
+    return MockTransport(handler), captured_requests
 
-        raise AssertionError(f"Unexpected MCP method: {method}")
 
-    user_client = AsyncClient(transport=MockTransport(mcp_v2_server_mock_handler))
+async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
+    transport, captured_requests = _make_mcp_protocol_server_mock(
+        era="modern",
+        capabilities={"tools": {}},
+        endpoints={
+            "tools/list": {
+                "cacheScope": "private",
+                "resultType": "complete",
+                "ttlMs": 0,
+                "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
+            },
+            "tools/call": {
+                "resultType": "complete",
+                "content": [{"type": "text", "text": "Hello!"}],
+                "isError": False,
+            },
+        },
+    )
+    user_client = AsyncClient(transport=transport)
 
     tool_a = MCPStreamableHTTPTool(
         name="a",
@@ -8487,82 +8498,23 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
 
 
 async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
-
-    from httpx2 import AsyncClient, MockTransport, Request, Response
-
-    captured_methods: list[str] = []
-
-    async def mcp_legacy_server_mock_handler(request: Request) -> Response:
-        if request.method == "DELETE":
-            return Response(200)
-
-        body = json.loads(request.content)
-        method = body["method"]
-        captured_methods.append(method)
-
-        if method == "notifications/initialized":
-            return Response(202)
-
-        if method == "ping":
-            return Response(
-                200,
-                json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
-            )
-        if method == "server/discover":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "error": {"code": -32601, "message": "Method not found"},
-                },
-            )
-
-        if method == "initialize":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "protocolVersion": "2025-11-25",
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {"name": "legacy-server", "version": "1.0.0"},
-                    },
-                },
-            )
-
-        if method == "tools/list":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "cacheScope": "private",
-                        "resultType": "complete",
-                        "ttlMs": 0,
-                        "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
-                    },
-                },
-            )
-
-        if method == "tools/call":
-            return Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "content": [{"type": "text", "text": "Hello!"}],
-                        "isError": False,
-                    },
-                },
-            )
-
-        raise AssertionError(f"Unexpected MCP method: {method}")
-
-    user_client = AsyncClient(transport=MockTransport(mcp_legacy_server_mock_handler))
+    transport, captured_requests = _make_mcp_protocol_server_mock(
+        era="legacy",
+        capabilities={"tools": {}},
+        endpoints={
+            "tools/list": {
+                "cacheScope": "private",
+                "resultType": "complete",
+                "ttlMs": 0,
+                "tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}],
+            },
+            "tools/call": {
+                "content": [{"type": "text", "text": "Hello!"}],
+                "isError": False,
+            },
+        },
+    )
+    user_client = AsyncClient(transport=transport)
 
     tool_a = MCPStreamableHTTPTool(
         name="a",
@@ -8580,9 +8532,96 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
         assert isinstance(result, list)
         assert [item.text for item in result if item.type == "text"] == ["Hello!"]
 
+    captured_methods = [body["method"] for body, _ in captured_requests]
     assert "server/discover" in captured_methods
     assert "initialize" in captured_methods
     assert "tools/list" in captured_methods
+
+
+@pytest.mark.parametrize(
+    ("era", "expected_version"),
+    [
+        ("modern", "2026-07-28"),
+        ("legacy", "2025-11-25"),
+    ],
+)
+async def test_mcp_streamable_http_prompt_contract_supports_both_protocol_eras(
+    era: str,
+    expected_version: str,
+) -> None:
+    prompt_list_result: dict[str, Any] = {
+        "prompts": [
+            {
+                "name": "summarize",
+                "description": "Summarize a topic",
+                "arguments": [
+                    {
+                        "name": "topic",
+                        "description": "Topic to summarize",
+                        "required": True,
+                    }
+                ],
+            }
+        ]
+    }
+    if era == "modern":
+        prompt_list_result.update({"resultType": "complete", "cacheScope": "private", "ttlMs": 0})
+
+    def get_prompt(body: dict[str, Any]) -> dict[str, Any]:
+        topic = body["params"]["arguments"]["topic"]
+        result = {
+            "description": "Rendered summary prompt",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {"type": "text", "text": f"Summarize {topic}"},
+                }
+            ],
+        }
+        if era == "modern":
+            result["resultType"] = "complete"
+        return result
+
+    transport, captured_requests = _make_mcp_protocol_server_mock(
+        era=era,
+        capabilities={"prompts": {}},
+        endpoints={
+            "prompts/list": prompt_list_result,
+            "prompts/get": get_prompt,
+        },
+    )
+
+    async with AsyncClient(transport=transport) as user_client:
+        tool = MCPStreamableHTTPTool(
+            name=f"{era}-prompts",
+            url="http://example.com/mcp",
+            load_tools=False,
+            http_client=user_client,
+        )
+
+        async with tool:
+            assert tool.session is not None
+            assert tool.session.protocol_version == expected_version
+            assert [function.name for function in tool.functions] == ["summarize"]
+
+            prompt = tool.functions[0]
+            context = FunctionInvocationContext(
+                function=prompt,
+                arguments={"topic": "Python"},
+                kwargs={"runtime_only": "do-not-forward"},
+            )
+            result = await prompt.invoke(arguments={"topic": "Python"}, context=context)
+            assert _mcp_result_to_text(result) == "Summarize Python"
+
+    captured_methods = [body["method"] for body, _ in captured_requests]
+    assert "server/discover" in captured_methods
+    assert ("initialize" in captured_methods) is (era == "legacy")
+    assert "prompts/list" in captured_methods
+    assert "prompts/get" in captured_methods
+
+    prompt_get = next(body for body, _ in captured_requests if body["method"] == "prompts/get")
+    assert prompt_get["params"]["name"] == "summarize"
+    assert prompt_get["params"]["arguments"] == {"topic": "Python"}
 
 
 @pytest.mark.parametrize(
