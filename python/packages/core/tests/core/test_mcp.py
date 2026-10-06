@@ -792,6 +792,15 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
                     ),
                 ),
             ),
+            types.PromptMessage(
+                role="assistant",
+                content=types.ResourceLink(
+                    name="prompt-guide",
+                    uri="https://example.test/prompt-guide",
+                    description="Prompt guide",
+                    mime_type="text/markdown",
+                ),
+            ),
         ]
     )
 
@@ -804,6 +813,13 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
     assert json.loads(parsed[2]) == {"type": "audio", "data": "YXVkaW8=", "mimeType": "audio/wav"}
     assert parsed[3] == "Embedded prompt"
     assert json.loads(parsed[4]) == {"type": "blob", "data": "ZGF0YQ==", "mimeType": "application/pdf"}
+    assert json.loads(parsed[5]) == {
+        "type": "resource_link",
+        "name": "prompt-guide",
+        "uri": "https://example.test/prompt-guide",
+        "description": "Prompt guide",
+        "mimeType": "text/markdown",
+    }
 
 
 def test_parse_tool_result_from_mcp():
@@ -8622,6 +8638,17 @@ async def test_mcp_streamable_http_prompt_contract_supports_both_protocol_eras(
     prompt_get = next(body for body, _ in captured_requests if body["method"] == "prompts/get")
     assert prompt_get["params"]["name"] == "summarize"
     assert prompt_get["params"]["arguments"] == {"topic": "Python"}
+    if era == "modern":
+        for method, name in (("prompts/list", None), ("prompts/get", "summarize")):
+            body, headers = next(item for item in captured_requests if item[0]["method"] == method)
+            meta = body["params"]["_meta"]
+            assert (
+                headers["mcp-protocol-version"] == meta["io.modelcontextprotocol/protocolVersion"] == expected_version
+            )
+            assert headers["mcp-method"] == method
+            assert isinstance(meta["io.modelcontextprotocol/clientCapabilities"], dict)
+            if name is not None:
+                assert headers["mcp-name"] == body["params"]["name"] == name
 
 
 @pytest.mark.parametrize(
