@@ -94,6 +94,16 @@ def test_create_harness_agent_with_defaults() -> None:
     assert agent.id is not None
 
 
+def test_default_harness_instructions_keep_reasoning_private() -> None:
+    """Default guidance should request useful progress without private reasoning."""
+    instructions = _assemble_instructions(None, None)
+    assert instructions is not None
+    assert "Explain decisions, actions, results, and important trade-offs at a high level." in instructions
+    assert "Do not expose private chain-of-thought or hidden reasoning." in instructions
+    assert "concise progress updates between tool calls" in instructions
+    assert "thought process" not in instructions
+
+
 def test_create_harness_agent_includes_all_default_providers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Default assembly should include history, compaction, todo, mode, and file memory."""
     monkeypatch.chdir(tmp_path)
