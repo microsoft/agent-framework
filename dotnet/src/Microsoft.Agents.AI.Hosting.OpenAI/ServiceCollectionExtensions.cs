@@ -109,35 +109,4 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
         services.TryAddSingleton<IAgentConversationIndex, InMemoryAgentConversationIndex>();
         return services;
     }
-
-    /// <summary>
-    /// Configures persistent storage for the OpenAI Conversations API used by hosted Responses endpoints and DevUI.
-    /// </summary>
-    /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
-    /// <param name="store">The persistent conversation store.</param>
-    /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
-    /// <remarks>
-    /// This replaces the default in-memory conversation storage registered by
-    /// <see cref="AddOpenAIResponses(IServiceCollection)"/> and
-    /// <see cref="AddOpenAIConversations(IServiceCollection)"/>. Response objects remain in memory, while
-    /// conversations, conversation items, and the agent conversation index are delegated to
-    /// <paramref name="store"/>.
-    /// </remarks>
-    public static IServiceCollection UseOpenAIConversationStore(
-        this IServiceCollection services,
-        IOpenAIConversationStore store)
-    {
-        ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(store);
-
-        services.RemoveAll<IOpenAIConversationStore>();
-        services.RemoveAll<OpenAIConversationStoreAdapter>();
-        services.RemoveAll<IConversationStorage>();
-        services.RemoveAll<IAgentConversationIndex>();
-        services.AddSingleton(store);
-        services.AddSingleton<OpenAIConversationStoreAdapter>();
-        services.AddSingleton<IConversationStorage>(sp => sp.GetRequiredService<OpenAIConversationStoreAdapter>());
-        services.AddSingleton<IAgentConversationIndex>(sp => sp.GetRequiredService<OpenAIConversationStoreAdapter>());
-        return services;
-    }
 }

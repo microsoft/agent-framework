@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Persist DevUI conversations, agent sessions, and chat history in SQLite.
-using DevUIWithSqlitePersistence;
+// Store hosted agent chat history in PostgreSQL and exercise it through DevUI.
+using DevUIWithPostgresPersistence.AgentService;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
@@ -11,14 +11,14 @@ using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-builder.WebHost.UseUrls("http://localhost:5130");
 builder.AddDevUI();
 
 string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
 string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5.4-mini";
-string databasePath = Environment.GetEnvironmentVariable("AGENT_DATABASE_PATH") ?? "conversations.db";
 string? endpoint = Environment.GetEnvironmentVariable("OPENAI_ENDPOINT");
+string connectionString = builder.Configuration.GetConnectionString("conversations")
+    ?? throw new InvalidOperationException("Connection string 'conversations' is required.");
 
 var clientOptions = new OpenAIClientOptions();
 if (!string.IsNullOrWhiteSpace(endpoint))
@@ -29,8 +29,8 @@ if (!string.IsNullOrWhiteSpace(endpoint))
 var openAIClient = new OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), clientOptions)
     .GetChatClient(model)
     .AsIChatClient();
-var database = new SqliteConversationDatabase(databasePath);
-var historyProvider = new SqliteChatHistoryProvider(database);
+PostgresConversationStore store = await PostgresConversationStore.CreateAsync(connectionString);
+var historyProvider = new DatabaseChatHistoryProvider(store);
 
 IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
     openAIClient.AsAIAgent(new ChatClientAgentOptions
@@ -42,16 +42,15 @@ IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
         },
         ChatHistoryProvider = historyProvider,
     }))
-    // DevUI sends requests sequentially in this local sample. Production hosts should enable
-    // caller isolation and coordinate concurrent turns for the same conversation.
-    .WithSessionStore(database, withIsolation: false);
+    // The session stores the database history key that belongs to the OpenAI conversation ID.
+    .WithSessionStore(store, withIsolation: false);
 
 builder.Services.AddOpenAIChatCompletions();
 builder.Services.AddOpenAIResponses();
 builder.Services.AddOpenAIConversations();
-builder.Services.UseOpenAIConversationStore(database);
 
 WebApplication app = builder.Build();
+app.Lifetime.ApplicationStopped.Register(store.Dispose);
 
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();

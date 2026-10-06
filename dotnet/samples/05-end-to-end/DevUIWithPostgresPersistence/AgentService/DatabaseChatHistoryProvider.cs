@@ -3,19 +3,22 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace DevUIWithSqlitePersistence;
+namespace DevUIWithPostgresPersistence.AgentService;
 
-internal sealed class SqliteChatHistoryProvider : ChatHistoryProvider
+internal sealed class DatabaseChatHistoryProvider : ChatHistoryProvider
 {
-    private const string StateKey = "DevUIWithSqlitePersistence.ChatHistory";
+    internal const string StateKey = "DevUIWithPostgresPersistence.ChatHistory";
 
-    private readonly SqliteConversationDatabase _database;
+    private readonly PostgresConversationStore _store;
     private readonly ProviderSessionState<State> _sessionState =
-        new(_ => new State { HistoryId = Guid.NewGuid().ToString("N") }, StateKey);
+        new(
+            _ => throw new InvalidOperationException(
+                "The PostgreSQL session store must initialize the conversation history ID."),
+            StateKey);
 
-    public SqliteChatHistoryProvider(SqliteConversationDatabase database)
+    public DatabaseChatHistoryProvider(PostgresConversationStore store)
     {
-        this._database = database;
+        this._store = store;
     }
 
     public override IReadOnlyList<string> StateKeys => [this._sessionState.StateKey];
@@ -25,7 +28,7 @@ internal sealed class SqliteChatHistoryProvider : ChatHistoryProvider
         CancellationToken cancellationToken = default)
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
-        return this._database.LoadChatHistoryAsync(state.HistoryId, cancellationToken);
+        return this._store.LoadChatHistoryAsync(state.HistoryId, cancellationToken);
     }
 
     protected override ValueTask StoreChatHistoryAsync(
@@ -33,13 +36,13 @@ internal sealed class SqliteChatHistoryProvider : ChatHistoryProvider
         CancellationToken cancellationToken = default)
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
-        return this._database.AppendChatHistoryAsync(
+        return this._store.AppendChatHistoryAsync(
             state.HistoryId,
             context.RequestMessages.Concat(context.ResponseMessages ?? []),
             cancellationToken);
     }
 
-    private sealed class State
+    internal sealed class State
     {
         public required string HistoryId { get; init; }
     }
