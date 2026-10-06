@@ -12,6 +12,8 @@ import httpx
 import pytest
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
+    Agent,
+    AgentResponseUpdate,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -55,6 +57,51 @@ class StubAGUIChatClient(AGUIChatClient):
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
         return self._inner_get_response(messages=messages, options=options, stream=stream)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+class _GatedSSEStream(httpx.AsyncByteStream):
+    """Yield one SSE chunk and keep the next event gated until another pull."""
+
+    def __init__(self) -> None:
+        self._tail_release = asyncio.Event()
+        self._iterator: AsyncGenerator[bytes, None] | None = None
+        self.chunk_indexes_yielded: list[int] = []
+        self.tail_requested = False
+        self.tail_yielded = False
+        self.exhausted = False
+        self.aclose_calls = 0
+        self.closed = False
+        self.iterator_finally = False
+        events = [
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "first"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "later"},
+        ]
+        self._chunks = [f"data: {json.dumps(event)}\n\n".encode() for event in events]
+
+    def __aiter__(self) -> AsyncGenerator[bytes, None]:
+        if self._iterator is None:
+            self._iterator = self._iterate()
+        return self._iterator
+
+    async def _iterate(self) -> AsyncGenerator[bytes, None]:
+        try:
+            self.chunk_indexes_yielded.append(0)
+            yield self._chunks[0]
+            self.tail_requested = True
+            await self._tail_release.wait()
+            self.chunk_indexes_yielded.append(1)
+            self.tail_yielded = True
+            yield self._chunks[1]
+            self.exhausted = True
+        finally:
+            self.iterator_finally = True
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+        self.closed = True
+        self._tail_release.set()
+        if self._iterator is not None:
+            await self._iterator.aclose()
 
 
 class TestAGUIChatClient:
@@ -702,6 +749,115 @@ class TestAGUIChatClient:
         assert second_content.type == "text"
         assert first_content.text == "Hello"
         assert second_content.text == " world"
+
+    @pytest.mark.parametrize(
+        ("caller", "function_invocation_enabled", "close_mode"),
+        [
+            pytest.param("client", True, "explicit_close", id="client-fi_default-explicit_close"),
+            pytest.param("client", True, "async_with_break", id="client-fi_default-async_with_break"),
+            pytest.param("client", False, "explicit_close", id="client-fi_disabled-explicit_close"),
+            pytest.param("client", False, "async_with_break", id="client-fi_disabled-async_with_break"),
+            pytest.param("agent", True, "explicit_close", id="agent-fi_default-explicit_close"),
+            pytest.param("agent", True, "async_with_break", id="agent-fi_default-async_with_break"),
+            pytest.param("agent", False, "explicit_close", id="agent-fi_disabled-explicit_close"),
+            pytest.param("agent", False, "async_with_break", id="agent-fi_disabled-async_with_break"),
+        ],
+    )
+    async def test_public_stream_close_releases_http_response(
+        self,
+        caller: str,
+        function_invocation_enabled: bool,
+        close_mode: str,
+    ) -> None:
+        """Closing a public stream releases its HTTP response and preserves supplied clients."""
+        body = _GatedSSEStream()
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client_options: dict[str, Any] = {}
+            if not function_invocation_enabled:
+                client_options["function_invocation_configuration"] = {"enabled": False}
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                **client_options,
+            )
+            assert client.function_invocation_configuration["enabled"] is function_invocation_enabled
+
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            def assert_first_chunk_only() -> None:
+                assert response is not None
+                assert not response.is_closed
+                assert body.aclose_calls == 0
+                assert body.chunk_indexes_yielded == [0]
+                assert not body.tail_requested
+                assert not body.tail_yielded
+                assert not body.exhausted
+
+            try:
+                if close_mode == "explicit_close":
+                    first = await asyncio.wait_for(anext(stream), timeout=5.0)
+                    assert isinstance(first, (ChatResponseUpdate, AgentResponseUpdate))
+                    assert first.text == "first"
+                    assert_first_chunk_only()
+                    await stream.close()
+                else:
+                    async with stream:
+                        async for update in stream:
+                            assert isinstance(update, (ChatResponseUpdate, AgentResponseUpdate))
+                            assert update.text == "first"
+                            assert_first_chunk_only()
+                            break
+
+                assert response is not None
+                assert response.is_closed
+                assert body.aclose_calls == 1
+                assert body.closed
+                assert body.iterator_finally
+                assert body.chunk_indexes_yielded == [0]
+                assert not body.tail_yielded
+                assert not body.exhausted
+
+                await stream.close()
+                assert body.aclose_calls == 1
+
+                if agent is not None:
+                    await agent.close()
+                else:
+                    await client.close()
+                assert not http_client.is_closed
+                health_response = await http_client.get("https://agui.example.test/health")
+                assert health_response.status_code == 204
+            finally:
+                try:
+                    await stream.close()
+                finally:
+                    try:
+                        if response is not None and not response.is_closed:
+                            await response.aclose()
+                    finally:
+                        if agent is not None:
+                            await agent.close()
+                        else:
+                            await client.close()
 
     async def test_get_response_non_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test non-streaming response method."""

@@ -5358,64 +5358,65 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
-            async for update in _iterate_provider_stream(inner_stream, on_invalidated):
-                for content in update.contents:
-                    if content.type != "function_call":
-                        continue
-                    if not _is_actionable_function_call(content):
-                        continue
-                    had_occurrence_id = content.id is not None
-                    provider_call_id = content.call_id
-                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
-                    if (
-                        identity is not None
-                        and provider_call_id is not None
-                        and content.id is None
-                        and content.name
-                        and (
-                            streamed_names_by_call_id.get(provider_call_id) != content.name
-                            or isinstance(content.arguments, Mapping)
-                        )
-                    ):
-                        identity = None
-                    if identity is None and not provider_call_id and not content.name:
-                        identity = last_streamed_identity
-
-                    if identity is None:
-                        occurrence_id = content.id or _generate_function_call_occurrence_id()
-                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
-                    else:
-                        occurrence_id, effective_call_id = identity
-                    if content.id is not None:
-                        occurrence_id = content.id
-                    if provider_call_id:
-                        effective_call_id = provider_call_id
-
-                    content.id = occurrence_id
-                    if not content.call_id and not had_occurrence_id:
-                        content.call_id = effective_call_id
-                        if identity is None and occurrence_id not in warned_empty_call_ids:
-                            warnings.warn(
-                                "An actionable function_call had an empty call_id. Agent Framework used its generated "
-                                "Content.id for local correlation. Providers should supply and preserve their service "
-                                "call_id; this fallback will be removed in a future release.",
-                                FutureWarning,
-                                stacklevel=3,
+            async with inner_stream:
+                async for update in _iterate_provider_stream(inner_stream, on_invalidated):
+                    for content in update.contents:
+                        if content.type != "function_call":
+                            continue
+                        if not _is_actionable_function_call(content):
+                            continue
+                        had_occurrence_id = content.id is not None
+                        provider_call_id = content.call_id
+                        identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                        if (
+                            identity is not None
+                            and provider_call_id is not None
+                            and content.id is None
+                            and content.name
+                            and (
+                                streamed_names_by_call_id.get(provider_call_id) != content.name
+                                or isinstance(content.arguments, Mapping)
                             )
-                            warned_empty_call_ids.add(occurrence_id)
-                    identity = (occurrence_id, effective_call_id)
-                    if effective_call_id:
-                        streamed_identities_by_call_id[effective_call_id] = identity
-                        if content.name:
-                            streamed_names_by_call_id[effective_call_id] = content.name
-                    last_streamed_identity = identity
-                if drop_unexecutable_calls:
-                    update = _drop_unexecutable_tool_contents_from_update(update)
-                    if update is None:
-                        continue
-                yield update
+                        ):
+                            identity = None
+                        if identity is None and not provider_call_id and not content.name:
+                            identity = last_streamed_identity
 
-            response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
+                        if identity is None:
+                            occurrence_id = content.id or _generate_function_call_occurrence_id()
+                            effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
+                        else:
+                            occurrence_id, effective_call_id = identity
+                        if content.id is not None:
+                            occurrence_id = content.id
+                        if provider_call_id:
+                            effective_call_id = provider_call_id
+
+                        content.id = occurrence_id
+                        if not content.call_id and not had_occurrence_id:
+                            content.call_id = effective_call_id
+                            if identity is None and occurrence_id not in warned_empty_call_ids:
+                                warnings.warn(
+                                    "An actionable function_call had an empty call_id. Agent Framework used its "
+                                    "generated Content.id for local correlation. Providers should supply and preserve "
+                                    "their service call_id; this fallback will be removed in a future release.",
+                                    FutureWarning,
+                                    stacklevel=3,
+                                )
+                                warned_empty_call_ids.add(occurrence_id)
+                        identity = (occurrence_id, effective_call_id)
+                        if effective_call_id:
+                            streamed_identities_by_call_id[effective_call_id] = identity
+                            if content.name:
+                                streamed_names_by_call_id[effective_call_id] = content.name
+                        last_streamed_identity = identity
+                    if drop_unexecutable_calls:
+                        update = _drop_unexecutable_tool_contents_from_update(update)
+                        if update is None:
+                            continue
+                    yield update
+
+                response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -5510,12 +5511,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
-            update = _drop_unexecutable_tool_contents_from_update(update)
-            if update is None:
-                continue
-            yield update
-        final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
+        async with final_inner_stream:
+            async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
+                update = _drop_unexecutable_tool_contents_from_update(update)
+                if update is None:
+                    continue
+                yield update
+            final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,
