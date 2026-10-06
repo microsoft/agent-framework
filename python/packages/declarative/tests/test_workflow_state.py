@@ -2,8 +2,11 @@
 
 """Unit tests for WorkflowState class."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from agent_framework_declarative._workflows import _state as state_module
 from agent_framework_declarative._workflows._state import WorkflowState
 
 
@@ -552,6 +555,107 @@ class TestWorkflowStateGetEdgeCases:
         """Test get from unknown Workflow sub-namespace."""
         state = WorkflowState()
         assert state.get("Workflow.Unknown.path") is None
+
+
+class TestWorkflowStateMemberEvaluation:
+    """Member rules apply to the standalone evaluator's fallback paths."""
+
+    @pytest.fixture
+    def member_state(self) -> WorkflowState:
+        class Record:
+            _private = "private-marker"
+            __marker__ = "double-underscore-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "public-marker"
+
+        state = WorkflowState()
+        state.set("Local.record", Record())
+        state.set("Local.bag", {"_private": "dictionary-marker"})
+        return state
+
+    @pytest.mark.parametrize("mode", ["absent", "error", "real"])
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("Local.record._private", None),
+            ("Local.record.__marker__", None),
+            ("Local.record.public_value", "public-marker"),
+            ("Local.bag._private", "dictionary-marker"),
+        ],
+    )
+    def test_fallback_member_access(
+        self,
+        member_state: WorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        path: str,
+        expected: str | None,
+    ) -> None:
+        fallback = MagicMock(wraps=member_state._eval_simple)
+        monkeypatch.setattr(member_state, "_eval_simple", fallback)
+        if mode == "absent":
+            engine = None
+        elif mode == "error":
+            engine = MagicMock()
+            engine.eval.side_effect = ValueError("synthetic engine error")
+        else:
+            if state_module._powerfx_engine is None:
+                pytest.skip("PowerFx engine not available")
+            engine = MagicMock(wraps=state_module._powerfx_engine)
+        monkeypatch.setattr(state_module, "_powerfx_engine", engine)
+
+        assert member_state.eval(f"={path}") == expected
+        fallback.assert_called_once_with(path)
+        if engine is not None:
+            engine.eval.assert_called_once()
+
+    def test_real_engine_success_does_not_fall_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        if state_module._powerfx_engine is None:
+            pytest.skip("PowerFx engine not available")
+        state = WorkflowState()
+        state.set("Local.bag", {"_private": "dictionary-marker"})
+        fallback = MagicMock(side_effect=AssertionError("Unexpected fallback"))
+        monkeypatch.setattr(state, "_eval_simple", fallback)
+
+        assert state.eval("=Local.bag._private") == "dictionary-marker"
+        fallback.assert_not_called()
+
+    def test_recursive_expression_values(self, member_state: WorkflowState, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        assert member_state.eval_if_expression({
+            "values": ["=Local.record._private", "=Local.record.public_value", "=Local.bag._private"]
+        }) == {"values": [None, "public-marker", "dictionary-marker"]}
+
+    def test_custom_namespace_preserves_unresolved_formula(
+        self, member_state: WorkflowState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        member_state.set("Custom.record", member_state.get("Local.record"))
+
+        assert member_state.eval("=Custom.record._private") == "Custom.record._private"
+        assert member_state.eval("=Custom.record.public_value") == "public-marker"
+
+    def test_append_does_not_mutate_rejected_member(self) -> None:
+        class Record:
+            def __init__(self) -> None:
+                self._items = ["original"]
+
+        state = WorkflowState()
+        record = Record()
+        state.set("Local.record", record)
+
+        with pytest.raises(TypeError):
+            state.append("Local.record._items", "new")
+        assert record._items == ["original"]
+
+        state.append("Local.bag._items", "new")
+        assert state.get("Local.bag._items") == ["new"]
+
+    def test_empty_dictionary_key_behavior_is_unchanged(self) -> None:
+        state = WorkflowState()
+        state.set("Local.bag", {"": "dictionary-marker"})
+        assert state.get("Local.bag.") == "dictionary-marker"
 
 
 class TestWorkflowStateConversationIdInit:

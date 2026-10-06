@@ -31,6 +31,22 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 
 The agent is hosted with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol on `http://localhost:8088`.
 
+`agent=create_agent` builds a new Toolbox, skills provider/cache, credential and
+client for **each request**, giving those resources one deterministic owner and
+cleanup boundary. `FoundryToolbox` also scopes tool and skill-resource
+operations to the current platform call ID when an instance is reused, rebinding
+its MCP session when that identity changes. `tools=` still connects the Toolbox
+and `context_providers=` still reads skills from that same session; both are
+required. Only loading the vetted sample skill body is auto-approved, not
+arbitrary skill scripts or external actions.
+
+The factory's client context closes its owned SDK transports and credential
+after completion, failed tool entry or cancellation. Local runs use
+`AzureCliCredential`; hosted runs use managed identity.
+`history_source="agent_server"` owns conversation history and disables inner
+model storage. Scope the configured Toolbox/skill resources and RBAC to the
+intended project; a fresh provider is not an external authorization boundary.
+
 ## The bundled skills
 
 | Skill | Purpose |
@@ -144,6 +160,10 @@ Make sure the skills and toolbox exist in the **same** Foundry project you deplo
 azd env set TOOLBOX_ENDPOINT "<versioned-endpoint-from-step-2>"
 ```
 
-The deployed agent's Managed Identity needs the **Foundry User** role on the Foundry project to discover skills over MCP at startup.
+The deployed agent's Managed Identity needs the **Foundry User** role on the
+Foundry project to read skill resources during each request. Discovery and
+resource access are distinct permission checks; successful discovery alone does
+not prove a skill body can be loaded. Provisioning skills, Toolbox resources and
+permissions requires external setup and is not exercised by offline checks.
 
 > The bundled `skills/` folder and `toolbox.yaml` are authoring inputs only; they are excluded from the deployed container via [`.azdignore`](.azdignore) / [`.dockerignore`](.dockerignore). The running agent discovers everything it needs from the toolbox MCP endpoint.

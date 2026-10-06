@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import shutil
 import sys
 from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any
@@ -18,12 +19,13 @@ from agent_framework.security import (
 )
 
 from agent_framework_tools._feature_usage import FeatureIndex
-from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
+from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy, ShellResult
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
 
 _TEST_SHELL = "agent-framework-test-shell"
 _APPROVED_COMMAND = "printf '%s' approved-value"
 _ALTERNATE_COMMAND = "printf '%s' alternate-value"
+_POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell") if sys.platform == "win32" else None)
 
 
 class _FakeExecProcess:
@@ -356,6 +358,33 @@ async def test_persistent_powershell_utf8_roundtrip() -> None:
         assert "café" in result.stdout
 
 
+@pytest.mark.skipif(_POWERSHELL is None, reason="PowerShell is not installed")
+async def test_persistent_powershell_returns_formatted_object_output(tmp_path: os.PathLike[str]) -> None:
+    """Output that pwsh renders as a table must arrive before the sentinel.
+
+    The host formats a script block's output only after the block returns,
+    which is after the sentinel has been written, so this output used to be
+    dropped, along with any plain string written after the first object.
+    Runs wherever PowerShell is installed, not just on Windows.
+    """
+    assert _POWERSHELL is not None
+    async with LocalShellTool(
+        mode="persistent",
+        shell=[_POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=str(tmp_path),
+    ) as tool:
+        result = await tool.run("[pscustomobject]@{ Marker = 'af-object' }; Write-Output 'af-trailing'")
+        assert result.exit_code == 0
+        assert "af-object" in result.stdout
+        assert "af-trailing" in result.stdout
+
+        selected = await tool.run(f"Get-Item -LiteralPath '{tmp_path}' | Select-Object Name")
+        assert selected.exit_code == 0
+        assert os.path.basename(str(tmp_path)) in selected.stdout
+
+
 async def test_concurrent_first_calls_do_not_spawn_two_sessions() -> None:
     """Regression: startup must be serialised so two concurrent first callers
     don't each spawn their own subprocess."""
@@ -394,6 +423,37 @@ async def test_as_function_wires_kind_and_approval() -> None:
     assert ft.name == "shell_exec"
     assert ft.kind == "shell"
     assert ft.approval_mode == "always_require"
+
+
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="partial output",
+        stderr="command failed",
+        exit_code=3,
+        duration_ms=12,
+        truncated=True,
+        timed_out=True,
+    )
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "partial output",
+        "stderr": "command failed",
+        "exit_code": 3,
+        "truncated": True,
+        "timed_out": True,
+    }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
 
 
 async def test_variable_shell_approval_executes_only_the_reviewed_command() -> None:

@@ -6,13 +6,14 @@ import asyncio
 import json
 import logging
 import math
+import warnings
 from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock
+from typing import Annotated, Any, cast
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pydantic import BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -26,6 +27,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _auto_invoke_function,
     _resolve_approval_responses,
@@ -34,6 +36,8 @@ from agent_framework._tools import (
 )
 from agent_framework._types import Content
 from agent_framework.security import (
+    _REWRITTEN_ARGUMENT_INDICES_KEY,
+    _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
     ConfidentialityLabel,
     ContentLabel,
     ContentVariableStore,
@@ -46,6 +50,7 @@ from agent_framework.security import (
     VariableReferenceContent,
     combine_labels,
     get_current_middleware,
+    rewritten_arguments,
     store_untrusted_content,
 )
 
@@ -472,6 +477,267 @@ class TestLabelTrackingMiddleware:
         label = context.metadata["result_label"]
         # Should default to UNTRUSTED (safe default)
         assert label.integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_as_trusted_content(self, middleware):
+        """A tool's declared standing_guidance is appended as its own trusted Content item."""
+
+        class ValidateArgs(BaseModel):
+            files: list[str]
+
+        async def validate(files: list[str]) -> str:
+            return "compiler output the model must not act on"
+
+        guidance_text = "A result you cannot read is not a clean validation."
+        validate_function = FunctionTool(
+            fn=validate,
+            name="validate",
+            description="Validate files",
+            args_schema=ValidateArgs,
+            additional_properties={
+                "source_integrity": "untrusted",
+                "standing_guidance": [guidance_text],
+            },
+        )
+
+        args = validate_function.args_schema(files=["main.bicep"])  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        context = FunctionInvocationContext(function=validate_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("compiler output the model must not act on")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        assert guidance_item.text == guidance_text
+
+        guidance_label = guidance_item.additional_properties["security_label"]
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+
+        original_item = context.result[0]
+        assert (original_item.additional_properties or {}).get("_variable_reference") is not None
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_absent_by_default(self, middleware, mock_function):
+        """A tool with no standing_guidance declared gets no extra Content item."""
+        args = mock_function.args_schema(arg="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("mock result")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_ignores_non_string_entries(self, middleware):
+        """Non-string or empty entries in standing_guidance are dropped, not raised."""
+
+        class NoiseArgs(BaseModel):
+            pass
+
+        async def noisy() -> str:
+            return "ok"
+
+        noisy_function = FunctionTool(
+            fn=noisy,
+            name="noisy",
+            description="Tool with malformed guidance",
+            args_schema=NoiseArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Valid sentence.", "", 42, None],
+            },
+        )
+        context = FunctionInvocationContext(function=noisy_function, arguments={})
+
+        async def next_fn():
+            context.result = [Content.from_text("ok")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        assert context.result[1].text == "Valid sentence."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_when_result_is_none(self, middleware):
+        """standing_guidance still surfaces even if the tool body returns nothing."""
+
+        class EmptyArgs(BaseModel):
+            pass
+
+        async def empty() -> None:
+            return None
+
+        empty_function = FunctionTool(
+            fn=empty,
+            name="empty_fn",
+            description="Returns nothing",
+            args_schema=EmptyArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Nothing was returned, which is expected."],
+            },
+        )
+        context = FunctionInvocationContext(function=empty_function, arguments={})
+
+        async def next_fn():
+            context.result = None
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "Nothing was returned, which is expected."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_preserves_user_identity_principal(self, middleware) -> None:
+        """standing_guidance on a USER_IDENTITY-confidentiality tool keeps its principal set."""
+
+        class IdentityArgs(BaseModel):
+            pass
+
+        async def identity_source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=identity_source,
+            name="identity_source_with_guidance",
+            description="Locally declared identity source with guidance",
+            args_schema=IdentityArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+                "standing_guidance": ["This result is scoped to a single user."],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        guidance_label = guidance_item.additional_properties["security_label"]
+
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+        assert guidance_label["confidentiality"] == "user_identity"
+        assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_immutable_across_invocations(self, middleware):
+        """A tool body that mutates standing_guidance cannot affect future invocations.
+
+        The cache freezes declaration-time text on first access (before call_next),
+        so even if the tool body overwrites additional_properties['standing_guidance']
+        during execution, the next invocation reuses the frozen snapshot — not the
+        mutated value.
+        """
+
+        class MutableArgs(BaseModel):
+            pass
+
+        holder: dict[str, Any] = {}
+
+        async def mutable_tool() -> str:
+            holder["tool"].additional_properties["standing_guidance"] = [
+                "INJECTED BY TOOL BODY — should never be stamped TRUSTED"
+            ]
+            return "result"
+
+        fn = FunctionTool(
+            fn=mutable_tool,
+            name="mutable_tool",
+            description="Tool that mutates its own guidance",
+            args_schema=MutableArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Original guidance."],
+            },
+        )
+        holder["tool"] = fn
+
+        ctx1 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next1():
+            ctx1.result = [Content.from_text("result")]
+
+        await middleware.process(ctx1, next1)
+        assert ctx1.result[1].text == "Original guidance."
+
+        ctx2 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next2():
+            ctx2.result = [Content.from_text("result")]
+
+        await middleware.process(ctx2, next2)
+        assert ctx2.result[1].text == "Original guidance."
+        assert "INJECTED" not in ctx2.result[1].text
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_cache_does_not_leak_across_tools(self, middleware):
+        """A short lived tool cached guidance must not be inherited by a later tool
+        whose id() happens to be reused. WeakKeyDictionary keys by object identity,
+        so collection removed the entry before any id reuse."""
+        import gc
+
+        class A(BaseModel):
+            pass
+
+        async def a_tool() -> str:
+            return "a"
+
+        tool_a = FunctionTool(
+            fn=a_tool,
+            name="tool_a",
+            description="A",
+            args_schema=A,
+            additional_properties={"source_integrity": "trusted", "standing_guidance": ["Guidance from A."]},
+        )
+
+        ctx = FunctionInvocationContext(function=tool_a, arguments={})
+
+        async def next_a():
+            ctx.result = [Content.from_text("a")]
+
+        await middleware.process(ctx, next_a)
+        assert ctx.result[1].text == "Guidance from A."
+
+        del tool_a
+        gc.collect()
+
+        class B(BaseModel):
+            pass
+
+        async def b_tool() -> str:
+            return "b"
+
+        tool_b = FunctionTool(
+            fn=b_tool,
+            name="tool_b",
+            description="B",
+            args_schema=B,
+            additional_properties={"source_integrity": "trusted"},
+        )
+
+        ctx_b = FunctionInvocationContext(function=tool_b, arguments={})
+
+        async def next_b():
+            ctx_b.result = [Content.from_text("b")]
+
+        await middleware.process(ctx_b, next_b)
+        assert isinstance(ctx_b.result, list)
+        assert len(ctx_b.result) == 1
+        assert ctx_b.result[0].text == "b"
 
     @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
@@ -2155,6 +2421,107 @@ class TestPolicyEnforcementMiddleware:
 
         assert isinstance(context.result, dict)
         assert context.result["violation_type"] == "unsafe_approval_binding"
+
+    async def test_legacy_user_identity_violation_with_approval_does_not_execute_tool(self) -> None:
+        """Regression for #8761: approval_on_violation must not allow a violating call."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        async def reads_user_identity() -> str:
+            return "secret"
+
+        source_tool = FunctionTool(
+            fn=reads_user_identity,
+            name="reads_user_identity",
+            description="Legacy USER_IDENTITY source without principals",
+            additional_properties={"source_integrity": "trusted", "confidentiality": "user_identity"},
+        )
+
+        async def private_sink(value: str) -> str:
+            return value
+
+        destination_tool = FunctionTool(
+            fn=private_sink,
+            name="microsoft_docs_fetch",
+            description="Private destination",
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+
+        source_context = FunctionInvocationContext(function=source_tool, arguments={})
+
+        async def produce_identity(_context: FunctionInvocationContext) -> list[Content]:
+            return [Content.from_text("secret")]
+
+        await FunctionMiddlewarePipeline(tracker).execute(source_context, produce_identity)
+
+        violation_context = FunctionInvocationContext(
+            function=destination_tool,
+            arguments={"value": "x"},
+        )
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> list[Content]:
+            nonlocal executed
+            executed = True
+            return [Content.from_text("leaked")]
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(violation_context, execute)
+
+        assert executed is False
+        assert isinstance(violation_context.result, dict)
+        assert violation_context.result["violation_type"] in {
+            "max_allowed_confidentiality",
+            "unsafe_approval_binding",
+        }
+
+    async def test_approval_on_violation_fail_closed_when_binding_record_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        monkeypatch.setattr(middleware, "_block_unsafe_approval_binding", lambda *args, **kwargs: None)
+
+        def fail_pending_record(*_args: object, **_kwargs: object) -> None:
+            raise ValueError("simulated pending approval binding failure")
+
+        monkeypatch.setattr(middleware, "_pending_record", fail_pending_record)
+
+        class DestinationArgs(BaseModel):
+            value: str = "value"
+
+        async def destination(value: str = "value") -> str:
+            return value
+
+        function = FunctionTool(
+            fn=destination,
+            name="private_sink",
+            description="Private destination",
+            args_schema=DestinationArgs,
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        )
+        context.metadata["argument_label"] = ContentLabel()
+        context.metadata["effective_invocation_label"] = combine_labels(
+            context.metadata["context_label"],
+            context.metadata["argument_label"],
+        )
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="Unsafe policy approval binding did not terminate"):
+            await middleware.process(context, execute)
+
+        assert executed is False
+        assert context.result is None
 
     async def test_approval_binds_computed_argument_principals_without_label_tracker(self) -> None:
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
@@ -5976,7 +6343,7 @@ def _make_connected_mcp_tool_for_ifc(
             "confidentiality": confidentiality.value,
         },
     )
-    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]
+    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mcp_tool.is_connected = True
     mcp_tool.session = AsyncMock()
     mcp_tool.session.list_tools = AsyncMock(  # type: ignore[method-assign]
@@ -5987,6 +6354,63 @@ def _make_connected_mcp_tool_for_ifc(
     )
     mcp_tool.functions.append(function)
     return mcp_tool, function
+
+
+def _make_mcp_tool_definition(name: str, *, open_world: bool = False) -> Any:
+    from mcp import types as mcp_types
+
+    return mcp_types.Tool(
+        name=name,
+        description=f"{name} description",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=mcp_types.ToolAnnotations(readOnlyHint=False, openWorldHint=open_world),
+    )
+
+
+def _make_connected_mcp_discovery_tool(
+    *,
+    progressive: bool = False,
+    always_load: list[str] | None = None,
+    result_meta: dict[str, Any] | None = None,
+) -> Any:
+    from mcp import types as mcp_types
+
+    from agent_framework._mcp import MCPTool
+
+    class _ConcreteMCPTool(MCPTool):
+        def get_mcp_client(self):
+            raise NotImplementedError
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mcp_tool = _ConcreteMCPTool(
+            name="helper",
+            load_prompts=False,
+            use_progressive_disclosure=progressive,
+            always_load=always_load,
+        )
+    mcp_tool.is_connected = True
+    mcp_tool.session = AsyncMock()
+    mcp_tool.session.call_tool = AsyncMock(
+        return_value=mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="payload")],
+            _meta=result_meta or {"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+        )
+    )
+    return mcp_tool
+
+
+def _find_mcp_function(mcp_tool: Any, remote_name: str) -> FunctionTool:
+    return next(
+        function
+        for function in mcp_tool._functions
+        if (function.additional_properties or {}).get("_mcp_remote_name") == remote_name
+    )
+
+
+async def _invoke_mcp_function(function: FunctionTool) -> Any:
+    context = FunctionInvocationContext(function=function, arguments={})
+    return await function.invoke(arguments={}, context=context, skip_parsing=True)
 
 
 # ---------------------------------------------------------------------------
@@ -6566,6 +6990,247 @@ class TestMCPIFCMetaLabels:
             else {"integrity": "untrusted", "confidentiality": "private"}
         )
         assert result[0].additional_properties["security_label"] == expected_label
+
+    async def test_secure_mcp_proxy_labels_notification_reload_before_publication(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink", open_world=False)
+        late_tool = _make_mcp_tool_definition("late_sink", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[initial_tool]))
+        await mcp_tool.load_tools()
+
+        proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
+        await proxy.refresh_labels()
+        initial_function = _find_mcp_function(mcp_tool, "initial_sink")
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "trusted"
+
+        reloaded_initial_tool = _make_mcp_tool_definition("initial_sink", open_world=True)
+        mcp_tool.session.list_tools.return_value = mcp_types.ListToolsResult(tools=[reloaded_initial_tool, late_tool])
+        notification = Mock(spec=mcp_types.ServerNotification)
+        notification.root = Mock()
+        notification.root.method = "notifications/tools/list_changed"
+
+        await mcp_tool.message_handler(notification)
+        pending_reloads = list(mcp_tool._pending_reload_tasks)
+        assert pending_reloads
+        await asyncio.gather(*pending_reloads)
+
+        assert _find_mcp_function(mcp_tool, "initial_sink") is initial_function
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "untrusted"
+        late_function = _find_mcp_function(mcp_tool, "late_sink")
+        assert late_function.additional_properties is not None
+        assert late_function.additional_properties["source_integrity"] == "untrusted"
+        assert late_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert late_function.additional_properties["accepts_untrusted"] is False
+        assert late_function.additional_properties["_mcp_trust_server_ifc"] is False
+        assert getattr(late_function.func, "_ifc_wrapped", False) is True
+
+        context = FunctionInvocationContext(function=late_function, arguments={})
+        context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(context, execute)
+
+        assert "exfiltration" in context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(late_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_labels_progressive_hidden_function_before_exposure(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink")
+        hidden_tool = _make_mcp_tool_definition("hidden_sink")
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            progressive=True,
+            always_load=["initial_sink"],
+        )
+        mcp_tool.session.list_tools = AsyncMock(
+            return_value=mcp_types.ListToolsResult(tools=[initial_tool, hidden_tool])
+        )
+        proxy = SecureMCPToolProxy(mcp_tool)
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        hidden_function = _find_mcp_function(mcp_tool, "hidden_sink")
+        assert hidden_function not in mcp_tool.functions
+        assert hidden_function.additional_properties is not None
+        assert hidden_function.additional_properties["source_integrity"] == "untrusted"
+        assert hidden_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert getattr(hidden_function.func, "_ifc_wrapped", False) is True
+
+        load_function = next(function for function in mcp_tool.functions if function.name == "load_tool")
+        context = FunctionInvocationContext(
+            function=load_function,
+            arguments={"tool": "hidden_sink"},
+            tools=list(mcp_tool.functions),
+        )
+        await load_function.invoke(arguments={"tool": "hidden_sink"}, context=context)
+
+        assert context.tools is not None
+        assert hidden_function in context.tools
+        policy_context = FunctionInvocationContext(function=hidden_function, arguments={})
+        policy_context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(policy_context, execute)
+
+        assert "exfiltration" in policy_context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(hidden_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_applies_local_policy_to_later_tool(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        later_tool = _make_mcp_tool_definition("later_tool", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            result_meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        )
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[later_tool]))
+        proxy = SecureMCPToolProxy(
+            mcp_tool,
+            annotation_overrides={"later_tool": (IntegrityLabel.TRUSTED, ConfidentialityLabel.PRIVATE)},
+            trust_server_ifc=True,
+        )
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "later_tool")
+        assert function.additional_properties is not None
+        assert function.additional_properties["source_integrity"] == "trusted"
+        assert function.additional_properties["max_allowed_confidentiality"] == "private"
+        assert function.additional_properties["_mcp_trust_server_ifc"] is True
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+
+        await proxy.disconnect()
+        assert mcp_tool._function_load_callback is None
+
+    @pytest.mark.parametrize("entrypoint", ["connect", "enter"])
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize(
+        ("already_connected", "already_bound"),
+        [(False, False), (True, False), (True, True)],
+        ids=["fresh", "connected-unbound", "connected-bound"],
+    )
+    async def test_secure_mcp_proxy_setup_failure_preserves_live_connection_binding(
+        self,
+        entrypoint: str,
+        failure_type: type[BaseException],
+        already_connected: bool,
+        already_bound: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.is_connected = already_connected
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_bound:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+
+        async def open_connection(*_args: Any) -> Any:
+            mcp_tool.is_connected = True
+            return mcp_tool
+
+        async def close_connection(*_args: Any) -> None:
+            mcp_tool.is_connected = False
+
+        open_mock = AsyncMock(side_effect=open_connection)
+        close_mock = AsyncMock(side_effect=close_connection)
+        if entrypoint == "connect":
+            mcp_tool.connect = open_mock  # type: ignore[method-assign]
+            mcp_tool.close = close_mock  # type: ignore[method-assign]
+        else:
+            mcp_tool.__aenter__ = open_mock  # type: ignore[method-assign]
+            mcp_tool.__aexit__ = close_mock  # type: ignore[method-assign]
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            if entrypoint == "connect":
+                await proxy.connect()
+            else:
+                await proxy.__aenter__()
+
+        if already_connected:
+            assert mcp_tool.is_connected is True
+            close_mock.assert_not_called()
+        else:
+            assert mcp_tool.is_connected is False
+            close_mock.assert_awaited_once()
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
+
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("already_bound", [False, True])
+    async def test_secure_mcp_proxy_refresh_failure_only_removes_new_binding(
+        self,
+        failure_type: type[BaseException],
+        already_bound: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_bound:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            await proxy.refresh_labels()
+
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
+
+    async def test_plain_mcp_tool_remains_unlabeled(self):
+        from mcp import types as mcp_types
+
+        plain_tool = _make_mcp_tool_definition("plain_tool")
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[plain_tool]))
+
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "plain_tool")
+        assert function.additional_properties == {
+            "_mcp_remote_name": "plain_tool",
+            "_mcp_normalized_name": "plain_tool",
+            "_mcp_is_tool": True,
+        }
+        assert getattr(function.func, "_ifc_wrapped", False) is False
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["_meta"] == {
+            "ifc": {"integrity": "trusted", "confidentiality": "private"}
+        }
+        assert "security_label" not in result[0].additional_properties
 
     async def test_wrap_mcp_function_str_result_passes_through(self):
         """``str`` results (no per-item containers) are not modified by the wrapper."""
@@ -7569,3 +8234,552 @@ class TestVariableArgumentPolicy:
 
         assert executed is True
         assert replay.metadata["user_approved_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_no_rewrites():
+    """Verify normal/non-expanded path returns empty dict."""
+    tracker = LabelTrackingFunctionMiddleware()
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(
+        name="my_tool",
+        func=my_tool,
+        additional_properties={"accepts_untrusted": True},
+    )
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["one.txt", "two.txt"]},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_explicit_context():
+    """Verify the explicit context API works inside a tool."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+    captured_context: FunctionInvocationContext | None = None
+
+    async def my_tool(files: list[str]):
+        captured["explicit"] = rewritten_arguments(captured_context)
+        captured["implicit"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+    captured_context = context
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["explicit"] == {"files": {0}}
+    assert captured["implicit"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_args():
+    """Verify tracking works across multiple top-level arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id1 = store.store("file_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("msg_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str], message: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", "safe.txt"], "message": f"[{var_id2}]"}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}, "message": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_duplicate_equal_values():
+    """Test that duplicate/equal final values are tracked per position."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id1 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", f"[{var_id2}]", "normal.txt"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["same_string", "same_string", "normal.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_list_positions():
+    """Test multiple list positions alongside untouched positions."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id}]", "untouched.txt", f"[{var_id}]"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_scalar():
+    """Test scalar (non-list) arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(text: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"text": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"text": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_nested_dict_semantics():
+    """Test that nested rewrites are reported against the top-level argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"config": {"path": f"[{var_id}]", "safe": "txt"}})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_whole_list_substitution():
+    """Test that whole-list substitution reports all resulting indices."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store(["hidden1.txt", "hidden2.txt"], ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["hidden1.txt", "hidden2.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_asyncio_to_thread():
+    """Verify async/thread/context behavior with asyncio.to_thread."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("thread_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def threaded_tool(files: list[str]):
+        def worker():
+            return rewritten_arguments()
+
+        captured["rewritten"] = await asyncio.to_thread(worker)
+        return "ok"
+
+    tool = FunctionTool(name="threaded_tool", func=threaded_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _reorder_files(v: list[str]) -> list[str]:
+    """A validator that reorders the list, invalidating original indices."""
+    return sorted(v, reverse=True)
+
+
+def _preserve_files(v: list[str]) -> list[str]:
+    """A validator that runs but does not mutate the list."""
+    return v
+
+
+ReorderedFiles = Annotated[list[str], AfterValidator(_reorder_files)]
+PreservedFiles = Annotated[list[str], AfterValidator(_preserve_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders():
+    """Verify indices degrade to -1 when a Pydantic validator mutates a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate():
+    """Verify indices are preserved when a validator runs but doesn't mutate the list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _filter_files(v: list[str]) -> list[str]:
+    """A validator that filters out items, invalidating original indices."""
+    return [f for f in v if f != "drop_me"]
+
+
+FilteredFiles = Annotated[list[str], AfterValidator(_filter_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters():
+    """Verify indices degrade to -1 when a Pydantic validator filters a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator reorders a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY (public direct-middleware path)."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator filters a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate_without_auto_prep():
+    """Indices are preserved when a validator runs but doesn't mutate,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_kwargs_collision_excluded():
+    """Rewrites in context.kwargs for a name also in context.arguments
+    must not be published — _top_level_argument_value prefers
+    context.arguments, so a kwargs rewrite for a shared name would
+    report indices against the untouched callable argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["safe.txt", "also_safe.txt"]},
+    )
+    context.kwargs = {"files": [f"[{var_id}]", "safe.txt"]}
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["safe.txt", "also_safe.txt"]
+    assert captured["rewritten"] == {}
+
+
+def test_degrade_rewritten_arguments_remaps_when_keys_differ():
+    """Auto-prep path: when validation changes top-level keys (e.g., a
+    Pydantic field alias ``fileNames`` normalizes to the callable parameter
+    ``files``), ``_degrade_rewritten_arguments`` must fail closed under the
+    final key set rather than leaving the rewritten entry stranded under the
+    pre-validation name where a tool's lookup would miss it."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={_REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}}},
+    )
+
+    LabelTrackingFunctionMiddleware._degrade_rewritten_arguments(context)
+    assert context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] == {"files": {0, 1}}
+
+
+def test_rewritten_arguments_fail_closed_when_keys_differ():
+    """Public ``rewritten_arguments()`` snapshot branch: when validation
+    changes top-level keys (e.g., a Pydantic field alias ``fileNames``
+    normalizes to the callable parameter ``files``), fail closed under the
+    final key set so a tool looking up the actual callable parameter does
+    not miss hidden content."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={
+            _REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}},
+            _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: "pre-validation-token",
+        },
+    )
+
+    assert rewritten_arguments(context) == {"files": {0, 1}}
