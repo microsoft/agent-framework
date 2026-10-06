@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 #pragma warning disable IDE0052 // Remove unread private members
+#pragma warning disable MAAIANTHROPIC001 // Tests exercise experimental Anthropic beta service extensions.
 
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +25,22 @@ namespace Microsoft.Agents.AI.Anthropic.UnitTests.Extensions;
 /// </summary>
 public sealed class AnthropicBetaServiceExtensionsTests
 {
+    [Fact]
+    public void PublicSurface_OnlyBetaExtensionsAreExperimental()
+    {
+        // Arrange
+        Type betaExtensionsType = typeof(AnthropicBetaServiceExtensions);
+        Type stableExtensionsType = typeof(global::Anthropic.AnthropicClientExtensions);
+
+        // Act
+        string? betaDiagnosticId = GetExperimentalDiagnosticId(betaExtensionsType);
+        string? stableDiagnosticId = GetExperimentalDiagnosticId(stableExtensionsType);
+
+        // Assert
+        Assert.Equal("MAAIANTHROPIC001", betaDiagnosticId);
+        Assert.Null(stableDiagnosticId);
+    }
+
     /// <summary>
     /// Verify that CreateAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
@@ -423,6 +441,19 @@ public sealed class AnthropicBetaServiceExtensionsTests
         }
 
         public void Dispose() => this._innerClient.Dispose();
+    }
+
+    private static string? GetExperimentalDiagnosticId(Type type)
+    {
+        foreach (CustomAttributeData attribute in type.GetCustomAttributesData())
+        {
+            if (attribute.AttributeType.FullName == "System.Diagnostics.CodeAnalysis.ExperimentalAttribute")
+            {
+                return attribute.ConstructorArguments[0].Value as string;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
