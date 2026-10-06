@@ -304,11 +304,18 @@ SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
 def _get_tool_name(tool: Any) -> str | None:
     """Extract a tool name from a tool object or dict tool definition."""
     if isinstance(tool, Mapping):
-        func = tool.get("function", None)  # type: ignore
-        if func and isinstance(func, Mapping):
-            name = func.get("name")  # type: ignore
+        if tool.get("type") == "function":
+            name = tool.get("name")
+            if isinstance(name, str):
+                return name
+
+        func = tool.get("function")
+        if isinstance(func, Mapping):
+            name = func.get("name")
             return name if isinstance(name, str) else None
+
         return None
+
     name = getattr(tool, "name", None)
     return name if isinstance(name, str) else None
 
