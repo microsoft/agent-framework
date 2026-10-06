@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Store hosted agent chat history in PostgreSQL and exercise it through DevUI.
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using DevUIWithPostgresPersistence.AgentService;
@@ -29,6 +30,9 @@ IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
     // In production, consider using a specific credential (e.g. ManagedIdentityCredential) to avoid
     // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
     new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+        .GetProjectOpenAIClient()
+        .GetProjectResponsesClient()
+        .AsIChatClientWithStoredOutputDisabled(model)
         .AsAIAgent(new ChatClientAgentOptions
         {
             Name = name,

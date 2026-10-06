@@ -39,6 +39,7 @@ From this directory:
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
 $env:FOUNDRY_MODEL = "gpt-5.4-mini" # Optional
+$env:POSTGRES_PASSWORD = "<local-development-password>"
 az login
 dotnet run --project AppHost
 ```
@@ -49,7 +50,9 @@ loads the prior messages from PostgreSQL using the conversation's persisted
 session state.
 
 The PostgreSQL resource uses `WithDataVolume()`, so its data survives container
-replacement. Remove the Aspire-managed volume when you want a clean database.
+replacement. Keep `POSTGRES_PASSWORD` unchanged when restarting the AppHost so
+the new container can reconnect to the existing volume. Remove the
+Aspire-managed volume when you want a clean database.
 
 ## What this sample persists
 
@@ -57,7 +60,9 @@ This targeted example persists agent chat messages and the framework session
 state required to find them. The built-in OpenAI Conversations and Responses
 protocol stores remain in memory. Therefore DevUI's conversation catalog and
 completed response objects are reset when the agent service restarts, even
-though the PostgreSQL records remain.
+though the PostgreSQL records remain. A client that retained the last response
+ID can continue after restart with `previous_response_id`; the restored session
+still points the `DatabaseChatHistoryProvider` at the original conversation ID.
 
 Chat Completions is mapped to match a typical API host, but that protocol is
 stateless and does not carry a conversation ID. The database-backed multi-turn

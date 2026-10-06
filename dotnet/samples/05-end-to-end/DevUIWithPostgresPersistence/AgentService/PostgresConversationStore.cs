@@ -48,7 +48,7 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
         await using NpgsqlCommand command = this._dataSource.CreateCommand(
             """
             INSERT INTO agent_sessions (agent_name, session_id, partitions, session)
-            VALUES ($1, $2, $3, $4::jsonb)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT (agent_name, session_id, partitions)
             DO UPDATE SET session = excluded.session
             """);
@@ -84,7 +84,7 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
     {
         await using NpgsqlCommand command = this._dataSource.CreateCommand(
             """
-            SELECT session::text
+            SELECT session
             FROM agent_sessions
             WHERE agent_name = $1 AND session_id = $2 AND partitions = $3
             """);
@@ -138,7 +138,7 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
         foreach (ChatMessage message in messages)
         {
             await using var command = new NpgsqlCommand(
-                "INSERT INTO chat_messages (history_id, message) VALUES ($1, $2::jsonb)",
+                "INSERT INTO chat_messages (history_id, message) VALUES ($1, $2)",
                 connection,
                 transaction);
             command.Parameters.AddWithValue(historyId);
@@ -182,14 +182,14 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
                 agent_name TEXT NOT NULL,
                 session_id TEXT NOT NULL,
                 partitions TEXT NOT NULL,
-                session JSONB NOT NULL,
+                session TEXT NOT NULL,
                 PRIMARY KEY (agent_name, session_id, partitions)
             );
 
             CREATE TABLE IF NOT EXISTS chat_messages (
                 position BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 history_id TEXT NOT NULL,
-                message JSONB NOT NULL
+                message TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS ix_chat_messages_history
