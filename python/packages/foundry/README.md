@@ -15,10 +15,11 @@ behavior are configured in Microsoft Foundry. The `tools=` argument supplies onl
 for function declarations already present on that remote agent; it does not replace or restrict the remote tool
 inventory.
 
-Per-run `tool_choice` and `parallel_tool_calls` values cannot be sent with an agent reference and are ignored with a
-warning. Configure tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary
-per request. `FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do
-not change tools that execute inside the remote Foundry agent.
+Per-run `tool_choice` restrictions and `allow_multiple_tool_calls` values cannot be sent with an agent reference and
+are ignored with a warning. The framework's unrestricted `tool_choice="auto"` default is omitted silently. Configure
+tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary per request.
+`FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do not change tools
+that execute inside the remote Foundry agent.
 
 ## Tracing an existing Foundry agent
 

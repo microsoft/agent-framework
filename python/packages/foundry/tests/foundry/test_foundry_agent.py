@@ -487,14 +487,46 @@ async def test_raw_foundry_agent_chat_client_warns_when_explicit_tool_control_is
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
-            options={"tool_choice": "none", "parallel_tool_calls": False},
+            options={"tool_choice": "none", "allow_multiple_tool_calls": False},
         )
 
     assert "tool_choice" not in result
     assert "parallel_tool_calls" not in result
     warning = next(record.message for record in caplog.records if "owns tool selection server-side" in record.message)
     assert "tool_choice" in warning
-    assert "parallel_tool_calls" in warning
+    assert "allow_multiple_tool_calls" in warning
+
+
+@pytest.mark.parametrize("allow_preview", [False, True], ids=["stable", "preview"])
+async def test_raw_foundry_agent_chat_client_does_not_warn_for_framework_default_tool_choice(
+    caplog: pytest.LogCaptureFixture,
+    allow_preview: bool,
+) -> None:
+    """The framework-generated auto mode must not be reported as caller intent."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        allow_preview=allow_preview,
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1", "tool_choice": "auto"},
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tool_choice": "auto"},
+        )
+
+    assert "tool_choice" not in result
+    assert not any("owns tool selection server-side" in record.message for record in caplog.records)
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools_when_allow_preview(
