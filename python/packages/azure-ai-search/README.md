@@ -40,6 +40,10 @@ explicit values override the file selected by `env_file_path`, then environment 
 `mode="agentic"` and `knowledge_base_name` or `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`.
 Attach the provider through your agent's `context_provider` parameter.
 
+In agentic mode, pass `knowledge_source_params` to set per-source retrieval options,
+such as `SearchIndexKnowledgeSourceParams(knowledge_source_name=..., filter_add_on=...)`.
+Each entry replaces the provider's defaults for the source with the same name.
+
 Injected SDK clients bypass connection settings and remain caller-owned unless
 `managed_client=True`. Use async context managers to close owned store/collection
 clients; credentials and embedding clients remain caller-owned.

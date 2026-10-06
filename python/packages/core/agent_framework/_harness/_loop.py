@@ -18,9 +18,10 @@ going. It serves two common patterns through a single configurable class:
    before the loop and restored between iterations so no accumulated history leaks back in).
    ``max_iterations`` bounds the loop as a safety cap.
 2. A chat-client judge (via :meth:`AgentLoopMiddleware.with_judge`) - a second chat client decides
-   whether the user's original request has been answered (via a :class:`JudgeVerdict` structured
-   output); the loop continues while the answer is "no". This is a convenience wrapper that builds an
-   async ``should_continue`` predicate, so it is a special case of (1).
+   whether the user's original request has been answered. By default it uses a :class:`JudgeVerdict`
+   structured output; provider-specific formats can be supplied with a parser that converts the
+   response into ``JudgeVerdict``. The loop continues while the answer is "no". This is a convenience
+   wrapper that builds an async ``should_continue`` predicate, so it is a special case of (1).
 3. Signal protocol (via :func:`~agent_framework.signal_should_continue` from ``_signals.py``) - the
    agent emits ``TASK_COMPLETE: <summary>`` or ``NEED_INPUT: <question>`` in its response text to
    signal terminal intent. Only assistant-role messages are scanned; user-role nudges injected between
@@ -39,7 +40,7 @@ from __future__ import annotations
 import inspect
 import math
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -56,6 +57,7 @@ from .._types import (
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
+    ChatResponse,
     Message,
     ResponseStream,
     UsageDetails,
@@ -220,16 +222,19 @@ async def _maybe_await(value: Any) -> Any:
 def _build_judge_condition(
     judge_client: SupportsChatGetResponse,
     instructions: str,
+    response_format: type[BaseModel] | Mapping[str, Any] | None,
+    verdict_parser: Callable[[ChatResponse[Any]], JudgeVerdict | Awaitable[JudgeVerdict]] | None,
 ) -> tuple[ShouldContinueCallable, NextMessageCallable]:
     """Build the ``should_continue`` predicate and ``next_message`` callable for a judge loop.
 
     The judge is called directly (no agent tools, session, or middleware) with fresh messages, so
     the loop's evaluation cannot recurse back through the agent pipeline. The original input messages
-    are forwarded verbatim (rather than collapsed to text) so multi-modal requests are preserved. The
-    judge is asked for a :class:`JudgeVerdict` structured output; if the client does not honor
-    structured output the verdict falls back to the explicit, non-overlapping ``VERDICT: DONE`` /
-    ``VERDICT: MORE`` markers (``MORE`` wins, keeping the loop running, when the marker is ambiguous
-    or absent).
+    are forwarded verbatim (rather than collapsed to text) so multi-modal requests are preserved.
+    By default the judge is asked for a :class:`JudgeVerdict` structured output; if the client does
+    not honor structured output the verdict falls back to the explicit, non-overlapping
+    ``VERDICT: DONE`` / ``VERDICT: MORE`` markers (``MORE`` wins, keeping the loop running, when the
+    marker is ambiguous or absent). A custom ``verdict_parser`` owns interpretation completely:
+    parser errors and invalid return values surface instead of falling back.
 
     The predicate returns a ``(continue, reasoning)`` tuple; the loop surfaces that ``reasoning`` to
     the next-message callable as the ``feedback`` keyword argument, which feeds it back to the agent
@@ -250,20 +255,25 @@ def _build_judge_condition(
             *last_result.messages,
             Message(role="user", contents=["Has the original request been fully addressed?"]),
         ]
-        response = await judge_client.get_response(judge_messages, options={"response_format": JudgeVerdict})
-        verdict = response.value
-        if isinstance(verdict, JudgeVerdict):
+        response = await judge_client.get_response(judge_messages, options={"response_format": response_format})
+        if verdict_parser is not None:
+            verdict = await _maybe_await(verdict_parser(response))
+            if not isinstance(verdict, JudgeVerdict):
+                raise TypeError("AgentLoopMiddleware verdict_parser must return JudgeVerdict.")
             answered = verdict.answered
             reasoning = verdict.reasoning
         else:
-            # Fallback for clients that do not honor structured output: look for the explicit,
-            # non-overlapping verdict markers. ``FAIL`` (more work needed) takes precedence so an
-            # ambiguous or marker-less reply keeps looping rather than stopping on an incomplete
-            # answer.
-            text = response.text.upper()
-            # ``MORE`` (more work needed) takes precedence so an ambiguous reply keeps looping.
-            answered = False if JUDGE_VERDICT_MORE in text else JUDGE_VERDICT_DONE in text
-            reasoning = response.text.strip()
+            verdict = response.value
+            if isinstance(verdict, JudgeVerdict):
+                answered = verdict.answered
+                reasoning = verdict.reasoning
+            else:
+                # Fallback for clients that do not honor structured output: look for the explicit,
+                # non-overlapping verdict markers. ``MORE`` (more work needed) takes precedence so
+                # an ambiguous or marker-less reply keeps looping.
+                text = response.text.upper()
+                answered = False if JUDGE_VERDICT_MORE in text else JUDGE_VERDICT_DONE in text
+                reasoning = response.text.strip()
         # Continue looping while the request is not yet answered, surfacing the reasoning as feedback.
         return (not answered), (reasoning or None)
 
@@ -425,6 +435,8 @@ class AgentLoopMiddleware(AgentMiddleware):
         *,
         criteria: Sequence[str] | None = None,
         instructions: str | None = None,
+        response_format: type[BaseModel] | Mapping[str, Any] | None = JudgeVerdict,
+        verdict_parser: Callable[[ChatResponse[Any]], JudgeVerdict | Awaitable[JudgeVerdict]] | None = None,
         max_iterations: int | None = DEFAULT_JUDGE_MAX_ITERATIONS,
         next_message: NextMessageCallable | None = None,
         fresh_context: bool = False,
@@ -433,11 +445,13 @@ class AgentLoopMiddleware(AgentMiddleware):
         """Create a loop that continues until a judge chat client decides the request was answered.
 
         Convenience factory for the judge pattern: ``judge_client`` is queried with a
-        :class:`JudgeVerdict` structured-output response after each iteration and the loop continues
-        while the request is *not* answered. The judge's ``reasoning`` is fed back to the agent as
-        the next iteration's input (unless a custom ``next_message`` is provided), so the agent knows
-        why its previous answer was judged incomplete. See :meth:`__init__` for the full meaning of
-        each argument.
+        :class:`JudgeVerdict` structured-output response after each iteration by default and the loop
+        continues while the request is *not* answered. Clients with provider-specific structured
+        output can use ``response_format`` with ``verdict_parser`` to produce the same verdict without
+        adding framework-specific behavior to the client. The judge's ``reasoning`` is fed back to the
+        agent as the next iteration's input (unless a custom ``next_message`` is provided), so the
+        agent knows why its previous answer was judged incomplete. See :meth:`__init__` for the full
+        meaning of each argument.
 
         Security considerations:
             Using a judge is an explicit opt-in — the caller must supply a ``judge_client`` — and
@@ -464,6 +478,13 @@ class AgentLoopMiddleware(AgentMiddleware):
             instructions: Optional system instructions for the judge. Defaults to
                 ``DEFAULT_JUDGE_INSTRUCTIONS``. May contain the ``{{criteria}}`` placeholder, which
                 is replaced with the rendered ``criteria`` (or removed when no criteria are given).
+            response_format: Structured response format passed to the judge client. Defaults to
+                :class:`JudgeVerdict`. A provider-specific format normally requires
+                ``verdict_parser`` unless the response still contains a ``JudgeVerdict`` value or
+                explicit text verdict markers.
+            verdict_parser: Optional sync or async callable that converts the full judge
+                :class:`ChatResponse` into :class:`JudgeVerdict`. When supplied, parser exceptions
+                and non-``JudgeVerdict`` return values are surfaced without text fallback.
             max_iterations: Maximum number of agent runs. Defaults to
                 ``DEFAULT_JUDGE_MAX_ITERATIONS`` (5); pass ``None`` for unbounded, or a positive
                 integer to set a custom cap.
@@ -479,7 +500,12 @@ class AgentLoopMiddleware(AgentMiddleware):
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)
         )
-        should_continue, judge_next_message = _build_judge_condition(judge_client, judge_instructions)
+        should_continue, judge_next_message = _build_judge_condition(
+            judge_client,
+            judge_instructions,
+            response_format,
+            verdict_parser,
+        )
         return cls(
             should_continue=should_continue,
             max_iterations=max_iterations,

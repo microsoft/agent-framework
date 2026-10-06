@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from ._powerfx_limits import _PowerFxStateLimitError, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
+from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
 
 try:
     from powerfx import Engine
@@ -31,7 +32,10 @@ logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:
-    """Manages variables and state during declarative workflow execution.
+    """Manages standalone workflow state and expression evaluation.
+
+    Workflows created by ``WorkflowFactory`` use a separate, checkpoint-backed
+    ``DeclarativeWorkflowState`` implementation.
 
     WorkflowState provides a unified interface for:
 
@@ -161,12 +165,16 @@ class WorkflowState:
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
+        Dict-keyed segments may use arbitrary string keys. Segments resolved
+        through object-attribute access must match ``[A-Za-z][A-Za-z0-9_]*``;
+        other shapes return ``default`` without accessing the attribute.
+
         Args:
             path: Dot-notated path like 'Local.results' or 'Workflow.Inputs.query'
             default: Default value if path doesn't exist
 
         Returns:
-            The value at the path, or default if not found
+            The value at the path, or default if not found or unreachable
         """
         parts = path.split(".")
         if not parts:
@@ -206,10 +214,18 @@ class WorkflowState:
                 obj = obj_dict.get(part, default)
                 if obj is default:
                     return default
-            elif hasattr(obj, part):
-                obj = getattr(obj, part)
             else:
-                return default
+                if not _is_safe_path_segment(part):
+                    logger.warning(
+                        "WorkflowState.get: rejecting attribute segment %r in path %r",
+                        part,
+                        path,
+                    )
+                    return default
+                if hasattr(obj, part):
+                    obj = getattr(obj, part)
+                else:
+                    return default
 
         return obj
 
@@ -372,7 +388,10 @@ class WorkflowState:
         """Evaluate a PowerFx expression with the current state.
 
         Expressions starting with '=' are evaluated as PowerFx.
-        Other strings are returned as-is (after variable interpolation if applicable).
+        Other strings are returned as-is. If PowerFx is unavailable or raises
+        an ordinary evaluation error, the simple evaluator is used instead.
+        Its state references follow :meth:`get`'s object-member rules.
+        State-budget errors propagate without falling back.
 
         Args:
             expression: The expression to evaluate

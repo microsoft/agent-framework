@@ -153,7 +153,7 @@ def _coerce_value(value: str, target_type: type) -> Any:
     if origin is type(None):
         return None
 
-    if args and type(None) in args:
+    if origin is Union or origin is type(int | str):
         for arg in args:
             if arg is not type(None):
                 if arg is Any:
