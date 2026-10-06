@@ -154,6 +154,11 @@ expressions, async-generator expressions, and async functions are also allowed,
 but access to their `gi_frame`, `ag_frame`, and `cr_frame` attributes is
 blocked.
 
+Frame payload attributes (`f_builtins`, `f_globals`, and `f_locals`) are also
+blocked regardless of how a frame is obtained. Generated code may inspect
+non-payload task stack information, but it cannot recover the runner's builtin,
+global, or local namespaces from those frames.
+
 Capability restrictions apply at attribute access and from-import acquisition,
 before references can be aliased. Receiver types are not statically knowable,
 so unrelated attributes with the same names are also rejected. This includes

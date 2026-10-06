@@ -164,6 +164,11 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData(
         "iterator = []\ngenerators = [(value async for value in iterator)]\nframe = generators[0].ag_frame",
         "ag_frame")]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1]\nframe.f_builtins", "f_builtins")]
+    [InlineData("import asyncio\nframes = asyncio.current_task().get_stack()\nglobals_map = frames[-1].f_globals", "f_globals")]
+    [InlineData(
+        "import asyncio\npayloads = [asyncio.current_task().get_stack()[-1].f_locals]",
+        "f_locals")]
     public async Task ExecuteCode_ValidationBlocksFrameAccessBeforeRunnerStartsAsync(string code, string capability)
     {
         SkipIfNoPython();
@@ -187,6 +192,12 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("async def value():\n    return 1\nframe = value().cr_frame", "cr_frame", false)]
     [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", true)]
     [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_builtins", "f_builtins", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_builtins", "f_builtins", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_globals", "f_globals", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_globals", "f_globals", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_locals", "f_locals", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_locals", "f_locals", false)]
     [InlineData("from typing import get_type_hints as resolve", "get_type_hints", false)]
     [InlineData("from functools import singledispatch as dispatch", "singledispatch", false)]
     public async Task ExecuteCode_ValidationCapabilityRestrictionsSurviveCustomListsAsync(
@@ -197,7 +208,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         // Arrange
         var options = new LocalCodeActProviderOptions
         {
-            AllowedImports = emptyLists ? Array.Empty<string>() : new[] { "typing", "functools" },
+            AllowedImports = emptyLists ? Array.Empty<string>() : new[] { "typing", "functools", "asyncio" },
             BlockedImports = Array.Empty<string>(),
             AllowedBuiltins = emptyLists ? Array.Empty<string>() : new[] { "int" },
             BlockedBuiltins = Array.Empty<string>(),
@@ -239,6 +250,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData(
         "async def add(a, b):\n    return a + b\nsum(value * 2 for value in [1, 2, 3]) + await add(1, 1)",
         "14")]
+    [InlineData("import asyncio\nprint(len(asyncio.current_task().get_stack()) > 0)", "True")]
     [InlineData("from collections.abc import MutableMapping\nprint(MutableMapping.register(dict) is dict)", "True")]
     [InlineData("def evaluate(value):\n    return value\nevaluate(5)", "5")]
     public async Task ExecuteCode_AllowsNonEvaluatingTypingAndHelpersAsync(string code, string expected)
