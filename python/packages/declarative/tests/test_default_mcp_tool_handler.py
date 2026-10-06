@@ -1486,6 +1486,40 @@ class TestAclose:
         assert not handler._inflight
         assert not handler._inflight_cleanup
 
+    async def test_aclose_reports_failed_handshake_cleanup_cancellation(self) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+
+        async def failed_connect(_tool: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            raise RuntimeError("handshake failed")
+
+        async def cancelled_close(tool: FakeTool) -> None:
+            tool.close_count += 1
+            raise asyncio.CancelledError
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", failed_connect),
+            patch.object(FakeTool, "close", cancelled_close),
+        ):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X": "1"})))
+            await connect_started.wait()
+            shutdown = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            release_connect.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await invocation
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+
+        assert FakeTool.instances[0].close_count == 1
+        assert not handler._inflight
+        assert not handler._inflight_cleanup
+
     @pytest.mark.asyncio
     async def test_cancelled_creator_does_not_block_aclose(self) -> None:
         handler = DefaultMCPToolHandler()
@@ -1595,9 +1629,9 @@ class TestAclose:
             release_close.set()
 
             with pytest.raises(asyncio.CancelledError):
-                _ = await invocation
+                await invocation
             with pytest.raises(asyncio.CancelledError):
-                _ = await shutdown
+                await shutdown
 
         assert not handler._inflight
         assert not handler._inflight_cleanup

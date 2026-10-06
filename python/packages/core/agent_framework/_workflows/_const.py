@@ -17,6 +17,9 @@ INTERNAL_SOURCE_PREFIX = "internal"
 # to pass kwargs from workflow.run() through to agent.run() and @tool functions.
 WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 
+# State key for the AgentSession identity supplied through WorkflowAgent.
+WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
+
 # Key used to store collision-free, executor-aware workflow invocation kwargs.
 # WORKFLOW_RUN_KWARGS_KEY remains in the legacy dict format for compatibility with
 # older first-party packages and checkpoints.

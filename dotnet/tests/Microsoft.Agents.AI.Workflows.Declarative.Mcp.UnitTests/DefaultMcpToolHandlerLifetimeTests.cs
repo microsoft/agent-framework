@@ -568,6 +568,39 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_InitializationTimeout_IsSharedWithoutRetryAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim initializationStarted = new(0);
+        using SemaphoreSlim releaseInitialization = new(0);
+        OperationCanceledException timeoutException = new("initialization timed out");
+        int initializationAttempts = 0;
+        stub.BeforeInitializationAsync = async _ =>
+        {
+            Interlocked.Increment(ref initializationAttempts);
+            initializationStarted.Release();
+            await releaseInitialization.WaitAsync(CancellationToken.None);
+            throw timeoutException;
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> creator = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task<McpServerToolResultContent> waiter = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await Task.Yield();
+        releaseInitialization.Release();
+
+        // Assert
+        Assert.Same(timeoutException, await Assert.ThrowsAsync<OperationCanceledException>(() => creator));
+        Assert.Same(timeoutException, await Assert.ThrowsAsync<OperationCanceledException>(() => waiter));
+        Assert.Equal(1, initializationAttempts);
+        Assert.Equal(0, stub.Initializations);
+    }
+
+    [Fact]
     public async Task Provider_OperationFailure_DisposesSessionAndPreservesCallerClientAsync()
     {
         // Arrange

@@ -56,9 +56,29 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_MAX_SIZE = 32
 _WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
+_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY = "_declarative_mcp_agent_workflow_session_namespace"
+_WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
 
 
 def get_or_create_workflow_session_id(state: State) -> str:
+    agent_session_id = state.get(_WORKFLOW_AGENT_SESSION_ID_KEY)
+    if agent_session_id is not None:
+        if not isinstance(agent_session_id, str) or not agent_session_id:
+            raise ValueError("Invalid agent session state.")
+        namespace_value = state.get(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY)
+        if namespace_value is None:
+            namespace_value = uuid.uuid4().hex
+            state.set(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY, namespace_value)
+        if not isinstance(namespace_value, str):
+            raise ValueError("Invalid MCP agent workflow session state.")
+        try:
+            namespace = uuid.UUID(namespace_value)
+        except ValueError as exc:
+            raise ValueError("Invalid MCP agent workflow session state.") from exc
+        workflow_session_id = uuid.uuid5(namespace, agent_session_id).hex
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+        return workflow_session_id
+
     workflow_session_id = state.get(_WORKFLOW_SESSION_ID_KEY)
     if workflow_session_id is None:
         workflow_session_id = uuid.uuid4().hex
@@ -68,8 +88,11 @@ def get_or_create_workflow_session_id(state: State) -> str:
     return workflow_session_id
 
 
-def reset_workflow_session_id(state: State) -> None:
-    state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
+def activate_workflow_session_id(state: State, *, reset_unscoped: bool) -> None:
+    if state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
+        get_or_create_workflow_session_id(state)
+    elif reset_unscoped:
+        state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
 
 
 @dataclass
@@ -184,6 +207,14 @@ class _CacheEntry:
 
 class _EntryCreationCancelled(Exception):
     """Signal waiters to retry after the task creating their entry was cancelled."""
+
+
+class _EntryCreationCleanupFailure(BaseException):
+    """Keep failed-handshake cleanup separate from the connection failure."""
+
+    def __init__(self, creation_exception: BaseException, cleanup_exception: BaseException) -> None:
+        self.creation_exception = creation_exception
+        self.cleanup_exception = cleanup_exception
 
 
 class DefaultMCPToolHandler:
@@ -613,6 +644,8 @@ class DefaultMCPToolHandler:
                 entry = await self._create_entry(invocation)
         except BaseException as exc:
             await self._complete_inflight_failure(key, inflight, exc)
+            if isinstance(exc, _EntryCreationCleanupFailure):
+                raise exc.cleanup_exception from exc.creation_exception
             raise
 
         # Phase 3: insert with LRU eviction; resolve the in-flight future.
@@ -723,9 +756,15 @@ class DefaultMCPToolHandler:
             async with self._cache_lock:
                 self._inflight.pop(key, None)
                 cleanup_outcome = self._inflight_cleanup.pop(key)
-            cleanup_outcome.set_result(None)
+            creation_exception = exc
+            if isinstance(exc, _EntryCreationCleanupFailure):
+                creation_exception = exc.creation_exception
+                cleanup_outcome.set_exception(exc.cleanup_exception)
+                cleanup_outcome.exception()
+            else:
+                cleanup_outcome.set_result(None)
             if not inflight.done():
-                inflight.set_exception(self._entry_creation_exception(exc))
+                inflight.set_exception(self._entry_creation_exception(creation_exception))
             inflight.exception()
 
         cleanup_task = asyncio.create_task(cleanup())
@@ -801,7 +840,7 @@ class DefaultMCPToolHandler:
         )
         try:
             await tool.connect()
-        except BaseException:
+        except BaseException as creation_exception:
             failed_entry = _CacheEntry(
                 tool=tool,
                 owned_httpx_client=(
@@ -810,10 +849,15 @@ class DefaultMCPToolHandler:
                     else None
                 ),
             )
-            if self._client_provider is not None:
-                await self._close_invocation_entry(failed_entry)
-            else:
-                await self._close_entry(failed_entry)
+            try:
+                if self._client_provider is not None:
+                    await self._close_invocation_entry(failed_entry)
+                else:
+                    await self._close_entry(failed_entry)
+            except BaseException as cleanup_exception:
+                if self._client_provider is not None:
+                    raise
+                raise _EntryCreationCleanupFailure(creation_exception, cleanup_exception) from cleanup_exception
             raise
 
         # ``MCPStreamableHTTPTool.get_mcp_client`` lazily creates an

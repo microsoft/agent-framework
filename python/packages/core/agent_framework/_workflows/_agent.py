@@ -330,6 +330,7 @@ class WorkflowAgent(BaseAgent):
         output_events: list[WorkflowEvent[Any]] = []
         async for event in self._run_core(
             session_messages,
+            session.session_id if session is not None else None,
             checkpoint_id,
             checkpoint_storage,
             streaming=False,
@@ -416,6 +417,7 @@ class WorkflowAgent(BaseAgent):
         all_updates: list[AgentResponseUpdate] = []
         async for event in self._run_core(
             session_messages,
+            session.session_id if session is not None else None,
             checkpoint_id,
             checkpoint_storage,
             streaming=True,
@@ -437,6 +439,7 @@ class WorkflowAgent(BaseAgent):
     async def _run_core(
         self,
         input_messages: Sequence[Message],
+        agent_session_id: str | None,
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
         streaming: bool,
@@ -451,6 +454,7 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             input_messages: Normalized input messages to process.
+            agent_session_id: Framework-local identity of the supplied agent session.
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             streaming: Whether to use streaming workflow methods.
@@ -461,6 +465,8 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
+        self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+
         # Restore the workflow state if a checkpoint is provided
         if checkpoint_id is not None:
             if checkpoint_storage is None:
@@ -484,6 +490,7 @@ class WorkflowAgent(BaseAgent):
             if not input_messages:
                 logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
                 return
+            self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
 
         final_state = self._workflow.status
         logger.debug(f"Workflow state: {final_state}")

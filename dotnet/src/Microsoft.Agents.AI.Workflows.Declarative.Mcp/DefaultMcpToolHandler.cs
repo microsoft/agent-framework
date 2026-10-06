@@ -47,6 +47,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     public const string ListToolsToolName = "tools/list";
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
+    private static readonly OperationCanceledException s_clientCreationCancelledException =
+        new("The MCP client creator was cancelled.");
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
@@ -436,7 +438,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             {
                 await WaitForClientCreationAsync(clientCreation.Task, cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException exception)
+                when (ReferenceEquals(exception, s_clientCreationCancelledException))
             {
                 return await this.AcquireClientAsync(
                     serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
@@ -469,9 +472,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         }
         catch (Exception exception)
         {
+            Exception sharedCreationException =
+                exception is OperationCanceledException && cancellationToken.IsCancellationRequested
+                    ? s_clientCreationCancelledException
+                    : exception;
             try
             {
-                await this.CompleteClientCreationFailureAsync(clientCacheKey, clientCreation, exception).ConfigureAwait(false);
+                await this.CompleteClientCreationFailureAsync(
+                    clientCacheKey, clientCreation, sharedCreationException).ConfigureAwait(false);
             }
             finally
             {
@@ -857,7 +865,6 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
     private sealed class ProviderInvocationContext(Task completion, ProviderInvocationContext? parent)
     {
         public Task Completion { get; } = completion;
-
         public ProviderInvocationContext? Parent { get; } = parent;
     }
 

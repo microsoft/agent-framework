@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
     reason="PowerFx engine not available (requires dotnet runtime)",
 )
 
-from agent_framework import Content, Message  # noqa: E402
+from agent_framework import AgentSession, Content, Message  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
@@ -207,6 +207,27 @@ class TestFieldForwarding:
         assert len(handler.invocations) == 2
         assert handler.invocations[0].workflow_session_id
         assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_as_agent_sessions_isolate_and_reuse_workflow_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+        session_a = AgentSession()
+        session_b = AgentSession()
+
+        await agent.run("session A first turn", session=session_a)
+        await agent.run("session B first turn", session=session_b)
+        await agent.run("session A second turn", session=session_a)
+
+        assert len(handler.invocations) == 3
+        session_a_id = handler.invocations[0].workflow_session_id
+        session_b_id = handler.invocations[1].workflow_session_id
+        assert session_a_id
+        assert session_b_id
+        assert session_a_id != session_b_id
+        assert handler.invocations[2].workflow_session_id == session_a_id
 
     @pytest.mark.asyncio
     async def test_continuation_reuses_workflow_session_id(self) -> None:

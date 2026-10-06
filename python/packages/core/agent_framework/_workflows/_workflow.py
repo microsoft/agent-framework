@@ -34,6 +34,7 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from ._edge import (
@@ -427,6 +428,9 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
+
+    def _set_agent_session_id(self, session_id: str | None) -> None:
+        self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, session_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
