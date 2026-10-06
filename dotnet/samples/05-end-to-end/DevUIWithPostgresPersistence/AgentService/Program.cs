@@ -1,47 +1,44 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Store hosted agent chat history in PostgreSQL and exercise it through DevUI.
+using Azure.AI.Projects;
+using Azure.Identity;
 using DevUIWithPostgresPersistence.AgentService;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddDevUI();
 
-string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-    ?? throw new InvalidOperationException("OPENAI_API_KEY is required.");
-string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5.4-mini";
-string? endpoint = Environment.GetEnvironmentVariable("OPENAI_ENDPOINT");
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is required.");
+string model = Environment.GetEnvironmentVariable("FOUNDRY_MODEL")
+    ?? Environment.GetEnvironmentVariable("FOUNDRY_MODEL_NAME")
+    ?? "gpt-5.4-mini";
 string connectionString = builder.Configuration.GetConnectionString("conversations")
     ?? throw new InvalidOperationException("Connection string 'conversations' is required.");
 
-var clientOptions = new OpenAIClientOptions();
-if (!string.IsNullOrWhiteSpace(endpoint))
-{
-    clientOptions.Endpoint = new Uri(endpoint);
-}
-
-var openAIClient = new OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), clientOptions)
-    .GetChatClient(model)
-    .AsIChatClient();
 PostgresConversationStore store = await PostgresConversationStore.CreateAsync(connectionString);
 var historyProvider = new DatabaseChatHistoryProvider(store);
 
 IHostedAgentBuilder agentBuilder = builder.AddAIAgent("assistant", (_, name) =>
-    openAIClient.AsAIAgent(new ChatClientAgentOptions
-    {
-        Name = name,
-        ChatOptions = new ChatOptions
+    // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+    // In production, consider using a specific credential (e.g. ManagedIdentityCredential) to avoid
+    // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+    new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+        .AsAIAgent(new ChatClientAgentOptions
         {
-            Instructions = "You are a helpful assistant. Answer concisely.",
-        },
-        ChatHistoryProvider = historyProvider,
-    }))
+            Name = name,
+            ChatOptions = new ChatOptions
+            {
+                ModelId = model,
+                Instructions = "You are a helpful assistant. Answer concisely.",
+            },
+            ChatHistoryProvider = historyProvider,
+        }))
     // The session stores the database history key that belongs to the OpenAI conversation ID.
     .WithSessionStore(store, withIsolation: false);
 

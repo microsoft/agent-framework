@@ -28,7 +28,7 @@ assistant messages afterward.
 - .NET 10
 - Docker or Podman with a Docker-compatible API, or the repository's .NET Dev
   Container (`.devcontainer/dotnet`), which includes Docker-in-Docker
-- an OpenAI API key or compatible endpoint
+- a Microsoft Foundry project and an authenticated Azure CLI session (`az login`)
 
 You do **not** need to install PostgreSQL locally.
 
@@ -37,9 +37,9 @@ You do **not** need to install PostgreSQL locally.
 From this directory:
 
 ```powershell
-$env:OPENAI_API_KEY = "<your-api-key>"
-$env:OPENAI_MODEL = "gpt-5.4-mini" # Optional
-$env:OPENAI_ENDPOINT = "https://..." # Optional for an OpenAI-compatible endpoint
+$env:FOUNDRY_PROJECT_ENDPOINT = "https://<resource>.services.ai.azure.com/api/projects/<project>"
+$env:FOUNDRY_MODEL = "gpt-5.4-mini" # Optional
+az login
 dotnet run --project AppHost
 ```
 
