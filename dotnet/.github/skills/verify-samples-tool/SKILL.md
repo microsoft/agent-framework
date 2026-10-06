@@ -45,7 +45,7 @@ The tool itself needs:
 - `AZURE_OPENAI_ENDPOINT` — for the AI verification agent
 - `AZURE_OPENAI_DEPLOYMENT_NAME` (optional, defaults to `gpt-5-mini`)
 
-Individual samples require their own env vars (e.g., `AZURE_AI_PROJECT_ENDPOINT`). The tool automatically checks and skips samples with missing env vars.
+Individual samples require their own env vars (for example, `FOUNDRY_PROJECT_ENDPOINT`). The tool automatically checks and skips samples with missing env vars.
 
 ### Output Files
 
@@ -188,8 +188,8 @@ new SampleDefinition
 {
     Name = "FoundryAgent_Hosted_MCP",
     ProjectPath = "samples/02-agents/ModelContextProtocol/FoundryAgent_Hosted_MCP",
-    RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-    OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+    OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
     Inputs = ["Y", "Y", "Y", "Y", "Y"],
     InputDelayMs = 5000,
     ExpectedOutputDescription = ["The output should show an agent using the Microsoft Learn MCP tool with approval prompts."],
@@ -203,8 +203,8 @@ new SampleDefinition
 {
     Name = "Workflow_Declarative_FunctionTools",
     ProjectPath = "samples/03-workflows/Declarative/FunctionTools",
-    RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT"],
-    OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+    OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
     Inputs = ["What are today's specials?", "EXIT"],
     InputDelayMs = 8000,
     ExpectedOutputDescription = ["The output should show a workflow calling function tools to answer a question about restaurant specials."],
@@ -223,5 +223,4 @@ new SampleDefinition
     SkipReason = "Runs as an MCP stdio server that does not exit on its own.",
 },
 ```
-
 

@@ -190,6 +190,48 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             Times.Never);
     }
 
+    [Fact]
+    public async Task InvokeFunctionToolWithProtectedConversationIdThrowsBeforeSendingAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeFunctionToolWithProtectedConversationIdThrowsBeforeSendingAsync)),
+            FunctionName = new StringExpression.Builder(StringExpression.Literal("test_function")),
+            ConversationId = new StringExpression.Builder(StringExpression.Expression("Env.PROTECTED_SETTING")),
+        };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+
+        // Act
+        ValueTask ExecuteAsync() => action.CaptureResponseAsync(
+            mockContext.Object,
+            new ExternalInputResponse([]),
+            CancellationToken.None);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(
+            async () => await ExecuteAsync());
+        Assert.Contains("conversation ID", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     #endregion
 
     #region CaptureResponseAsync Tests

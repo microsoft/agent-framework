@@ -27,7 +27,7 @@ supported media, callback-query data, and the commands `/start`, `/help`,
 Create a Telegram bot with BotFather, then configure:
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 export FOUNDRY_MODEL=gpt-5-nano
 export TELEGRAM_BOT_TOKEN=...
 az login
@@ -44,7 +44,7 @@ Configure the public HTTPS URL that Telegram should call and a random secret
 used to authenticate webhook deliveries:
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 export FOUNDRY_MODEL=gpt-5-nano
 export TELEGRAM_BOT_TOKEN=...
 export TELEGRAM_WEBHOOK_URL=https://<your-host>/telegram/webhook
