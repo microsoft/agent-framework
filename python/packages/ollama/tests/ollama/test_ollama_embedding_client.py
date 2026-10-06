@@ -1,10 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import os
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
+from ollama import AsyncClient
 
 from agent_framework_ollama import OllamaEmbeddingClient, OllamaEmbeddingOptions
 from agent_framework_ollama._feature_usage import FeatureIndex
@@ -115,6 +119,29 @@ async def test_ollama_embedding_get_embeddings_with_options() -> None:
             truncate=True,
             dimensions=512,
         )
+
+
+@pytest.mark.parametrize("keep_alive", [0, 0.0, -1, 300, "0", "5m", None])
+async def test_ollama_embedding_keep_alive_request(keep_alive: float | str | None) -> None:
+    """Preserve explicit keep-alive durations, including numeric zero, on the wire."""
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"model": "test-model", "embeddings": [[0.1, 0.2]]})
+
+    sdk_client = AsyncClient(host="http://ollama.test", transport=httpx.MockTransport(handle_request))
+    async with sdk_client._client:
+        client = OllamaEmbeddingClient(model="test-model", client=sdk_client)
+        options: OllamaEmbeddingOptions = {} if keep_alive is None else {"keep_alive": keep_alive}
+        result = await client.get_embeddings(["hello"], options=options)
+
+    assert result[0].vector == [0.1, 0.2]
+    assert len(requests) == 1
+    if keep_alive is None:
+        assert "keep_alive" not in requests[0]
+    else:
+        assert requests[0]["keep_alive"] == keep_alive
 
 
 async def test_ollama_embedding_get_embeddings_no_model_raises() -> None:
