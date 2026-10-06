@@ -189,7 +189,7 @@ class WorkflowViz:
             A string representation of the workflow in Mermaid flowchart syntax.
         """
         lines: list[str] = ["flowchart TD"]
-        node_ids = self._mermaid_node_ids()
+        node_ids = self._mermaid_node_ids(include_internal_executors=include_internal_executors)
 
         # Emit top-level workflow
         self._emit_workflow_mermaid(
@@ -351,7 +351,7 @@ class WorkflowViz:
         sanitized = re.sub(r"[^0-9A-Za-z_]", "_", value)
         return sanitized if sanitized and sanitized[0].isalpha() else f"n_{sanitized}"
 
-    def _mermaid_node_ids(self) -> dict[tuple[str, ...], str]:
+    def _mermaid_node_ids(self, *, include_internal_executors: bool = False) -> dict[tuple[str, ...], str]:
         """Allocate graph-wide aliases without consuming another node's ordinary ID."""
         from ._workflow_executor import WorkflowExecutor
 
@@ -365,6 +365,12 @@ class WorkflowViz:
                     if ns:
                         candidates[("subgraph", *ns, executor_id)] = self._sanitize_mermaid_id(executor_id)
                     collect(executor.workflow, (*ns, executor_id))
+            # Internal edge sources are not present in workflow.executors.
+            for source, target, _ in self._compute_normal_edges(
+                workflow, include_internal_executors=include_internal_executors
+            ):
+                for executor_id in (source, target):
+                    candidates[("executor", *ns, executor_id)] = prefix + self._sanitize_mermaid_id(executor_id)
             for dot_node_id, _, target in self._compute_fan_in_descriptors(workflow):
                 digest = dot_node_id.split("::")[-1]
                 candidates[("fan-in", *ns, dot_node_id)] = (
