@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -72,7 +71,7 @@ public sealed class LoopAgent : DelegatingAIAgent
     private readonly IReadOnlyList<LoopEvaluator> _evaluators;
     private readonly int _maxIterations;
     private readonly long? _maxTokens;
-    private readonly TimeSpan? _maxDuration;
+    private readonly System.TimeSpan? _maxDuration;
     private readonly bool _freshContextPerIteration;
     private readonly string? _onBehalfOfAuthorName;
     private readonly bool _excludeOnBehalfOfMessages;
@@ -242,13 +241,7 @@ public sealed class LoopAgent : DelegatingAIAgent
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
             {
-                AgentResponse evalResult = this.BuildResult(response, transcript, aggregatedUsage);
-                if (context.AdditionalProperties.TryGetValue(LoopExitReason.AdditionalPropertiesKey, out object? exitReason))
-                {
-                    (evalResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = exitReason;
-                }
-
-                return evalResult;
+                return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
             currentMessages = step.Messages;

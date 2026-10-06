@@ -10,7 +10,6 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import (
-    LOOP_EXIT_REASON_KEY,
     Agent,
     AgentBudget,
     AgentContext,
@@ -27,19 +26,15 @@ from agent_framework import (
     Content,
     ContextProvider,
     JudgeVerdict,
-    LoopExitReason,
     Message,
     MiddlewareTermination,
     ResponseStream,
-    SignalParser,
     TodoItem,
     TodoProvider,
     UsageDetails,
     background_tasks_running,
     background_tasks_running_message,
-    get_loop_exit_reason,
     set_agent_mode,
-    signal_should_continue,
     todos_remaining,
     todos_remaining_message,
     tool,
@@ -1712,160 +1707,6 @@ async def test_concurrent_same_agent_run_during_stream_pause_is_not_suppressed()
     assert turn_scoped.after_calls == 2
 
 
-# --- Signal Protocol Tests ---
-
-
-def _make_signal_response(text: str, additional_properties: dict[str, Any] | None = None) -> AgentResponse:
-    return AgentResponse(
-        messages=[Message(role="assistant", contents=[text])],
-        additional_properties=additional_properties,
-    )
-
-
-def test_signal_parser_task_complete_stops_and_extracts_summary() -> None:
-    response = _make_signal_response("TASK_COMPLETE: finished the job")
-    assert SignalParser()(last_result=response) == (False, "finished the job")
-
-
-def test_signal_parser_need_input_stops_and_extracts_question() -> None:
-    response = _make_signal_response("NEED_INPUT: which file should I edit?")
-    assert SignalParser()(last_result=response) == (False, "which file should I edit?")
-
-
-def test_signal_parser_no_signal_continues() -> None:
-    response = _make_signal_response("I am still working on it.")
-    assert SignalParser()(last_result=response) == (True, None)
-
-
-def test_signal_parser_task_complete_wins_over_need_input() -> None:
-    response = _make_signal_response("TASK_COMPLETE: done\nNEED_INPUT: are you sure?")
-    assert SignalParser()(last_result=response) == (False, "done")
-
-
-def test_signal_parser_extracts_only_first_line_after_token() -> None:
-    response = _make_signal_response("Some preamble\nTASK_COMPLETE: line1\nmore stuff after")
-    assert SignalParser()(last_result=response) == (False, "line1")
-
-
-def test_signal_parser_empty_response_continues() -> None:
-    response = AgentResponse(messages=[])
-    assert SignalParser()(last_result=response) == (True, None)
-
-
-def test_signal_parser_token_with_no_following_text_returns_none_feedback() -> None:
-    response = _make_signal_response("TASK_COMPLETE:")
-    assert SignalParser()(last_result=response) == (False, None)
-
-
-def test_get_loop_exit_reason_completed_from_text() -> None:
-    response = _make_signal_response("TASK_COMPLETE: done")
-    assert get_loop_exit_reason(response) == LoopExitReason.completed
-
-
-def test_get_loop_exit_reason_need_input_from_text() -> None:
-    response = _make_signal_response("NEED_INPUT: which approach?")
-    assert get_loop_exit_reason(response) == LoopExitReason.need_input
-
-
-def test_get_loop_exit_reason_cap_from_additional_properties() -> None:
-    response = _make_signal_response("still going", additional_properties={"loop_exit_reason": "iteration_cap_reached"})
-    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
-
-
-def test_get_loop_exit_reason_signal_wins_over_additional_properties() -> None:
-    response = _make_signal_response(
-        "TASK_COMPLETE: done", additional_properties={"loop_exit_reason": "iteration_cap_reached"}
-    )
-    assert get_loop_exit_reason(response) == LoopExitReason.completed
-
-
-def test_get_loop_exit_reason_unknown_returns_none() -> None:
-    response = _make_signal_response("nothing special")
-    assert get_loop_exit_reason(response) is None
-
-
-def test_signal_should_continue_factory_returns_signal_parser() -> None:
-    assert isinstance(signal_should_continue(), SignalParser)
-
-
-async def test_loop_stops_on_task_complete_signal() -> None:
-    client = RecordingChatClient(texts=["TASK_COMPLETE: all done"])
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
-
-    response = await agent.run("task")
-
-    assert client.call_count == 1
-    assert get_loop_exit_reason(response) == LoopExitReason.completed
-    assert LOOP_EXIT_REASON_KEY not in response.additional_properties
-
-
-async def test_loop_stops_on_need_input_signal() -> None:
-    client = RecordingChatClient(texts=["NEED_INPUT: which approach?"])
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
-
-    response = await agent.run("task")
-
-    assert client.call_count == 1
-    assert get_loop_exit_reason(response) == LoopExitReason.need_input
-    assert LOOP_EXIT_REASON_KEY not in response.additional_properties
-
-
-async def test_loop_sets_iteration_cap_reason_when_no_signal() -> None:
-    client = RecordingChatClient()
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
-
-    response = await agent.run("task")
-
-    assert client.call_count == 2
-    assert response.additional_properties.get("loop_exit_reason") == LoopExitReason.iteration_cap_reached
-    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
-
-
-async def test_loop_sets_iteration_cap_reason_streaming() -> None:
-    client = RecordingChatClient()
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
-
-    stream = agent.run("task", stream=True)
-    async for _ in stream:
-        pass
-    response = await stream.get_final_response()
-
-    assert client.call_count == 2
-    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
-
-
-async def test_get_loop_exit_reason_ignores_nudge_text_with_token() -> None:
-    # A next_message nudge that mentions TASK_COMPLETE: must not trigger a false positive.
-    # Scripted texts keep the agent from echoing the nudge back in its own messages.
-    client = RecordingChatClient(texts=["working...", "still working..."])
-    agent = Agent(
-        client=client,
-        middleware=[
-            AgentLoopMiddleware(
-                signal_should_continue(),
-                max_iterations=2,
-                next_message=lambda **kwargs: "Reminder: emit TASK_COMPLETE: when done.",
-            )
-        ],
-    )
-
-    response = await agent.run("task")
-
-    assert client.call_count == 2
-    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
-    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
-
-
-async def test_loop_continues_when_no_signal() -> None:
-    client = RecordingChatClient(texts=["working...", "still working...", "TASK_COMPLETE: finally done"])
-    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
-
-    response = await agent.run("task")
-
-    assert client.call_count == 3
-    assert get_loop_exit_reason(response) == LoopExitReason.completed
-
-
 # region budget
 
 
@@ -1879,7 +1720,7 @@ async def test_budget_stops_on_token_limit() -> None:
     response = await agent.run("task")
 
     assert client.call_count == 2
-    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == "token_budget_exceeded"
+    assert response.additional_properties.get("loop_exit_reason") == "token_budget_exceeded"
 
 
 async def test_budget_stops_on_duration_limit() -> None:
@@ -1897,7 +1738,7 @@ async def test_budget_stops_on_duration_limit() -> None:
     response = await agent.run("task")
 
     assert client.call_count == 1
-    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.time_budget_exceeded
+    assert response.additional_properties.get("loop_exit_reason") == "time_budget_exceeded"
 
 
 async def test_budget_not_triggered_when_none() -> None:
@@ -1907,7 +1748,7 @@ async def test_budget_not_triggered_when_none() -> None:
     response = await agent.run("task")
 
     assert client.call_count == 3
-    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+    assert response.additional_properties.get("loop_exit_reason") == "iteration_cap_reached"
 
 
 async def test_budget_token_check_before_should_continue() -> None:
@@ -1940,8 +1781,7 @@ async def test_budget_exit_reason_in_additional_properties() -> None:
     response = await agent.run("task")
 
     assert client.call_count == 1
-    assert response.additional_properties["loop_exit_reason"] == LoopExitReason.token_budget_exceeded
-    assert get_loop_exit_reason(response) == LoopExitReason.token_budget_exceeded
+    assert response.additional_properties["loop_exit_reason"] == "token_budget_exceeded"
 
 
 def test_agent_budget_validates_max_tokens() -> None:

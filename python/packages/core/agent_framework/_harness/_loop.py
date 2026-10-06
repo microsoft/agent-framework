@@ -22,15 +22,6 @@ going. It serves two common patterns through a single configurable class:
    structured output; provider-specific formats can be supplied with a parser that converts the
    response into ``JudgeVerdict``. The loop continues while the answer is "no". This is a convenience
    wrapper that builds an async ``should_continue`` predicate, so it is a special case of (1).
-3. Signal protocol (via :func:`~agent_framework.signal_should_continue` from ``_signals.py``) - the
-   agent emits ``TASK_COMPLETE: <summary>`` or ``NEED_INPUT: <question>`` in its response text to
-   signal terminal intent. Only assistant-role messages are scanned; user-role nudges injected between
-   iterations do not trigger false positives. ``TASK_COMPLETE:`` is checked first. Read the result
-   with :func:`~agent_framework.get_loop_exit_reason`, which returns a
-   :class:`~agent_framework.LoopExitReason` string (``"completed"``, ``"iteration_cap_reached"``,
-   ``"need_input"``). When ``max_iterations`` fires the loop stamps
-   ``additional_properties["loop_exit_reason"] = "iteration_cap_reached"``; signal tokens always win
-   over the cap.
 
 In every case, the input for the next iteration is controlled by the ``next_message`` callable.
 """
@@ -157,13 +148,13 @@ class AgentBudget:
 
         .. code-block:: python
 
-            from agent_framework import AgentBudget, AgentLoopMiddleware, signal_should_continue
+            from agent_framework import AgentBudget, AgentLoopMiddleware, todos_remaining
 
             agent = Agent(
                 client=client,
                 middleware=[
                     AgentLoopMiddleware(
-                        signal_should_continue(),
+                        todos_remaining(),
                         budget=AgentBudget(max_tokens=50_000, max_duration=300.0),
                     )
                 ],
@@ -713,9 +704,9 @@ class AgentLoopMiddleware(AgentMiddleware):
         finally:
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
-        if cap_fired and final_result is not None:
+        if cap_fired:
             final_result.additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
-        if budget_exit is not None and final_result is not None:
+        if budget_exit is not None:
             final_result.additional_properties.setdefault("loop_exit_reason", budget_exit)
 
         if not self.return_final_only:
@@ -791,7 +782,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # ``loop_exit_reason`` on the response (the caller assembles it from updates), so
                     # the loop simply stops, consistent with the iteration-cap limitation.
                     if self.budget is not None:
-                        if self.budget.max_tokens is not None and final is not None and final.usage_details:
+                        if self.budget.max_tokens is not None and final.usage_details:
                             ud = final.usage_details
                             tokens_used += ud.get("total_token_count") or (
                                 (ud.get("input_token_count") or 0) + (ud.get("output_token_count") or 0)

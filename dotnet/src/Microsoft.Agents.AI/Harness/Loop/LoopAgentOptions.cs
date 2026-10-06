@@ -124,7 +124,7 @@ public sealed class LoopAgentOptions
     /// </remarks>
     public long? MaxTokens
     {
-        get => this._maxTokens;
+        get;
         set
         {
             if (value.HasValue && value.Value < 1)
@@ -132,11 +132,9 @@ public sealed class LoopAgentOptions
                 throw new ArgumentOutOfRangeException(nameof(value), "MaxTokens must be a positive integer.");
             }
 
-            this._maxTokens = value;
+            field = value;
         }
     }
-
-    private long? _maxTokens;
 
     /// <summary>Gets or sets the maximum wall-clock duration for the entire loop run, or <see langword="null"/> for unconstrained.</summary>
     /// <remarks>
@@ -146,7 +144,7 @@ public sealed class LoopAgentOptions
     /// </remarks>
     public TimeSpan? MaxDuration
     {
-        get => this._maxDuration;
+        get;
         set
         {
             if (value.HasValue && value.Value <= TimeSpan.Zero)
@@ -154,9 +152,7 @@ public sealed class LoopAgentOptions
                 throw new ArgumentOutOfRangeException(nameof(value), "MaxDuration must be a positive duration.");
             }
 
-            this._maxDuration = value;
+            field = value;
         }
     }
-
-    private TimeSpan? _maxDuration;
 }

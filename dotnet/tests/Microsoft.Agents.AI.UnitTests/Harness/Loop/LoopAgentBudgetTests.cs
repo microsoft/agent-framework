@@ -42,7 +42,7 @@ public class LoopAgentBudgetTests
     {
         // Arrange
         var inner = new InnerAgentCapture(_ => ResponseWithTokens(1));
-        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.Zero, MaxIterations = 10 });
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxDuration = TimeSpan.FromTicks(1), MaxIterations = 10 });
 
         // Act
         AgentResponse response = await agent.RunAsync("task", new ChatClientAgentSession());
