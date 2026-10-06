@@ -1,8 +1,5 @@
 # Tools
 
-[Container Apps Dynamic Sessions](./container_apps_dynamic_sessions.py) shows a
-function tool that executes Python in a cloud session with per-run session ownership.
-
 Samples that show how to define, configure, and control function tools for an
 agent — from basic declarations to approvals, invocation limits, session
 injection, and dynamic (progressive) tool exposure.
