@@ -26,11 +26,12 @@ see the [Toolbox sample](../foundry_toolbox/). Authenticate local runs with
 
 `ResponsesHostServer(agent=create_agent, history_source="agent_server")` creates
 fresh clients and a Toolbox MCP connection for each request and closes their
-transports afterward. The MCP writer therefore inherits **this** request's
-platform call ID, not an earlier caller's. The outer Responses service supplies
-history; the host disables downstream model storage. An outer `store=false`
-request writes no host-managed state, but does not undo external tool side
-effects or delete uploads.
+transports afterward. This request-owned lifecycle gives the sample a clear
+cleanup boundary; `FoundryToolbox` also rebinds its MCP session to current
+platform headers if an instance is reused across requests. The outer Responses
+service supplies history; the host disables downstream model storage. An outer
+`store=false` request writes no host-managed state, but does not undo external
+tool side effects or delete uploads.
 
 Foundry session files and Toolbox code-interpreter container files are different
 resources. Reading an upload returns its text; it does not mount that upload into

@@ -32,11 +32,12 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 The agent is hosted with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol on `http://localhost:8088`.
 
 `agent=create_agent` builds a new Toolbox, skills provider/cache, credential and
-client for **each request**. The host enters and exits that agent, so the
-streamable-HTTP writer and skill-resource reads inherit the current platform
-call ID instead of the first request's context. `tools=` still connects the
-Toolbox and `context_providers=` still reads skills from that same session; both
-are required. Only loading the vetted sample skill body is auto-approved, not
+client for **each request**, giving those resources one deterministic owner and
+cleanup boundary. `FoundryToolbox` also scopes tool and skill-resource
+operations to the current platform call ID when an instance is reused, rebinding
+its MCP session when that identity changes. `tools=` still connects the Toolbox
+and `context_providers=` still reads skills from that same session; both are
+required. Only loading the vetted sample skill body is auto-approved, not
 arbitrary skill scripts or external actions.
 
 The factory's client context closes its owned SDK transports and credential

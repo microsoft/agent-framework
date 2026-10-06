@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 
 
 def create_agent() -> Agent:
-    """Create tools inside this request so the MCP writer captures its call ID."""
+    """Create request-owned SDK resources and close them with the agent."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
