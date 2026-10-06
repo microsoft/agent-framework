@@ -27,7 +27,7 @@ This folder contains Microsoft Foundry and Foundry Local samples for Agent Frame
 | [`foundry_chat_client_with_hosted_mcp.py`](foundry_chat_client_with_hosted_mcp.py) | Foundry Chat Client with hosted MCP |
 | [`foundry_chat_client_with_local_mcp.py`](foundry_chat_client_with_local_mcp.py) | Foundry Chat Client with local MCP |
 | [`foundry_chat_client_with_session.py`](foundry_chat_client_with_session.py) | Foundry Chat Client with session management |
-| [`foundry_chat_client_with_toolbox.py`](foundry_chat_client_with_toolbox.py) | Discover and invoke Foundry toolbox tools on demand with `tool_search` and `call_tool` over MCP |
+| [`foundry_chat_client_with_toolbox.py`](foundry_chat_client_with_toolbox.py) | Foundry Chat Client connected to a toolbox via its MCP endpoint using `MCPStreamableHTTPTool` |
 | [`foundry_chat_client_with_toolbox_skills.py`](foundry_chat_client_with_toolbox_skills.py) | Foundry Chat Client that discovers MCP-based skills from a Foundry Toolbox endpoint via `MCPSkillsSource` (uses an Azure AD bearer token and the toolbox preview header) |
 
 ## FoundryLocalClient Samples
