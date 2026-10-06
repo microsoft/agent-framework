@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 def create_agent() -> Agent:
     """Build fresh tool configuration without accepting caller-supplied credentials."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     github_pat = os.environ.get("GITHUB_PAT")
     if not github_pat or not github_pat.strip():
         raise RuntimeError("Configure GITHUB_PAT separately before using the GitHub MCP sample.")
