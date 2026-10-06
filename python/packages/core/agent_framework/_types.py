@@ -4169,10 +4169,10 @@ def _wrap_plain_callables_once(tools: Any, wrapped: dict[int, Any]) -> Any:
     if isinstance(tools, (str, bytes, bytearray, Mapping)) or not isinstance(tools, Sequence):
         tools = [tools]
     items: list[Any] = []
-    for item in tools:  # type: ignore[reportUnknownVariableType]
+    for item in cast(Sequence[Any], tools):
         if callable(item) and not isinstance(item, (FunctionTool, MCPTool, dict)):
             if id(item) not in wrapped:
-                wrapped[id(item)] = make_tool(item)  # type: ignore[reportUnknownArgumentType]
+                wrapped[id(item)] = make_tool(item)
             item = wrapped[id(item)]
         items.append(item)
     return items
