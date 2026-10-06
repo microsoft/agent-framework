@@ -50,6 +50,43 @@ class TestMessageText:
         """Test that empty list returns empty string."""
         assert message_text([]) == ""
 
+    def test_message_text_accepts_text_key_shape(self):
+        """DeclarativeWorkflowState producers emit a flat text key."""
+        assert message_text([{"role": "user", "text": "hi"}]) == "hi"
+
+    def test_message_text_accepts_structured_content_list(self):
+        """The .NET record shape carries text in a content list."""
+        msg = {"role": "user", "content": [{"type": "text", "value": "hi"}]}
+        assert message_text([msg]) == "hi"
+
+    def test_message_text_accepts_capitalized_content_items(self):
+        """System.Text.Json can surface PascalCase content item keys."""
+        msg = {"role": "user", "content": [{"Type": "Text", "Value": "hi"}]}
+        assert message_text([msg]) == "hi"
+
+    def test_message_text_accepts_contents_list(self):
+        """Message-dict shape stores content items under contents."""
+        msg = {"role": "assistant", "contents": [{"type": "text", "text": "hi"}]}
+        assert message_text([msg]) == "hi"
+
+    def test_message_text_mixed_shapes_join(self):
+        """A list mixing both flat shapes extracts every entry."""
+        msgs = [
+            {"role": "user", "text": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+        assert message_text(msgs) == "question answer"
+
+    def test_message_text_object_with_only_text_attr(self):
+        """Objects exposing text but no content still contribute."""
+
+        class _TextOnly:
+            @property
+            def text(self):
+                return "hi"
+
+        assert message_text([_TextOnly()]) == "hi"
+
 
 class TestUserMessage:
     """Tests for UserMessage function."""
