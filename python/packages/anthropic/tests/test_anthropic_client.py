@@ -7,7 +7,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
 import anthropic as anthropic_sdk
-import httpx
+import httpx2
 import pytest
 from agent_framework import (
     Agent,
@@ -1505,6 +1505,15 @@ async def test_prepare_options_excludes_stream_option(
     assert "stream" not in run_options
 
 
+def test_prepare_betas_uses_only_required_default_flags(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """GA features must not add redundant beta headers."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    assert client._prepare_betas({}) == {"mcp-client-2025-04-04"}
+
+
 async def test_prepare_options_consumes_additional_beta_flags(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -2001,8 +2010,8 @@ async def test_inner_get_response_ignores_options_stream_streaming(
 def _anthropic_status_error(
     error_cls: type[anthropic_sdk.APIStatusError], status_code: int, message: str
 ) -> anthropic_sdk.APIStatusError:
-    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    response = httpx.Response(status_code, request=request, json={"error": {"message": message}})
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx2.Response(status_code, request=request, json={"error": {"message": message}})
     return error_cls(message, response=response, body={"error": {"message": message}})
 
 
