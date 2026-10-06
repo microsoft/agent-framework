@@ -486,6 +486,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         public ISkillService Skills => throw new NotImplementedException();
 
+        public IOrganizationService Organization => throw new NotImplementedException();
+
         public IBetaService Beta => this.BetaService;
 
         public IBetaService BetaService { get; }
