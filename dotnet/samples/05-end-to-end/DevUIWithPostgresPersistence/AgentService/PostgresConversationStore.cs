@@ -128,20 +128,37 @@ internal sealed class PostgresConversationStore : AgentSessionStore, IDisposable
         return messages;
     }
 
-    public async ValueTask AppendChatHistoryAsync(
-        string historyId,
+    public async ValueTask ForkAndAppendChatHistoryAsync(
+        string sourceHistoryId,
+        string targetHistoryId,
         IEnumerable<ChatMessage> messages,
         CancellationToken cancellationToken)
     {
         await using NpgsqlConnection connection = await this._dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using (var forkCommand = new NpgsqlCommand(
+            """
+            INSERT INTO chat_messages (history_id, message)
+            SELECT $2, message
+            FROM chat_messages
+            WHERE history_id = $1
+            ORDER BY position
+            """,
+            connection,
+            transaction))
+        {
+            forkCommand.Parameters.AddWithValue(sourceHistoryId);
+            forkCommand.Parameters.AddWithValue(targetHistoryId);
+            await forkCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         foreach (ChatMessage message in messages)
         {
             await using var command = new NpgsqlCommand(
                 "INSERT INTO chat_messages (history_id, message) VALUES ($1, $2)",
                 connection,
                 transaction);
-            command.Parameters.AddWithValue(historyId);
+            command.Parameters.AddWithValue(targetHistoryId);
             command.Parameters.AddWithValue(JsonSerializer.Serialize(
                 message,
                 AgentAbstractionsJsonUtilities.DefaultOptions));

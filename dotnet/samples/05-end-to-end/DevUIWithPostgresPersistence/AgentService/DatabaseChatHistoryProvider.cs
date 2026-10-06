@@ -31,19 +31,23 @@ internal sealed class DatabaseChatHistoryProvider : ChatHistoryProvider
         return this._store.LoadChatHistoryAsync(state.HistoryId, cancellationToken);
     }
 
-    protected override ValueTask StoreChatHistoryAsync(
+    protected override async ValueTask StoreChatHistoryAsync(
         InvokedContext context,
         CancellationToken cancellationToken = default)
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
-        return this._store.AppendChatHistoryAsync(
+        string nextHistoryId = Guid.NewGuid().ToString("N");
+        await this._store.ForkAndAppendChatHistoryAsync(
             state.HistoryId,
+            nextHistoryId,
             context.RequestMessages.Concat(context.ResponseMessages ?? []),
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        state.HistoryId = nextHistoryId;
+        this._sessionState.SaveState(context.Session, state);
     }
 
     internal sealed class State
     {
-        public required string HistoryId { get; init; }
+        public required string HistoryId { get; set; }
     }
 }

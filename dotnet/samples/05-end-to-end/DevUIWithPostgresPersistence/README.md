@@ -20,8 +20,10 @@ The agent service uses:
 
 On each turn, built-in Responses hosting resolves the `AgentSession` by OpenAI
 conversation ID. The chat-history provider then loads the matching messages
-from PostgreSQL before the model call and appends the successful user and
-assistant messages afterward.
+from PostgreSQL before the model call. After a successful call it forks that
+immutable history snapshot to a new internal history ID and appends the new
+user and assistant messages. This keeps branches from the same
+`previous_response_id` independent.
 
 ## Prerequisites
 
@@ -62,7 +64,9 @@ protocol stores remain in memory. Therefore DevUI's conversation catalog and
 completed response objects are reset when the agent service restarts, even
 though the PostgreSQL records remain. A client that retained the last response
 ID can continue after restart with `previous_response_id`; the restored session
-still points the `DatabaseChatHistoryProvider` at the original conversation ID.
+still points the `DatabaseChatHistoryProvider` at the matching immutable
+history snapshot. The initial snapshot ID is the OpenAI conversation ID; later
+snapshots use internal IDs stored in the corresponding `AgentSession`.
 
 Chat Completions is mapped to match a typical API host, but that protocol is
 stateless and does not carry a conversation ID. The database-backed multi-turn
