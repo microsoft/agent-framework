@@ -160,6 +160,10 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("generators = [(value for value in [1])]\nframes = [generators[0].gi_frame]", "gi_frame")]
     [InlineData("async def value():\n    return 1\ncoroutine = value()\ncoroutine.cr_frame", "cr_frame")]
     [InlineData("async def value():\n    return 1\ncoroutines = [value()]\nframe = coroutines[0].cr_frame", "cr_frame")]
+    [InlineData("iterator = []\ngenerator = (value async for value in iterator)\ngenerator.ag_frame", "ag_frame")]
+    [InlineData(
+        "iterator = []\ngenerators = [(value async for value in iterator)]\nframe = generators[0].ag_frame",
+        "ag_frame")]
     public async Task ExecuteCode_ValidationBlocksFrameAccessBeforeRunnerStartsAsync(string code, string capability)
     {
         SkipIfNoPython();
@@ -181,6 +185,8 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("frame = (value for value in [1]).gi_frame", "gi_frame", false)]
     [InlineData("async def value():\n    return 1\nframe = value().cr_frame", "cr_frame", true)]
     [InlineData("async def value():\n    return 1\nframe = value().cr_frame", "cr_frame", false)]
+    [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", true)]
+    [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", false)]
     [InlineData("from typing import get_type_hints as resolve", "get_type_hints", false)]
     [InlineData("from functools import singledispatch as dispatch", "singledispatch", false)]
     public async Task ExecuteCode_ValidationCapabilityRestrictionsSurviveCustomListsAsync(

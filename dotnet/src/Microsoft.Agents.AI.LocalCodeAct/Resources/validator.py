@@ -120,6 +120,7 @@ _BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
         "_eval_type",
         "_evaluate",
         "_sys",
+        "ag_frame",
         "builtins",
         "connect_accepted_socket",
         "cr_frame",

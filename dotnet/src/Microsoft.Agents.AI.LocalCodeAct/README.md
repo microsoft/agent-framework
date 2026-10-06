@@ -150,8 +150,9 @@ including during annotation-inferred dispatch registration.
 
 Ordinary typing constructs, ForwardRef construction, unevaluated annotation
 declarations, and other functools utilities remain available. Generator
-expressions and async functions are also allowed, but access to their
-`gi_frame` and `cr_frame` attributes is blocked.
+expressions, async-generator expressions, and async functions are also allowed,
+but access to their `gi_frame`, `ag_frame`, and `cr_frame` attributes is
+blocked.
 
 Capability restrictions apply at attribute access and from-import acquisition,
 before references can be aliased. Receiver types are not statically knowable,
