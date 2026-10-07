@@ -11279,6 +11279,53 @@ def _install_lifecycle_provider_streams(
     )
 
 
+class _LifecycleCloseErrorIterator:
+    """Provider iterator whose awaited close can fail after an operation has failed."""
+
+    def __init__(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        close_error: OSError,
+        iteration_error: BaseException | None = None,
+        wait_after_updates: bool = False,
+    ) -> None:
+        self._updates = list(updates)
+        self._close_error = close_error
+        self._iteration_error = iteration_error
+        self._wait_after_updates = wait_after_updates
+        self._index = 0
+        self._release = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.aclose_calls = 0
+        self.aclose_completed = 0
+        self.closed = False
+
+    def __aiter__(self) -> "_LifecycleCloseErrorIterator":
+        return self
+
+    async def __anext__(self) -> ChatResponseUpdate:
+        if self._index < len(self._updates):
+            update = self._updates[self._index]
+            self._index += 1
+            return update
+        if self._wait_after_updates:
+            self.waiting.set()
+            await self._release.wait()
+        if self._iteration_error is not None:
+            raise self._iteration_error
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+        self._release.set()
+        await asyncio.sleep(0)
+        self.aclose_completed += 1
+        self.closed = True
+        if self.aclose_calls == 1:
+            raise self._close_error
+
+
 class TestPublicFunctionInvocationStreamLifecycle:
     _retained_provider_streams: list[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]
     _retained_provider_sources: list[AsyncGenerator[ChatResponseUpdate, None]]
@@ -11713,3 +11760,150 @@ class TestPublicFunctionInvocationStreamLifecycle:
         finally:
             consumer.cancel()
             await asyncio.gather(consumer, return_exceptions=True)
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize(
+        ("surface", "iteration_limit"),
+        [
+            pytest.param("client", 2, id="client-ordinary-turn"),
+            pytest.param("agent", 2, id="agent-ordinary-turn"),
+            pytest.param("client", 0, id="client-final-no-tools"),
+            pytest.param("agent", 0, id="agent-final-no-tools"),
+        ],
+    )
+    @pytest.mark.parametrize("failure_kind", ["iteration", "finalizer", "transform", "cancel"])
+    async def test_public_function_loop_preserves_primary_failure_when_provider_close_fails(
+        self,
+        chat_client_base: SupportsChatGetResponse,
+        monkeypatch: pytest.MonkeyPatch,
+        surface: Literal["client", "agent"],
+        iteration_limit: int,
+        failure_kind: Literal["iteration", "finalizer", "transform", "cancel"],
+    ) -> None:
+        """Provider cleanup errors do not replace public function-loop failures or cancellation."""
+        primary = RuntimeError("primary function-loop failure")
+        close_failure = OSError("provider iterator close failed")
+        source = _LifecycleCloseErrorIterator(
+            [ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")],
+            close_error=close_failure,
+            iteration_error=primary if failure_kind == "iteration" else None,
+            wait_after_updates=failure_kind == "cancel",
+        )
+        provider_streams: list[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]] = []
+        requested_tool_choices: list[str | None] = []
+        chat_client_base.function_invocation_configuration["max_iterations"] = iteration_limit  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        def get_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+            requested_tool_choices.append(options.get("tool_choice"))
+
+            def finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+                if failure_kind == "finalizer":
+                    raise primary
+                return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
+
+            provider = ResponseStream(source, finalizer=finalize)
+            provider_streams.append(provider)
+            self._retained_provider_streams.append(provider)
+            return provider
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", get_streaming_response)
+        stream = _lifecycle_public_stream(chat_client_base, surface, [_make_lifecycle_noop_tool()])
+
+        if failure_kind == "transform":
+
+            def fail_transform(_update: Any) -> Any:
+                raise primary
+
+            stream.with_transform_hook(fail_transform)
+
+        async def consume_public_stream() -> None:
+            async for _ in stream:
+                pass
+
+        if failure_kind == "cancel":
+            consumer: asyncio.Task[None] = asyncio.create_task(consume_public_stream())
+            try:
+                await asyncio.wait_for(source.waiting.wait(), timeout=5)
+                consumer.cancel("consumer cancelled")
+                with pytest.raises(asyncio.CancelledError):
+                    await consumer
+                assert consumer.cancelled()
+            finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+        else:
+            with pytest.raises(RuntimeError) as error:
+                await consume_public_stream()
+            assert error.value is primary
+
+        assert len(provider_streams) == 1
+        assert requested_tool_choices == (["auto"] if iteration_limit == 2 else ["none"])
+        assert source.aclose_calls >= 1
+        assert source.aclose_completed == source.aclose_calls
+        assert source.closed
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize(
+        ("surface", "iteration_limit"),
+        [
+            pytest.param("client", 2, id="client-ordinary-turn"),
+            pytest.param("agent", 2, id="agent-ordinary-turn"),
+            pytest.param("client", 0, id="client-final-no-tools"),
+            pytest.param("agent", 0, id="agent-final-no-tools"),
+        ],
+    )
+    @pytest.mark.parametrize("close_mode", ["explicit", "complete"], ids=["public-close", "normal-completion"])
+    async def test_public_function_loop_propagates_provider_close_error_without_primary_failure(
+        self,
+        chat_client_base: SupportsChatGetResponse,
+        monkeypatch: pytest.MonkeyPatch,
+        surface: Literal["client", "agent"],
+        iteration_limit: int,
+        close_mode: Literal["explicit", "complete"],
+    ) -> None:
+        """Provider close errors still propagate on public close or normal completion."""
+        close_failure = OSError("provider iterator close failed")
+        source = _LifecycleCloseErrorIterator(
+            [ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")],
+            close_error=close_failure,
+        )
+        provider_streams: list[ResponseStream[ChatResponseUpdate, ChatResponse[Any]]] = []
+        requested_tool_choices: list[str | None] = []
+        chat_client_base.function_invocation_configuration["max_iterations"] = iteration_limit  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        def get_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+            requested_tool_choices.append(options.get("tool_choice"))
+            provider = ResponseStream(source, finalizer=ChatResponse.from_updates)
+            provider_streams.append(provider)
+            self._retained_provider_streams.append(provider)
+            return provider
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", get_streaming_response)
+        stream = _lifecycle_public_stream(chat_client_base, surface, [_make_lifecycle_noop_tool()])
+
+        if close_mode == "explicit":
+            first = await stream.__anext__()
+            assert first.text == "first"
+            with pytest.raises(OSError) as error:
+                await stream.close()
+        else:
+            with pytest.raises(OSError) as error:
+                async for _ in stream:
+                    pass
+
+        assert error.value is close_failure
+        assert len(provider_streams) == 1
+        assert requested_tool_choices == (["auto"] if iteration_limit == 2 else ["none"])
+        assert source.aclose_calls >= 1
+        assert source.aclose_completed == source.aclose_calls
+        assert source.closed

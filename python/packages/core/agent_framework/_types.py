@@ -3841,7 +3841,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         """Close the stream on block exit, including an early consumer break."""
-        await self.close()
+        try:
+            await self.close()
+        except Exception:
+            # GeneratorExit also represents an explicit close(), whose failure must be reported.
+            if exc is None or isinstance(exc, GeneratorExit):
+                raise
+            logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
 
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
@@ -3988,16 +3994,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     async def _abort_buffered_materialization(self, exc: BaseException) -> None:
         self._stream_error = exc
         try:
-            iterator = self._iterator
-            if iterator is not None:
-                if isinstance(iterator, ResponseStream):
-                    await cast(ResponseStream[UpdateT, Any], iterator).close()
-                else:
-                    close = getattr(iterator, "aclose", None)
-                    if close is not None:
-                        await close()
-            self._consumed = True
-            await self._run_cleanup_hooks()
+            # close() also runs the hooks if releasing the iterator fails.
+            await self.close()
         finally:
             self._stream_error = None
 
@@ -4131,9 +4129,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             self._buffered_materialized = True
         except BaseException as exc:
             try:
-                if release_phase_started:
-                    await self._run_release_error_hooks(exc)
-                await self._abort_buffered_materialization(exc)
+                try:
+                    if release_phase_started:
+                        await self._run_release_error_hooks(exc)
+                except Exception:
+                    logger.warning("Stream error hook failed while handling an existing exception.", exc_info=True)
+                finally:
+                    try:
+                        await self._abort_buffered_materialization(exc)
+                    except Exception:
+                        logger.warning(
+                            "Buffered stream cleanup failed while handling an existing exception.", exc_info=True
+                        )
             except BaseException as cleanup_exc:
                 self._buffered_materialization_error = cleanup_exc
                 raise
@@ -4166,12 +4173,17 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             # provider stream suspended until GC. Hooks run first because they
             # read self._stream_error, and close() would consume the one-shot
             # cleanup run without it. close() stays in finally so the provider
-            # stream is released even when a hook raises; the original
-            # exception always re-raises.
+            # stream is released even when a hook raises. Ordinary cleanup
+            # errors must not replace this failure; a new cancellation still propagates.
             try:
                 await self._handle_stream_error(exc)
+            except Exception:
+                logger.warning("Stream cleanup hook failed while handling an existing exception.", exc_info=True)
             finally:
-                await self.close()
+                try:
+                    await self.close()
+                except Exception:
+                    logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
             raise
 
     async def close(self) -> None:
@@ -4179,6 +4191,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
         """
+        iterator_failed = False
         try:
             iterator: AsyncIterator[UpdateT] | None = self._iterator
             if iterator is not None:
@@ -4188,9 +4201,17 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
                         await close()
+        except BaseException:
+            iterator_failed = True
+            raise
         finally:
             self._consumed = True
-            await self._run_cleanup_hooks()
+            try:
+                await self._run_cleanup_hooks()
+            except Exception:
+                if not iterator_failed:
+                    raise
+                logger.warning("Stream cleanup hook failed after iterator close failed.", exc_info=True)
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.

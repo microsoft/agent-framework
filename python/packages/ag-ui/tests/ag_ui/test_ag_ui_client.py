@@ -25,6 +25,7 @@ from agent_framework import (
 from pytest import MonkeyPatch
 
 from agent_framework_ag_ui._client import AGUIChatClient
+from agent_framework_ag_ui._event_converters import AGUIEventConverter
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
 
@@ -62,9 +63,17 @@ class StubAGUIChatClient(AGUIChatClient):
 class _GatedSSEStream(httpx.AsyncByteStream):
     """Yield one SSE chunk and keep the next event gated until another pull."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        aclose_error: BaseException | None = None,
+        iteration_error: BaseException | None = None,
+    ) -> None:
         self._tail_release = asyncio.Event()
         self._iterator: AsyncGenerator[bytes, None] | None = None
+        self.aclose_error = aclose_error
+        self.iteration_error = iteration_error
+        self.tail_waiting = asyncio.Event()
         self.chunk_indexes_yielded: list[int] = []
         self.tail_requested = False
         self.tail_yielded = False
@@ -88,7 +97,10 @@ class _GatedSSEStream(httpx.AsyncByteStream):
             self.chunk_indexes_yielded.append(0)
             yield self._chunks[0]
             self.tail_requested = True
+            self.tail_waiting.set()
             await self._tail_release.wait()
+            if self.iteration_error is not None:
+                raise self.iteration_error
             self.chunk_indexes_yielded.append(1)
             self.tail_yielded = True
             yield self._chunks[1]
@@ -96,12 +108,61 @@ class _GatedSSEStream(httpx.AsyncByteStream):
         finally:
             self.iterator_finally = True
 
+    def release_tail(self) -> None:
+        self._tail_release.set()
+
     async def aclose(self) -> None:
         self.aclose_calls += 1
         self.closed = True
         self._tail_release.set()
         if self._iterator is not None:
             await self._iterator.aclose()
+        if self.aclose_error is not None and self.aclose_calls == 1:
+            raise self.aclose_error
+
+
+class _FailingAGUIEventStream:
+    """Yield a public AG-UI event, then fail or wait while its close fails."""
+
+    def __init__(
+        self,
+        event: dict[str, Any],
+        *,
+        close_error: OSError,
+        iteration_error: BaseException | None = None,
+        wait_after_event: bool = False,
+    ) -> None:
+        self._event = event
+        self._close_error = close_error
+        self._iteration_error = iteration_error
+        self._wait_after_event = wait_after_event
+        self._index = 0
+        self._release = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.aclose_calls = 0
+        self.aclose_completed = 0
+
+    def __aiter__(self) -> "_FailingAGUIEventStream":
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        if self._index == 0:
+            self._index += 1
+            return self._event
+        if self._wait_after_event:
+            self.waiting.set()
+            await self._release.wait()
+        if self._iteration_error is not None:
+            raise self._iteration_error
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+        self._release.set()
+        await asyncio.sleep(0)
+        self.aclose_completed += 1
+        if self.aclose_calls == 1:
+            raise self._close_error
 
 
 class TestAGUIChatClient:
@@ -860,6 +921,257 @@ class TestAGUIChatClient:
                             await agent.close()
                         else:
                             await client.close()
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    @pytest.mark.parametrize("failure_kind", ["iteration", "conversion", "cancel"])
+    async def test_primary_failure_survives_event_or_http_body_aclose_error(
+        self,
+        monkeypatch: MonkeyPatch,
+        caller: str,
+        failure_kind: str,
+    ) -> None:
+        """AG-UI keeps event, conversion, and cancellation failures over close errors."""
+        primary = RuntimeError("AG-UI primary failure")
+        close_failure = OSError("stream close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+        event_source = (
+            _FailingAGUIEventStream(
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "first"},
+                close_error=close_failure,
+                iteration_error=primary if failure_kind == "iteration" else None,
+                wait_after_event=failure_kind == "cancel",
+            )
+            if failure_kind != "conversion"
+            else None
+        )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        if failure_kind == "conversion":
+
+            def fail_convert_event(_converter: AGUIEventConverter, _event: dict[str, Any]) -> ChatResponseUpdate | None:
+                raise primary
+
+            monkeypatch.setattr(AGUIEventConverter, "convert_event", fail_convert_event)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            if event_source is not None:
+                monkeypatch.setattr(client._http_service, "post_run", lambda *args, **kwargs: event_source)
+
+            if failure_kind == "iteration":
+                first = await stream.__anext__()
+                assert first.text == "first"
+                with pytest.raises(RuntimeError) as error:
+                    await stream.__anext__()
+                assert error.value is primary
+            elif failure_kind == "conversion":
+                with pytest.raises(RuntimeError) as error:
+                    await stream.__anext__()
+                assert error.value is primary
+            else:
+                first = await stream.__anext__()
+                assert first.text == "first"
+                consumer = asyncio.create_task(stream.__anext__())
+                try:
+                    assert event_source is not None
+                    await asyncio.wait_for(event_source.waiting.wait(), timeout=5)
+                    consumer.cancel("consumer cancelled")
+                    with pytest.raises(asyncio.CancelledError) as cancel_error:
+                        await consumer
+                    assert isinstance(cancel_error.value, asyncio.CancelledError)
+                    assert consumer.cancelled()
+                finally:
+                    consumer.cancel()
+                    await asyncio.gather(consumer, return_exceptions=True)
+
+        if failure_kind == "conversion":
+            assert response is not None
+            assert body.aclose_calls >= 1
+            assert body.closed
+            assert body.iterator_finally
+        else:
+            assert event_source is not None
+            assert event_source.aclose_calls >= 1
+            assert event_source.aclose_completed == event_source.aclose_calls
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    async def test_http_body_task_cancel_survives_aclose_error(self, caller: str) -> None:
+        """A task canceled during HTTP body iteration remains canceled when body close fails."""
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+            first = await stream.__anext__()
+            assert first.text == "first"
+            consumer = asyncio.create_task(stream.__anext__())
+            try:
+                await asyncio.wait_for(body.tail_waiting.wait(), timeout=5)
+                consumer.cancel("consumer cancelled")
+                with pytest.raises(asyncio.CancelledError):
+                    await consumer
+                assert consumer.cancelled()
+            finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    async def test_http_body_iteration_error_survives_aclose_error(
+        self,
+        caller: str,
+    ) -> None:
+        """An HTTP body iteration failure should remain primary when body close fails."""
+        primary = RuntimeError("HTTP event iteration failed")
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure, iteration_error=primary)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            first = await stream.__anext__()
+            assert first.text == "first"
+            body.release_tail()
+            with pytest.raises(RuntimeError) as error:
+                await stream.__anext__()
+
+        assert error.value is primary
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    @pytest.mark.parametrize("close_mode", ["explicit", "complete"], ids=["public-close", "normal-completion"])
+    async def test_http_body_aclose_error_propagates_without_primary_failure(
+        self,
+        caller: str,
+        close_mode: str,
+    ) -> None:
+        """A body close failure remains visible when no operation failure takes precedence."""
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            if close_mode == "explicit":
+                first = await stream.__anext__()
+                assert first.text == "first"
+                with pytest.raises(OSError) as error:
+                    await stream.close()
+            else:
+                body.release_tail()
+                with pytest.raises(OSError) as error:
+                    async for _ in stream:
+                        pass
+
+            assert error.value is close_failure
+
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
 
     async def test_get_response_non_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test non-streaming response method."""

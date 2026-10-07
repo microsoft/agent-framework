@@ -512,6 +512,7 @@ class AGUIChatClient(
             available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
             resume=_serialize_resume(options.get("resume")),
         )
+        body_failed = False
         try:
             async for event in events:
                 logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
@@ -539,7 +540,18 @@ class AGUIChatClient(
                                 update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
                     yield update
+        except GeneratorExit:
+            # An explicit close() has no body failure to take precedence over cleanup.
+            raise
+        except BaseException:
+            body_failed = True
+            raise
         finally:
             close = getattr(events, "aclose", None)
             if close is not None:
-                await close()
+                try:
+                    await close()
+                except Exception:
+                    if not body_failed:
+                        raise
+                    logger.warning("AG-UI event cleanup failed while handling an existing exception.", exc_info=True)
