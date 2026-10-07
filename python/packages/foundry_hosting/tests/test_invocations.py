@@ -312,6 +312,14 @@ def _workflow_agent_warnings(captured: Sequence[warnings.WarningMessage]) -> lis
     return [item for item in captured if "Hosting WorkflowAgent" in str(item.message)]
 
 
+def _workflow_agent_logs(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "DEPRECATION: Hosting WorkflowAgent" in record.getMessage()
+    ]
+
+
 async def _invoke_text(server: InvocationsHostServer, message: str) -> str:
     request = _make_request({"message": message})
     with _request_context(session_id="session"):
@@ -680,7 +688,7 @@ class TestInit:
 
 
 class TestLegacyWorkflowAgentHosting:
-    async def test_instance_warns_once_per_host(self) -> None:
+    async def test_instance_warns_once_per_host(self, caplog: pytest.LogCaptureFixture) -> None:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always", DeprecationWarning)
             server = InvocationsHostServer(_make_workflow_agent())
@@ -694,19 +702,22 @@ class TestLegacyWorkflowAgentHosting:
         assert "stateful" in message
         assert "parse_request" in message
         assert Path(deprecations[0].filename).name == Path(__file__).name
+        assert len(_workflow_agent_logs(caplog)) == 1
         assert texts == ["one", "two"]
 
-    async def test_factory_warns_once_on_first_request(self) -> None:
+    async def test_factory_warns_once_on_first_request(self, caplog: pytest.LogCaptureFixture) -> None:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always", DeprecationWarning)
             server = InvocationsHostServer(_make_workflow_agent)
             assert _workflow_agent_warnings(captured) == []
+            assert _workflow_agent_logs(caplog) == []
             texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
 
         assert len(_workflow_agent_warnings(captured)) == 1
+        assert len(_workflow_agent_logs(caplog)) == 1
         assert texts == ["one", "two"]
 
-    async def test_regular_agent_does_not_warn(self) -> None:
+    async def test_regular_agent_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always", DeprecationWarning)
             server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -714,6 +725,7 @@ class TestLegacyWorkflowAgentHosting:
 
         assert text == "hi"
         assert _workflow_agent_warnings(captured) == []
+        assert _workflow_agent_logs(caplog) == []
 
 
 # endregion

@@ -20,9 +20,10 @@ needed by later requests must remain in the supported stores.
 ### Hosting a `WorkflowAgent` is deprecated
 
 Hosting a `WorkflowAgent` (for example `workflow.as_agent()`) through `agent=` is deprecated and should be avoided, and
-both `ResponsesHostServer` and `InvocationsHostServer` emit a `DeprecationWarning` for it. A `WorkflowAgent` is
-stateful: its workflow state stays in memory between runs, so one instance must never serve requests from different
-users or conversations. Host the workflow natively with `workflow=` and a request-aware factory instead; see
+both `ResponsesHostServer` and `InvocationsHostServer` emit a `DeprecationWarning` for it and log the same message at
+`WARNING` level, once per host. A `WorkflowAgent` is stateful: its workflow state stays in memory between runs, so one
+instance must never serve requests from different users or conversations. Host the workflow natively with `workflow=`
+and a request-aware factory instead; see
 [Native Responses workflows](#native-responses-workflows) and
 [Native Invocations workflows](#native-invocations-workflows):
 

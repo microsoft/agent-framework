@@ -502,16 +502,18 @@ class InvocationsHostServer(InvocationAgentServerHost):
     def _warn_legacy_workflow(self) -> None:
         if not self._warned_workflow_agent:
             self._warned_workflow_agent = True
-            warnings.warn(
+            message = (
                 "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
                 "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
                 "never serve requests from different users or conversations. "
                 "Use workflow=a_request_aware_factory with an explicit parse_request. "
                 "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
-                "Wrapper history, context providers, and event semantics are not automatically unwrapped.",
-                DeprecationWarning,
-                stacklevel=3,
+                "Wrapper history, context providers, and event semantics are not automatically unwrapped."
             )
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
+            # warning there; log it as well.
+            logger.warning("DEPRECATION: %s", message)
 
     @asynccontextmanager
     async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
