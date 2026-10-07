@@ -84,6 +84,7 @@ class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
         self._name = name
         self._handoff_to = handoff_to
         self._call_index = 0
+        self.received_messages: list[list[Message]] = []
 
     def _inner_get_response(
         self,
@@ -93,6 +94,7 @@ class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append(list(messages))
         if stream:
             return self._build_streaming_response(options=dict(options))
 
@@ -135,7 +137,7 @@ def _build_reply_contents(
     if handoff_to and call_id:
         contents.append(
             Content.from_function_call(
-                call_id=call_id, name=f"handoff_to_{handoff_to}", arguments={"handoff_to": handoff_to}
+                call_id=call_id, name=get_handoff_tool_name(handoff_to), arguments={"handoff_to": handoff_to}
             )
         )
     text = f"{agent_name} reply"
@@ -301,6 +303,71 @@ def _request_text(event: WorkflowEvent[Any]) -> str:
     messages = request_payload.agent_response.messages
     assert messages
     return messages[-1].text or ""
+
+
+@pytest.mark.parametrize(
+    ("return_to_previous", "expected_start_agent_calls"),
+    [
+        param(None, 1, id="default"),
+        param(True, 1, id="enabled"),
+        param(False, 2, id="disabled"),
+    ],
+)
+async def test_handoff_user_response_routing(
+    return_to_previous: bool | None,
+    expected_start_agent_calls: int,
+) -> None:
+    """User responses return to the prior agent unless configured to revisit the start agent."""
+    triage_client = MockChatClient(name="triage", handoff_to="specialist")
+    specialist_client = MockChatClient(name="specialist")
+    triage = Agent(
+        id="triage",
+        name="triage",
+        client=triage_client,
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=specialist_client,
+        require_per_service_call_history_persistence=True,
+    )
+    builder = HandoffBuilder(
+        participants=_as_handoff_agents(triage, specialist),
+        termination_condition=lambda _: False,
+    ).with_start_agent(_as_handoff_agent(triage))
+    if return_to_previous is True:
+        builder.enable_return_to_previous()
+    elif return_to_previous is False:
+        builder.enable_return_to_previous(False)
+    workflow = builder.build()
+
+    first_events = await _drain(workflow.run("Need specialist help", stream=True))
+    first_request = _latest_request_info_event(first_events)
+    assert first_request.source_executor_id == specialist.name
+    assert len(triage_client.received_messages) == 1
+    assert len(specialist_client.received_messages) == 1
+
+    second_events = await _drain(
+        workflow.run(
+            stream=True,
+            responses={first_request.request_id: [Message(role="user", contents=["Additional details"])]},
+        )
+    )
+    second_request = _latest_request_info_event(second_events)
+
+    assert second_request.source_executor_id == specialist.name
+    assert len(triage_client.received_messages) == expected_start_agent_calls
+    assert len(specialist_client.received_messages) == 2
+    if return_to_previous is False:
+        assert any(
+            message.role == "user" and message.text == "Additional details"
+            for message in triage_client.received_messages[-1]
+        )
+    assert any(
+        message.role == "user" and message.text == "Additional details"
+        for message in specialist_client.received_messages[-1]
+    )
 
 
 async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
@@ -1447,6 +1514,90 @@ async def test_context_provider_preserved_during_handoff():
         "Context provider should be called during workflow execution, "
         "indicating it was properly preserved during agent cloning"
     )
+
+
+@pytest.mark.parametrize(
+    ("target_id", "expected"),
+    [
+        ("refund_agent", "handoff_to_refund_agent"),
+        ("order-status", "handoff_to_order-status"),
+        ("Billing Agent", "handoff_to_Billing_Agent"),
+        ("support.v2", "handoff_to_support_v2"),
+    ],
+)
+def test_handoff_tool_name_uses_only_valid_tool_name_characters(target_id: str, expected: str) -> None:
+    assert get_handoff_tool_name(target_id) == expected
+
+
+def test_handoff_tool_name_stays_within_provider_length_limit() -> None:
+    long_name = "customer_billing_and_refund_escalation_specialist_for_enterprise_accounts"
+
+    tool_name = get_handoff_tool_name(long_name)
+
+    assert len(tool_name) == 64
+    assert tool_name == f"handoff_to_{long_name}"[:64]
+
+
+def test_handoff_builder_rejects_long_targets_with_the_same_tool_name() -> None:
+    prefix = "customer_billing_and_refund_escalation_specialist_for_enterprise"
+    triage = MockHandoffAgent(name="triage")
+    first = MockHandoffAgent(name=f"{prefix}_north")
+    second = MockHandoffAgent(name=f"{prefix}_south")
+
+    with pytest.raises(ValueError, match="conflicts with existing tool"):
+        HandoffBuilder(participants=_as_handoff_agents(triage, first, second)).with_start_agent(
+            _as_handoff_agent(triage)
+        ).build()
+
+
+class ToolNameRecordingClient(MockChatClient):
+    """Mock chat client that records the tool names offered to the model."""
+
+    def __init__(self, *, name: str, handoff_to: str | None = None) -> None:
+        super().__init__(name=name, handoff_to=handoff_to)
+        self.offered_tool_names: list[str] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.offered_tool_names.extend(tool.name for tool in options.get("tools") or [])
+        return super()._inner_get_response(messages=messages, stream=stream, options=options, **kwargs)
+
+
+async def test_handoff_between_agents_with_spaces_in_names() -> None:
+    """Agent names with spaces still produce tool names that model providers accept."""
+    triage_client = ToolNameRecordingClient(name="Triage Desk", handoff_to="Billing Agent")
+    billing_client = ToolNameRecordingClient(name="Billing Agent")
+    triage = Agent(client=triage_client, name="Triage Desk", require_per_service_call_history_persistence=True)
+    billing = Agent(client=billing_client, name="Billing Agent", require_per_service_call_history_persistence=True)
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, billing))
+        .with_start_agent(_as_handoff_agent(triage))
+        .build()
+    )
+    async for _ in workflow.run("I was charged twice", stream=True):
+        pass
+
+    assert "handoff_to_Billing_Agent" in triage_client.offered_tool_names
+    assert all(re.fullmatch(r"[a-zA-Z0-9_-]+", name) for name in triage_client.offered_tool_names)
+    assert billing_client.received_messages
+
+
+def test_handoff_builder_rejects_targets_with_the_same_tool_name() -> None:
+    triage = MockHandoffAgent(name="triage")
+    spaced = MockHandoffAgent(name="Billing Agent")
+    underscored = MockHandoffAgent(name="Billing_Agent")
+
+    with pytest.raises(ValueError, match="handoff_to_Billing_Agent"):
+        HandoffBuilder(participants=_as_handoff_agents(triage, spaced, underscored)).with_start_agent(
+            _as_handoff_agent(triage)
+        ).build()
 
 
 def test_handoff_builder_accepts_all_instances_in_add_handoff():

@@ -510,7 +510,7 @@ jobs:
           name: CoverageReport-ubuntu-latest-${{ env.COVERAGE_FRAMEWORK }}-Release
           path: ./TestResults/Reports
       - name: Upload coverage report to GitHub
-        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
+        uses: actions/upload-code-coverage@bfa741d815a28cb064a8e3a0837e577457a017d5 # v1.4.3
         with:
           file: ./TestResults/Reports/Cobertura.xml
           language: CSharp

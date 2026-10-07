@@ -81,6 +81,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from mcp import types
     from mcp.server.lowlevel import Server
     from pydantic import BaseModel
@@ -105,9 +107,23 @@ _DELEGATED_STATE_MISSING = object()
 
 def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
     """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
     from ._harness._tool_approval import ToolApprovalMiddleware
 
-    return frozenset(item.source_id for item in middleware or () if isinstance(item, ToolApprovalMiddleware))
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
+
+
+def _provider_service_session_state_keys(agent: object) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by an agent or its client."""
+    keys: set[str] = set()
+    # A generic Agent can use a provider client that persists its own continuation state.
+    for owner in (agent, getattr(agent, "client", None)):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast("Collection[Any]", declared) if isinstance(key, str))
+    return frozenset(keys)
 
 
 def _merge_delegated_session_state(
@@ -662,9 +678,10 @@ class BaseAgent(SerializationMixin):
             propagate_session: If True, the parent agent's session is forwarded
                 to this sub-agent's ``run()`` call. Application-state changes
                 propagate back to the parent, while framework approval continuation
-                state remains isolated. Defaults to False. The sub-agent always
-                receives an AgentSession so session-backed middleware can run.
-                When False, that session is private to this invocation.
+                state and provider-owned service session state remain isolated.
+                Defaults to False. The sub-agent always receives an AgentSession
+                so session-backed middleware can run. When False, that session is
+                private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -679,6 +696,10 @@ class BaseAgent(SerializationMixin):
             ``propagate_session=True``, configure distinct middleware ``source_id``
             values. The delegated call raises ToolExecutionException before running
             the child when their shared session-state keys overlap.
+
+            Direct or custom-loop invocation with ``propagate_session=True`` must set
+            :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
+            the parent session is non-empty. Automatic function calling supplies it.
 
         Examples:
             .. code-block:: python
@@ -730,10 +751,24 @@ class BaseAgent(SerializationMixin):
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
             parent_approval_source_ids: frozenset[str] = frozenset()
+            parent_service_session_state_keys: frozenset[str] = frozenset()
 
             if propagate_session and parent_session is not None:
                 from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
+                # A custom loop can bypass the framework seam that identifies the parent provider's state.
+                # Refuse a non-empty shared session rather than guessing which keys are safe to delegate.
+                if ctx.parent_service_session_state_keys is None:
+                    if parent_session.state:
+                        raise ToolExecutionException(
+                            f"Agent tool {tool_name!r} cannot safely propagate a non-empty parent session because "
+                            "the invocation path did not provide parent provider-owned session state keys. "
+                            "Use the automatic function-calling loop, set "
+                            "FunctionInvocationContext.parent_service_session_state_keys in a custom loop, "
+                            "or set propagate_session=False."
+                        )
+                else:
+                    parent_service_session_state_keys = ctx.parent_service_session_state_keys
                 raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
                 parent_approval_source_ids = (
                     cast("frozenset[str]", raw_parent_approval_source_ids)
@@ -767,6 +802,10 @@ class BaseAgent(SerializationMixin):
                     _TOOL_APPROVAL_STATE_KEY,
                     _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
                     _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    # Service handles belong to one agent's remote resources, not shared application state.
+                    # Exclude them in both directions so later children cannot inherit an earlier child's handles.
+                    *_provider_service_session_state_keys(self),
+                    *parent_service_session_state_keys,
                     *child_approval_source_ids,
                     *parent_approval_source_ids,
                 })
@@ -787,7 +826,7 @@ class BaseAgent(SerializationMixin):
                     # The callback is a host-facing observer: feed it the *released*
                     # updates by consuming the stream, never by registering a transform
                     # hook on it. Hooks can end up applied to buffered content ahead of an
-                    # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
+                    # egress gate's verdict, so a
                     # hook-registered observer could see denied or unredacted content.
                     async for update in stream:
                         callback_result = stream_callback(update)
@@ -892,8 +931,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 name="weather-agent",
                 instructions="You are a weather assistant.",
                 tools=get_weather,
-                temperature=0.7,
-                max_tokens=500,
+                default_options={"temperature": 0.7, "max_tokens": 500},
             )
 
             # Use streaming responses
@@ -912,20 +950,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
-                name="reasoning-agent",
-                instructions="You are a reasoning assistant.",
-                options={
+                name="typed-agent",
+                instructions="You are a helpful assistant.",
+                default_options={
                     "temperature": 0.7,
                     "max_tokens": 500,
-                    "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
+                    "include": ["message.output_text.logprobs"],  # OpenAI-specific option
                 },
             )
 
-            # Or pass options at runtime
+            # Or override default options at runtime
             response = await agent.run(
                 "What is 25 * 47?",
-                options={"temperature": 0.0, "logprobs": True},
+                options={"temperature": 0.0},
             )
+
+        Explicit resource management (equivalent to ``async with agent``):
+
+        .. code-block:: python
+
+            await agent.open()
+            try:
+                response = await agent.run("Hello")
+            finally:
+                await agent.close()
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -1049,22 +1097,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
-    async def __aenter__(self) -> Self:
-        """Enter the async context manager.
+    async def open(self) -> Self:
+        """Open the client's and configured MCP tools' async contexts.
 
-        If any of the client or local_mcp_tools are context managers,
-        they will be entered into the async exit stack to ensure proper cleanup.
-
-        Note:
-            This list might be extended in the future.
+        Call ``await agent.close()`` when finished, or use ``async with agent``
+        to open and close automatically. Already-entered contexts are closed if
+        a later context fails to open.
 
         Returns:
-            The Agent instance.
+            The agent instance.
         """
-        for context_manager in chain([self.client], self.mcp_tools):
-            if isinstance(context_manager, AbstractAsyncContextManager):
-                await self._async_exit_stack.enter_async_context(context_manager)
+        try:
+            for context_manager in chain([self.client], self.mcp_tools):
+                if isinstance(context_manager, AbstractAsyncContextManager):
+                    await self._async_exit_stack.enter_async_context(context_manager)
+        except BaseException:
+            await self.close()
+            raise
         return self
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager by opening managed resources."""
+        return await self.open()
 
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
@@ -1095,22 +1149,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             )
         return history_providers
 
+    async def close(self) -> None:
+        """Close managed client and MCP contexts, including lazily opened MCP tools."""
+        await self._async_exit_stack.aclose()
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Exit the async context manager.
-
-        Close the async exit stack to ensure all context managers are exited properly.
-
-        Args:
-            exc_type: The exception type if an exception was raised, None otherwise.
-            exc_val: The exception value if an exception was raised, None otherwise.
-            exc_tb: The exception traceback if an exception was raised, None otherwise.
-        """
-        await self._async_exit_stack.aclose()
+        """Exit the async context manager by closing managed resources."""
+        await self.close()
 
     def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
@@ -1575,7 +1625,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
-        from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+        from ._tools import (
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1622,6 +1675,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
+        )
+        # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
+        additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
+            _provider_service_session_state_keys(self)
         )
 
         model = opts.pop("model", None)
@@ -1944,6 +2001,9 @@ class Agent(
     - OpenTelemetry-based telemetry for observability
 
     For a minimal implementation without these features, use :class:`RawAgent`.
+
+    Use ``await agent.open()`` and ``await agent.close()`` for explicit resource
+    management, or ``async with agent`` to close managed resources automatically.
     """
 
     @overload

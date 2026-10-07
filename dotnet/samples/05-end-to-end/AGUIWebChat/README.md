@@ -2,6 +2,9 @@
 
 This sample demonstrates a Blazor-based web chat application using the AG-UI protocol to communicate with an AI agent server.
 
+> [!WARNING]
+> This sample does not authenticate AG-UI callers. Before exposing it to other users, configure authentication and endpoint authorization, and enable caller isolation if you add session persistence. Follow the shared [AG-UI security configuration](../../02-agents/AGUI/README.md#security-considerations). Azure OpenAI credentials authenticate the server to the model service, not users to this application.
+
 The sample consists of two projects:
 
 1. **Server** - An ASP.NET Core server that hosts a simple chat agent using the AG-UI protocol
@@ -105,6 +108,8 @@ The Blazor UI (`Client/Components/Pages/Chat/Chat.razor`) uses the `IChatClient`
 - Stream responses back in real-time
 - Maintain conversation history
 - Display messages with appropriate styling
+
+For an authenticated deployment, the outbound `HttpClient` must send an appropriate credential for the current user on every AG-UI request. Signing into the Blazor application alone does not authenticate its calls to the separate AG-UI server. Do not substitute one shared service identity when per-user session isolation is required.
 
 ### UI Components
 
