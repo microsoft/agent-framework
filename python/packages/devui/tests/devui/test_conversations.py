@@ -384,15 +384,19 @@ async def test_list_items_pagination_with_checkpoint_items(order: str):
     for _ in range(2):
         await storage.save(WorkflowCheckpoint(workflow_name="workflow", graph_signature_hash="hash"))
 
+    def item_id(item: object) -> str:
+        # Checkpoint items are plain dicts at runtime; the rest are models.
+        return cast(str, item["id"] if isinstance(item, dict) else getattr(item, "id"))
+
     all_items, _ = await store.list_items(conversation.id, order=order)
-    all_ids = [item["id"] if isinstance(item, dict) else item.id for item in all_items]
+    all_ids = [item_id(item) for item in all_items]
 
     paged_ids: list[str] = []
-    after = None
+    after: str | None = None
     has_more = True
     while has_more:
         page, has_more = await store.list_items(conversation.id, limit=1, after=after, order=order)
-        after = page[-1]["id"] if isinstance(page[-1], dict) else page[-1].id
+        after = item_id(page[-1])
         paged_ids.append(after)
 
     assert paged_ids == all_ids
