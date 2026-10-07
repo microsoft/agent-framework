@@ -12,7 +12,7 @@ import struct
 import sys
 import typing
 import warnings
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -22,7 +22,10 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from enum import Enum
 from functools import partial, wraps
 from time import perf_counter, time_ns
 from typing import (
@@ -40,11 +43,13 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import uuid4
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, RootModel, ValidationError, create_model
+from pydantic_core import TzInfo
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -215,6 +220,87 @@ class _PreparedArgumentsState:
     arguments: dict[str, Any]
     token: Any
     validated_model: BaseModel | None = None
+
+
+def _inferred_argument_projection_token(value: Any, *, native: bool) -> Any:
+    """Compare invocation fields with their visible projection without rerunning serializers."""
+    value_type = cast(type[object], type(value))
+    if isinstance(value, BaseModel):
+        if not native:
+            return _OpaqueArgumentToken(value_type.__qualname__, id(value))
+        if isinstance(value, RootModel):
+            return _inferred_argument_projection_token(cast(RootModel[Any], value).root, native=True)
+        model_values = {name: getattr(value, name) for name in type(value).model_fields}
+        if value.model_extra:
+            model_values.update(value.model_extra)
+        return _inferred_argument_projection_token(model_values, native=True)
+    if is_dataclass(value) and not isinstance(value, type):
+        if not native:
+            return _OpaqueArgumentToken(value_type.__qualname__, id(value))
+        dataclass_values = {field.name: getattr(value, field.name) for field in fields(value)}
+        return _inferred_argument_projection_token(dataclass_values, native=True)
+    if value_type is dict:
+        return (
+            "dict",
+            tuple(
+                (
+                    _inferred_argument_projection_token(key, native=native),
+                    _inferred_argument_projection_token(item, native=native),
+                )
+                for key, item in cast(dict[Any, Any], value).items()
+            ),
+        )
+    if value_type in (list, tuple):
+        return (
+            value_type,
+            tuple(
+                _inferred_argument_projection_token(item, native=native)
+                for item in cast(list[Any] | tuple[Any, ...], value)
+            ),
+        )
+    if value_type in (set, frozenset):
+        return (
+            value_type,
+            frozenset(
+                Counter(
+                    _inferred_argument_projection_token(item, native=native)
+                    for item in cast(set[Any] | frozenset[Any], value)
+                ).items()
+            ),
+        )
+    if value_type is datetime or value_type is time:
+        temporal_value = cast(datetime | time, value)
+        return (
+            value_type,
+            temporal_value.isoformat(),
+            temporal_value.fold,
+            _inferred_argument_projection_token(temporal_value.tzinfo, native=native),
+        )
+    if value_type is timezone or value_type is TzInfo:
+        offset_timezone = cast(timezone | TzInfo, value)
+        return (
+            value_type,
+            _inferred_argument_projection_token(offset_timezone.utcoffset(None), native=native),
+            offset_timezone.tzname(None),
+        )
+    if value_type is ZoneInfo:
+        # A ZoneInfo instance holds immutable rules; a key alone cannot identify those rules.
+        return (ZoneInfo, id(value))
+    if value_type is date:
+        return (date, cast(date, value).isoformat())
+    if value_type is timedelta:
+        duration = cast(timedelta, value)
+        return (timedelta, duration.days, duration.seconds, duration.microseconds)
+    if value_type is Decimal:
+        return (Decimal, cast(Decimal, value).as_tuple())
+    if value_type is UUID:
+        identifier = cast(UUID, value)
+        return (UUID, identifier.int, identifier.is_safe)
+    if isinstance(value, Enum):
+        return (value_type, value.name, _inferred_argument_projection_token(value.value, native=native))
+    if value is None or value_type in (bool, int, float, str, bytes):
+        return _argument_comparison_token(value)
+    return _OpaqueArgumentToken(value_type.__qualname__, id(value))
 
 
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
@@ -842,14 +928,15 @@ class FunctionTool(SerializationMixin):
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
                 if self.input_model is not None and not self._schema_supplied:
-                    # exclude_unset (not exclude_none): keep arguments the model
-                    # explicitly provided even when their value is null, and drop
-                    # only the ones it left out, so the function's own defaults
-                    # apply. Excluding null instead would strip a required nullable
-                    # parameter the model deliberately set to null, failing the
-                    # invocation on the missing argument (#5934).
+                    # Keep supplied root arguments, including explicit null (#5934), so
+                    # omitted parameters retain the function's defaults. Inferred inputs
+                    # expose nested defaults as well because their native models are invoked.
                     validated_model = self.input_model.model_validate(parsed_arguments)
-                    parsed_arguments = validated_model.model_dump(exclude_unset=True)
+                    parsed_arguments = (
+                        validated_model.model_dump(exclude_unset=True)
+                        if self._input_model_explicitly_provided
+                        else validated_model.model_dump(include=validated_model.model_fields_set)
+                    )
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -858,7 +945,11 @@ class FunctionTool(SerializationMixin):
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
                 validated_model = arguments
-                parsed_arguments = arguments.model_dump(exclude_unset=True)
+                parsed_arguments = (
+                    arguments.model_dump(exclude_unset=True)
+                    if self._input_model_explicitly_provided
+                    else arguments.model_dump(include=arguments.model_fields_set)
+                )
             else:
                 raise TypeError(
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -1036,11 +1127,13 @@ class FunctionTool(SerializationMixin):
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
+            MiddlewareFailure: If inferred native arguments cannot be faithfully represented
+                by the normalized arguments of an explicit or injected invocation context.
         """
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
-        from ._middleware import FunctionInvocationContext
+        from ._middleware import FunctionInvocationContext, MiddlewareFailure
         from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
@@ -1091,6 +1184,18 @@ class FunctionTool(SerializationMixin):
         if prepared_state.validated_model is not None:
             native_arguments = dict(prepared_state.validated_model)
             call_kwargs = {name: native_arguments.get(name, value) for name, value in validated_arguments.items()}
+            if effective_context is not None:
+                for name, value in call_kwargs.items():
+                    native_token = _inferred_argument_projection_token(value, native=True)
+                    projected_token = _inferred_argument_projection_token(validated_arguments[name], native=False)
+                    if (
+                        _contains_opaque_argument_token(native_token)
+                        or _contains_opaque_argument_token(projected_token)
+                        or native_token != projected_token
+                    ):
+                        raise MiddlewareFailure(
+                            "Cannot safely invoke inferred arguments that differ from the normalized mapping."
+                        )
         else:
             call_kwargs = dict(validated_arguments)
         observable_kwargs = dict(validated_arguments)

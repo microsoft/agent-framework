@@ -2,16 +2,24 @@
 import asyncio
 import copy
 import logging
+import struct
 import threading
+from collections import defaultdict
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone, tzinfo
+from decimal import Decimal
+from enum import Enum
+from io import BytesIO
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, RootModel, computed_field, field_serializer, field_validator, model_validator
+from typing_extensions import Self
 
 import agent_framework._tools as tools_module
 from agent_framework import (
@@ -20,7 +28,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
-from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._middleware import FunctionInvocationContext, MiddlewareFailure
 from agent_framework._tools import (
     _auto_invoke_function,
     _format_tool_parameters,
@@ -572,6 +580,389 @@ async def test_invoke_rejects_invalid_nested_model_argument() -> None:
         await describe_customer.invoke(arguments={"customer": {}})
 
     assert not executed
+
+
+@pytest.mark.parametrize("projection_kind", ["excluded", "transformed"])
+async def test_context_inferred_arguments_reject_lossy_projection(projection_kind: str) -> None:
+    """A context cannot authorize a projection and execute different native fields."""
+    executed: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        name: str
+        detail: str = Field(exclude=projection_kind == "excluded")
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            return value.upper() if projection_kind == "transformed" else value
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        executed.append(customer)
+        return customer.name
+
+    context = FunctionInvocationContext(
+        function=describe_customer, arguments={"customer": {"name": "Ada", "detail": "regular"}}
+    )
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_customer.invoke(context=context)
+    assert executed == []
+
+
+async def test_context_inferred_arguments_include_nested_defaults_only() -> None:
+    """Middleware sees effective nested defaults while omitted function defaults stay omitted."""
+    validations: list[str] = []
+    serializations: list[str] = []
+    received: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        name: str
+        category: str = "regular"
+
+        @field_validator("name")
+        @classmethod
+        def validate_name(cls, value: str) -> str:
+            validations.append(value)
+            return value
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            serializations.append(value)
+            return value
+
+    @tool
+    def describe_customer(customer: Customer, suffix: str = "!") -> str:
+        received.append(customer)
+        return f"{customer.name}:{customer.category}{suffix}"
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"name": "Ada"}})
+    result = await describe_customer.invoke(context=context)
+    assert result[0].text == "Ada:regular!"
+    assert context.arguments == {"customer": {"name": "Ada", "category": "regular"}}
+    assert len(received) == 1
+    assert validations == serializations == ["Ada"]
+
+
+@pytest.mark.parametrize("projection_kind", ["excluded", "transformed"])
+async def test_injected_context_rejects_lossy_inferred_projection(projection_kind: str) -> None:
+    """Implicitly injected contexts have the same visible argument contract as explicit ones."""
+    executed: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        name: str
+        detail: str = Field(exclude=projection_kind == "excluded")
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            return value.upper() if projection_kind == "transformed" else value
+
+    @tool
+    def describe_customer(customer: Customer, ctx: FunctionInvocationContext) -> str:
+        executed.append(customer)
+        return customer.name
+
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_customer.invoke(arguments={"customer": {"name": "Ada", "detail": "regular"}})
+    assert executed == []
+
+
+async def test_context_inferred_arguments_reject_opaque_fields() -> None:
+    """Object identity cannot prove that a native public field is faithfully represented."""
+    opaque_value = Mock()
+    executed: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        detail: Any
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        executed.append(customer)
+        return "described"
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"detail": opaque_value}})
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_customer.invoke(context=context)
+    assert executed == []
+
+
+async def test_context_inferred_arguments_include_factory_and_validator_defaults() -> None:
+    """Derived nested fields are visible without rerunning factories or validators."""
+    factory_calls: list[str] = []
+    validation_calls: list[str] = []
+
+    def default_category() -> str:
+        factory_calls.append("category")
+        return "regular"
+
+    class Customer(BaseModel):
+        name: str
+        category: str = Field(default_factory=default_category)
+        display_name: str = ""
+
+        @model_validator(mode="after")
+        def set_display_name(self) -> Self:
+            validation_calls.append(self.name)
+            self.display_name = self.name.upper()
+            return self
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        return customer.display_name
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"name": "Ada"}})
+    result = await describe_customer.invoke(context=context)
+    assert result[0].text == "ADA"
+    assert context.arguments == {"customer": {"name": "Ada", "category": "regular", "display_name": "ADA"}}
+    assert factory_calls == ["category"]
+    assert validation_calls == ["Ada"]
+
+
+async def test_context_inferred_arguments_preserve_root_model() -> None:
+    """Root models compare their declared root value with the normalized mapping."""
+
+    class Names(RootModel[list[str]]):
+        pass
+
+    @tool
+    def describe_names(names: Names) -> str:
+        return ",".join(names.root)
+
+    context = FunctionInvocationContext(function=describe_names, arguments={"names": ["Ada", "Grace"]})
+    result = await describe_names.invoke(context=context)
+    assert result[0].text == "Ada,Grace"
+    assert context.arguments == {"names": ["Ada", "Grace"]}
+
+
+async def test_context_inferred_arguments_reject_additional_computed_projection() -> None:
+    """A projection with fields outside the native input contract does not silently pass."""
+    executed: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        name: str
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def display_name(self) -> str:
+            return self.name.upper()
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        executed.append(customer)
+        return customer.name
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"name": "Ada"}})
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_customer.invoke(context=context)
+    assert executed == []
+
+
+@pytest.fixture
+def utc_zone_info() -> ZoneInfo:
+    """Use a constant UTC ruleset without requiring a system timezone database."""
+    header = b"TZif\x00" + b"\x00" * 15 + struct.pack("!6l", 0, 0, 0, 0, 1, 4)
+    utc_type = struct.pack("!lBB", 0, 0, 0) + b"UTC\x00"
+    return ZoneInfo.from_file(BytesIO(header + utc_type), key="UTC")
+
+
+@pytest.mark.parametrize("temporal_kind", ["datetime", "time"])
+async def test_context_inferred_arguments_reject_changed_timezone(temporal_kind: str, utc_zone_info: ZoneInfo) -> None:
+    """Equal timestamp text cannot conceal a different native timezone representation."""
+    executed: list[BaseModel] = []
+
+    class Schedule(BaseModel):
+        appointment: datetime | time
+
+        @field_serializer("appointment")
+        def serialize_appointment(self, value: datetime | time) -> datetime | time:
+            return value.replace(tzinfo=timezone.utc)
+
+    appointment = (
+        datetime(2026, 1, 1, tzinfo=utc_zone_info) if temporal_kind == "datetime" else time(12, tzinfo=utc_zone_info)
+    )
+
+    @tool
+    def describe_schedule(schedule: Schedule) -> str:
+        executed.append(schedule)
+        return schedule.appointment.isoformat()
+
+    context = FunctionInvocationContext(
+        function=describe_schedule, arguments={"schedule": {"appointment": appointment}}
+    )
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_schedule.invoke(context=context)
+    assert executed == []
+
+
+async def test_context_inferred_arguments_reject_unknown_timezone() -> None:
+    """A mutable custom timezone is not an immutable timestamp argument representation."""
+    executed: list[BaseModel] = []
+
+    class CustomTimezone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            return timedelta(0)
+
+        def dst(self, dt: datetime | None) -> timedelta:
+            return timedelta(0)
+
+        def tzname(self, dt: datetime | None) -> str:
+            return "UTC"
+
+    class Schedule(BaseModel):
+        appointment: datetime
+
+    @tool
+    def describe_schedule(schedule: Schedule) -> str:
+        executed.append(schedule)
+        return schedule.appointment.isoformat()
+
+    context = FunctionInvocationContext(
+        function=describe_schedule,
+        arguments={"schedule": {"appointment": datetime(2026, 1, 1, tzinfo=CustomTimezone())}},
+    )
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_schedule.invoke(context=context)
+    assert executed == []
+
+
+@pytest.mark.parametrize("projection_kind", ["reordered", "subclass"])
+async def test_context_inferred_arguments_reject_changed_dictionary_semantics(projection_kind: str) -> None:
+    """Projection must retain native dictionary order and cannot erase subclass behavior."""
+    executed: list[BaseModel] = []
+
+    class Record(BaseModel):
+        attributes: Any
+
+        @field_serializer("attributes")
+        def serialize_attributes(self, value: Any) -> dict[str, str]:
+            pairs = list(value.items())
+            return dict(reversed(pairs)) if projection_kind == "reordered" else dict(pairs)
+
+    attributes = {"first": "a", "second": "b"}
+    if projection_kind == "subclass":
+        attributes = defaultdict(str, attributes)
+
+    @tool
+    def describe_record(record: Record) -> str:
+        executed.append(record)
+        return ",".join(record.attributes)
+
+    context = FunctionInvocationContext(function=describe_record, arguments={"record": {"attributes": attributes}})
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_record.invoke(context=context)
+    assert executed == []
+
+
+@pytest.mark.parametrize("temporal_kind", ["datetime", "time"])
+@pytest.mark.parametrize("timezone_kind", ["naive", "offset", "zone", "parsed"])
+async def test_context_inferred_arguments_preserve_supported_timezones(
+    temporal_kind: str, timezone_kind: str, utc_zone_info: ZoneInfo
+) -> None:
+    """Native and normalized arguments retain the same standard timezone semantics."""
+
+    class Schedule(BaseModel):
+        appointment: datetime | time
+
+    zone: tzinfo | None = None
+    if timezone_kind == "offset":
+        zone = timezone(timedelta(hours=2), "planned")
+    elif timezone_kind == "zone":
+        zone = utc_zone_info
+    appointment: datetime | time | str = (
+        datetime(2026, 1, 1, 12, tzinfo=zone) if temporal_kind == "datetime" else time(12, tzinfo=zone)
+    )
+    if timezone_kind == "parsed":
+        appointment = "2026-01-01T12:00:00+02:00" if temporal_kind == "datetime" else "12:00:00+02:00"
+    received: list[datetime | time] = []
+
+    @tool
+    def describe_schedule(schedule: Schedule) -> str:
+        received.append(schedule.appointment)
+        return schedule.appointment.isoformat()
+
+    context = FunctionInvocationContext(
+        function=describe_schedule, arguments={"schedule": {"appointment": appointment}}
+    )
+    result = await describe_schedule.invoke(context=context)
+    assert len(received) == 1
+    assert result[0].text == received[0].isoformat()
+    assert isinstance(context.arguments, dict)
+    assert context.arguments["schedule"]["appointment"] is received[0]
+    if timezone_kind != "parsed":
+        assert received[0].tzinfo is zone
+
+
+async def test_context_inferred_arguments_preserve_enum_fields() -> None:
+    """Standard enum fields retain their native type and exact member in the visible mapping."""
+
+    class Category(Enum):
+        REGULAR = "regular"
+
+    class Customer(BaseModel):
+        category: Category
+
+    @tool
+    def describe_customer(customer: Customer) -> str:
+        assert customer.category is Category.REGULAR
+        return customer.category.value
+
+    context = FunctionInvocationContext(function=describe_customer, arguments={"customer": {"category": "regular"}})
+    result = await describe_customer.invoke(context=context)
+    assert result[0].text == "regular"
+    assert context.arguments == {"customer": {"category": Category.REGULAR}}
+
+
+@pytest.mark.parametrize("container_kind", ["set", "frozenset"])
+@pytest.mark.parametrize("scalar_kind", ["float", "decimal"])
+async def test_context_inferred_arguments_reject_changed_set_multiplicity(
+    container_kind: str, scalar_kind: str
+) -> None:
+    """Distinct NaN members must not collapse to one comparison token during projection."""
+    executed: list[BaseModel] = []
+
+    class Measurements(BaseModel):
+        values: set[Any] | frozenset[Any]
+
+        @field_serializer("values")
+        def serialize_values(self, value: set[Any] | frozenset[Any]) -> set[Any] | frozenset[Any]:
+            return type(value)([next(iter(value))])
+
+    first = float("nan") if scalar_kind == "float" else Decimal("NaN")
+    second = float("nan") if scalar_kind == "float" else Decimal("NaN")
+    values = {first, second} if container_kind == "set" else frozenset([first, second])
+    assert len(values) == 2
+
+    @tool
+    def describe_measurements(measurements: Measurements) -> str:
+        executed.append(measurements)
+        return str(len(measurements.values))
+
+    context = FunctionInvocationContext(function=describe_measurements, arguments={"measurements": {"values": values}})
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        await describe_measurements.invoke(context=context)
+    assert executed == []
+
+
+@pytest.mark.parametrize("container_kind", ["set", "frozenset"])
+@pytest.mark.parametrize("scalar_kind", ["float", "decimal"])
+async def test_context_inferred_arguments_preserve_set_multiplicity(container_kind: str, scalar_kind: str) -> None:
+    """Faithful set projections preserve all distinct NaN members in either supported container."""
+
+    class Measurements(BaseModel):
+        values: set[Any] | frozenset[Any]
+
+    first = float("nan") if scalar_kind == "float" else Decimal("NaN")
+    second = float("nan") if scalar_kind == "float" else Decimal("NaN")
+    values = {first, second} if container_kind == "set" else frozenset([first, second])
+
+    @tool
+    def describe_measurements(measurements: Measurements) -> str:
+        assert type(measurements.values) is type(values)
+        return str(len(measurements.values))
+
+    context = FunctionInvocationContext(function=describe_measurements, arguments={"measurements": {"values": values}})
+    result = await describe_measurements.invoke(context=context)
+    assert result[0].text == "2"
+    assert isinstance(context.arguments, dict)
+    assert len(context.arguments["measurements"]["values"]) == 2
 
 
 async def test_invoke_preserves_explicit_input_model_serialization() -> None:

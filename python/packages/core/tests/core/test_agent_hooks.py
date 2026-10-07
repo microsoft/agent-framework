@@ -13,7 +13,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, PrivateAttr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
 import agent_framework
 import agent_framework._telemetry as telemetry
@@ -116,7 +116,18 @@ class _HookCustomer(BaseModel):
     @field_serializer("name")
     def serialize_name(self, value: str) -> str:
         self._serialization_count += 1
-        return f"{value.upper()}:{self._serialization_count}"
+        return value
+
+
+class _ExcludedHookCustomer(_HookCustomer):
+    detail: str = Field(exclude=True)
+
+
+class _TransformedHookCustomer(_HookCustomer):
+    @field_serializer("name")
+    def serialize_name(self, value: str) -> str:
+        self._serialization_count += 1
+        return value.upper()
 
 
 @dataclass
@@ -905,7 +916,7 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
 
         function = describe_customer
         arguments = {"customer": {"name": "Ada"}}
-        expected_args = {"customer": {"name": "ADA:1"}}
+        expected_args = {"customer": {"name": "Ada"}}
     elif container == "list":
 
         @tool
@@ -915,7 +926,7 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
 
         function = describe_customers
         arguments = {"customers": [{"name": "Ada"}]}
-        expected_args = {"customers": [{"name": "ADA:1"}]}
+        expected_args = {"customers": [{"name": "Ada"}]}
     elif container == "dataclass":
 
         @tool
@@ -925,7 +936,7 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
 
         function = describe_request
         arguments = {"request": {"customer": {"name": "Ada"}}}
-        expected_args = {"request": {"customer": {"name": "ADA:1"}}}
+        expected_args = {"request": {"customer": {"name": "Ada"}}}
     elif container == "scalars":
 
         @tool
@@ -938,7 +949,7 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
             "customer": {"name": "Ada", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
         }
         expected_args = {
-            "customer": {"name": "ADA:1", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
+            "customer": {"name": "Ada", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
         }
     else:
 
@@ -960,7 +971,7 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
         }
         expected_args = {
             "customer": {
-                "name": "ADA:1",
+                "name": "Ada",
                 "created_at": "2026-10-04T00:00:00+00:00" if offset else "2026-10-04T00:00:00",
                 "birthday": "2000-01-02",
                 "appointment": "12:30:00",
@@ -1032,7 +1043,7 @@ async def test_approved_nested_arguments_keep_normalized_middleware_contract(
 
         function = describe_customer
         arguments = {"customer": {"name": "Ada"}}
-        expected_args = {"customer": {"name": "ADA:1"}}
+        expected_args = {"customer": {"name": "Ada"}}
     elif container == "list":
 
         @tool(approval_mode="always_require")
@@ -1042,7 +1053,7 @@ async def test_approved_nested_arguments_keep_normalized_middleware_contract(
 
         function = describe_customers
         arguments = {"customers": [{"name": "Ada"}]}
-        expected_args = {"customers": [{"name": "ADA:1"}]}
+        expected_args = {"customers": [{"name": "Ada"}]}
     elif container == "dataclass":
 
         @tool(approval_mode="always_require")
@@ -1052,7 +1063,7 @@ async def test_approved_nested_arguments_keep_normalized_middleware_contract(
 
         function = describe_request
         arguments = {"request": {"customer": {"name": "Ada"}}}
-        expected_args = {"request": {"customer": {"name": "ADA:1"}}}
+        expected_args = {"request": {"customer": {"name": "Ada"}}}
     else:
 
         @tool(approval_mode="always_require")
@@ -1062,7 +1073,7 @@ async def test_approved_nested_arguments_keep_normalized_middleware_contract(
 
         function = describe_locked_customer
         arguments = {"customer": {"name": "Ada"}}
-        expected_args = {"customer": {"name": "ADA:1"}}
+        expected_args = {"customer": {"name": "Ada"}}
 
     class ObserveArgumentsMiddleware(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -1111,6 +1122,77 @@ async def test_approved_nested_arguments_keep_normalized_middleware_contract(
     if hooks:
         assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
         assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("projection_kind", ["excluded", "transformed"])
+@pytest.mark.parametrize("hooks", [False, pytest.param(True, marks=requires_sdk)])
+async def test_approved_lossy_nested_arguments_do_not_execute(
+    chat_client_base: MockBaseChatClient, streaming: bool, projection_kind: str, hooks: bool
+) -> None:
+    """Approval does not permit restoring fields or values absent from the middleware view."""
+    executed: list[BaseModel] = []
+    if projection_kind == "excluded":
+
+        @tool(approval_mode="always_require")
+        def describe_customer(customer: _ExcludedHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        arguments = {"customer": {"name": "Ada", "detail": "regular"}}
+    else:
+
+        @tool(approval_mode="always_require")
+        def describe_transformed_customer(customer: _TransformedHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_transformed_customer
+        arguments = {"customer": {"name": "Ada"}}
+
+    observed_arguments: list[dict[str, Any]] = []
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            assert type(context.arguments) is dict
+            observed_arguments.append(deepcopy(dict(context.arguments)))
+            await call_next()
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant", [Content.from_function_call("lossy-customer", function.name, arguments=arguments)]
+            )
+        ),
+        final_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+    middleware: list[Any] = [ObserveArgumentsMiddleware()]
+    if hooks:
+        middleware.insert(0, create_agent_hooks_middleware([AllowGuard()]))
+    agent = Agent(client=chat_client_base, tools=[function], middleware=middleware)
+    session = agent.create_session()
+    if streaming:
+        paused = await agent.run("describe the customer", session=session, stream=True).get_final_response()
+    else:
+        paused = await agent.run("describe the customer", session=session)
+    request = next(c for m in paused.messages for c in m.contents if c.type == "function_approval_request")
+    assert executed == []
+    approval = Message("user", [request.to_function_approval_response(approved=True)])
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        if streaming:
+            await agent.run([approval], session=session, stream=True).get_final_response()
+        else:
+            await agent.run([approval], session=session)
+    assert executed == []
+    assert observed_arguments == [{"customer": {"name": "Ada" if projection_kind == "excluded" else "ADA"}}]
 
 
 @requires_sdk
