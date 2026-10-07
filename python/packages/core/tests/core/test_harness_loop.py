@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any
 
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
+    AgentBudget,
     AgentContext,
     AgentMiddleware,
     AgentModeProvider,
@@ -29,6 +31,7 @@ from agent_framework import (
     ResponseStream,
     TodoItem,
     TodoProvider,
+    UsageDetails,
     background_tasks_running,
     background_tasks_running_message,
     set_agent_mode,
@@ -61,8 +64,10 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
         texts: list[str] | None = None,
         honor_response_format: bool = False,
         service_mode: bool = False,
+        usage_per_call: int | None = None,
     ) -> None:
         super().__init__()
+        self._usage_per_call = usage_per_call
         self.call_count: int = 0
         self.received_messages: list[list[str]] = []
         self.received_response_formats: list[Any] = []
@@ -108,6 +113,9 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
                 messages=Message(role="assistant", contents=[self._next_text(messages)]),
                 response_format=response_format if self._honor_response_format else None,
                 conversation_id=conversation_id,
+                usage_details=(
+                    UsageDetails(total_token_count=self._usage_per_call) if self._usage_per_call is not None else None
+                ),
             )
 
         return _get()
@@ -1697,3 +1705,90 @@ async def test_concurrent_same_agent_run_during_stream_pause_is_not_suppressed()
 
     # once for the loop boundary, once for the concurrent run's own boundary
     assert turn_scoped.after_calls == 2
+
+
+# region budget
+
+
+async def test_budget_stops_on_token_limit() -> None:
+    client = RecordingChatClient(usage_per_call=50)
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=10, budget=AgentBudget(max_tokens=100))],
+    )
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get("loop_exit_reason") == "token_budget_exceeded"
+
+
+async def test_budget_stops_on_duration_limit() -> None:
+    class _SlowClient(RecordingChatClient):
+        def _inner_get_response(self, **kwargs: Any) -> Any:
+            time.sleep(0.05)  # exceed the 1ms budget (Windows clock tick is ~15ms)
+            return super()._inner_get_response(**kwargs)
+
+    client = _SlowClient()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=10, budget=AgentBudget(max_duration=0.001))],
+    )
+
+    response = await agent.run("task")
+
+    assert client.call_count == 1
+    assert response.additional_properties.get("loop_exit_reason") == "time_budget_exceeded"
+
+
+async def test_budget_not_triggered_when_none() -> None:
+    client = RecordingChatClient(usage_per_call=50)
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=3)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 3
+    assert response.additional_properties.get("loop_exit_reason") == "iteration_cap_reached"
+
+
+async def test_budget_token_check_before_should_continue() -> None:
+    client = RecordingChatClient(usage_per_call=50)
+    calls: list[int] = []
+
+    def should_continue(*, iteration: int, **kwargs: Any) -> bool:
+        calls.append(iteration)
+        return True
+
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(should_continue, max_iterations=10, budget=AgentBudget(max_tokens=100))],
+    )
+
+    await agent.run("task")
+
+    assert client.call_count == 2
+    # should_continue ran only for iteration 1; the budget stop pre-empted it on iteration 2.
+    assert calls == [1]
+
+
+async def test_budget_exit_reason_in_additional_properties() -> None:
+    client = RecordingChatClient(usage_per_call=60)
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, budget=AgentBudget(max_tokens=50))],
+    )
+
+    response = await agent.run("task")
+
+    assert client.call_count == 1
+    assert response.additional_properties["loop_exit_reason"] == "token_budget_exceeded"
+
+
+def test_agent_budget_validates_max_tokens() -> None:
+    with pytest.raises(ValueError, match="max_tokens"):
+        AgentBudget(max_tokens=0)
+
+
+def test_agent_budget_validates_max_duration() -> None:
+    with pytest.raises(ValueError, match="max_duration"):
+        AgentBudget(max_duration=-1.0)

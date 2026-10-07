@@ -29,7 +29,10 @@ In every case, the input for the next iteration is controlled by the ``next_mess
 from __future__ import annotations
 
 import inspect
+import math
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import BaseModel, Field
@@ -57,6 +60,7 @@ if TYPE_CHECKING:
     from .._clients import SupportsChatGetResponse
 
 __all__ = [
+    "AgentBudget",
     "AgentLoopMiddleware",
     "JudgeVerdict",
     "background_tasks_running",
@@ -129,6 +133,58 @@ DEFAULT_MAX_ITERATIONS = 10
 # they are bounded by a smaller default. Pass ``max_iterations=None`` explicitly to opt into an
 # unbounded judge loop.
 DEFAULT_JUDGE_MAX_ITERATIONS = 5
+
+
+@experimental(feature_id=ExperimentalFeature.HARNESS)
+@dataclass
+class AgentBudget:
+    """Budget constraints for an :class:`AgentLoopMiddleware` autonomous loop.
+
+    Both ``max_tokens`` and ``max_duration`` are optional with no default — they are
+    workload-specific and must be set explicitly for production autonomous sessions.
+    When a budget dimension is ``None``, it is unconstrained.
+
+    Examples:
+
+        .. code-block:: python
+
+            from agent_framework import AgentBudget, AgentLoopMiddleware, todos_remaining
+
+            agent = Agent(
+                client=client,
+                middleware=[
+                    AgentLoopMiddleware(
+                        todos_remaining(),
+                        budget=AgentBudget(max_tokens=50_000, max_duration=300.0),
+                    )
+                ],
+            )
+
+    Note:
+        Budget stops stamp ``additional_properties["loop_exit_reason"]`` with
+        ``"token_budget_exceeded"`` or ``"time_budget_exceeded"`` on the returned
+        :class:`~agent_framework.AgentResponse` (non-streaming only).
+    """
+
+    max_tokens: int | None = None
+    """Maximum total LLM token spend across all loop iterations.
+
+    Counts ``total_token_count`` from each iteration's usage details, falling back to
+    ``input_token_count + output_token_count`` when ``total_token_count`` is absent.
+    """
+
+    max_duration: float | None = None
+    """Maximum wall-clock time in seconds for the entire loop run.
+
+    Checked at the start of each iteration using :func:`time.monotonic`.
+    Catches agents blocked on slow tools that token budgets cannot detect.
+    """
+
+    def __post_init__(self) -> None:
+        if self.max_tokens is not None and self.max_tokens < 1:
+            raise ValueError("AgentBudget.max_tokens must be a positive integer.")
+        if self.max_duration is not None and (not math.isfinite(self.max_duration) or self.max_duration <= 0):
+            raise ValueError("AgentBudget.max_duration must be a positive, finite number of seconds.")
 
 
 # A callable invoked between iterations. It always receives the loop keyword arguments
@@ -285,6 +341,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         fresh_context: bool = False,
         return_final_only: bool = False,
         additional_instructions: str | None = None,
+        budget: AgentBudget | None = None,
     ) -> None:
         """Initialize the agent loop middleware.
 
@@ -342,6 +399,9 @@ class AgentLoopMiddleware(AgentMiddleware):
                 messages, so it is preserved across ``fresh_context`` resets and (with a session)
                 persists server-side across iterations. Used by :meth:`with_judge` to tell the agent
                 about the criteria its response must satisfy, but available to any loop.
+            budget: Optional :class:`AgentBudget` bounding total token spend and/or wall-clock time.
+                Checked after each iteration, before ``should_continue`` is evaluated. When exceeded
+                the loop stops and (non-streaming only) stamps ``loop_exit_reason``.
 
         Raises:
             ValueError: If ``max_iterations`` is not ``None`` and is less than 1.
@@ -357,6 +417,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         self.fresh_context = fresh_context
         self.return_final_only = return_final_only
         self.additional_instructions = additional_instructions
+        self.budget: AgentBudget | None = budget
 
     @classmethod
     def with_judge(
@@ -370,6 +431,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         max_iterations: int | None = DEFAULT_JUDGE_MAX_ITERATIONS,
         next_message: NextMessageCallable | None = None,
         fresh_context: bool = False,
+        budget: AgentBudget | None = None,
     ) -> Self:
         """Create a loop that continues until a judge chat client decides the request was answered.
 
@@ -424,6 +486,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                 conversation; an attached session is snapshotted before the loop and restored to that
                 baseline between iterations. See :meth:`__init__` for the full semantics. Defaults to
                 ``False``.
+            budget: Optional :class:`AgentBudget`. See :meth:`__init__`.
         """
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)
@@ -440,6 +503,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             next_message=next_message or judge_next_message,
             fresh_context=fresh_context,
             additional_instructions=_criteria_agent_instruction(criteria) if criteria else None,
+            budget=budget,
         )
 
     async def process(
@@ -538,6 +602,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         snapshot: dict[str, Any] | None,
     ) -> None:
         iteration = 0
+        cap_fired = False
         work_iterations = 0
         progress: list[str] = []
         # Aggregated transcript across iterations: each iteration's response messages plus the
@@ -545,6 +610,9 @@ class AgentLoopMiddleware(AgentMiddleware):
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
         final_result: AgentResponse | None = None
+        tokens_used: int = 0
+        budget_start: float = time.monotonic()
+        budget_exit: str | None = None
         stamped_options = dict(context.options) if context.options is not None else {}
         stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
         context.options = stamped_options
@@ -565,6 +633,13 @@ class AgentLoopMiddleware(AgentMiddleware):
                 if result.usage_details is not None:
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
+                # Accumulate token spend for budget enforcement.
+                if self.budget is not None and self.budget.max_tokens is not None and result.usage_details is not None:
+                    ud = result.usage_details
+                    tokens_used += ud.get("total_token_count") or (
+                        (ud.get("input_token_count") or 0) + (ud.get("output_token_count") or 0)
+                    )
+
                 # Escape hatch: if this iteration is asking for tool approval, stop and return the
                 # response so the caller can approve, instead of continuing or injecting next_message.
                 if self._has_pending_approval_request(result):
@@ -581,9 +656,21 @@ class AgentLoopMiddleware(AgentMiddleware):
                 )
 
                 work_iterations += 1
+                # Budget pre-check — runs before should_continue to avoid invoking an expensive
+                # predicate/judge after a budget has already been exhausted.
+                if self.budget is not None:
+                    elapsed = time.monotonic() - budget_start
+                    if self.budget.max_duration is not None and elapsed >= self.budget.max_duration:
+                        budget_exit = "time_budget_exceeded"
+                        break
+                    if self.budget.max_tokens is not None and tokens_used >= self.budget.max_tokens:
+                        budget_exit = "token_budget_exceeded"
+                        break
                 # Decide whether to stop and capture any feedback from should_continue first, so the
                 # feedback is available to both the progress and next-message callables this iteration.
                 stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                    cap_fired = True
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -617,6 +704,11 @@ class AgentLoopMiddleware(AgentMiddleware):
         finally:
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
+        if cap_fired:
+            final_result.additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
+        if budget_exit is not None:
+            final_result.additional_properties.setdefault("loop_exit_reason", budget_exit)
+
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
         await self._fire_turn_scoped_after_providers(
@@ -638,8 +730,11 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         async def _generator() -> Any:
             iteration = 0
+            cap_fired = False
             work_iterations = 0
             progress: list[str] = []
+            tokens_used: int = 0
+            budget_start: float = time.monotonic()
             stamped_options = dict(context.options) if context.options is not None else {}
             stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
             context.options = stamped_options
@@ -683,9 +778,25 @@ class AgentLoopMiddleware(AgentMiddleware):
                     )
 
                     work_iterations += 1
+                    # Budget pre-check (before should_continue). Streaming cannot stamp
+                    # ``loop_exit_reason`` on the response (the caller assembles it from updates), so
+                    # the loop simply stops, consistent with the iteration-cap limitation.
+                    if self.budget is not None:
+                        if self.budget.max_tokens is not None and final.usage_details:
+                            ud = final.usage_details
+                            tokens_used += ud.get("total_token_count") or (
+                                (ud.get("input_token_count") or 0) + (ud.get("output_token_count") or 0)
+                            )
+                        elapsed = time.monotonic() - budget_start
+                        if self.budget.max_duration is not None and elapsed >= self.budget.max_duration:
+                            return
+                        if self.budget.max_tokens is not None and tokens_used >= self.budget.max_tokens:
+                            return
                     # Decide whether to stop and capture any feedback from should_continue first, so the
                     # feedback is available to both the progress and next-message callables this iteration.
                     stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                    if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                        cap_fired = True
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -721,6 +832,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                         yield self._message_to_update(message)
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
+                if cap_fired and holder["final"] is not None:
+                    holder["final"].additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
