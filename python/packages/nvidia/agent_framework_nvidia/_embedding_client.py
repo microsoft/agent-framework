@@ -34,6 +34,15 @@ __all__ = [
     "RawNvidiaEmbeddingClient",
 ]
 
+# An agent-framework-openai without this hook never calls the override below, so input_type and
+# truncate would be dropped from every request without an error. Refuse to load instead. Remove this
+# once the agent-framework-openai floor in pyproject.toml is a release that has the hook.
+if not hasattr(RawOpenAIEmbeddingClient, "_prepare_extra_request_options"):
+    raise ImportError(
+        "agent-framework-nvidia requires an agent-framework-openai release whose RawOpenAIEmbeddingClient "
+        "provides _prepare_extra_request_options. Upgrade agent-framework-openai."
+    )
+
 DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 """NVIDIA's hosted NIM endpoint, which exposes an OpenAI-compatible surface."""
 

@@ -24,7 +24,8 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
     # input_type and truncate need RawOpenAIEmbeddingClient._prepare_extra_request_options.
-    # 1.14.4 predates it and silently drops them, so raise this floor to the release that adds it.
+    # 1.15.0 and earlier lack it, so the package refuses to import with them. Raise this floor to
+    # the first release that adds it.
     "agent-framework-openai>=1.14.4,<2",
 ]
 

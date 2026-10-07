@@ -15,7 +15,8 @@ Integration with NVIDIA NIM for embedding generation.
 - `input_type` and `truncate` are outside the OpenAI embedding schema. The client sends them as
   `extra_body` by overriding `_prepare_extra_request_options`, and rejects invalid values before
   the request. Callers set `input_type` per call through vector-store `embeddings_options`, the
-  same route the Gemini client uses for `task_type`.
+  same route the Gemini client uses for `task_type`. An `agent-framework-openai` without that hook
+  would drop both fields silently, so importing the package raises `ImportError` instead.
 - The hosted endpoint rejects requests with more than 256 inputs (`MAX_BATCH_SIZE`) or a body over
   2 MiB (`413`, budgeted by `MAX_BATCH_BYTES`), and a vector-store upsert embeds every record in one
   call, so `get_embeddings` splits larger inputs into consecutive requests, as the Gemini client does

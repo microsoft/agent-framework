@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import importlib.util
 import json
 import math
 import os
@@ -10,6 +11,7 @@ import httpx2
 import pytest
 from agent_framework import InMemoryCollection, VectorStoreField, create_vector_search_tool, vectorstoremodel
 from agent_framework._settings import SecretString
+from agent_framework_openai._embedding_client import RawOpenAIEmbeddingClient  # pyright: ignore[reportPrivateUsage]
 from openai import AsyncOpenAI
 
 from agent_framework_nvidia import NvidiaEmbeddingClient, RawNvidiaEmbeddingClient
@@ -180,6 +182,19 @@ def test_telemetry_layer_wraps_the_raw_client() -> None:
 
     assert names.index("EmbeddingTelemetryLayer") < names.index("RawNvidiaEmbeddingClient")
     assert names.index("RawNvidiaEmbeddingClient") < names.index("RawOpenAIEmbeddingClient")
+
+
+def test_refuses_to_load_without_the_openai_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An older agent-framework-openai would silently drop input_type and truncate, so the import must fail."""
+    import agent_framework_nvidia._embedding_client as module  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.delattr(RawOpenAIEmbeddingClient, "_prepare_extra_request_options")
+    # Load a fresh copy under another name so the module the other tests use is left untouched.
+    spec = importlib.util.spec_from_file_location("agent_framework_nvidia._embedding_client_probe", module.__file__)
+    assert spec is not None and spec.loader is not None
+
+    with pytest.raises(ImportError, match="Upgrade agent-framework-openai"):
+        spec.loader.exec_module(importlib.util.module_from_spec(spec))
 
 
 async def test_raw_client_sends_nvidia_options_without_telemetry() -> None:
