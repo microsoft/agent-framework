@@ -13,7 +13,7 @@ from azure.identity import AzureCliCredential
 
 client = FoundryChatClient(
     project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
-    model="gpt-4o",
+    model="gpt-6-luna",
     credential=AzureCliCredential(),
 )
 
