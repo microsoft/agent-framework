@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import json
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
@@ -1572,6 +1573,49 @@ def test_chat_response_from_streaming_updates_parses_final_assistant_message() -
     assert response.value.response == "Hello"
 
 
+def test_chat_response_to_updates_carries_response_level_fields() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        conversation_id="conv-1",
+        model="model-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = ChatResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.conversation_id == "conv-1"
+    assert round_tripped.model == "model-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_chat_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = ChatResponse(messages=[], response_id="resp-1", model="model-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].model == "model-1"
+    assert updates[0].finish_reason == "stop"
+
+
 # region ToolMode
 
 
@@ -1889,6 +1933,47 @@ def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     ])
 
     assert response.agent_id == "source-agent"
+
+
+def test_agent_run_response_to_updates_carries_response_level_fields() -> None:
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        agent_id="agent-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = AgentResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.agent_id == "agent-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_agent_run_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = AgentResponse(messages=[], response_id="resp-1", agent_id="agent-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].agent_id == "agent-1"
+    assert updates[0].finish_reason == "stop"
 
 
 def test_agent_run_response_str_method(chat_message: Message) -> None:
@@ -4462,6 +4547,38 @@ class TestResponseStreamBasicIteration:
         assert stream.updates[0].text == "update_0"
         assert stream.updates[1].text == "update_1"
 
+    async def test_pull_context_added_by_factory_applies_to_current_pull(self) -> None:
+        """A pull context registered by the first factory wraps the same iterator pull."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            events.append("pull")
+            yield ChatResponseUpdate(contents=[Content.from_text("update")], role="assistant")
+
+        @contextlib.contextmanager
+        def added_context() -> Any:
+            events.append("added_enter")
+            try:
+                yield
+            finally:
+                events.append("added_exit")
+
+        @contextlib.contextmanager
+        def initial_context() -> Any:
+            events.append("initial_enter")
+            stream.with_pull_context_manager(added_context)
+            try:
+                yield
+            finally:
+                events.append("initial_exit")
+
+        stream = ResponseStream(updates(), finalizer=_combine_updates).with_pull_context_manager(initial_context)
+
+        await anext(stream)
+        await stream.close()
+
+        assert events == ["initial_enter", "added_enter", "pull", "added_exit", "initial_exit"]
+
     async def test_auto_finalize_on_iteration_completion(self) -> None:
         """Stream auto-finalizes when async iteration completes."""
         stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
@@ -4633,6 +4750,31 @@ class TestResponseStreamTransformHooks:
 
         assert collected == ["async_update_0", "async_update_1"]
 
+    async def test_transform_added_while_async_transform_waits_applies_to_current_update(self) -> None:
+        """A transform registered during an awaited transform applies before the current update is released."""
+        transform_started = asyncio.Event()
+        release_transform = asyncio.Event()
+
+        async def waiting_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            transform_started.set()
+            await release_transform.wait()
+            return update
+
+        def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=cast(Any, update.role),
+            )
+
+        stream = ResponseStream(_generate_updates(1), finalizer=_combine_updates).with_transform_hook(waiting_transform)
+        pending_update = asyncio.create_task(anext(stream))
+
+        await transform_started.wait()
+        stream.with_transform_hook(uppercase_transform)
+        release_transform.set()
+
+        assert (await pending_update).text == "UPDATE_0"
+
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
@@ -4678,6 +4820,132 @@ class TestResponseStreamCleanupHooks:
         await outer.close()
 
         assert events == ["iterator", "inner", "outer"]
+
+    async def test_async_with_break_closes_iterator(self) -> None:
+        """Breaking out of `async with stream:` releases the iterator without a manual close."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async with stream:
+            async for _ in stream:
+                break
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_transform_hook_error_closes_iterator(self) -> None:
+        """A hook that fails after a yielded update releases the suspended iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook blew up")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[failing_hook],  # ty: ignore[invalid-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+        assert events == ["iterator"]
+
+    async def test_cancellation_closes_iterator(self) -> None:
+        """Cancelling the consumer mid-iteration releases the suspended iterator."""
+        events: list[str] = []
+        provider_suspended = asyncio.Event()
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                provider_suspended.set()
+                await asyncio.sleep(60)
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async def consume() -> None:
+            async for _ in stream:
+                pass
+
+        task = asyncio.create_task(consume())
+        await provider_suspended.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_cancelled_error_from_hook_closes_iterator(self) -> None:
+        """A hook raising CancelledError after a yielded update still closes the iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[cancelling_hook],  # ty: ignore[invalid-argument-type]
+            cleanup_hooks=[lambda: events.append("cleanup")],
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in stream:
+                pass
+
+        # Error path runs cleanup before close() releases the iterator.
+        assert events == ["cleanup", "iterator"]
+
+    async def test_cancelled_error_from_map_transform_closes_inner_stream(self) -> None:
+        """A cancelled async map transform releases the wrapped provider iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(updates())
+        outer = inner.map(cancelling_transform, _combine_updates)
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in outer:
+                pass
+
+        assert events == ["iterator"]
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""

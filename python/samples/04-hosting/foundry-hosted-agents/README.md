@@ -79,6 +79,7 @@ An opaque call ID correlates one request; it is not a storage namespace.
 | 1 | [Basic](invocations/basic/) | An Invocations agent with a custom JSON parser, durable MAF history, and JSON/SSE responses. |
 | 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 | 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
+| 4 | [Native Workflow](invocations/basic/README.md#native-workflow-with-typed-tickets) | An explicit JSON parser maps typed tickets and pending review replies to a freshly built native workflow, with scoped exact-checkpoint continuation and JSON/SSE output. |
 
 ## Running the Agent Host Locally
 

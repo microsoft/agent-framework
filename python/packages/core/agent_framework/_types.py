@@ -2255,6 +2255,26 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     response.continuation_token = update.continuation_token
 
 
+def _apply_response_tail_to_update(
+    response: ChatResponse[Any] | AgentResponse[Any],
+    update: ChatResponseUpdate | AgentResponseUpdate,
+) -> None:
+    """Carry the response-level fields that belong on the final update of a stream.
+
+    ``finish_reason``, ``continuation_token``, ``additional_properties`` and usage are properties
+    of the response as a whole rather than of any single message, so they ride on the last update.
+    This mirrors how :func:`_process_update` reads them back.
+    """
+    update.finish_reason = response.finish_reason
+    update.continuation_token = response.continuation_token
+    if response.additional_properties:
+        merged = dict(update.additional_properties) if update.additional_properties else {}
+        merged.update(response.additional_properties)
+        update.additional_properties = merged
+    if response.usage_details is not None:
+        update.contents.append(Content.from_usage(response.usage_details))
+
+
 def _merge_function_call_content(message: Message, content: Content) -> None:
     """Merge a streamed function_call chunk into the in-progress call it belongs to.
 
@@ -2824,6 +2844,54 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         _finalize_response(msg)
         return msg
 
+    def to_updates(self) -> list[ChatResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse
+
+                response = ChatResponse.from_updates(updates)
+                assert response.text == ChatResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            ChatResponseUpdate(
+                contents=list(message.contents),
+                role=cast(Any, message.role),
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                conversation_id=self.conversation_id,
+                model=self.model,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                ChatResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    conversation_id=self.conversation_id,
+                    model=self.model,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
+
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
@@ -3235,6 +3303,52 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             _process_update(msg, update)
         _finalize_response(msg)
         return msg
+
+    def to_updates(self) -> list[AgentResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import AgentResponse
+
+                response = AgentResponse.from_updates(updates)
+                assert response.text == AgentResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            AgentResponseUpdate(
+                contents=list(message.contents),
+                role=message.role,
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                agent_id=self.agent_id,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                AgentResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    agent_id=self.agent_id,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
 
     def __str__(self) -> str:
         return self.text
@@ -3782,6 +3896,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
+    async def __aenter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the stream on block exit, including an early consumer break."""
+        await self.close()
+
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
             return
@@ -3828,17 +3949,20 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return value, transformed
 
     async def _record_update(self, update: UpdateT, *, run_after_gates: bool) -> UpdateT:
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._update_gates_before),
-            update,
-            target="update",
-        )
+        if self._update_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._update_gates_before),
+                update,
+                target="update",
+            )
         self._updates.append(update)
-        update, _ = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._transform_hooks),
-            update,
-        )
-        if run_after_gates:
+        for transform in self._transform_hooks:
+            transformed_update = transform(update)
+            if isawaitable(transformed_update):
+                transformed_update = await transformed_update
+            if transformed_update is not None:
+                update = cast(UpdateT, transformed_update)
+        if run_after_gates and self._update_gates_after:
             await self._run_gates(
                 cast(Sequence[Callable[[Any], object]], self._update_gates_after),
                 update,
@@ -3854,17 +3978,42 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     run_after_gates=run_after_gates,
                 )
 
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
+            context_factories = self._pull_context_manager_factories
+            update: UpdateT
+            if not context_factories:
                 if self._iterator is None:
                     stream = await self._get_stream()
                     self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
+                update = await self._iterator.__anext__()
+            elif len(context_factories) == 1:
+                with context_factories[0]():
+                    if len(context_factories) == 1:
+                        if self._iterator is None:
+                            stream = await self._get_stream()
+                            self._iterator = stream.__aiter__()
+                        update = await self._iterator.__anext__()
+                    else:
+                        with contextlib.ExitStack() as stack:
+                            context_index = 1
+                            while context_index < len(context_factories):
+                                stack.enter_context(context_factories[context_index]())
+                                context_index += 1
+                            if self._iterator is None:
+                                stream = await self._get_stream()
+                                self._iterator = stream.__aiter__()
+                            update = await self._iterator.__anext__()
+            else:
+                with contextlib.ExitStack() as stack:
+                    for factory in context_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update = await self._iterator.__anext__()
             if self._flat_map_update is not None:
                 mapped_updates = self._flat_map_update(update)
                 if isawaitable(mapped_updates):
@@ -3934,15 +4083,19 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         else:
             result = list(self._updates)
 
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_before),
-            result,
-            target="result",
-        )
-        result, self._result_was_transformed = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
-            result,
-        )
+        if self._result_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_before),
+                result,
+                target="result",
+            )
+        if self._result_hooks:
+            result, self._result_was_transformed = await self._apply_transforms(
+                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
+                result,
+            )
+        else:
+            self._result_was_transformed = False
         self._final_result = result
         self._result_prepared = True
 
@@ -3950,25 +4103,28 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         if self._finalized:
             return
         await self._prepare_final_result()
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_after),
-            self._final_result,
-            target="result",
-        )
-        terminal_result, transformed = await self._apply_transforms(
-            cast(
-                Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
-                self._terminal_result_transforms,
-            ),
-            self._final_result,
-        )
-        self._final_result = terminal_result
-        self._result_was_transformed = self._result_was_transformed or transformed
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
-            self._final_result,
-            target="result",
-        )
+        if self._result_gates_after:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_after),
+                self._final_result,
+                target="result",
+            )
+        if self._terminal_result_transforms:
+            terminal_result, transformed = await self._apply_transforms(
+                cast(
+                    Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+                    self._terminal_result_transforms,
+                ),
+                self._final_result,
+            )
+            self._final_result = terminal_result
+            self._result_was_transformed = self._result_was_transformed or transformed
+        if self._terminal_result_gates:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
+                self._final_result,
+                target="result",
+            )
         self._finalized = True
 
     async def _finish_consumption(self) -> None:
@@ -4064,8 +4220,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             await self._finish_consumption()
             raise
-        except Exception as exc:
-            await self._handle_stream_error(exc)
+        except BaseException as exc:
+            # CancelledError must reach close() too: a cancel landing in an
+            # async map/flat_map transform, hook, or gate otherwise leaves the
+            # provider stream suspended until GC. Hooks run first because they
+            # read self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() stays in finally so the provider
+            # stream is released even when a hook raises; the original
+            # exception always re-raises.
+            try:
+                await self._handle_stream_error(exc)
+            finally:
+                await self.close()
             raise
 
     async def close(self) -> None:

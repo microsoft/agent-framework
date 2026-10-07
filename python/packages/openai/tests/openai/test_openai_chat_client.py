@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,8 +49,11 @@ from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import (
     ResponseComputerToolCall,
     ResponseComputerToolCallOutputItem,
+    ResponseContentPartDoneEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
+    ResponseOutputItemDoneEvent,
+    ResponseOutputTextAnnotationAddedEvent,
 )
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
@@ -2260,6 +2264,177 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     empty_shell_payload = OpenAIChatClient._to_shell_call_output_payload(empty_diagnostic)
     assert empty_local_payload["exit_code"] == 1
     assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
+
+
+@pytest.mark.parametrize(
+    ("properties", "expected_local", "expected_shell"),
+    [
+        pytest.param(
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "truncated": False, "timed_out": False},
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
+            [{"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+            id="success",
+        ),
+        pytest.param(
+            {
+                "stdout": "",
+                "stderr": "command failed",
+                "exit_code": 3,
+                "truncated": False,
+                "timed_out": False,
+            },
+            {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
+            [{"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}}],
+            id="nonzero-exit",
+        ),
+        pytest.param(
+            {
+                "stdout": "partial",
+                "stderr": "timeout details",
+                "exit_code": 124,
+                "truncated": False,
+                "timed_out": True,
+            },
+            {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
+            [{"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}}],
+            id="timeout",
+        ),
+        pytest.param(
+            {
+                "stdout": "partial output",
+                "stderr": "",
+                "exit_code": 0,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "partial output\n[output truncated]",
+                "stderr": "",
+                "exit_code": 0,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "partial output\n[output truncated]",
+                    "stderr": "",
+                    "outcome": {"type": "exit", "exit_code": 0},
+                }
+            ],
+            id="truncated-stdout",
+        ),
+        pytest.param(
+            {
+                "stdout": "",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "[output truncated]",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "[output truncated]",
+                    "stderr": "partial error",
+                    "outcome": {"type": "exit", "exit_code": 1},
+                }
+            ],
+            id="truncated-empty-stdout",
+        ),
+    ],
+)
+def test_shell_output_payloads_use_structured_function_result_items(
+    properties: dict[str, Any],
+    expected_local: dict[str, Any],
+    expected_shell: list[dict[str, Any]],
+) -> None:
+    display_text = "model-facing shell result"
+    content = Content.from_function_result(
+        call_id="call-structured",
+        result=[Content.from_text(display_text, additional_properties=properties)],
+    )
+    round_tripped = Content.from_dict(content.to_dict())
+
+    assert round_tripped.result == display_text
+    assert round_tripped.items is not None
+    assert round_tripped.items[0].additional_properties == properties
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(round_tripped)) == expected_local
+    assert OpenAIChatClient._to_shell_call_output_payload(round_tripped) == expected_shell
+
+
+def test_shell_output_payloads_accept_native_shell_command_output() -> None:
+    content = Content.from_function_result(
+        call_id="call-native",
+        result=[
+            Content.from_shell_command_output(
+                stdout="native output",
+                stderr="native error",
+                exit_code=9,
+                timed_out=False,
+            )
+        ],
+    )
+
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(content)) == {
+        "stdout": "native output",
+        "stderr": "native error",
+        "timed_out": False,
+        "exit_code": 9,
+    }
+    assert OpenAIChatClient._to_shell_call_output_payload(content) == [
+        {
+            "stdout": "native output",
+            "stderr": "native error",
+            "outcome": {"type": "exit", "exit_code": 9},
+        }
+    ]
+
+
+def test_prepare_messages_uses_structured_local_shell_result() -> None:
+    from agent_framework_openai._chat_client import (
+        OPENAI_SHELL_OUTPUT_TYPE_KEY,
+        OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    shell_result = Content.from_function_result(
+        call_id="shell-call-1",
+        result=[
+            Content.from_text(
+                "stderr: command failed\nexit_code: 3",
+                additional_properties={
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "exit_code": 3,
+                    "timed_out": False,
+                },
+            )
+        ],
+        additional_properties={OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL},
+    )
+
+    prepared = client._prepare_message_for_openai(
+        Message(role="tool", contents=[shell_result]),
+        request_uses_service_side_storage=False,
+    )
+
+    assert prepared == [
+        {
+            "call_id": "shell-call-1",
+            "type": "shell_call_output",
+            "output": [
+                {
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "outcome": {"type": "exit", "exit_code": 3},
+                }
+            ],
+        }
+    ]
 
 
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
@@ -6808,6 +6983,302 @@ def test_streaming_response_in_progress_type() -> None:
     assert response.conversation_id == "conv_5678"
 
 
+def _make_completed_text_event(
+    annotations: Sequence[dict[str, Any]],
+    *,
+    event_type: Literal["response.content_part.done", "response.output_item.done"] = "response.content_part.done",
+    item_id: str = "msg_citations",
+    content_index: int = 0,
+    text: str = "The answer is in the document.",
+) -> ResponseContentPartDoneEvent | ResponseOutputItemDoneEvent:
+    part = {"type": "output_text", "text": text, "annotations": list(annotations)}
+    if event_type == "response.content_part.done":
+        return ResponseContentPartDoneEvent.model_validate({
+            "type": event_type,
+            "item_id": item_id,
+            "output_index": 0,
+            "content_index": content_index,
+            "sequence_number": 2,
+            "part": part,
+        })
+    return ResponseOutputItemDoneEvent.model_validate({
+        "type": event_type,
+        "output_index": 0,
+        "sequence_number": 3,
+        "item": {
+            "type": "message",
+            "id": item_id,
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+                *({"type": "output_text", "text": "", "annotations": []} for _ in range(content_index)),
+                part,
+            ],
+        },
+    })
+
+
+@pytest.mark.parametrize("event_type", ["response.content_part.done", "response.output_item.done"])
+@pytest.mark.parametrize(
+    ("provider_annotation", "expected"),
+    [
+        param(
+            {
+                "type": "url_citation",
+                "url": "https://example.sharepoint.com/sites/docs/document.pdf",
+                "title": "Document",
+                "start_index": 21,
+                "end_index": 29,
+            },
+            {
+                "url": "https://example.sharepoint.com/sites/docs/document.pdf",
+                "title": "Document",
+                "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            },
+            id="sharepoint-url",
+        ),
+        param(
+            {"type": "file_citation", "file_id": "file-123", "filename": "document.pdf", "index": 21},
+            {"file_id": "file-123", "url": "document.pdf"},
+            id="file-citation",
+        ),
+        param(
+            {"type": "file_path", "file_id": "file-123", "index": 21},
+            {"file_id": "file-123"},
+            id="file-path",
+        ),
+        param(
+            {
+                "type": "container_file_citation",
+                "file_id": "file-123",
+                "container_id": "container-123",
+                "filename": "document.pdf",
+                "start_index": 21,
+                "end_index": 29,
+            },
+            {
+                "file_id": "file-123",
+                "url": "document.pdf",
+                "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            },
+            id="container-file",
+        ),
+    ],
+)
+def test_streaming_completed_text_preserves_annotations_without_replaying_text(
+    event_type: Literal["response.content_part.done", "response.output_item.done"],
+    provider_annotation: dict[str, Any],
+    expected: dict[str, Any],
+) -> None:
+    """Completed text carries citations even when annotation-added events are absent."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    event = _make_completed_text_event([provider_annotation], event_type=event_type)
+
+    update = client._parse_chunk_from_openai(event, {}, {})
+
+    assert len(update.contents) == 1
+    content = update.contents[0]
+    assert content.type == "text"
+    assert content.text == ""
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert all(annotation.get(key) == value for key, value in expected.items())
+    assert annotation["raw_representation"].type == provider_annotation["type"]
+    assert content.raw_representation is event
+
+
+@pytest.mark.parametrize("mode", ["create", "retrieve", "structured"])
+async def test_streaming_completed_annotations_are_deduplicated_per_occurrence(mode: str) -> None:
+    """Added, completed-part, and completed-item events emit each citation once."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first = {
+        "type": "url_citation",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "title": "Document",
+        "start_index": 0,
+        "end_index": 3,
+    }
+    second = {**first, "start_index": 21, "end_index": 29}
+    text = '{"location": "Seattle", "weather": "Clear"}' if mode == "structured" else "The answer is in the document."
+    text_event = ResponseTextDeltaEvent.model_validate({
+        "type": "response.output_text.delta",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 0,
+        "delta": text,
+        "logprobs": [],
+    })
+    added_event = ResponseOutputTextAnnotationAddedEvent.model_validate({
+        "type": "response.output_text.annotation.added",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 1,
+        "annotation_index": 0,
+        "annotation": first,
+    })
+    done_event = _make_completed_text_event([first, second], text=text)
+    item_done_event = _make_completed_text_event([first, second], event_type="response.output_item.done", text=text)
+    options: OpenAIChatOptions[OutputStruct] = {}
+    if mode == "retrieve":
+        options["continuation_token"] = {"response_id": "resp_citations"}
+    elif mode == "structured":
+        options["response_format"] = OutputStruct
+    original_options = dict(options)
+    events = [text_event, added_event, done_event, item_done_event, done_event]
+    method = "stream" if mode == "structured" else mode
+
+    with patch.object(
+        client.client.responses,
+        method,
+        new_callable=MagicMock if mode == "structured" else AsyncMock,
+        return_value=_FakeAsyncEventStream(events),
+    ) as create:
+        stream = client.get_response(
+            [Message(role="user", contents=["Find the document."])], stream=True, options=options
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+
+    assert response.text == text_event.delta
+    assert len(response.messages) == 1
+    assert len(response.messages[0].contents) == 1
+    annotations = response.messages[0].contents[0].annotations
+    assert annotations is not None
+    assert len(annotations) == 2
+    assert [annotation["annotated_regions"][0]["start_index"] for annotation in annotations] == [0, 21]
+    assert sum(len(content.annotations or []) for update in updates for content in update.contents) == 2
+    assert options == original_options
+    assert not any(key.startswith("__agent_framework") for key in create.call_args.kwargs)
+    if mode == "structured":
+        assert isinstance(response.value, OutputStruct)
+        assert response.value.location == "Seattle"
+
+
+@pytest.mark.parametrize("with_added_event", [False, True])
+async def test_completed_sharepoint_citations_reach_agui_stream(with_added_event: bool) -> None:
+    """Responses completion citations survive the client, Agent, and AG-UI transport."""
+    pytest.importorskip("agent_framework_ag_ui")
+    from ag_ui.core import CustomEvent, TextMessageContentEvent
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    annotation = {
+        "type": "url_citation",
+        "title": "Document",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "start_index": 21,
+        "end_index": 29,
+    }
+    text_event = ResponseTextDeltaEvent.model_validate({
+        "type": "response.output_text.delta",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 0,
+        "delta": "The answer is in the document.",
+        "logprobs": [],
+    })
+    sdk_events: list[object] = [text_event]
+    if with_added_event:
+        sdk_events.append(
+            ResponseOutputTextAnnotationAddedEvent.model_validate({
+                "type": "response.output_text.annotation.added",
+                "item_id": "msg_citations",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+                "annotation_index": 0,
+                "annotation": annotation,
+            })
+        )
+    sdk_events.extend([
+        _make_completed_text_event([annotation]),
+        _make_completed_text_event([annotation], event_type="response.output_item.done"),
+    ])
+    agent = AgentFrameworkAgent(agent=client.as_agent(name="grounded-assistant"))
+
+    with patch.object(
+        client.client.responses, "create", new_callable=AsyncMock, return_value=_FakeAsyncEventStream(sdk_events)
+    ):
+        events = [
+            event
+            async for event in agent.run({
+                "thread_id": "thread-citations",
+                "run_id": "run-citations",
+                "messages": [{"role": "user", "content": "Find the document."}],
+            })
+        ]
+
+    citation_events = [event for event in events if isinstance(event, CustomEvent) and event.name == "annotations"]
+    assert len(citation_events) == 1
+    text_events = [event for event in events if isinstance(event, TextMessageContentEvent)]
+    assert "".join(event.delta for event in text_events) == text_event.delta
+    payload = json.loads(citation_events[0].model_dump_json(by_alias=True))
+    assert payload["value"]["messageId"] == text_events[0].message_id
+    assert payload["value"]["annotations"] == [
+        {
+            "type": "citation",
+            "title": annotation["title"],
+            "url": annotation["url"],
+            "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            "additional_properties": {"annotation_index": 0},
+        }
+    ]
+    assert events.index(citation_events[0]) < next(
+        index for index, event in enumerate(events) if event.type == "RUN_FINISHED"
+    )
+
+
+async def test_streaming_completed_annotations_do_not_share_state_between_requests() -> None:
+    """A shared client preserves identical citations in concurrent independent runs."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    annotation = {"type": "file_citation", "file_id": "file-123", "filename": "document.pdf", "index": 0}
+    events = [
+        _make_completed_text_event([annotation, annotation]),
+        _make_completed_text_event([annotation], content_index=1),
+        _make_completed_text_event([annotation], item_id="msg_other"),
+    ]
+
+    class InterleavedEventStream(_FakeAsyncEventStream):
+        async def __anext__(self) -> object:
+            await asyncio.sleep(0)
+            return await super().__anext__()
+
+    async def get_response() -> ChatResponse:
+        return await client.get_response(
+            [Message(role="user", contents=["Find the document."])], stream=True
+        ).get_final_response()
+
+    with patch.object(
+        client.client.responses,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=[InterleavedEventStream(events), InterleavedEventStream(events)],
+    ):
+        responses = await asyncio.gather(get_response(), get_response())
+
+    for response in responses:
+        assert len(response.messages) == 1
+        assert len(response.messages[0].contents) == 1
+        annotations = response.messages[0].contents[0].annotations
+        assert annotations is not None
+        assert len(annotations) == 4
+
+
+def test_streaming_completed_text_without_annotations_emits_no_content() -> None:
+    """Completed text must not duplicate text that was already streamed."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    update = client._parse_chunk_from_openai(_make_completed_text_event([]), {}, {})
+
+    assert update.contents == []
+
+
 def test_streaming_annotation_added_with_file_path() -> None:
     """Streaming `file_path` should attach as a text annotation, matching non-streaming."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -7545,6 +8016,32 @@ def test_prepare_content_for_openai_audio_content() -> None:
     result = client._prepare_content_for_openai("user", mp3_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 audio content with the registered media type
+    mpeg_content = Content.from_uri(uri="data:audio/mpeg;base64,ghi789", media_type="audio/mpeg")
+    result = client._prepare_content_for_openai("user", mpeg_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "data:audio/mpeg;base64,ghi789"
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 aliases with media type parameters and mixed case
+    parameterized_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,jkl012",
+        media_type="Audio/MPEG; codecs=mpeg-3",
+    )
+    result = client._prepare_content_for_openai("user", parameterized_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
+
+def test_prepare_content_for_openai_non_mp3_mpeg_audio_is_unsupported() -> None:
+    """Test _prepare_content_for_openai omits MPEG audio that is not MP3."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    for media_type in ("audio/mpegurl", "audio/mpeg4-generic"):
+        content = Content.from_uri(uri=f"data:{media_type};base64,abc123", media_type=media_type)
+
+        assert client._prepare_content_for_openai("user", content) == {}
 
 
 def test_prepare_content_for_openai_unsupported_content() -> None:
