@@ -35,6 +35,7 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_AGENT_RUN_KEY,
     WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
@@ -430,7 +431,8 @@ class Workflow(DictConvertible):
         """
         return self._status
 
-    def _set_agent_session_id(self, session_id: str | None) -> None:
+    def _set_agent_run_context(self, session_id: str | None) -> None:
+        self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, True)
         self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, session_id)
 
     def to_dict(self) -> dict[str, Any]:
@@ -869,7 +871,8 @@ class Workflow(DictConvertible):
             )
 
         if message is not None:
-            self._set_agent_session_id(None)
+            self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, False)
+            self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
 
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before

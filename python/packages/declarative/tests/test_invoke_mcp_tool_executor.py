@@ -181,28 +181,38 @@ class TestFieldForwarding:
         assert handler.invocations[1].workflow_session_id
         assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
 
-    @pytest.mark.asyncio
-    async def test_fresh_runs_on_same_workflow_receive_separate_session_ids(self) -> None:
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_fresh_runs_on_same_workflow_receive_separate_session_ids(
+        self, message_list: bool, streaming: bool
+    ) -> None:
         handler = StubMcpHandler(_ok())
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action()))
 
-        await workflow.run({})
-        await workflow.run({})
+        for text in ("first run", "second run"):
+            inputs = [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            if streaming:
+                await workflow.run(inputs, stream=True).get_final_response()
+            else:
+                await workflow.run(inputs)
 
         assert len(handler.invocations) == 2
         assert handler.invocations[0].workflow_session_id
         assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
 
-    @pytest.mark.asyncio
-    async def test_as_agent_continuation_reuses_workflow_session_id(self) -> None:
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_as_agent_continuation_reuses_workflow_session_id(self, streaming: bool) -> None:
         handler = StubMcpHandler(_ok())
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action()))
         agent = workflow.as_agent(name="mcp-agent")
 
-        await agent.run("first turn")
-        await agent.run("second turn")
+        for text in ("first turn", "second turn"):
+            if streaming:
+                await agent.run(text, stream=True).get_final_response()
+            else:
+                await agent.run(text)
 
         assert len(handler.invocations) == 2
         assert handler.invocations[0].workflow_session_id
@@ -229,15 +239,24 @@ class TestFieldForwarding:
         assert session_a_id != session_b_id
         assert handler.invocations[2].workflow_session_id == session_a_id
 
-    async def test_direct_fresh_runs_after_agent_turn_receive_separate_session_ids(self) -> None:
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("explicit_session", [False, True])
+    async def test_direct_fresh_runs_after_agent_turn_receive_separate_session_ids(
+        self, message_list: bool, streaming: bool, explicit_session: bool
+    ) -> None:
         handler = StubMcpHandler(_ok())
         factory = WorkflowFactory(mcp_tool_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action()))
         agent = workflow.as_agent(name="mcp-agent")
 
-        await agent.run("agent turn", session=AgentSession())
-        await workflow.run({})
-        await workflow.run({})
+        await agent.run("agent turn", session=AgentSession() if explicit_session else None)
+        for text in ("first direct run", "second direct run"):
+            inputs = [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            if streaming:
+                await workflow.run(inputs, stream=True).get_final_response()
+            else:
+                await workflow.run(inputs)
 
         session_ids = [invocation.workflow_session_id for invocation in handler.invocations]
         assert len(session_ids) == 3

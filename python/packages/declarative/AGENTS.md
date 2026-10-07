@@ -20,6 +20,8 @@ Both state classes validate object attribute names but leave dictionary keys unc
 Cache identity includes a framework-owned workflow session ID in addition to
 endpoint, label, connection, and headers, so separate fresh runs do not share a
 stateful MCP protocol session while continuations and checkpoint restores do.
+Direct fresh runs reset this scope even for message-list inputs; only
+framework-marked WorkflowAgent turns retain the agent continuation scope.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.

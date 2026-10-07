@@ -21,6 +21,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
+from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY
 
 from ._declarative_base import (
     ActionComplete,
@@ -409,7 +410,9 @@ class JoinExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Simply pass through to continue the workflow."""
-        is_agent_continuation = self._is_agent_continuation(self._get_state(ctx.state), trigger)
+        is_agent_continuation = ctx.state.get(WORKFLOW_AGENT_RUN_KEY) is True and self._is_agent_continuation(
+            self._get_state(ctx.state), trigger
+        )
         await self._ensure_state_initialized(ctx, trigger)
         if self._action_def.get("kind") == "Entry":
             from ._mcp_handler import activate_workflow_session_id

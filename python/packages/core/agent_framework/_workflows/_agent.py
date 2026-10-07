@@ -478,7 +478,7 @@ class WorkflowAgent(BaseAgent):
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 async for _ in restore_stream:
                     pass
             else:
@@ -487,7 +487,7 @@ class WorkflowAgent(BaseAgent):
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 _ = await restore_result
             if not input_messages:
                 logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
@@ -514,7 +514,7 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 async for event in response_stream:
                     yield event
             else:
@@ -525,7 +525,7 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 for event in await response_result:
                     yield event
         elif final_state == WorkflowRunState.IDLE:
@@ -538,7 +538,7 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 async for event in response_stream:
                     yield event
             else:
@@ -549,7 +549,7 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 for event in await response_result:
                     yield event
         else:

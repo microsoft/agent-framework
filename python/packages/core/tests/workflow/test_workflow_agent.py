@@ -36,7 +36,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework._workflows._const import WORKFLOW_AGENT_SESSION_ID_KEY
+from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY, WORKFLOW_AGENT_SESSION_ID_KEY
 from agent_framework._workflows._typing_utils import deserialize_type
 
 
@@ -198,12 +198,16 @@ class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
 
     @pytest.mark.parametrize("streaming", [False, True])
-    async def test_direct_fresh_runs_clear_agent_session_id(self, streaming: bool) -> None:
+    @pytest.mark.parametrize("explicit_session", [False, True])
+    async def test_direct_fresh_runs_clear_agent_session_id(self, streaming: bool, explicit_session: bool) -> None:
         workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
         agent = workflow.as_agent()
-        session = AgentSession()
+        session = AgentSession() if explicit_session else None
         await agent.run("Agent turn", session=session)
-        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == (
+            session.session_id if session is not None else None
+        )
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
 
         for text in ("First direct run", "Second direct run"):
             messages = [Message(role="user", contents=[Content.from_text(text)])]
@@ -212,6 +216,7 @@ class TestWorkflowAgent:
             else:
                 await workflow.run(messages)
             assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) is None
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is False
 
     @pytest.mark.parametrize("streaming", [False, True])
     async def test_direct_continuations_preserve_agent_session_id(self, streaming: bool) -> None:
@@ -228,19 +233,23 @@ class TestWorkflowAgent:
         if streaming:
             await workflow.run(responses=responses, stream=True).get_final_response()
             assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
             await workflow.run(
                 checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True
             ).get_final_response()
         else:
             await workflow.run(responses=responses)
             assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
             await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
         assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is True
 
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("rejected_streaming", [False, True])
+    @pytest.mark.parametrize("first_agent", [False, True])
     async def test_rejected_concurrent_run_preserves_agent_session_id(
-        self, streaming: bool, rejected_streaming: bool, monkeypatch: pytest.MonkeyPatch
+        self, streaming: bool, rejected_streaming: bool, first_agent: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         started = asyncio.Event()
         release = asyncio.Event()
@@ -262,19 +271,37 @@ class TestWorkflowAgent:
                 return await agent.run("Hello", session=agent_session, stream=True).get_final_response()
             return await agent.run("Hello", session=agent_session)
 
-        task = asyncio.create_task(run_agent(session, streaming))
+        async def run_first() -> AgentResponse:
+            if first_agent:
+                return await run_agent(session, streaming)
+            messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+            if streaming:
+                result = await workflow.run(messages, stream=True).get_final_response()
+            else:
+                result = await workflow.run(messages)
+            [output] = result.get_outputs()
+            assert isinstance(output, AgentResponse)
+            return output
+
+        expected_session_id = session.session_id if first_agent else None
+        task = asyncio.create_task(run_first())
         try:
             await started.wait()
-            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
             with pytest.raises(WorkflowException, match="Workflow is already running"):
                 await run_agent(rejected_session, rejected_streaming)
-            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            with pytest.raises(WorkflowException, match="Workflow is already running"):
+                await workflow.run([Message(role="user", contents=[Content.from_text("Rejected")])])
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+            assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
         finally:
             release.set()
             result = await task
 
         assert result.text == "Accepted: Hello"
-        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == expected_session_id
+        assert workflow._runner.state.get(WORKFLOW_AGENT_RUN_KEY) is first_agent
         await run_agent(rejected_session, rejected_streaming)
         assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == rejected_session.session_id
 
