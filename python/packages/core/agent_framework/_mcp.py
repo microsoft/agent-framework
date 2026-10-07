@@ -2602,7 +2602,7 @@ class MCPTool:
                         capture_unhandled_exceptions=False,
                     ) as list_span:
                         try:
-                            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                            prompt_list = await self._list_prompts_page(params)
                         except Exception as list_ex:
                             set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
                             raise
@@ -2748,7 +2748,7 @@ class MCPTool:
                         capture_unhandled_exceptions=False,
                     ) as list_span:
                         try:
-                            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                            tool_list = await self._list_tools_page(params)
                         except Exception as list_ex:
                             set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
                             raise
@@ -2923,6 +2923,28 @@ class MCPTool:
         if self.session is None:
             raise RuntimeError("MCPTool is not connected.")
         return self.session
+
+    async def _list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """List one tools page without changing existing cache behavior."""
+        if self._mcp_client is not None:
+            return await self._mcp_client.list_tools(
+                cursor=params.cursor if params is not None else None,
+                cache_mode="bypass",
+            )
+        if self.session is None:
+            raise RuntimeError("MCPTool is not connected.")
+        return await self.session.list_tools(params=params)
+
+    async def _list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+        """List one prompts page without changing existing cache behavior."""
+        if self._mcp_client is not None:
+            return await self._mcp_client.list_prompts(
+                cursor=params.cursor if params is not None else None,
+                cache_mode="bypass",
+            )
+        if self.session is None:
+            raise RuntimeError("MCPTool is not connected.")
+        return await self.session.list_prompts(params=params)
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
