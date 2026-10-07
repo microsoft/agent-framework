@@ -613,3 +613,21 @@ async def test_audit_log_accumulates_multiple() -> None:
     for _ in range(3):
         await tool.run(cmd)
     assert len(tool.audit_log) == 3
+
+
+async def test_audit_log_records_are_detached_snapshots() -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
+    await tool.run(cmd)
+
+    snapshot = tool.audit_log.records[0]
+    snapshot.command = "tampered"
+    snapshot.policy_decision = "deny"
+    snapshot.exit_code = 99
+    tool.audit_log.records.clear()
+
+    record = tool.audit_log.records[0]
+    assert len(tool.audit_log) == 1
+    assert record.command == cmd
+    assert record.policy_decision == "allow"
+    assert record.exit_code == 0

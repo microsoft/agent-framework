@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 __all__ = ["ShellAuditLog", "ShellCommandRecord"]
 
@@ -67,8 +67,12 @@ class ShellAuditLog:
 
     @property
     def records(self) -> list[ShellCommandRecord]:
-        """All recorded command attempts, in chronological order."""
-        return list(self._records)
+        """Snapshots of all recorded command attempts, in chronological order.
+
+        Each call returns detached copies, so mutating a returned record does
+        not alter the stored audit history.
+        """
+        return [replace(rec) for rec in self._records]
 
     def __len__(self) -> int:
         return len(self._records)

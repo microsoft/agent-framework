@@ -8,8 +8,11 @@ matching result via :meth:`AsyncRequestBroker.resolve` or
 :meth:`AsyncRequestBroker.reject`.
 
 The broker tracks recently settled request IDs in a bounded deque (default
-256 entries) so that re-using a settled ID is reported instead of silently
-hanging. Late responses for unknown IDs return ``False`` rather than raising.
+256 entries). A request counts as settled once it is resolved, rejected,
+timed out, or cancelled. Re-using a settled ID raises ``ValueError`` instead of
+creating a new waiter that a late response could complete with stale data.
+Late responses for recently settled IDs return ``True`` (and are ignored);
+responses for unknown or evicted IDs return ``False`` rather than raising.
 
 Usage::
 
@@ -66,7 +69,8 @@ class AsyncRequestBroker(Generic[T]):
             The result passed to :meth:`resolve`.
 
         Raises:
-            ValueError: If the ID is already pending or was recently settled.
+            ValueError: If the ID is already pending or was recently settled
+                (resolved, rejected, timed out, or cancelled).
             asyncio.TimeoutError: If ``timeout`` elapses before a response arrives.
             asyncio.CancelledError: If the waiting task is cancelled.
             Exception: Any exception passed to :meth:`reject`.
@@ -83,6 +87,9 @@ class AsyncRequestBroker(Generic[T]):
         except BaseException:
             if self._pending.get(request_id) is future:
                 del self._pending[request_id]
+                # Remember the ID so a late response cannot complete a new waiter
+                # that re-uses it, and so re-use is reported as already settled.
+                self._settled.append(request_id)
             future.cancel()
             raise
 
@@ -90,12 +97,13 @@ class AsyncRequestBroker(Generic[T]):
         """Deliver a successful result to a waiting :meth:`request_async` call.
 
         Returns:
-            ``True`` if a waiter was notified, ``False`` if the request was not found
-            (already settled or never registered).
+            ``True`` if a waiter was notified or the request was recently settled
+            (the late result is ignored). ``False`` if the request ID is unknown
+            (never registered, or evicted from the settled history).
         """
         future = self._pending.pop(request_id, None)
         if future is None:
-            return False
+            return request_id in self._settled
         self._settled.append(request_id)
         if not future.done():
             future.set_result(result)
@@ -105,11 +113,13 @@ class AsyncRequestBroker(Generic[T]):
         """Deliver an exception to a waiting :meth:`request_async` call.
 
         Returns:
-            ``True`` if a waiter was notified.
+            ``True`` if a waiter was notified or the request was recently settled
+            (the late exception is ignored). ``False`` if the request ID is unknown
+            (never registered, or evicted from the settled history).
         """
         future = self._pending.pop(request_id, None)
         if future is None:
-            return False
+            return request_id in self._settled
         self._settled.append(request_id)
         if not future.done():
             future.set_exception(exception)
