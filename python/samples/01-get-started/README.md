@@ -10,15 +10,12 @@ pip install agent-framework-foundry azure-identity
 az login
 ```
 
-Samples 1 through 6 hardcode example values for `project_endpoint` and `model`. Replace them with your Microsoft
+All samples hardcode example values for `project_endpoint` and `model`. Replace them with your Microsoft
 Foundry project endpoint and model deployment name before running the sample.
 
 Alternatively, set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, then remove the `project_endpoint` and `model`
 arguments from the `FoundryChatClient` constructor. To read those values from a `.env` file, call `load_dotenv()`
 before creating the client; Agent Framework doesn't load `.env` files automatically.
-
-The hosting sample reads `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` from the environment because hosted
-deployments provide configuration that way.
 
 ## Samples
 
