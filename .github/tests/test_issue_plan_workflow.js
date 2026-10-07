@@ -17,7 +17,18 @@ function job(name) {
 }
 
 function acceptsComment(body, { action = 'created', pullRequest = false, association = 'COLLABORATOR' } = {}) {
-  const condition = JSON.parse(job('pre_activation').match(/^    if: (.+)$/m)[1])
+  if (action !== 'created') {
+    return false;
+  }
+  const preActivation = job('pre_activation');
+  const ifValue = preActivation.match(/^    if: (.+)$/m)[1];
+  const condition = (ifValue.startsWith('>') ?
+    preActivation.match(/^    if: >-?\n((?:      .+\n)+)/m)[1]
+      .split('\n')
+      .map(line => line.trim())
+      .join(' ')
+      .trim() :
+    JSON.parse(ifValue))
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r');
   return runInNewContext(condition, {
@@ -72,6 +83,34 @@ describe('Issue planning workflow', () => {
     const safeTools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
     assert.deepEqual(safeTools.filter(tool => !['missing_data', 'missing_tool', 'noop'].includes(tool)), ['add_comment']);
     assert.match(source, /status-comment: false/);
+  });
+
+  it('enforces the daily credit guard without allowing cross-issue accounting races', () => {
+    assert.match(source, /on:\n  issue_comment:\n    types: \[created\]/);
+    assert.match(source, /concurrency:\n  group: gh-aw-issue-plan\n  cancel-in-progress: false\n  queue: max/);
+    assert.match(compiled, /concurrency:\n  cancel-in-progress: false\n  group: gh-aw-issue-plan\n  queue: max/);
+    assert.match(job('activation'), /GH_AW_HAS_SLASH_COMMAND: "false"/);
+    assert.match(job('activation'), /Check daily workflow token guardrail/);
+  });
+
+  it('does not expose telemetry credentials to the agent or generated artifacts', () => {
+    assert.match(source, /GH_AW_OTLP_ENDPOINTS: "\[\]"/);
+    assert.match(source, /OTEL_EXPORTER_OTLP_ENDPOINT: ""/);
+    assert.match(source, /OTEL_EXPORTER_OTLP_HEADERS: ""/);
+    assert.doesNotMatch(manifest.secrets.join(','), /GH_AW_DEFAULT_OTLP/);
+    assert.doesNotMatch(compiled, /secrets\.GH_AW_DEFAULT_OTLP/);
+  });
+
+  it('does not create repository issues for workflow failures or system reports', () => {
+    assert.match(source, /report-failure-as-issue: false/);
+    assert.match(source, /report-failed-jobs: false/);
+    assert.match(source, /missing-tool:\n    create-issue: false/);
+    assert.match(source, /missing-data:\n    create-issue: false/);
+    assert.match(source, /report-incomplete:\n    create-issue: false/);
+    assert.match(job('conclusion'), /GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"/);
+    assert.match(job('conclusion'), /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
+    assert.match(job('conclusion'), /GH_AW_FAILURE_REPORT_AS_ISSUE: "false"/);
+    assert.doesNotMatch(job('conclusion'), /GH_AW_REPORT_FAILED_JOBS: "true"/);
   });
 
   it('can read first-time reports but treats them as data and stays in this repository', () => {

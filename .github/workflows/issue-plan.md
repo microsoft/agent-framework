@@ -2,13 +2,17 @@
 name: Issue Planning
 description: Investigate an issue and explain a proposed plan or the questions that need answering.
 on:
-  slash_command:
-    name: plan
-    events: [issue_comment]
+  issue_comment:
+    types: [created]
   roles: [triage, write, maintain, admin]
   reaction: eyes
   status-comment: false
-if: github.event.action == 'created' && github.event.issue.pull_request == null
+if: >-
+  github.event.issue.pull_request == null &&
+  (github.event.comment.body == '/plan' ||
+  startsWith(github.event.comment.body, '/plan ') ||
+  startsWith(github.event.comment.body, '/plan\n') ||
+  startsWith(github.event.comment.body, '/plan\r'))
 permissions:
   contents: read
   issues: read
@@ -16,6 +20,14 @@ permissions:
   copilot-requests: write
 engine: copilot
 timeout-minutes: 20
+env:
+  GH_AW_OTLP_ENDPOINTS: "[]"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_HEADERS: ""
+concurrency:
+  group: gh-aw-issue-plan
+  cancel-in-progress: false
+  queue: max
 network:
   allowed: [defaults, github]
 tools:
@@ -26,6 +38,14 @@ tools:
     min-integrity: none
   bash: ["ls", "cat", "head", "tail", "find", "grep", "rg", "git ls-files", "git log", "git show"]
 safe-outputs:
+  report-failure-as-issue: false
+  report-failed-jobs: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   add-comment:
     target: triggering
     max: 1
