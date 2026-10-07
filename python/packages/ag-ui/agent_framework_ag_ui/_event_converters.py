@@ -54,15 +54,6 @@ def _finalize_agui_response(
     )
 
 
-def _finalize_agui_agent_response(
-    updates: Sequence[AgentResponseUpdate], *, response_format: Any | None = None
-) -> AgentResponse[Any]:
-    """Aggregate mapped agent updates without losing message-linked annotations."""
-    return _finalize_agui_updates(
-        updates, lambda items: AgentResponse.from_updates(items, output_format_type=response_format)
-    )
-
-
 def _finalize_agui_updates(
     updates: Sequence[AGUIUpdateT], aggregate: Callable[[Sequence[AGUIUpdateT]], AGUIResponseT]
 ) -> AGUIResponseT:

@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 from agent_framework import Annotation, ChatResponse, Content, Message
 
-from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response
+from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response, _finalize_agui_updates
 
 
 class TestAGUIEventConverter:
@@ -503,10 +503,8 @@ class TestAGUIEventConverter:
 
     def test_agent_finalizer_preserves_metadata_from_annotation_only_update(self) -> None:
         """Mapped annotation events retain agent-only fields without creating an empty duplicate."""
-        from agent_framework import AgentResponseUpdate, ContinuationToken
+        from agent_framework import AgentResponse, AgentResponseUpdate, ContinuationToken
         from pydantic import BaseModel
-
-        from agent_framework_ag_ui._event_converters import _finalize_agui_agent_response
 
         class CursorToken(ContinuationToken):
             cursor: str
@@ -547,7 +545,9 @@ class TestAGUIEventConverter:
             ),
         ]
 
-        response = _finalize_agui_agent_response(updates, response_format=Answer)
+        response = _finalize_agui_updates(
+            updates, lambda items: AgentResponse.from_updates(items, output_format_type=Answer)
+        )
 
         assert [(message.message_id, message.text) for message in response.messages] == [
             ("m1", "First"),
