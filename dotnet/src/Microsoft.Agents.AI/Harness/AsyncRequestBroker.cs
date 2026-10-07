@@ -133,17 +133,18 @@ public sealed class AsyncRequestBroker<TResult>
     /// <param name="requestId">The request identifier.</param>
     /// <param name="result">The result to deliver.</param>
     /// <returns>
-    /// <see langword="true"/> if a waiter was notified; <see langword="false"/> if the request was not found
-    /// (already settled, timed out, cancelled, or never registered).
+    /// <see langword="true"/> if a waiter was notified, or if the request was recently settled (resolved, rejected,
+    /// timed out, or cancelled), in which case the late <paramref name="result"/> is ignored;
+    /// <see langword="false"/> if the request ID is unknown or has been evicted from the settled-ID history.
     /// </returns>
     public bool Resolve(string requestId, TResult result)
     {
-        if (!this.TryRemovePending(requestId, out var tcs))
+        if (!this.TrySettle(requestId, out var tcs))
         {
             return false;
         }
 
-        tcs.TrySetResult(result);
+        tcs?.TrySetResult(result);
         return true;
     }
 
@@ -151,36 +152,45 @@ public sealed class AsyncRequestBroker<TResult>
     /// <param name="requestId">The request identifier.</param>
     /// <param name="exception">The exception to deliver.</param>
     /// <returns>
-    /// <see langword="true"/> if a waiter was notified; <see langword="false"/> if the request was not found
-    /// (already settled, timed out, cancelled, or never registered).
+    /// <see langword="true"/> if a waiter was notified, or if the request was recently settled (resolved, rejected,
+    /// timed out, or cancelled), in which case the late <paramref name="exception"/> is ignored;
+    /// <see langword="false"/> if the request ID is unknown or has been evicted from the settled-ID history.
     /// </returns>
     public bool Reject(string requestId, Exception exception)
     {
         _ = Throw.IfNull(exception);
 
-        if (!this.TryRemovePending(requestId, out var tcs))
+        if (!this.TrySettle(requestId, out var tcs))
         {
             return false;
         }
 
-        tcs.TrySetException(exception);
+        tcs?.TrySetException(exception);
         return true;
     }
 
-    private bool TryRemovePending(string requestId, [NotNullWhen(true)] out TaskCompletionSource<TResult>? tcs)
+    /// <summary>
+    /// Removes a pending request and records it as settled, or detects a late response for a recently settled request.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if the ID was pending (<paramref name="tcs"/> is the waiter to complete) or recently
+    /// settled (<paramref name="tcs"/> is <see langword="null"/>); <see langword="false"/> if the ID is unknown.
+    /// </returns>
+    private bool TrySettle(string requestId, out TaskCompletionSource<TResult>? tcs)
     {
         _ = Throw.IfNull(requestId);
 
         lock (this._lock)
         {
-            if (!this._pending.TryGetValue(requestId, out tcs))
+            if (this._pending.TryGetValue(requestId, out tcs))
             {
-                return false;
+                this._pending.Remove(requestId);
+                this.TrackSettledLocked(requestId);
+                return true;
             }
 
-            this._pending.Remove(requestId);
-            this.TrackSettledLocked(requestId);
-            return true;
+            tcs = null;
+            return this._settledSet.Contains(requestId);
         }
     }
 

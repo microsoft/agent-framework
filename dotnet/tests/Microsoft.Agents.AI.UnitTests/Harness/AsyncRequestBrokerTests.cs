@@ -87,10 +87,10 @@ public class AsyncRequestBrokerTests
     }
 
     /// <summary>
-    /// Verify that a late response for an already-settled ID returns false and does not affect state.
+    /// Verify that a late response for a recently resolved ID returns true, is ignored, and does not affect state.
     /// </summary>
     [Fact]
-    public async Task ResolveAndReject_LateResponseForSettledId_ReturnFalseAsync()
+    public async Task ResolveAndReject_LateResponseForSettledId_ReturnTrueAsync()
     {
         // Arrange
         var broker = new AsyncRequestBroker<int>();
@@ -103,8 +103,9 @@ public class AsyncRequestBrokerTests
         bool lateReject = broker.Reject("req-1", new InvalidOperationException());
 
         // Assert
-        Assert.False(lateResolve);
-        Assert.False(lateReject);
+        Assert.True(lateResolve);
+        Assert.True(lateReject);
+        Assert.Equal(1, await task);
         Assert.Equal(0, broker.PendingCount);
     }
 
@@ -187,7 +188,8 @@ public class AsyncRequestBrokerTests
 
         // Assert
         Assert.Equal(0, broker.PendingCount);
-        Assert.False(broker.Resolve("req-1", 1));
+        Assert.True(broker.Resolve("req-1", 1));
+        Assert.True(broker.Reject("req-1", new InvalidOperationException()));
         await Assert.ThrowsAsync<InvalidOperationException>(() => broker.RequestAsync("req-1"));
     }
 
@@ -209,7 +211,8 @@ public class AsyncRequestBrokerTests
         // Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
         Assert.Equal(0, broker.PendingCount);
-        Assert.False(broker.Resolve("req-1", 1));
+        Assert.True(broker.Resolve("req-1", 1));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
         await Assert.ThrowsAsync<InvalidOperationException>(() => broker.RequestAsync("req-1"));
     }
 
@@ -306,9 +309,15 @@ public class AsyncRequestBrokerTests
         }
 
         // Act
+        bool evictedResolve = broker.Resolve("a", 1);
+        bool evictedReject = broker.Reject("a", new InvalidOperationException());
+        bool retainedResolve = broker.Resolve("b", 1);
         var reused = broker.RequestAsync("a");
 
         // Assert
+        Assert.False(evictedResolve);
+        Assert.False(evictedReject);
+        Assert.True(retainedResolve);
         Assert.Equal(1, broker.PendingCount);
         await Assert.ThrowsAsync<InvalidOperationException>(() => broker.RequestAsync("b"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => broker.RequestAsync("c"));
@@ -322,7 +331,7 @@ public class AsyncRequestBrokerTests
 
     /// <summary>
     /// Verify invariants under concurrent resolve, reject, cancellation, and duplicate registration:
-    /// exactly one settlement wins, duplicate registrations are always rejected, and no entries leak.
+    /// exactly one settlement determines the outcome, late responses are accepted, duplicate registrations are always rejected, and no entries leak.
     /// </summary>
     [Fact]
     public async Task ConcurrentSettlementAndRegistration_PreservesInvariantsAsync()
@@ -336,14 +345,14 @@ public class AsyncRequestBrokerTests
             .ToArray();
         Assert.Equal(Count, broker.PendingCount);
 
-        var resolveWon = new bool[Count];
-        var rejectWon = new bool[Count];
+        var resolveAccepted = new bool[Count];
+        var rejectAccepted = new bool[Count];
         var duplicates = new Task<int>[Count];
 
         // Act
         await Task.WhenAll(Enumerable.Range(0, Count).Select(i => Task.WhenAll(
-            Task.Run(() => resolveWon[i] = broker.Resolve($"req-{i}", i)),
-            Task.Run(() => rejectWon[i] = broker.Reject($"req-{i}", new InvalidOperationException("rejected"))),
+            Task.Run(() => resolveAccepted[i] = broker.Resolve($"req-{i}", i)),
+            Task.Run(() => rejectAccepted[i] = broker.Reject($"req-{i}", new InvalidOperationException("rejected"))),
             Task.Run(() => ctsList[i].Cancel()),
             // Cast to Action so Task.Run does not unwrap (and await) the duplicate request task.
             Task.Run((Action)(() => duplicates[i] = broker.RequestAsync($"req-{i}"))))));
@@ -352,20 +361,25 @@ public class AsyncRequestBrokerTests
         Assert.Equal(0, broker.PendingCount);
         for (int i = 0; i < Count; i++)
         {
-            Assert.False(resolveWon[i] && rejectWon[i]);
-            var request = requests[i];
+            // The ID was always either pending or recently settled, so both responses are accepted
+            // (the one that loses the race is ignored as a late response).
+            Assert.True(resolveAccepted[i]);
+            Assert.True(rejectAccepted[i]);
 
-            if (resolveWon[i])
+            // Exactly one settlement (resolve, reject, or cancel) determines the outcome.
+            var request = requests[i];
+            await Task.WhenAny(request);
+            if (request.Status == TaskStatus.RanToCompletion)
             {
                 Assert.Equal(i, await request);
             }
-            else if (rejectWon[i])
+            else if (request.IsCanceled)
             {
-                await Assert.ThrowsAsync<InvalidOperationException>(() => request);
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
             }
             else
             {
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => request);
             }
 
             // The ID was always either pending or settled, so the duplicate registration must have been rejected.
