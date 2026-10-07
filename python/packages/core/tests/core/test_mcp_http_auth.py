@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from mcp.client.session import ClientSession
 
 from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
@@ -1199,6 +1200,24 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
             await borrowed.close()
 
         await supplied_session.send_ping()
+
+
+async def test_replacing_supplied_session_invalidates_bound_header_identity() -> None:
+    """A recorded header identity is valid only for the session that established it."""
+    original_session = Mock(spec=ClientSession)
+    replacement_session = Mock(spec=ClientSession)
+    tool = MCPStreamableHTTPTool(
+        name="borrowed",
+        url="https://must-not-connect.example/mcp",
+        session=original_session,
+        header_provider=lambda _kwargs: {"Authorization": "A"},
+    )
+    tool._bind_session_headers({"Authorization": "A"})
+
+    tool.session = replacement_session
+
+    with pytest.raises(ToolExecutionException, match="identity is unknown"):
+        await tool._ensure_session_identity({"Authorization": "A"}, {})
 
 
 async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_server: MCPHTTPServer) -> None:

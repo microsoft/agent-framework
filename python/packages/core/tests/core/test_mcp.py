@@ -44,6 +44,7 @@ from agent_framework._mcp import (
     MCPSpecificApproval,
     MCPTool,
     _build_prefixed_mcp_name,
+    _ClientMCPConnection,
     _describe_error,
     _get_input_model_from_mcp_prompt,
     _json_size_exceeds,
@@ -2356,24 +2357,6 @@ async def test_local_mcp_server_initialization():
     assert server.functions == []
 
 
-async def test_local_mcp_server_context_manager():
-    """Test MCPTool as context manager."""
-
-    class TestServer(MCPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            # Mock connection
-            self.session = Mock(spec=ClientSession)
-
-        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
-            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
-
-    server = TestServer(name="test_server")
-    async with server:
-        assert server.session is not None
-
-    assert server.session is None
-
-
 async def test_local_mcp_server_load_functions():
     """Test loading functions from MCP server."""
 
@@ -3571,8 +3554,9 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
             header_provider=provider,
             use_progressive_disclosure=True,
         )
-    server.session = AsyncMock()
-    server.session.list_tools = AsyncMock(
+    sdk_client = AsyncMock()
+    sdk_client.session = AsyncMock()
+    sdk_client.list_tools = AsyncMock(
         return_value=types.ListToolsResult(
             tools=[
                 types.Tool(
@@ -3587,9 +3571,10 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
             ]
         )
     )
-    server.session.call_tool = AsyncMock(
+    sdk_client.call_tool = AsyncMock(
         return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
     )
+    server._connection = _ClientMCPConnection(sdk_client)
     await server.load_tools()
     load_tool = server.functions[1]
     load_context = FunctionInvocationContext(
@@ -3618,7 +3603,7 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
 
     assert result[0].text == "Hello!"
     assert provider_received[0]["some_token"] == "my-secret"
-    call_args = server.session.call_tool.call_args  # type: ignore[union-attr]
+    call_args = sdk_client.call_tool.call_args
     assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
     assert "some_token" not in call_args.kwargs.get("arguments", {})
 
@@ -4972,12 +4957,18 @@ async def test_connect_retains_and_close_clears_sdk_client() -> None:
     with patch("mcp.Client", return_value=sdk_client):
         await tool.connect()
         try:
-            assert tool._mcp_client is sdk_client
+            connection = tool._connection
+            tool.session = tool.session
+            assert tool._connection is connection
+            with pytest.raises(RuntimeError, match="framework-owned MCP Client"):
+                tool.session = None
+            await tool.connect(reset=True)
+            assert tool._connection.client is sdk_client
             assert tool.session is sdk_client.session
         finally:
             await tool.close()
 
-    assert tool._mcp_client is None
+    assert tool._connection is None
     assert tool.session is None
 
 
@@ -6995,12 +6986,16 @@ async def test_mcp_tool_reuses_supplied_session(mode: str, expected_version: str
             )
 
             async with wrapper:
-                assert wrapper._mcp_client is None
+                assert wrapper._connection is not None
+                assert wrapper._connection.client is None
+                assert wrapper._connection.is_framework_owned is False
                 assert wrapper.session is session
                 assert [function.name for function in wrapper.functions] == ["greet"]
                 assert _mcp_result_to_text(await wrapper.call_tool("greet")) == "Hello!"
 
-            assert wrapper._mcp_client is None
+            assert wrapper._connection is not None
+            assert wrapper._connection.client is None
+            assert wrapper._connection.is_framework_owned is False
             initialize.assert_not_awaited()
             discover.assert_not_awaited()
             if mode == "auto":
@@ -7010,6 +7005,36 @@ async def test_mcp_tool_reuses_supplied_session(mode: str, expected_version: str
         result = await session.call_tool("greet")
         assert isinstance(result.content[0], types.TextContent)
         assert result.content[0].text == "Hello!"
+
+
+async def test_replacing_supplied_session_preserves_caller_ownership() -> None:
+    """Test compatibility assignment does not transfer session ownership."""
+    original_session = Mock(spec=ClientSession)
+    replacement_session = Mock(spec=ClientSession)
+    replacement_session.protocol_version = "2026-07-28"
+    replacement_session.server_capabilities = types.ServerCapabilities()
+    replacement_session.initialize_result = None
+    tool = MCPStdioTool(
+        name="test",
+        command="unused",
+        session=original_session,
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    tool.session = None
+    tool.session = replacement_session
+
+    with patch.object(tool, "get_mcp_client", side_effect=AssertionError("Unexpected transport")):
+        await tool.connect(reset=True)
+        assert tool._connection is not None
+        assert tool._connection.is_framework_owned is False
+        assert tool.session is replacement_session
+        await tool.close()
+
+    assert tool._connection is not None
+    assert tool._connection.is_framework_owned is False
+    assert tool.session is replacement_session
 
 
 async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompts() -> None:
@@ -7614,8 +7639,9 @@ async def test_mcp_streamable_http_tool_header_provider_injects_headers():
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -7630,10 +7656,10 @@ async def test_mcp_streamable_http_tool_header_provider_injects_headers():
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
@@ -7653,8 +7679,10 @@ async def test_mcp_streamable_http_tool_header_provider_injects_headers():
         # Simulate the runtime kwargs that flow from FunctionInvocationContext.kwargs
         await server.call_tool("greet", name="Alice", some_token="my-secret")
 
-        # Verify the MCP session.call_tool was called
-        server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        # Verify the high-level Client.call_tool was called.
+        sdk_client = server._connection.client
+        assert sdk_client is not None
+        cast(AsyncMock, sdk_client.call_tool).assert_awaited_once()
 
 
 async def test_mcp_streamable_http_tool_header_provider_sets_contextvar():
@@ -7674,8 +7702,9 @@ async def test_mcp_streamable_http_tool_header_provider_sets_contextvar():
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -7686,10 +7715,10 @@ async def test_mcp_streamable_http_tool_header_provider_sets_contextvar():
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
@@ -7716,8 +7745,9 @@ async def test_mcp_streamable_http_tool_header_provider_contextvar_reset_after_c
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -7728,10 +7758,10 @@ async def test_mcp_streamable_http_tool_header_provider_contextvar_reset_after_c
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
@@ -7756,8 +7786,9 @@ async def test_mcp_streamable_http_tool_without_header_provider():
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -7768,10 +7799,10 @@ async def test_mcp_streamable_http_tool_without_header_provider():
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
@@ -7784,7 +7815,9 @@ async def test_mcp_streamable_http_tool_without_header_provider():
     async with server:
         await server.load_tools()
         await server.call_tool("greet", name="Alice")
-        server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        sdk_client = server._connection.client
+        assert sdk_client is not None
+        cast(AsyncMock, sdk_client.call_tool).assert_awaited_once()
 
     # Without header_provider, call_tool should delegate directly to MCPTool
     assert server._header_provider is None
@@ -8416,8 +8449,9 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -8432,10 +8466,10 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
@@ -8479,9 +8513,12 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         assert len(provider_received) == 1
         assert provider_received[0]["some_token"] == "my-secret"
 
-        # Verify session.call_tool was called with the tool arguments (not the runtime kwargs)
-        server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-        call_args = server.session.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        # Verify Client.call_tool was called with the tool arguments (not the runtime kwargs).
+        sdk_client = server._connection.client
+        assert sdk_client is not None
+        call_tool = cast(AsyncMock, sdk_client.call_tool)
+        call_tool.assert_awaited_once()
+        call_args = call_tool.call_args
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
 
 
@@ -9109,8 +9146,9 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
 
     class _TestServer(MCPStreamableHTTPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
-            self.session = Mock(spec=ClientSession)
-            self.session.list_tools = AsyncMock(
+            session = Mock(spec=ClientSession)
+            sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+            sdk_client.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
                     tools=[
                         types.Tool(
@@ -9121,10 +9159,10 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
                     ]
                 )
             )
-            self.session.call_tool = AsyncMock(
+            sdk_client.call_tool = AsyncMock(
                 return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
             )
-            self.session.send_ping = AsyncMock()
+            self._connection = _ClientMCPConnection(sdk_client)
             self.is_connected = True
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]

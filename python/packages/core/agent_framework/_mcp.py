@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, cast
 
 if sys.version_info >= (3, 13):
     from warnings import deprecated  # pragma: no cover
@@ -478,6 +478,147 @@ class _MCPHeaderScopedClient:
 
     async def delete(self, *args: Any, **kwargs: Any) -> Any:
         return await self._client.delete(*args, **self._tagged_kwargs(kwargs))
+
+
+class _MCPConnection(Protocol):
+    """Normalized MCP connection surface used by MCPTool."""
+
+    @property
+    def session(self) -> ClientSession:
+        """Return the low-level compatibility session."""
+        ...
+
+    @property
+    def client(self) -> Client | None:
+        """Return the high-level Client when this connection has one."""
+        ...
+
+    @property
+    def is_framework_owned(self) -> bool:
+        """Return whether Agent Framework owns this connection."""
+        ...
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        *,
+        meta: dict[str, Any] | None,
+    ) -> types.CallToolResult:
+        """Call a tool through this connection."""
+        ...
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+        """Get a prompt through this connection."""
+        ...
+
+    async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """List one tools page through this connection."""
+        ...
+
+    async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+        """List one prompts page through this connection."""
+        ...
+
+    async def set_logging_level(self, level: Any) -> None:
+        """Set the legacy logging level through this connection."""
+        ...
+
+
+@dataclass(frozen=True)
+class _ClientMCPConnection:
+    """MCP connection backed by a high-level Client."""
+
+    client: Client
+
+    @property
+    def session(self) -> ClientSession:
+        """Return the Client's low-level compatibility session."""
+        return self.client.session
+
+    @property
+    def is_framework_owned(self) -> bool:
+        """Return True because Agent Framework owns the Client."""
+        return True
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        *,
+        meta: dict[str, Any] | None,
+    ) -> types.CallToolResult:
+        """Call a tool through the high-level Client."""
+        return await self.client.call_tool(
+            name,
+            arguments=arguments,
+            meta=cast("types.RequestParamsMeta | None", meta),
+        )
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+        """Get a prompt through the high-level Client."""
+        return await self.client.get_prompt(name, arguments=cast("dict[str, str] | None", arguments))
+
+    async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """List one tools page without changing existing cache behavior."""
+        return await self.client.list_tools(
+            cursor=params.cursor if params is not None else None,
+            cache_mode="bypass",
+        )
+
+    async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+        """List one prompts page without changing existing cache behavior."""
+        return await self.client.list_prompts(
+            cursor=params.cursor if params is not None else None,
+            cache_mode="bypass",
+        )
+
+    async def set_logging_level(self, level: Any) -> None:
+        """Set the legacy logging level through the underlying session."""
+        await self.session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
+
+
+@dataclass(frozen=True)
+class _SessionMCPConnection:
+    """MCP connection backed by a low-level ClientSession."""
+
+    session: ClientSession
+    client: None = None
+
+    @property
+    def is_framework_owned(self) -> bool:
+        """Return False because the caller owns the session."""
+        return False
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        *,
+        meta: dict[str, Any] | None,
+    ) -> types.CallToolResult:
+        """Call a tool directly through the session."""
+        return await self.session.call_tool(
+            name,
+            arguments=arguments,
+            meta=cast("types.RequestParamsMeta | None", meta),
+        )
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+        """Get a prompt directly through the session."""
+        return await self.session.get_prompt(name, arguments=cast("dict[str, str] | None", arguments))
+
+    async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """List one tools page directly through the session."""
+        return await self.session.list_tools(params=params)
+
+    async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+        """List one prompts page directly through the session."""
+        return await self.session.list_prompts(params=params)
+
+    async def set_logging_level(self, level: Any) -> None:
+        """Set the legacy logging level directly through the session."""
+        await self.session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
 
 
 # Default safety limits applied to server-initiated MCP sampling requests
@@ -955,9 +1096,7 @@ class MCPTool:
             asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
         ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
-        self.session = session
-        self._owns_session = session is None
-        self._mcp_client: Client | None = None
+        self._connection: _MCPConnection | None = _SessionMCPConnection(session) if session is not None else None
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
@@ -997,6 +1136,21 @@ class MCPTool:
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
+
+    @property
+    def session(self) -> ClientSession | None:
+        """Return the low-level session for compatibility and advanced use."""
+        return self._connection.session if self._connection is not None else None
+
+    @session.setter
+    def session(self, value: ClientSession | None) -> None:
+        """Replace the connection with a caller-owned session compatibility path."""
+        connection = self._connection
+        if connection is not None and connection.is_framework_owned:
+            if value is connection.session:
+                return
+            raise RuntimeError("Cannot replace the session while its framework-owned MCP Client is connected.")
+        self._connection = _SessionMCPConnection(value) if value is not None else None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         """Return base MCP span attributes shared across all operations.
@@ -1939,9 +2093,9 @@ class MCPTool:
             if reset_discovery:
                 await self._cancel_pending_reload_tasks()
             await self._safe_close_exit_stack()
-            if self._owns_session:
-                self._mcp_client = None
-                self.session = None
+            connection = self._connection
+            if connection is not None and connection.is_framework_owned:
+                self._connection = None
             self.is_connected = False
             self._reset_session_state()
             if reset_discovery:
@@ -2017,9 +2171,7 @@ class MCPTool:
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
-            self.session = session
-            self._mcp_client = mcp_client
-            self._owns_session = True
+            self._connection = _ClientMCPConnection(mcp_client)
             try:
                 await self._listen_capability_list_changes(mcp_client)
             except (Exception, asyncio.CancelledError):
@@ -2059,7 +2211,7 @@ class MCPTool:
                     level_name = cast(
                         Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
                     )
-                    await self.session.set_logging_level(level_name)
+                    await self._require_connection().set_logging_level(level_name)
                 except Exception as exc:
                     logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
         except (Exception, asyncio.CancelledError):
@@ -2446,7 +2598,7 @@ class MCPTool:
                         )
                         return
                     with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
-                        prompt_list = await self._list_prompts_page(params)
+                        prompt_list = await self._require_connection().list_prompts_page(params)
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2558,7 +2710,7 @@ class MCPTool:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
                     with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
-                        tool_list = await self._list_tools_page(params)
+                        tool_list = await self._require_connection().list_tools_page(params)
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2699,9 +2851,9 @@ class MCPTool:
         await self._cancel_pending_reload_tasks()
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
-        if self._owns_session:
-            self._mcp_client = None
-            self.session = None
+        connection = self._connection
+        if connection is not None and connection.is_framework_owned:
+            self._connection = None
         self.is_connected = False
         self._reset_session_state()
 
@@ -2717,35 +2869,11 @@ class MCPTool:
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("close")
 
-    def _operation_client(self) -> Client | ClientSession:
-        """Return the highest-level MCP client available for standard operations."""
-        if self._mcp_client is not None:
-            return self._mcp_client
-        if self.session is None:
+    def _require_connection(self) -> _MCPConnection:
+        """Return the active normalized MCP connection."""
+        if self._connection is None:
             raise RuntimeError("MCPTool is not connected.")
-        return self.session
-
-    async def _list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        """List one tools page without changing existing cache behavior."""
-        if self._mcp_client is not None:
-            return await self._mcp_client.list_tools(
-                cursor=params.cursor if params is not None else None,
-                cache_mode="bypass",
-            )
-        if self.session is None:
-            raise RuntimeError("MCPTool is not connected.")
-        return await self.session.list_tools(params=params)
-
-    async def _list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
-        """List one prompts page without changing existing cache behavior."""
-        if self._mcp_client is not None:
-            return await self._mcp_client.list_prompts(
-                cursor=params.cursor if params is not None else None,
-                cache_mode="bypass",
-            )
-        if self.session is None:
-            raise RuntimeError("MCPTool is not connected.")
-        return await self.session.list_prompts(params=params)
+        return self._connection
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -2866,10 +2994,10 @@ class MCPTool:
 
         for attempt in range(2):
             try:
-                result = await self._operation_client().call_tool(
+                result = await self._require_connection().call_tool(
                     tool_name,
-                    arguments=filtered_kwargs,
-                    meta=cast("types.RequestParamsMeta | None", meta),
+                    filtered_kwargs,
+                    meta=meta,
                 )
                 _capture_mcp_tool_result(result)
                 if result.is_error:
@@ -3010,7 +3138,7 @@ class MCPTool:
         with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:
             for attempt in range(2):
                 try:
-                    prompt_result = await self._operation_client().get_prompt(prompt_name, arguments=kwargs)
+                    prompt_result = await self._require_connection().get_prompt(prompt_name, kwargs)
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -3550,6 +3678,7 @@ class MCPStreamableHTTPTool(MCPTool):
         # the replacement transport initializes.
         self._session_headers: dict[str, str] | None = None
         self._session_header_identity: _MCPHeaderIdentity | None = None
+        self._session_header_session: ClientSession | None = None
         self._pending_session_headers: dict[str, str] | None = None
         self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
@@ -3743,6 +3872,7 @@ class MCPStreamableHTTPTool(MCPTool):
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
         self._session_headers = dict(headers)
         self._session_header_identity = _mcp_header_identity(headers)
+        self._session_header_session = self.session
 
     def _stage_session_headers(self, headers: Mapping[str, str], kwargs: Mapping[str, Any]) -> None:
         self._pending_session_headers = dict(headers)
@@ -3790,8 +3920,9 @@ class MCPStreamableHTTPTool(MCPTool):
         kwargs: Mapping[str, Any],
     ) -> None:
         identity = _mcp_header_identity(headers)
-        if not self._owns_session:
-            if self._session_header_identity is None:
+        connection = self._connection
+        if connection is not None and not connection.is_framework_owned:
+            if self._session_header_identity is None or self._session_header_session is not self.session:
                 raise ToolExecutionException(
                     "MCP header identity is unknown for a caller-supplied session; "
                     "use a separate framework-managed tool instance."
@@ -3849,9 +3980,11 @@ class MCPStreamableHTTPTool(MCPTool):
         self._connection_kwargs = None
         self._pending_session_headers = None
         self._pending_connection_kwargs = None
-        if self._owns_session:
+        connection = self._connection
+        if connection is None or connection.is_framework_owned:
             self._session_headers = None
             self._session_header_identity = None
+            self._session_header_session = None
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.
