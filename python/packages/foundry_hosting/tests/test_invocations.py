@@ -15,10 +15,12 @@ import asyncio
 import json
 import logging
 import uuid
+import warnings
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import product
+from pathlib import Path
 from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -34,12 +36,17 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Executor,
     FunctionInvocationLayer,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
     ServiceSessionId,
     SessionStore,
+    WorkflowAgent,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
     tool,
 )
 from azure.ai.agentserver.core import (
@@ -286,6 +293,30 @@ async def _success_text(response: Response) -> str:
         return "".join(data["text"] for event, data in events if event == "delta")
     assert response.media_type == "application/json"
     return json.loads(bytes(response.body))["response"]
+
+
+class _EchoExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__("echo")
+
+    @handler
+    async def echo(self, messages: list[Message], ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output(messages[-1].text)
+
+
+def _make_workflow_agent() -> WorkflowAgent:
+    return WorkflowBuilder(name="legacy", start_executor=_EchoExecutor()).build().as_agent()
+
+
+def _workflow_agent_warnings(captured: Sequence[warnings.WarningMessage]) -> list[warnings.WarningMessage]:
+    return [item for item in captured if "Hosting WorkflowAgent" in str(item.message)]
+
+
+async def _invoke_text(server: InvocationsHostServer, message: str) -> str:
+    request = _make_request({"message": message})
+    with _request_context(session_id="session"):
+        response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+    return await _success_text(response)
 
 
 # endregion
@@ -646,6 +677,43 @@ class TestInit:
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
         with pytest.raises((TypeError, ValueError), match=error):
             InvocationsHostServer(_make_agent(response_text="ok"), **{parameter: value})
+
+
+class TestLegacyWorkflowAgentHosting:
+    async def test_instance_warns_once_per_host(self) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_workflow_agent())
+            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
+
+        deprecations = _workflow_agent_warnings(captured)
+        assert len(deprecations) == 1
+        assert deprecations[0].category is DeprecationWarning
+        message = str(deprecations[0].message)
+        assert "should be avoided" in message
+        assert "stateful" in message
+        assert "parse_request" in message
+        assert Path(deprecations[0].filename).name == Path(__file__).name
+        assert texts == ["one", "two"]
+
+    async def test_factory_warns_once_on_first_request(self) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_workflow_agent)
+            assert _workflow_agent_warnings(captured) == []
+            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
+
+        assert len(_workflow_agent_warnings(captured)) == 1
+        assert texts == ["one", "two"]
+
+    async def test_regular_agent_does_not_warn(self) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_agent(response_text="hi"))
+            text = await _invoke_text(server, "hello")
+
+        assert text == "hi"
+        assert _workflow_agent_warnings(captured) == []
 
 
 # endregion

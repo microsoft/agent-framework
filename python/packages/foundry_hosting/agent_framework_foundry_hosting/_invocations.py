@@ -29,6 +29,7 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     Workflow,
+    WorkflowAgent,
     WorkflowCheckpointException,
     WorkflowEvent,
     WorkflowExecutor,
@@ -347,6 +348,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
+                must never serve requests from different users or conversations. Use `workflow=` instead.
             workflow: A built native workflow or a sync/async request-aware factory returning a freshly built
                 workflow with stable graph/executor IDs. Hosted workflows require a factory. Supply exactly
                 one of agent or workflow; local workflow instances are single-use and remain application-owned.
@@ -402,6 +405,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         self._agent = agent
         self._owns_request_agent = agent is not None and not is_agent(agent)
+        self._warned_workflow_agent = False
         self._parse_request = parse_request
         self._prepare_options = prepare_options
         self._unsupported_options = validate_unsupported_options(unsupported_options)
@@ -424,6 +428,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
             )
             warnings.warn(message, DeprecationWarning, stacklevel=2)
             logger.warning("DEPRECATION: %s", message)
+        if isinstance(agent, WorkflowAgent):
+            self._warn_legacy_workflow()
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
@@ -493,11 +499,27 @@ class InvocationsHostServer(InvocationAgentServerHost):
             is_hosted=True,
         )
 
+    def _warn_legacy_workflow(self) -> None:
+        if not self._warned_workflow_agent:
+            self._warned_workflow_agent = True
+            warnings.warn(
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
+                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
+                "never serve requests from different users or conversations. "
+                "Use workflow=a_request_aware_factory with an explicit parse_request. "
+                "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
+                "Wrapper history, context providers, and event semantics are not automatically unwrapped.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
     @asynccontextmanager
     async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
         if self._agent is None:
             raise RuntimeError("No agent is configured for Invocations.")
         agent = await resolve_agent(self._agent)
+        if isinstance(agent, WorkflowAgent):
+            self._warn_legacy_workflow()
         async with AsyncExitStack() as resources:
             if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)

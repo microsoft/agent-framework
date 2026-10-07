@@ -1004,3 +1004,7 @@ async def test_legacy_wrapper_warns_once_per_host_and_keeps_message_semantics() 
     assert _texts(first) == ["legacy"]
     assert _texts(second) == ["again"]
     assert sum("Hosting WorkflowAgent" in str(item.message) for item in captured) == 1
+    message = next(str(item.message) for item in captured if "Hosting WorkflowAgent" in str(item.message))
+    assert "should be avoided" in message
+    assert "stateful" in message
+    assert "parse_response" in message
