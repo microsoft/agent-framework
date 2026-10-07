@@ -3838,7 +3838,8 @@ def test_parse_result_pydantic_model_uses_json_mode():
 
 
 def test_parse_result_pydantic_model_with_arbitrary_type():
-    """A field Pydantic cannot serialize to JSON falls back to str, as before."""
+    """Only the field Pydantic cannot serialize to JSON falls back to str; the others stay in JSON mode."""
+    from pydantic import field_serializer
 
     class Handle:
         def __str__(self) -> str:
@@ -3849,10 +3850,15 @@ def test_parse_result_pydantic_model_with_arbitrary_type():
 
         handle: Handle
         created: datetime
+        token: str
 
-    parsed = FunctionTool.parse_result(Result(handle=Handle(), created=datetime(2024, 1, 1, 12)))
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
 
-    assert json.loads(parsed[0].text) == {"handle": "handle-1", "created": "2024-01-01 12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    parsed = FunctionTool.parse_result(Result(handle=Handle(), created=datetime(2024, 1, 1, 12), token="secret"))
+
+    assert json.loads(parsed[0].text) == {"handle": "handle-1", "created": "2024-01-01T12:00:00", "token": "***"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 # region FunctionTool.parse_result with MCP TextContent-like objects
