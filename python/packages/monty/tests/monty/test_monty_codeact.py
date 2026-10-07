@@ -262,6 +262,83 @@ def test_tool_construction_defaults() -> None:
     assert monty_tool.get_tools() == []
 
 
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+@pytest.mark.parametrize("register_later", [False, True])
+@pytest.mark.parametrize(
+    "properties",
+    [
+        {"source_integrity": "untrusted"},
+        {"confidentiality": "private"},
+        {"max_allowed_confidentiality": "public"},
+        {"max_allowed_confidentiality": None},
+        {"accepts_untrusted": False},
+        {"standing_guidance": []},
+        {"agent_framework.security.principals": []},
+        {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_trust_server_ifc": False},
+    ],
+)
+def test_codeact_warns_for_fides_tool_metadata(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+    register_later: bool,
+    properties: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def annotated_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=None if register_later else annotated_tool)
+        if register_later:
+            codeact.add_tools(annotated_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].args == ("annotated_tool",)
+    assert codeact.get_tools()[0] is annotated_tool
+    assert annotated_tool.additional_properties == properties
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+@pytest.mark.parametrize("properties", [None, {}, {"custom_property": False}])
+def test_codeact_does_not_warn_for_unannotated_tools(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+    properties: dict[str, Any] | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=plain_tool)
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools()[0] is plain_tool
+
+
+def test_run_snapshot_warns_for_fides_metadata_added_after_registration(caplog: pytest.LogCaptureFixture) -> None:
+    @tool
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["accepts_untrusted"] = False
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
 def test_add_remove_clear_tools_round_trip() -> None:
     monty_tool = MontyExecuteCodeTool()
 
