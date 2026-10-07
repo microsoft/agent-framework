@@ -2446,7 +2446,7 @@ class MCPTool:
                         )
                         return
                     with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
-                        prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                        prompt_list = await self._list_prompts_page(params)
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2558,7 +2558,7 @@ class MCPTool:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
                     with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
-                        tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                        tool_list = await self._list_tools_page(params)
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2724,6 +2724,28 @@ class MCPTool:
         if self.session is None:
             raise RuntimeError("MCPTool is not connected.")
         return self.session
+
+    async def _list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """List one tools page without changing existing cache behavior."""
+        if self._mcp_client is not None:
+            return await self._mcp_client.list_tools(
+                cursor=params.cursor if params is not None else None,
+                cache_mode="bypass",
+            )
+        if self.session is None:
+            raise RuntimeError("MCPTool is not connected.")
+        return await self.session.list_tools(params=params)
+
+    async def _list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+        """List one prompts page without changing existing cache behavior."""
+        if self._mcp_client is not None:
+            return await self._mcp_client.list_prompts(
+                cursor=params.cursor if params is not None else None,
+                cache_mode="bypass",
+            )
+        if self.session is None:
+            raise RuntimeError("MCPTool is not connected.")
+        return await self.session.list_prompts(params=params)
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:

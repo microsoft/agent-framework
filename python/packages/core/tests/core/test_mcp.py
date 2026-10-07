@@ -105,6 +105,29 @@ def _mock_sdk_client(
     client.server_capabilities = capabilities
     client.__aenter__.return_value = client
 
+    async def list_tools(
+        *,
+        cursor: str | None = None,
+        meta: types.RequestParamsMeta | None = None,
+        cache_mode: str = "use",
+    ) -> types.ListToolsResult:
+        del meta, cache_mode
+        params = types.PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        return await session.list_tools(params=params)
+
+    async def list_prompts(
+        *,
+        cursor: str | None = None,
+        meta: types.RequestParamsMeta | None = None,
+        cache_mode: str = "use",
+    ) -> types.ListPromptsResult:
+        del meta, cache_mode
+        params = types.PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        return await session.list_prompts(params=params)
+
+    client.list_tools = AsyncMock(side_effect=list_tools)
+    client.list_prompts = AsyncMock(side_effect=list_prompts)
+
     return client
 
 
@@ -5017,6 +5040,63 @@ async def test_get_prompt_uses_sdk_client_for_framework_owned_connection() -> No
     assert "Summarize this." in result
     sdk_client.get_prompt.assert_awaited_once_with("summarize", arguments={})
     session.get_prompt.assert_not_awaited()
+
+
+async def test_catalog_loading_uses_sdk_client_without_cache() -> None:
+    """Test framework-owned catalog pagination uses the Client without caching."""
+    capabilities = types.ServerCapabilities(
+        tools=types.ToolsCapability(),
+        prompts=types.PromptsCapability(),
+    )
+    session = Mock(spec=ClientSession)
+    session.list_tools = AsyncMock()
+    session.list_prompts = AsyncMock()
+    sdk_client = _mock_sdk_client(
+        session=session,
+        capabilities=capabilities,
+        protocol_version="2026-07-28",
+    )
+    sdk_client.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(
+                tools=[types.Tool(name="first_tool", input_schema={"type": "object", "properties": {}})],
+                next_cursor="tools-next",
+            ),
+            types.ListToolsResult(
+                tools=[types.Tool(name="second_tool", input_schema={"type": "object", "properties": {}})]
+            ),
+        ]
+    )
+    sdk_client.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(
+                prompts=[types.Prompt(name="first_prompt", arguments=[])],
+                next_cursor="prompts-next",
+            ),
+            types.ListPromptsResult(prompts=[types.Prompt(name="second_prompt", arguments=[])]),
+        ]
+    )
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            assert [function.name for function in tool.functions] == [
+                "first_tool",
+                "second_tool",
+                "first_prompt",
+                "second_prompt",
+            ]
+
+    assert [awaited.kwargs for awaited in sdk_client.list_tools.await_args_list] == [
+        {"cursor": None, "cache_mode": "bypass"},
+        {"cursor": "tools-next", "cache_mode": "bypass"},
+    ]
+    assert [awaited.kwargs for awaited in sdk_client.list_prompts.await_args_list] == [
+        {"cursor": None, "cache_mode": "bypass"},
+        {"cursor": "prompts-next", "cache_mode": "bypass"},
+    ]
+    session.list_tools.assert_not_awaited()
+    session.list_prompts.assert_not_awaited()
 
 
 # Test error handling in connect() method
