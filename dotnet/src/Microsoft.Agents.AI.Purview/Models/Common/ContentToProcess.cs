@@ -14,19 +14,19 @@ internal sealed class ContentToProcess
     /// <summary>
     /// Creates a new instance of ContentToProcess.
     /// </summary>
-    /// <param name="contentEntries">The content to send and its associated ids.</param>
+    /// <param name="contentEntry">The content to send and its associated id.</param>
     /// <param name="activityMetadata">Metadata about the activity performed with the content.</param>
     /// <param name="deviceMetadata">Metadata about the device that produced the content.</param>
     /// <param name="integratedAppMetadata">Metadata about the application integrating with Purview.</param>
     /// <param name="protectedAppMetadata">Metadata about the application being protected by Purview.</param>
     public ContentToProcess(
-        List<ProcessContentMetadataBase> contentEntries,
+        ProcessContentMetadataBase contentEntry,
         ActivityMetadata activityMetadata,
         DeviceMetadata deviceMetadata,
         IntegratedAppMetadata integratedAppMetadata,
         ProtectedAppMetadata protectedAppMetadata)
     {
-        this.ContentEntries = contentEntries;
+        this.ContentEntries = [contentEntry];
         this.ActivityMetadata = activityMetadata;
         this.DeviceMetadata = deviceMetadata;
         this.IntegratedAppMetadata = integratedAppMetadata;

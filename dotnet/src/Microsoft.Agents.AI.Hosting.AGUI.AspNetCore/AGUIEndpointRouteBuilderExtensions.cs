@@ -39,6 +39,10 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <param name="agentBuilder">The hosted agent builder that identifies the agent registration.</param>
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    /// <remarks>
+    /// See <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/> for authentication,
+    /// authorization, and caller-scoped session isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(
         this IEndpointRouteBuilder endpoints,
         IHostedAgentBuilder agentBuilder,
@@ -56,6 +60,10 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <param name="agentName">The name of the keyed agent registration to resolve from dependency injection.</param>
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    /// <remarks>
+    /// See <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/> for authentication,
+    /// authorization, and caller-scoped session isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(
         this IEndpointRouteBuilder endpoints,
         string agentName,
@@ -83,23 +91,30 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// </para>
     /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
-    /// from the wire and is treated as a chain-resume identifier — <em>not</em> as an
-    /// authorization token. The <see cref="AgentSessionStore"/> contract carries no
-    /// principal/owner dimension, so when a persistent store is registered any caller
-    /// who knows or guesses another caller's <c>ThreadId</c> can resume that other
-    /// caller's persisted thread. Hosts that serve more than one user must compose a
-    /// principal dimension into the lookup key. The recommended way is to wrap the
-    /// keyed <see cref="AgentSessionStore"/> in
-    /// <see cref="IsolationKeyScopedAgentSessionStore"/>, typically by calling
-    /// <c>UseClaimsBasedAgentIsolation(...)</c> from
-    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
-    /// <see cref="AgentIsolationKeyProvider"/>) and registering the store via the
-    /// <c>WithSessionStore(...)</c> / <c>WithInMemorySessionStore(...)</c> helpers on
-    /// <see cref="IHostedAgentBuilder"/> so that the wrapper is applied. When no
-    /// isolation provider is registered, behavior is unchanged — the bare
-    /// <c>ThreadId</c> is used as the conversation identifier, which is appropriate
-    /// for first-run / single-user / prototyping scenarios but unsafe for
-    /// multi-user hosts.
+    /// from the wire and is treated as a chain-resume identifier, not as an authorization
+    /// token. Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> that
+    /// derives a stable, unique caller identity from trusted authentication, not from request
+    /// fields such as <c>ThreadId</c>. For ASP.NET Core claims-based isolation, register
+    /// <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c> from
+    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>.
+    /// </para>
+    /// <para>
+    /// This method automatically wraps the keyed session store in
+    /// <see cref="IsolationKeyScopedAgentSessionStore"/> unless that decorator is already present.
+    /// The wrapper adds the caller's isolation partition to both session lookups and saves.
+    /// When a provider is registered, the automatically added wrapper rejects missing or blank
+    /// isolation keys instead of falling back to shared storage. Without a provider, that wrapper
+    /// leaves keys unchanged: any caller who knows a thread ID can access that persisted session.
+    /// This shared mode is unsafe for multi-user hosts. An existing isolation decorator retains
+    /// its configured strictness.
+    /// </para>
+    /// <para>
+    /// Isolation does not authenticate callers or authorize access to the agent or its tools.
+    /// This method does not require authorization automatically. Configure ASP.NET Core
+    /// authentication and authorization, and call <c>RequireAuthorization()</c> (or apply an
+    /// appropriate policy) on the returned endpoint builder. Requiring authentication alone
+    /// does not isolate persisted sessions; multi-user hosts need both controls. Clients must
+    /// supply their credentials on every request, including continuation and approval requests.
     /// </para>
     /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(

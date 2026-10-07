@@ -17,7 +17,7 @@ from typing import Annotated, Any
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import Agent, Content, Message, tool
+from agent_framework import Agent, Content, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
 
 from agent_framework_monty import MontyCodeActProvider, MontyExecuteCodeTool
@@ -138,9 +138,62 @@ async def test_async_host_tool_is_awaited() -> None:
     assert any("ping" in text for text in texts)
 
 
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("call", ["await limited()", "await call_tool('limited')"])
+async def test_host_tool_invocation_limit_across_code_executions(is_async: bool, call: str) -> None:
+    calls: list[int] = []
+
+    def limited() -> int:
+        calls.append(42)
+        return 42
+
+    async def async_limited() -> int:
+        await asyncio.sleep(0)
+        return limited()
+
+    host_tool = FunctionTool(name="limited", func=async_limited if is_async else limited, max_invocations=1)
+    monty_tool = MontyExecuteCodeTool(tools=[host_tool])
+
+    first = await monty_tool._run_code(code=call)
+    assert _text_outputs(first) == ["42"]
+    for _ in range(2):
+        result = await monty_tool._run_code(code=call)
+        assert any(content.type == "error" for content in result)
+    assert calls == [42]
+    assert host_tool.invocation_count == 1
+
+    host_tool.invocation_count = 0
+    result = await monty_tool._run_code(code=f"{call}\n{call}")
+    assert any(content.type == "error" for content in result)
+    assert calls == [42, 42]
+    assert host_tool.invocation_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Concurrency
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("separate_executions", [False, True])
+async def test_concurrent_code_calls_share_host_tool_invocation_limit(separate_executions: bool) -> None:
+    calls: list[int] = []
+
+    @tool(max_invocations=1)
+    async def limited() -> int:
+        calls.append(42)
+        await asyncio.sleep(0)
+        return 42
+
+    monty_tool = MontyExecuteCodeTool(tools=[limited])
+    if separate_executions:
+        results = await asyncio.gather(*(monty_tool._run_code(code="await limited()") for _ in range(4)))
+        assert sum(_text_outputs(result) == ["42"] for result in results) == 1
+        assert sum(any(content.type == "error" for content in result) for result in results) == 3
+    else:
+        result = await monty_tool._run_code(code="await asyncio.gather(limited(), limited(), limited(), limited())")
+        assert any(content.type == "error" for content in result)
+    assert calls == [42]
+    assert limited.invocation_count == 1
 
 
 async def test_asyncio_gather_fans_out_tool_calls_concurrently() -> None:

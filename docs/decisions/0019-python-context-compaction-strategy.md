@@ -1044,7 +1044,7 @@ How each option addresses the three primary compaction points and the current ar
 A compaction strategy takes a list of messages and returns a (potentially shorter) list, in almost all cases, there is certain logic that needs to be applied universally, such as retaining system messages, not breaking up function call and result pairs (for Responses that includes Reasoning as well, see [context section above](#message-list-correctness-constraint-atomic-group-preservation) for more info) as tool calls, etc. Beyond that, strategies can be as simple or complex as needed:
 
 - **Truncation**: Keep only the last N messages or N tokens, this is a likely done as a kind of zigzag, where the history grows, then get's truncated to some value below the token limit, then grows again, etc. This can be done on a simple message count basis, a character count basis, or more complex token counting basis.
-- **Summarization**: Replace older messages with an LLM-generated summary (depending on the implementation this could be done, by replacing the summarized messages, or by inserting a summary message in between and not loading messages older then the summarized ones)
+- **Summarization**: Replace older messages with an LLM-generated summary (depending on the implementation this could be done, by replacing the summarized messages, or by inserting a summary message in between and not loading messages older than the summarized ones)
 - **Selective removal**: Remove tool call/result pairs while keeping user/assistant turns
 - **Sliding window with anchor**: Keep system message + last N messages
 - **Custom logic**: The design should be extendible so that users can implement their own strategies.

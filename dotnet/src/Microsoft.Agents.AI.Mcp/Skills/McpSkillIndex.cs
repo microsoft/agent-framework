@@ -11,10 +11,10 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// Schema reference: <see href="https://schemas.agentskills.io/discovery/0.2.0/schema.json"/>
-/// (Agent Skills Discovery v0.2.0), as bound to MCP by SEP-2640. The MCP binding differs from the
-/// base schema in two ways: the <c>url</c> field contains a full MCP resource URI, and the
-/// <c>digest</c> field is omitted (integrity is the transport's concern over an authenticated
-/// MCP connection).
+/// (Agent Skills Discovery v0.2.0), as used by the legacy SEP-2640 MCP index binding.
+/// The <c>url</c> field contains a full MCP resource URI. Unlike the base schema, the
+/// <c>digest</c> field is optional; supplied archive digests are verified in addition to
+/// relying on the authenticated MCP transport.
 /// </para>
 /// <para>
 /// All properties are nullable so that deserialization succeeds even when the server-side index
@@ -47,7 +47,7 @@ internal sealed class McpSkillIndex
 /// <list type="bullet">
 ///   <item><description><c>type</c>, <c>description</c>, and <c>url</c> are REQUIRED.</description></item>
 ///   <item><description><c>name</c> is REQUIRED for <c>skill-md</c> and <c>archive</c> entries; OMITTED for <c>mcp-resource-template</c>.</description></item>
-///   <item><description><c>digest</c> is part of the base schema but OMITTED under the SEP-2640 MCP binding; carried here for compatibility with non-MCP indices.</description></item>
+///   <item><description><c>digest</c> is optional under this MCP index binding; supplied archive digests are verified before extraction.</description></item>
 /// </list>
 /// All properties are nullable to keep deserialization lenient; callers validate required fields before use.
 /// </remarks>
@@ -87,9 +87,10 @@ internal sealed class McpSkillIndexEntry
     public string? Url { get; set; }
 
     /// <summary>
-    /// Gets or sets the SHA-256 digest of the artifact bytes (e.g. <c>sha256:abcd1234...</c>).
-    /// Required by the base v0.2.0 schema, but OMITTED under the SEP-2640 MCP binding because
-    /// integrity is the transport's concern over an authenticated MCP connection.
+    /// Gets or sets the SHA-256 digest of the artifact bytes, formatted as <c>sha256:</c> followed
+    /// by 64 lowercase hexadecimal characters. Required by the base v0.2.0 schema but optional
+    /// under this MCP index binding. Supplied archive digests are verified before extraction;
+    /// verification does not apply to <c>skill-md</c> entries.
     /// </summary>
     [JsonPropertyName("digest")]
     public string? Digest { get; set; }

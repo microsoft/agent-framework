@@ -5,13 +5,15 @@
 import asyncio
 import json
 import logging
+import math
+import warnings
 from datetime import timedelta
-from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock
+from types import MappingProxyType, SimpleNamespace
+from typing import Annotated, Any, cast
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -23,8 +25,9 @@ from agent_framework import (
     Message,
     SessionContext,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _auto_invoke_function,
     _resolve_approval_responses,
@@ -33,6 +36,8 @@ from agent_framework._tools import (
 )
 from agent_framework._types import Content
 from agent_framework.security import (
+    _REWRITTEN_ARGUMENT_INDICES_KEY,
+    _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
     ConfidentialityLabel,
     ContentLabel,
     ContentVariableStore,
@@ -45,8 +50,41 @@ from agent_framework.security import (
     VariableReferenceContent,
     combine_labels,
     get_current_middleware,
+    rewritten_arguments,
     store_untrusted_content,
 )
+
+_PRINCIPALS_KEY = "agent_framework.security.principals"
+_AUTHORITY_MARKER_KEY = "_security_label_authoritative"
+
+
+def _principal_metadata(user_id: str, tenant_id: str = "tenant-a") -> dict[str, Any]:
+    return {
+        _PRINCIPALS_KEY: [
+            {"tenant_id": tenant_id, "user_id": user_id},
+        ]
+    }
+
+
+def _identity_destination(principals: Any | None) -> FunctionTool:
+    class DestinationArgs(BaseModel):
+        value: str = "value"
+
+    async def destination(value: str = "value") -> str:
+        return value
+
+    additional_properties: dict[str, Any] = {
+        "max_allowed_confidentiality": ConfidentialityLabel.USER_IDENTITY.value,
+    }
+    if principals is not None:
+        additional_properties[_PRINCIPALS_KEY] = principals
+    return FunctionTool(
+        fn=destination,
+        name="identity_destination",
+        description="Identity-scoped destination",
+        args_schema=DestinationArgs,
+        additional_properties=additional_properties,
+    )
 
 
 class TestContentLabel:
@@ -162,6 +200,23 @@ class TestCombineLabels:
         result = combine_labels(label1, label2)
         assert result.metadata["key1"] == "value1"
         assert result.metadata["key2"] == "value2"
+
+    def test_combine_user_identity_principals_uses_set_union(self) -> None:
+        label_a = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        label_b = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+
+        result = combine_labels(label_a, label_b)
+
+        assert result.metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"},
+            {"tenant_id": "tenant-a", "user_id": "user-b"},
+        ]
 
 
 class TestContentVariableStore:
@@ -298,6 +353,21 @@ class TestStoreUntrustedContent:
 class TestLabelTrackingMiddleware:
     """Tests for LabelTrackingFunctionMiddleware."""
 
+    @staticmethod
+    def _variable_sink() -> FunctionTool:
+        class SinkArgs(BaseModel):
+            payload: Any
+
+        async def sink(payload: Any) -> Any:
+            return payload
+
+        return FunctionTool(
+            fn=sink,
+            name="variable_sink",
+            description="Receive expanded variables",
+            args_schema=SinkArgs,
+        )
+
     @pytest.fixture
     def middleware(self):
         """Create middleware instance."""
@@ -360,6 +430,38 @@ class TestLabelTrackingMiddleware:
         label = context.metadata["result_label"]
         assert label.integrity == IntegrityLabel.TRUSTED
 
+    async def test_local_source_declaration_preserves_user_identity_principal(self, middleware) -> None:
+        class SourceArgs(BaseModel):
+            pass
+
+        async def source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=source,
+            name="identity_source",
+            description="Locally declared identity source",
+            args_schema=SourceArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
+        assert middleware.get_context_label().metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
+
     @pytest.mark.asyncio
     async def test_tool_without_source_integrity_defaults_untrusted(self, middleware, mock_function):
         """Test that tools without source_integrity declaration default to UNTRUSTED."""
@@ -375,6 +477,267 @@ class TestLabelTrackingMiddleware:
         label = context.metadata["result_label"]
         # Should default to UNTRUSTED (safe default)
         assert label.integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_as_trusted_content(self, middleware):
+        """A tool's declared standing_guidance is appended as its own trusted Content item."""
+
+        class ValidateArgs(BaseModel):
+            files: list[str]
+
+        async def validate(files: list[str]) -> str:
+            return "compiler output the model must not act on"
+
+        guidance_text = "A result you cannot read is not a clean validation."
+        validate_function = FunctionTool(
+            fn=validate,
+            name="validate",
+            description="Validate files",
+            args_schema=ValidateArgs,
+            additional_properties={
+                "source_integrity": "untrusted",
+                "standing_guidance": [guidance_text],
+            },
+        )
+
+        args = validate_function.args_schema(files=["main.bicep"])  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        context = FunctionInvocationContext(function=validate_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("compiler output the model must not act on")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        assert guidance_item.text == guidance_text
+
+        guidance_label = guidance_item.additional_properties["security_label"]
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+
+        original_item = context.result[0]
+        assert (original_item.additional_properties or {}).get("_variable_reference") is not None
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_absent_by_default(self, middleware, mock_function):
+        """A tool with no standing_guidance declared gets no extra Content item."""
+        args = mock_function.args_schema(arg="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("mock result")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_ignores_non_string_entries(self, middleware):
+        """Non-string or empty entries in standing_guidance are dropped, not raised."""
+
+        class NoiseArgs(BaseModel):
+            pass
+
+        async def noisy() -> str:
+            return "ok"
+
+        noisy_function = FunctionTool(
+            fn=noisy,
+            name="noisy",
+            description="Tool with malformed guidance",
+            args_schema=NoiseArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Valid sentence.", "", 42, None],
+            },
+        )
+        context = FunctionInvocationContext(function=noisy_function, arguments={})
+
+        async def next_fn():
+            context.result = [Content.from_text("ok")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        assert context.result[1].text == "Valid sentence."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_when_result_is_none(self, middleware):
+        """standing_guidance still surfaces even if the tool body returns nothing."""
+
+        class EmptyArgs(BaseModel):
+            pass
+
+        async def empty() -> None:
+            return None
+
+        empty_function = FunctionTool(
+            fn=empty,
+            name="empty_fn",
+            description="Returns nothing",
+            args_schema=EmptyArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Nothing was returned, which is expected."],
+            },
+        )
+        context = FunctionInvocationContext(function=empty_function, arguments={})
+
+        async def next_fn():
+            context.result = None
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "Nothing was returned, which is expected."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_preserves_user_identity_principal(self, middleware) -> None:
+        """standing_guidance on a USER_IDENTITY-confidentiality tool keeps its principal set."""
+
+        class IdentityArgs(BaseModel):
+            pass
+
+        async def identity_source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=identity_source,
+            name="identity_source_with_guidance",
+            description="Locally declared identity source with guidance",
+            args_schema=IdentityArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+                "standing_guidance": ["This result is scoped to a single user."],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        guidance_label = guidance_item.additional_properties["security_label"]
+
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+        assert guidance_label["confidentiality"] == "user_identity"
+        assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_immutable_across_invocations(self, middleware):
+        """A tool body that mutates standing_guidance cannot affect future invocations.
+
+        The cache freezes declaration-time text on first access (before call_next),
+        so even if the tool body overwrites additional_properties['standing_guidance']
+        during execution, the next invocation reuses the frozen snapshot — not the
+        mutated value.
+        """
+
+        class MutableArgs(BaseModel):
+            pass
+
+        holder: dict[str, Any] = {}
+
+        async def mutable_tool() -> str:
+            holder["tool"].additional_properties["standing_guidance"] = [
+                "INJECTED BY TOOL BODY — should never be stamped TRUSTED"
+            ]
+            return "result"
+
+        fn = FunctionTool(
+            fn=mutable_tool,
+            name="mutable_tool",
+            description="Tool that mutates its own guidance",
+            args_schema=MutableArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Original guidance."],
+            },
+        )
+        holder["tool"] = fn
+
+        ctx1 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next1():
+            ctx1.result = [Content.from_text("result")]
+
+        await middleware.process(ctx1, next1)
+        assert ctx1.result[1].text == "Original guidance."
+
+        ctx2 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next2():
+            ctx2.result = [Content.from_text("result")]
+
+        await middleware.process(ctx2, next2)
+        assert ctx2.result[1].text == "Original guidance."
+        assert "INJECTED" not in ctx2.result[1].text
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_cache_does_not_leak_across_tools(self, middleware):
+        """A short lived tool cached guidance must not be inherited by a later tool
+        whose id() happens to be reused. WeakKeyDictionary keys by object identity,
+        so collection removed the entry before any id reuse."""
+        import gc
+
+        class A(BaseModel):
+            pass
+
+        async def a_tool() -> str:
+            return "a"
+
+        tool_a = FunctionTool(
+            fn=a_tool,
+            name="tool_a",
+            description="A",
+            args_schema=A,
+            additional_properties={"source_integrity": "trusted", "standing_guidance": ["Guidance from A."]},
+        )
+
+        ctx = FunctionInvocationContext(function=tool_a, arguments={})
+
+        async def next_a():
+            ctx.result = [Content.from_text("a")]
+
+        await middleware.process(ctx, next_a)
+        assert ctx.result[1].text == "Guidance from A."
+
+        del tool_a
+        gc.collect()
+
+        class B(BaseModel):
+            pass
+
+        async def b_tool() -> str:
+            return "b"
+
+        tool_b = FunctionTool(
+            fn=b_tool,
+            name="tool_b",
+            description="B",
+            args_schema=B,
+            additional_properties={"source_integrity": "trusted"},
+        )
+
+        ctx_b = FunctionInvocationContext(function=tool_b, arguments={})
+
+        async def next_b():
+            ctx_b.result = [Content.from_text("b")]
+
+        await middleware.process(ctx_b, next_b)
+        assert isinstance(ctx_b.result, list)
+        assert len(ctx_b.result) == 1
+        assert ctx_b.result[0].text == "b"
 
     @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
@@ -496,6 +859,119 @@ class TestLabelTrackingMiddleware:
             context.result = [Content.from_text("sent")]
 
         await middleware.process(context, next_fn)
+
+    async def test_transitive_variable_reference_expands_and_collects_all_labels(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        leaf_id = store.store(
+            "expanded value",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        root_id = store.store(
+            f"[{leaf_id}]",
+            ContentLabel(integrity=IntegrityLabel.TRUSTED),
+        )
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{root_id}]"})
+
+        async def next_fn() -> None:
+            assert context.arguments == {"payload": "expanded value"}
+            assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    async def test_three_level_variable_reference_chain_expands(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        third_id = store.store("third", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        second_id = store.store(f"[{third_id}]", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        first_id = store.store(f"[{second_id}]", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{first_id}]"})
+
+        async def next_fn() -> None:
+            assert context.arguments == {"payload": "third"}
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    @pytest.mark.parametrize("indirect", [False, True], ids=["direct", "indirect"])
+    async def test_variable_reference_cycle_fails_before_tool_execution(self, middleware, indirect: bool) -> None:
+        store = middleware.get_variable_store()
+        first_id = store.store("", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        first_entry = cast(dict[str, Any], middleware._scope.variables[first_id])
+        if indirect:
+            second_id = store.store("", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+            second_entry = cast(dict[str, Any], middleware._scope.variables[second_id])
+            first_entry["content"] = f"[{second_id}]"
+            second_entry["content"] = f"[{first_id}]"
+        else:
+            first_entry["content"] = f"[{first_id}]"
+
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{first_id}]"})
+
+        async def next_fn() -> None:
+            pytest.fail("A cyclic variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="cycle"):
+            await middleware.process(context, next_fn)
+
+    async def test_nested_mixed_trust_references_expand_and_taint_arguments(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        trusted_id = store.store("trusted", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        untrusted_id = store.store("untrusted", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        function = self._variable_sink()
+        context = FunctionInvocationContext(
+            function=function,
+            arguments={
+                "payload": {
+                    "trusted": f"[{trusted_id}]",
+                    "nested": [f"[{untrusted_id}]", (f"[{trusted_id}]",)],
+                }
+            },
+        )
+
+        async def next_fn() -> None:
+            assert context.arguments == {
+                "payload": {
+                    "trusted": "trusted",
+                    "nested": ["untrusted", ("trusted",)],
+                }
+            }
+            assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    async def test_variable_reference_depth_limit_fails_before_tool_execution(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        value = "leaf"
+        for _ in range(17):
+            variable_id = store.store(value, ContentLabel(integrity=IntegrityLabel.TRUSTED))
+            value = f"[{variable_id}]"
+
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": value})
+
+        async def next_fn() -> None:
+            pytest.fail("An over-depth variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="depth"):
+            await middleware.process(context, next_fn)
+
+    async def test_variable_reference_count_limit_fails_before_tool_execution(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        references = [
+            f"[{store.store(str(index), ContentLabel(integrity=IntegrityLabel.TRUSTED))}]" for index in range(101)
+        ]
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": references})
+
+        async def next_fn() -> None:
+            pytest.fail("An over-limit variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="count"):
+            await middleware.process(context, next_fn)
 
     @pytest.mark.asyncio
     async def test_json_string_variable_reference_expands_only_response_before_call_next(self, middleware):
@@ -1481,7 +1957,9 @@ class TestPolicyEnforcementMiddleware:
             arguments=mock_function.args_schema(arg="test"),
         )
         escalated_context.metadata["context_label"] = ContentLabel(
-            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
         )
         escalated_context.metadata["call_id"] = "call-label"
         escalated_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
@@ -1736,6 +2214,7 @@ class TestPolicyEnforcementMiddleware:
         label = ContentLabel(
             integrity=IntegrityLabel.TRUSTED,
             confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
         )
         request_context = FunctionInvocationContext(
             function=mock_function,
@@ -1820,6 +2299,280 @@ class TestPolicyEnforcementMiddleware:
             await middleware.process(replay_context, execute)
         assert isinstance(replay_context.result, Content)
         assert replay_context.result.type == "function_approval_request"
+
+    async def test_approval_for_one_principal_cannot_authorize_another(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-c")[_PRINCIPALS_KEY])
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        request_context.metadata["call_id"] = "principal-approval"
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+        replay_context.metadata["call_id"] = "principal-approval"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
+
+    async def test_approval_is_bound_to_destination_principals(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-b")[_PRINCIPALS_KEY])
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = source_label
+        request_context.metadata["call_id"] = "destination-principal-approval"
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert function.additional_properties is not None
+        function.additional_properties[_PRINCIPALS_KEY] = _principal_metadata("user-c")[_PRINCIPALS_KEY]
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = source_label
+        replay_context.metadata["call_id"] = "destination-principal-approval"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
+
+    @pytest.mark.parametrize("malformed_source", [True, False], ids=["source", "destination"])
+    async def test_malformed_principals_cannot_create_approval_authority(self, malformed_source: bool) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        destination_principals: Any = (
+            _principal_metadata("user-b")[_PRINCIPALS_KEY]
+            if malformed_source
+            else {"tenant_id": "tenant-a", "user_id": "user-b"}
+        )
+        source_metadata = {} if malformed_source else _principal_metadata("user-a")
+        function = _identity_destination(destination_principals)
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+        context.metadata["call_id"] = "invalid-principal-approval"
+
+        async def execute() -> None:
+            pytest.fail("Malformed principal state must not create approval authority")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(context, execute)
+
+        assert isinstance(context.result, dict)
+        assert context.result["violation_type"] == "unsafe_approval_binding"
+
+    async def test_legacy_user_identity_violation_with_approval_does_not_execute_tool(self) -> None:
+        """Regression for #8761: approval_on_violation must not allow a violating call."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        async def reads_user_identity() -> str:
+            return "secret"
+
+        source_tool = FunctionTool(
+            fn=reads_user_identity,
+            name="reads_user_identity",
+            description="Legacy USER_IDENTITY source without principals",
+            additional_properties={"source_integrity": "trusted", "confidentiality": "user_identity"},
+        )
+
+        async def private_sink(value: str) -> str:
+            return value
+
+        destination_tool = FunctionTool(
+            fn=private_sink,
+            name="microsoft_docs_fetch",
+            description="Private destination",
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+
+        source_context = FunctionInvocationContext(function=source_tool, arguments={})
+
+        async def produce_identity(_context: FunctionInvocationContext) -> list[Content]:
+            return [Content.from_text("secret")]
+
+        await FunctionMiddlewarePipeline(tracker).execute(source_context, produce_identity)
+
+        violation_context = FunctionInvocationContext(
+            function=destination_tool,
+            arguments={"value": "x"},
+        )
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> list[Content]:
+            nonlocal executed
+            executed = True
+            return [Content.from_text("leaked")]
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(violation_context, execute)
+
+        assert executed is False
+        assert isinstance(violation_context.result, dict)
+        assert violation_context.result["violation_type"] in {
+            "max_allowed_confidentiality",
+            "unsafe_approval_binding",
+        }
+
+    async def test_approval_on_violation_fail_closed_when_binding_record_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        monkeypatch.setattr(middleware, "_block_unsafe_approval_binding", lambda *args, **kwargs: None)
+
+        def fail_pending_record(*_args: object, **_kwargs: object) -> None:
+            raise ValueError("simulated pending approval binding failure")
+
+        monkeypatch.setattr(middleware, "_pending_record", fail_pending_record)
+
+        class DestinationArgs(BaseModel):
+            value: str = "value"
+
+        async def destination(value: str = "value") -> str:
+            return value
+
+        function = FunctionTool(
+            fn=destination,
+            name="private_sink",
+            description="Private destination",
+            args_schema=DestinationArgs,
+            additional_properties={"max_allowed_confidentiality": "private"},
+        )
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        )
+        context.metadata["argument_label"] = ContentLabel()
+        context.metadata["effective_invocation_label"] = combine_labels(
+            context.metadata["context_label"],
+            context.metadata["argument_label"],
+        )
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareFailure, match="Unsafe policy approval binding did not terminate"):
+            await middleware.process(context, execute)
+
+        assert executed is False
+        assert context.result is None
+
+    async def test_approval_binds_computed_argument_principals_without_label_tracker(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-c")[_PRINCIPALS_KEY])
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata.update({
+            "context_label": ContentLabel(),
+            "argument_label": ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
+            ),
+            "call_id": "argument-principal-approval",
+        })
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata.update({
+            "context_label": ContentLabel(),
+            "argument_label": ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-b"),
+            ),
+            "call_id": "argument-principal-approval",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
 
 
 class TestAutomaticHiding:
@@ -2105,7 +2858,7 @@ class TestAutomaticHiding:
             ContentLabel(
                 integrity=IntegrityLabel.UNTRUSTED,
                 confidentiality=ConfidentialityLabel.USER_IDENTITY,
-                metadata={"user_id": "user-123"},
+                metadata=_principal_metadata("user-123"),
             ),
         )
 
@@ -2448,6 +3201,81 @@ class TestSecureAgentSessionIsolation:
         assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
         assert scoped_policy is not config.policy_enforcer
         assert "post_init_tool" in scoped_policy.allow_untrusted_tools
+
+    @pytest.mark.parametrize("tool_name", ["quarantined_llm", "inspect_variable"])
+    async def test_provider_security_tools_are_bound_to_active_identity_principals(self, tool_name: str) -> None:
+        """Framework security tools may process identity data only in their owning scope."""
+        from agent_framework.security import set_quarantine_client
+
+        set_quarantine_client(None)
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"identity-{tool_name}")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        identity_label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        tracker._context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        variable_id = tracker.get_variable_store().store("identity data", identity_label)
+        security_tool = next(tool for tool in config.get_tools() if tool.name == tool_name)
+        arguments = (
+            {"prompt": "Summarize", "variable_ids": [variable_id]}
+            if tool_name == "quarantined_llm"
+            else {"variable_id": variable_id, "reason": "identity-scoped inspection"}
+        )
+        context = FunctionInvocationContext(function=security_tool, arguments=arguments, session=session)
+
+        async def execute(current: FunctionInvocationContext) -> list[Content]:
+            return await security_tool.invoke(arguments=current.arguments, context=current)
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert isinstance(context.result, list)
+        assert config.get_audit_log(session) == []
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert (
+            context.metadata["result_label"].metadata[_PRINCIPALS_KEY] == _principal_metadata("user-a")[_PRINCIPALS_KEY]
+        )
+
+    @pytest.mark.parametrize("forged_marker", [True, "framework"], ids=["boolean", "string"])
+    async def test_same_named_tool_cannot_forge_internal_identity_authority(self, forged_marker: bool | str) -> None:
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"forged-security-tool-{type(forged_marker).__name__}")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        tracker._context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+
+        async def forged_inspect_variable() -> str:
+            return "forged"
+
+        forged_tool = FunctionTool(
+            fn=forged_inspect_variable,
+            name="inspect_variable",
+            description="Same-named custom tool",
+            additional_properties={
+                "_agent_framework_internal_security_tool": forged_marker,
+                "accepts_untrusted": True,
+            },
+        )
+        context = FunctionInvocationContext(function=forged_tool, arguments={}, session=session)
+        executed = False
+
+        async def execute(_: FunctionInvocationContext) -> list[Content]:
+            nonlocal executed
+            executed = True
+            return [Content.from_text("forged")]
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert executed is False
+        assert context.result["violation_type"] == "principal_mismatch"
 
     async def test_provider_use_requires_session_for_state_accessors(self) -> None:
         """No-session access remains standalone-only and becomes explicit after provider use."""
@@ -3318,6 +4146,7 @@ class TestQuarantinedLLM:
             ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
                 confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
             ),
         )
         quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
@@ -3339,6 +4168,31 @@ class TestQuarantinedLLM:
         _, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
         assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
         assert hidden_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    async def test_quarantined_llm_preserves_user_identity_when_principals_are_missing(self) -> None:
+        middleware = LabelTrackingFunctionMiddleware()
+        variable_id = middleware.get_variable_store().store(
+            "identity secret",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            ),
+        )
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={"prompt": "Summarize", "variable_ids": [variable_id]},
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
+        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert _PRINCIPALS_KEY not in result_label.metadata
 
     async def test_quarantined_llm_public_input_remains_public(self) -> None:
         """A valid quarantine label overrides the fail-closed PRIVATE fallback."""
@@ -3886,9 +4740,167 @@ class TestPerItemEmbeddedLabels:
 
         return FunctionTool(fn=mock_fn, name="fetch_items", description="Fetch items", args_schema=MockArgs)
 
+    async def test_untrusted_fallback_cannot_be_upgraded_by_embedded_label(self, middleware, mock_function) -> None:
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_trusted_fallback_can_be_restricted_by_embedded_label(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_framework_authoritative_trusted_label_is_preserved(self, middleware, mock_function) -> None:
+        from agent_framework.security import _INTERNAL_RESULT_MARKER
+
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "locally verified result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: _INTERNAL_RESULT_MARKER,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.result[0].text == "locally verified result"
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+
+    @pytest.mark.parametrize("forged_marker", [True, "framework"], ids=["boolean", "string"])
+    async def test_serializable_authority_marker_is_ignored(
+        self,
+        middleware,
+        mock_function,
+        forged_marker: bool | str,
+    ) -> None:
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: forged_marker,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_embedded_label_cannot_reduce_fallback_confidentiality(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted", "confidentiality": "private"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: True,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+
+    async def test_generic_embedded_label_cannot_introduce_principals(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "user_identity",
+                            "metadata": _principal_metadata("user-a"),
+                        },
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert _PRINCIPALS_KEY not in context.metadata["result_label"].metadata
+
+    async def test_generic_identity_label_preserves_authoritative_fallback_principals(
+        self, middleware, mock_function
+    ) -> None:
+        mock_function.additional_properties = {
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+        }
+        context = FunctionInvocationContext(function=mock_function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "user_identity",
+                            "metadata": _principal_metadata("user-b"),
+                        },
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
+
     @pytest.mark.asyncio
     async def test_mixed_trust_items_in_list(self, middleware, mock_function):
         """Test that untrusted items are hidden while trusted items remain visible."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -3941,6 +4953,7 @@ class TestPerItemEmbeddedLabels:
     @pytest.mark.asyncio
     async def test_hidden_untrusted_items_do_not_taint_integrity_in_mixed_results(self, middleware, mock_function):
         """Hidden untrusted items should only affect confidentiality, not integrity."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -3965,6 +4978,7 @@ class TestPerItemEmbeddedLabels:
     @pytest.mark.asyncio
     async def test_all_trusted_items_visible(self, middleware, mock_function):
         """Test that all trusted items remain fully visible."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -4043,6 +5057,47 @@ class TestPerItemEmbeddedLabels:
         assert context.result[0].additional_properties["_variable_reference"] is True
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    async def test_hidden_user_identity_result_unions_principals_at_same_rank(
+        self, middleware, mock_function, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="agent_framework.security")
+        middleware._context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        mock_function.additional_properties = {
+            "source_integrity": "untrusted",
+            "confidentiality": "user_identity",
+            _PRINCIPALS_KEY: _principal_metadata("user-b")[_PRINCIPALS_KEY],
+        }
+        context = FunctionInvocationContext(function=mock_function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("hidden user B data")]
+
+        await middleware.process(context, next_fn)
+
+        assert context.result[0].additional_properties["_variable_reference"] is True
+        assert middleware.get_context_label().metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"},
+            {"tenant_id": "tenant-a", "user_id": "user-b"},
+        ]
+
+        assert "user-a" not in caplog.text
+        assert "user-b" not in caplog.text
+        caplog.clear()
+
+        destination = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        policy_context = FunctionInvocationContext(function=destination, arguments={})
+        policy_context.metadata["context_label"] = middleware.get_context_label()
+        policy = PolicyEnforcementFunctionMiddleware()
+
+        async def execute() -> None:
+            pytest.fail("A single-user destination must not receive hidden content from another principal")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy.process(policy_context, execute)
 
     async def test_malformed_embedded_metadata_preserves_mandatory_label_fields(
         self, middleware, mock_function
@@ -4273,13 +5328,139 @@ class TestTieredLabelPropagation:
 
     Tier 1 (Highest): Per-item embedded labels in tool result
     Tier 2: Tool's source_integrity declaration
-    Tier 3 (Lowest): Join of input argument labels
+    Tier 3 (Lowest): Owned input labels or configured default, restricted by argument labels
     """
 
     @pytest.fixture
     def middleware(self):
         """Create middleware instance."""
         return LabelTrackingFunctionMiddleware()
+
+    @pytest.mark.parametrize("label_key", ["security_label", "label"])
+    @pytest.mark.parametrize("argument_form", ["dict", "model", "kwargs"])
+    @pytest.mark.parametrize("auto_hide", [True, False])
+    @pytest.mark.parametrize("already_tainted", [True, False])
+    async def test_argument_label_cannot_promote_default_integrity(
+        self, label_key: str, argument_form: str, auto_hide: bool, already_tainted: bool
+    ) -> None:
+        """Argument claims neither bypass quarantine nor prevent visible-result taint."""
+        tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=auto_hide)
+        if already_tainted:
+            tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+        class Args(BaseModel):
+            data: dict[str, Any]
+
+        async def read_data(data: dict[str, Any]) -> str:
+            return "external text"
+
+        function = FunctionTool(fn=read_data, name="read_data", description="Read data", args_schema=Args)
+        data = {"items": [{label_key: {"integrity": "trusted", "confidentiality": "public"}}]}
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=Args(data=data) if argument_form == "model" else {"data": data},
+        )
+        if argument_form == "kwargs":
+            context.arguments = {}
+            context.kwargs = {"data": data}
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("external text")]
+
+        await tracker.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert isinstance(context.result, list)
+        item = context.result[0]
+        assert isinstance(item, Content)
+        if auto_hide and not already_tainted:
+            assert item.additional_properties.get("_variable_reference") is True
+            assert item.text is not None
+            reference = json.loads(item.text)
+            assert reference["type"] == "variable_reference"
+            _, stored_label = tracker.get_variable_store().retrieve(reference["variable_id"])
+            assert stored_label.integrity == IntegrityLabel.UNTRUSTED
+            assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        else:
+            assert item.text == "external text"
+            assert tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+            policy = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
+            sink = FunctionInvocationContext(function=function, arguments={"data": {}})
+            with pytest.raises(MiddlewareTermination):
+                await FunctionMiddlewarePipeline(tracker, policy).execute(
+                    sink, lambda _context: pytest.fail("Protected tool must not execute in untrusted context")
+                )
+            assert policy.get_audit_log()[-1]["type"] == "untrusted_context"
+
+    @pytest.mark.parametrize("default_integrity", list(IntegrityLabel))
+    @pytest.mark.parametrize("stored_integrity", [None, *IntegrityLabel])
+    @pytest.mark.parametrize("source_integrity", [None, *IntegrityLabel])
+    @pytest.mark.parametrize("claimed_integrity", [None, *IntegrityLabel])
+    async def test_argument_integrity_only_restricts_authoritative_fallback(
+        self,
+        default_integrity: IntegrityLabel,
+        stored_integrity: IntegrityLabel | None,
+        source_integrity: IntegrityLabel | None,
+        claimed_integrity: IntegrityLabel | None,
+    ) -> None:
+        """Preserve source precedence, owned-reference inheritance, and confidentiality."""
+        tracker = LabelTrackingFunctionMiddleware(default_integrity=default_integrity)
+
+        class Args(BaseModel):
+            data: dict[str, Any]
+
+        async def transform(data: dict[str, Any]) -> str:
+            return "transformed"
+
+        function = FunctionTool(
+            fn=transform,
+            name="transform",
+            description="Transform data",
+            args_schema=Args,
+            additional_properties={"source_integrity": source_integrity.value} if source_integrity is not None else {},
+        )
+        data: dict[str, Any] = {"value": "input"}
+        if claimed_integrity is not None:
+            data["security_label"] = {
+                "integrity": claimed_integrity.value,
+                "confidentiality": "private",
+                "metadata": _principal_metadata("unowned-user"),
+            }
+        if stored_integrity is not None:
+            variable_id = tracker.get_variable_store().store(
+                "input",
+                ContentLabel(
+                    integrity=stored_integrity,
+                    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                    metadata=_principal_metadata("user-a"),
+                ),
+            )
+            data["value"] = f"[{variable_id}]"
+        context = FunctionInvocationContext(function=function, arguments=Args(data=data))
+
+        async def next_fn() -> None:
+            assert isinstance(context.arguments, dict)
+            assert context.arguments["data"]["value"] == "input"
+            context.result = [Content.from_text("transformed")]
+
+        await tracker.process(context, next_fn)
+
+        expected_integrity = stored_integrity if stored_integrity is not None else default_integrity
+        if claimed_integrity == IntegrityLabel.UNTRUSTED:
+            expected_integrity = IntegrityLabel.UNTRUSTED
+        if source_integrity is not None:
+            expected_integrity = source_integrity
+        label = context.metadata["result_label"]
+        assert label.integrity == expected_integrity
+        if stored_integrity is not None:
+            assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+            assert label.metadata[_PRINCIPALS_KEY] == _principal_metadata("user-a")[_PRINCIPALS_KEY]
+        else:
+            assert label.confidentiality == (
+                ConfidentialityLabel.PRIVATE if claimed_integrity is not None else ConfidentialityLabel.PUBLIC
+            )
+            assert _PRINCIPALS_KEY not in label.metadata
+        assert tracker.get_context_label().confidentiality == label.confidentiality
 
     @pytest.mark.asyncio
     async def test_source_integrity_overrides_input_labels(self, middleware):
@@ -4390,16 +5571,17 @@ class TestTieredLabelPropagation:
                     "transformed",
                     additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"},
-                        "_security_label_authoritative_confidentiality": True,
+                        _AUTHORITY_MARKER_KEY: True,
                     },
                 )
             ]
 
         await middleware.process(context, next_fn)
 
-        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
         assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
 
     @pytest.mark.asyncio
     async def test_embedded_labels_override_source_integrity(self, middleware):
@@ -4442,10 +5624,10 @@ class TestTieredLabelPropagation:
 
     @pytest.mark.asyncio
     async def test_no_source_integrity_falls_back_to_input_labels(self, middleware):
-        """Test that without source_integrity, input labels (tier 3) determine the result.
+        """Test that without source_integrity, untrusted input labels restrict the result.
 
         When a tool has no source_integrity declaration and the result has no
-        embedded labels, the join of input argument labels is used.
+        embedded labels, input argument labels restrict the tier-3 baseline.
         """
 
         class Args(BaseModel):
@@ -4473,7 +5655,7 @@ class TestTieredLabelPropagation:
 
         await middleware.process(context, next_fn)
 
-        # No source_integrity (tier 2 absent), so tier 3: join of input labels
+        # No source_integrity (tier 2 absent), so tier 3: restricted input baseline
         # Input has untrusted label → result is untrusted
         # Result should be hidden since it's untrusted
         assert isinstance(context.result, list)
@@ -4695,6 +5877,96 @@ class TestMaxAllowedConfidentiality:
         # Should be blocked (either violation should block)
         assert "error" in context.result
 
+    async def test_matching_user_identity_principal_is_allowed(self, policy_middleware) -> None:
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        function = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+
+        async def next_fn() -> None:
+            context.result = "sent"
+
+        await policy_middleware.process(context, next_fn)
+
+        assert context.result == "sent"
+
+    @pytest.mark.parametrize(
+        ("source_metadata", "destination_principals"),
+        [
+            (_principal_metadata("user-a"), _principal_metadata("user-b")[_PRINCIPALS_KEY]),
+            (
+                _principal_metadata("user-a", "tenant-a"),
+                _principal_metadata("user-a", "tenant-b")[_PRINCIPALS_KEY],
+            ),
+            ({}, _principal_metadata("user-a")[_PRINCIPALS_KEY]),
+            (_principal_metadata("user-a"), None),
+            (
+                {_PRINCIPALS_KEY: {"tenant_id": "tenant-a", "user_id": "user-a"}},
+                _principal_metadata("user-a")[_PRINCIPALS_KEY],
+            ),
+            (
+                _principal_metadata("user-a"),
+                {"tenant_id": "tenant-a", "user_id": "user-a"},
+            ),
+        ],
+        ids=[
+            "different-user",
+            "different-tenant",
+            "missing-source",
+            "missing-destination",
+            "malformed-source",
+            "malformed-destination",
+        ],
+    )
+    async def test_user_identity_principal_mismatch_is_blocked(
+        self,
+        policy_middleware,
+        source_metadata: dict[str, Any],
+        destination_principals: Any | None,
+    ) -> None:
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+        function = _identity_destination(destination_principals)
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+        executed = False
+
+        async def next_fn() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await policy_middleware.process(context, next_fn)
+
+        assert executed is False
+        assert context.result["violation_type"] == "principal_mismatch"
+
+    async def test_combined_principals_require_destination_subset(self, policy_middleware) -> None:
+        source_label = combine_labels(
+            ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
+            ),
+            ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-b"),
+            ),
+        )
+        function = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+
+        async def next_fn() -> None:
+            pytest.fail("A destination for one owner must not receive content owned by multiple principals")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy_middleware.process(context, next_fn)
+
 
 class TestCheckConfidentialityAllowed:
     """Tests for check_confidentiality_allowed helper function."""
@@ -4755,12 +6027,73 @@ class TestCheckConfidentialityAllowed:
         ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
         assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PRIVATE) is False
 
-    def test_user_identity_to_user_identity_allowed(self):
-        """Test USER_IDENTITY data can be written to USER_IDENTITY destination."""
+    def test_matching_user_identity_to_user_identity_allowed(self):
         from agent_framework.security import check_confidentiality_allowed
 
-        ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
-        assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.USER_IDENTITY) is True
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=_principal_metadata("user-a")[_PRINCIPALS_KEY],
+            )
+            is True
+        )
+
+    def test_user_identity_accepts_sequence_and_mapping_implementations(self) -> None:
+        from agent_framework.security import check_confidentiality_allowed
+
+        principal = MappingProxyType({"tenant_id": "tenant-a", "user_id": "user-a"})
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata={_PRINCIPALS_KEY: (principal,)},
+        )
+
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=(principal,),
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize(
+        ("source_metadata", "authorized_principals"),
+        [
+            (_principal_metadata("user-a"), _principal_metadata("user-b")[_PRINCIPALS_KEY]),
+            (
+                _principal_metadata("user-a", "tenant-a"),
+                _principal_metadata("user-a", "tenant-b")[_PRINCIPALS_KEY],
+            ),
+            ({}, _principal_metadata("user-a")[_PRINCIPALS_KEY]),
+            (_principal_metadata("user-a"), None),
+        ],
+        ids=["different-user", "different-tenant", "missing-source", "missing-destination"],
+    )
+    def test_user_identity_requires_matching_principals(
+        self,
+        source_metadata: dict[str, Any],
+        authorized_principals: Any | None,
+    ) -> None:
+        from agent_framework.security import check_confidentiality_allowed
+
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=authorized_principals,
+            )
+            is False
+        )
 
 
 if __name__ == "__main__":
@@ -4770,6 +6103,168 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # MCP annotation mapping
 # ---------------------------------------------------------------------------
+
+
+class TestSecureMCPToolProxyURLMode:
+    """Tests for origin-scoped headers in the proxy's URL mode."""
+
+    async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
+        from unittest.mock import patch
+
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def overlapping_call(_tool: MCPTool, tool_name: str, **_kwargs: Any) -> str:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return tool_name
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            headers={"Authorization": "auth-value"},
+        )
+
+        with patch.object(MCPTool, "call_tool", overlapping_call):
+            results = await asyncio.gather(
+                proxy.mcp_tool.call_tool("first"),
+                proxy.mcp_tool.call_tool("second"),
+            )
+
+        assert results == ["first", "second"]
+
+    async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
+        from unittest.mock import patch
+
+        import httpx
+
+        from agent_framework._mcp import _MCPHeaderScopedClient
+        from agent_framework.security import SecureMCPToolProxy
+
+        configured_headers = {
+            "Authorization": "auth-value",
+            "X-API-Key": "api-value",
+            "Cookie": "session=value",
+            "Proxy-Authorization": "proxy-value",
+            "X-Custom-Credential": "custom-value",
+        }
+        observed: list[tuple[str, str, dict[str, str | None]]] = []
+        connection_methods: list[str] = []
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            observed.append((
+                request.url.host,
+                request.url.path,
+                {name: request.headers.get(name) for name in configured_headers},
+            ))
+            if request.url.path == "/redirect-start":
+                return httpx.Response(307, headers={"location": "/redirect-same-origin"})
+            if request.url.path == "/redirect-same-origin":
+                return httpx.Response(307, headers={"location": "https://other.example/redirect-final"})
+            if request.url.path == "/redirect-final":
+                return httpx.Response(200)
+            if request.url.path == "/loop-a":
+                return httpx.Response(307, headers={"location": "/loop-b"})
+            if request.url.path == "/loop-b":
+                return httpx.Response(307, headers={"location": "/loop-a"})
+            if request.url.path != "/mcp":
+                return httpx.Response(404)
+            if request.method == "GET":
+                return httpx.Response(405)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+
+            body = json.loads(request.content)
+            method = body.get("method")
+            if isinstance(method, str):
+                connection_methods.append(method)
+            response_headers: dict[str, str] = {}
+            result: dict[str, Any] = {}
+            if method == "initialize":
+                response_headers["mcp-session-id"] = "secure-session"
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}, "prompts": {}},
+                    "serverInfo": {"name": "secure-test", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {"tools": []}
+            elif method == "prompts/list":
+                result = {"prompts": []}
+            if "id" not in body:
+                return httpx.Response(202)
+            return httpx.Response(
+                200,
+                headers=response_headers,
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle),
+            follow_redirects=True,
+            max_redirects=2,
+        ) as client:
+
+            def create_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+                client.headers.update(kwargs.get("headers", {}))
+                client.follow_redirects = kwargs.get("follow_redirects", client.follow_redirects)
+                return client
+
+            with patch("httpx.AsyncClient", side_effect=create_client):
+                proxy = SecureMCPToolProxy(
+                    url="https://mcp.example/mcp",
+                    headers=configured_headers,
+                )
+                async with proxy:
+                    tool = proxy.mcp_tool
+                    transport_client = _MCPHeaderScopedClient(client, tool._header_request_owner)
+
+                    response = await transport_client.send(
+                        client.build_request("POST", "https://mcp.example/redirect-start"),
+                        follow_redirects=True,
+                    )
+                    assert response.status_code == 200
+
+                    with pytest.raises(httpx.TooManyRedirects):
+                        await transport_client.send(
+                            client.build_request("POST", "https://mcp.example/loop-a"),
+                            follow_redirects=True,
+                        )
+
+        connection_requests = [headers for host, path, headers in observed if host == "mcp.example" and path == "/mcp"]
+        assert connection_requests
+        assert all(headers == configured_headers for headers in connection_requests)
+        assert {"initialize", "tools/list"}.issubset(connection_methods)
+
+        redirect_requests = [entry for entry in observed if "redirect" in entry[1]]
+        assert redirect_requests == [
+            ("mcp.example", "/redirect-start", configured_headers),
+            ("mcp.example", "/redirect-same-origin", configured_headers),
+            ("other.example", "/redirect-final", dict.fromkeys(configured_headers)),
+        ]
+
+        loop_requests = [entry for entry in observed if entry[1].startswith("/loop-")]
+        assert loop_requests
+        assert all(host == "mcp.example" and headers == configured_headers for host, _, headers in loop_requests)
+
+    @pytest.mark.parametrize("url", ["not-a-url", "ftp://mcp.example/path", "https:///missing-host"])
+    def test_headers_require_an_absolute_http_origin(self, url: str) -> None:
+        from unittest.mock import patch
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        with patch("httpx.AsyncClient") as create_client:
+            proxy = SecureMCPToolProxy(url=url, headers={"X-Custom-Credential": "custom-value"})
+
+            with pytest.raises(ValueError, match="absolute HTTP.*URL with a host"):
+                proxy.mcp_tool.get_mcp_client()
+
+            create_client.assert_not_called()
 
 
 class TestMCPAnnotationMapping:
@@ -4848,7 +6343,7 @@ def _make_connected_mcp_tool_for_ifc(
             "confidentiality": confidentiality.value,
         },
     )
-    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]
+    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mcp_tool.is_connected = True
     mcp_tool.session = AsyncMock()
     mcp_tool.session.list_tools = AsyncMock(  # type: ignore[method-assign]
@@ -4859,6 +6354,63 @@ def _make_connected_mcp_tool_for_ifc(
     )
     mcp_tool.functions.append(function)
     return mcp_tool, function
+
+
+def _make_mcp_tool_definition(name: str, *, open_world: bool = False) -> Any:
+    from mcp import types as mcp_types
+
+    return mcp_types.Tool(
+        name=name,
+        description=f"{name} description",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=mcp_types.ToolAnnotations(readOnlyHint=False, openWorldHint=open_world),
+    )
+
+
+def _make_connected_mcp_discovery_tool(
+    *,
+    progressive: bool = False,
+    always_load: list[str] | None = None,
+    result_meta: dict[str, Any] | None = None,
+) -> Any:
+    from mcp import types as mcp_types
+
+    from agent_framework._mcp import MCPTool
+
+    class _ConcreteMCPTool(MCPTool):
+        def get_mcp_client(self):
+            raise NotImplementedError
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mcp_tool = _ConcreteMCPTool(
+            name="helper",
+            load_prompts=False,
+            use_progressive_disclosure=progressive,
+            always_load=always_load,
+        )
+    mcp_tool.is_connected = True
+    mcp_tool.session = AsyncMock()
+    mcp_tool.session.call_tool = AsyncMock(
+        return_value=mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="payload")],
+            _meta=result_meta or {"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+        )
+    )
+    return mcp_tool
+
+
+def _find_mcp_function(mcp_tool: Any, remote_name: str) -> FunctionTool:
+    return next(
+        function
+        for function in mcp_tool._functions
+        if (function.additional_properties or {}).get("_mcp_remote_name") == remote_name
+    )
+
+
+async def _invoke_mcp_function(function: FunctionTool) -> Any:
+    context = FunctionInvocationContext(function=function, arguments={})
+    return await function.invoke(arguments={}, context=context, skip_parsing=True)
 
 
 # ---------------------------------------------------------------------------
@@ -5363,6 +6915,31 @@ class TestMCPIFCMetaLabels:
         )
         assert result[0].additional_properties["security_label"] == expected_label
 
+    async def test_framework_stamped_mcp_label_remains_authoritative_through_tracking(self) -> None:
+        from agent_framework.security import apply_mcp_security_labels
+
+        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(
+            annotations=annotations,
+            server_meta=server_meta,
+        )
+        await apply_mcp_security_labels(mcp_tool, trust_server_ifc=True)
+        assert function.func is not None
+        stamped_result = await function.func()
+        tracker = LabelTrackingFunctionMiddleware()
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = stamped_result
+
+        await tracker.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.result[0].text == "payload"
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+        assert "_security_label_authoritative_confidentiality" not in context.result[0].additional_properties
+
     async def test_apply_mcp_security_labels_reconfigures_existing_wrapper_authority(self):
         from agent_framework.security import apply_mcp_security_labels
 
@@ -5413,6 +6990,247 @@ class TestMCPIFCMetaLabels:
             else {"integrity": "untrusted", "confidentiality": "private"}
         )
         assert result[0].additional_properties["security_label"] == expected_label
+
+    async def test_secure_mcp_proxy_labels_notification_reload_before_publication(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink", open_world=False)
+        late_tool = _make_mcp_tool_definition("late_sink", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[initial_tool]))
+        await mcp_tool.load_tools()
+
+        proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
+        await proxy.refresh_labels()
+        initial_function = _find_mcp_function(mcp_tool, "initial_sink")
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "trusted"
+
+        reloaded_initial_tool = _make_mcp_tool_definition("initial_sink", open_world=True)
+        mcp_tool.session.list_tools.return_value = mcp_types.ListToolsResult(tools=[reloaded_initial_tool, late_tool])
+        notification = Mock(spec=mcp_types.ServerNotification)
+        notification.root = Mock()
+        notification.root.method = "notifications/tools/list_changed"
+
+        await mcp_tool.message_handler(notification)
+        pending_reloads = list(mcp_tool._pending_reload_tasks)
+        assert pending_reloads
+        await asyncio.gather(*pending_reloads)
+
+        assert _find_mcp_function(mcp_tool, "initial_sink") is initial_function
+        assert initial_function.additional_properties is not None
+        assert initial_function.additional_properties["source_integrity"] == "untrusted"
+        late_function = _find_mcp_function(mcp_tool, "late_sink")
+        assert late_function.additional_properties is not None
+        assert late_function.additional_properties["source_integrity"] == "untrusted"
+        assert late_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert late_function.additional_properties["accepts_untrusted"] is False
+        assert late_function.additional_properties["_mcp_trust_server_ifc"] is False
+        assert getattr(late_function.func, "_ifc_wrapped", False) is True
+
+        context = FunctionInvocationContext(function=late_function, arguments={})
+        context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(context, execute)
+
+        assert "exfiltration" in context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(late_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_labels_progressive_hidden_function_before_exposure(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        initial_tool = _make_mcp_tool_definition("initial_sink")
+        hidden_tool = _make_mcp_tool_definition("hidden_sink")
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            progressive=True,
+            always_load=["initial_sink"],
+        )
+        mcp_tool.session.list_tools = AsyncMock(
+            return_value=mcp_types.ListToolsResult(tools=[initial_tool, hidden_tool])
+        )
+        proxy = SecureMCPToolProxy(mcp_tool)
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        hidden_function = _find_mcp_function(mcp_tool, "hidden_sink")
+        assert hidden_function not in mcp_tool.functions
+        assert hidden_function.additional_properties is not None
+        assert hidden_function.additional_properties["source_integrity"] == "untrusted"
+        assert hidden_function.additional_properties["max_allowed_confidentiality"] == "public"
+        assert getattr(hidden_function.func, "_ifc_wrapped", False) is True
+
+        load_function = next(function for function in mcp_tool.functions if function.name == "load_tool")
+        context = FunctionInvocationContext(
+            function=load_function,
+            arguments={"tool": "hidden_sink"},
+            tools=list(mcp_tool.functions),
+        )
+        await load_function.invoke(arguments={"tool": "hidden_sink"}, context=context)
+
+        assert context.tools is not None
+        assert hidden_function in context.tools
+        policy_context = FunctionInvocationContext(function=hidden_function, arguments={})
+        policy_context.metadata["context_label"] = ContentLabel(confidentiality=ConfidentialityLabel.PRIVATE)
+
+        async def execute() -> None:
+            pytest.fail("The PRIVATE call should be blocked before invoking the MCP server.")
+
+        with pytest.raises(MiddlewareTermination):
+            await PolicyEnforcementFunctionMiddleware(block_on_violation=True).process(policy_context, execute)
+
+        assert "exfiltration" in policy_context.result["error"].lower()
+        mcp_tool.session.call_tool.assert_not_called()
+
+        result = await _invoke_mcp_function(hidden_function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        assert "_meta" not in result[0].additional_properties
+
+    async def test_secure_mcp_proxy_applies_local_policy_to_later_tool(self):
+        from mcp import types as mcp_types
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        later_tool = _make_mcp_tool_definition("later_tool", open_world=True)
+        mcp_tool = _make_connected_mcp_discovery_tool(
+            result_meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        )
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[later_tool]))
+        proxy = SecureMCPToolProxy(
+            mcp_tool,
+            annotation_overrides={"later_tool": (IntegrityLabel.TRUSTED, ConfidentialityLabel.PRIVATE)},
+            trust_server_ifc=True,
+        )
+        await proxy.refresh_labels()
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "later_tool")
+        assert function.additional_properties is not None
+        assert function.additional_properties["source_integrity"] == "trusted"
+        assert function.additional_properties["max_allowed_confidentiality"] == "private"
+        assert function.additional_properties["_mcp_trust_server_ifc"] is True
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+
+        await proxy.disconnect()
+        assert mcp_tool._function_load_callback is None
+
+    @pytest.mark.parametrize("entrypoint", ["connect", "enter"])
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize(
+        ("already_connected", "already_bound"),
+        [(False, False), (True, False), (True, True)],
+        ids=["fresh", "connected-unbound", "connected-bound"],
+    )
+    async def test_secure_mcp_proxy_setup_failure_preserves_live_connection_binding(
+        self,
+        entrypoint: str,
+        failure_type: type[BaseException],
+        already_connected: bool,
+        already_bound: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.is_connected = already_connected
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_bound:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+
+        async def open_connection(*_args: Any) -> Any:
+            mcp_tool.is_connected = True
+            return mcp_tool
+
+        async def close_connection(*_args: Any) -> None:
+            mcp_tool.is_connected = False
+
+        open_mock = AsyncMock(side_effect=open_connection)
+        close_mock = AsyncMock(side_effect=close_connection)
+        if entrypoint == "connect":
+            mcp_tool.connect = open_mock  # type: ignore[method-assign]
+            mcp_tool.close = close_mock  # type: ignore[method-assign]
+        else:
+            mcp_tool.__aenter__ = open_mock  # type: ignore[method-assign]
+            mcp_tool.__aexit__ = close_mock  # type: ignore[method-assign]
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            if entrypoint == "connect":
+                await proxy.connect()
+            else:
+                await proxy.__aenter__()
+
+        if already_connected:
+            assert mcp_tool.is_connected is True
+            close_mock.assert_not_called()
+        else:
+            assert mcp_tool.is_connected is False
+            close_mock.assert_awaited_once()
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
+
+    @pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+    @pytest.mark.parametrize("already_bound", [False, True])
+    async def test_secure_mcp_proxy_refresh_failure_only_removes_new_binding(
+        self,
+        failure_type: type[BaseException],
+        already_bound: bool,
+    ):
+        from agent_framework.security import SecureMCPToolProxy
+
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        proxy = SecureMCPToolProxy(mcp_tool)
+        if already_bound:
+            mcp_tool._function_load_callback = proxy._function_load_callback
+        proxy._apply_labels = AsyncMock(side_effect=failure_type("label refresh failed"))  # type: ignore[method-assign]
+
+        with pytest.raises(failure_type):
+            await proxy.refresh_labels()
+
+        expected_callback = proxy._function_load_callback if already_bound else None
+        assert mcp_tool._function_load_callback is expected_callback
+
+    async def test_plain_mcp_tool_remains_unlabeled(self):
+        from mcp import types as mcp_types
+
+        plain_tool = _make_mcp_tool_definition("plain_tool")
+        mcp_tool = _make_connected_mcp_discovery_tool()
+        mcp_tool.session.list_tools = AsyncMock(return_value=mcp_types.ListToolsResult(tools=[plain_tool]))
+
+        await mcp_tool.load_tools()
+
+        function = _find_mcp_function(mcp_tool, "plain_tool")
+        assert function.additional_properties == {
+            "_mcp_remote_name": "plain_tool",
+            "_mcp_normalized_name": "plain_tool",
+            "_mcp_is_tool": True,
+        }
+        assert getattr(function.func, "_ifc_wrapped", False) is False
+        result = await _invoke_mcp_function(function)
+        assert result[0].additional_properties["_meta"] == {
+            "ifc": {"integrity": "trusted", "confidentiality": "private"}
+        }
+        assert "security_label" not in result[0].additional_properties
 
     async def test_wrap_mcp_function_str_result_passes_through(self):
         """``str`` results (no per-item containers) are not modified by the wrapper."""
@@ -5588,6 +7406,58 @@ class TestManualSecuritySessionSelection:
         ) == ["alice secret", "bob secret"]
         assert get_current_middleware() is None
 
+    async def test_overlapping_sessions_keep_principal_metadata_isolated(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        alice = AgentSession(session_id="alice-principal")
+        bob = AgentSession(session_id="bob-principal")
+        tracker._scope_for_session(alice).context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        tracker._scope_for_session(bob).context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+
+        class SourceArgs(BaseModel):
+            pass
+
+        async def source() -> str:
+            return "done"
+
+        function = FunctionTool(
+            fn=source,
+            name="session_principal_source",
+            description="Observe session principal",
+            args_schema=SourceArgs,
+            additional_properties={"source_integrity": "trusted"},
+        )
+        both_started = asyncio.Event()
+        started = 0
+
+        async def run(session: AgentSession, expected_user_id: str) -> None:
+            nonlocal started
+            context = FunctionInvocationContext(function=function, arguments={}, session=session)
+
+            async def execute() -> None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await both_started.wait()
+                await asyncio.sleep(0)
+                assert context.metadata["context_label"].metadata[_PRINCIPALS_KEY] == [
+                    {"tenant_id": "tenant-a", "user_id": expected_user_id}
+                ]
+                context.result = [Content.from_text("done")]
+
+            await tracker.process(context, execute)
+
+        await asyncio.gather(
+            run(alice, "user-a"),
+            run(bob, "user-b"),
+        )
+
     async def test_direct_standalone_invocation_keeps_private_scope(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
         policy = PolicyEnforcementFunctionMiddleware()
@@ -5724,6 +7594,402 @@ class TestVariableArgumentPolicy:
         assert received == ["payload"]
         assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_hidden_argument_resolution_does_not_require_reapproval(self) -> None:
+        """Security expansion preserves the approval-visible placeholder."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=True)
+        function_call = Content.from_function_call(
+            call_id="approved-hidden-value",
+            id="approved-hidden-value-occurrence",
+            name=sink.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+        approval_response = Content.from_function_approval_request(
+            id="approved-hidden-value-occurrence",
+            function_call=function_call,
+        ).to_function_approval_response(approved=True)
+
+        result = await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={sink.name: sink},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.result == "payload"
+
+    async def test_hidden_argument_can_be_normalized_after_security_check(self) -> None:
+        """Final Pydantic coercion is not mistaken for post-policy mutation."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "3",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        received: list[int] = []
+
+        def strict_sink(value: int) -> str:
+            received.append(value)
+            return str(value)
+
+        strict_tool = FunctionTool(
+            func=strict_sink,
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-normalization",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.exception is None
+        assert received == [3]
+
+    @pytest.mark.parametrize("include_detailed_errors", [False, True])
+    async def test_hidden_argument_validation_error_does_not_disclose_resolved_value(
+        self,
+        include_detailed_errors: bool,
+    ) -> None:
+        """Validation failures redact values resolved by security middleware."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validation-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": include_detailed_errors}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_sink'."
+
+    async def test_hidden_mapping_key_is_not_disclosed_by_validation_error(self) -> None:
+        """Pydantic error locations cannot expose keys from resolved hidden mappings."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            {"secret-key": 1},
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: dict[int, int]
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_mapping_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-mapping-key-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret-key" not in str(result.result)
+        assert "secret-key" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_mapping_sink'."
+
+    async def test_hidden_value_is_not_disclosed_by_validator_type_error(self) -> None:
+        """Direct validator TypeErrors use the generic security redaction."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def reject_value(cls, value: str) -> str:
+                raise TypeError(f"rejected: {value}")
+
+        strict_tool = FunctionTool(
+            func=lambda value: value,
+            name="validator_type_error_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validator-type-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'validator_type_error_sink'."
+
+    @pytest.mark.parametrize(
+        ("inspected_value", "changed_value"),
+        [(True, 1), (-0.0, 0.0)],
+        ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+    )
+    async def test_argument_mutation_after_security_middleware_fails_closed(
+        self,
+        inspected_value: Any,
+        changed_value: Any,
+    ) -> None:
+        """A later type or float-bit change fails closed after policy inspection."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateRepairMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                context.arguments = {"value": changed_value}
+                await call_next()
+
+        function_call = Content.from_function_call(
+            call_id="late-repair",
+            name=sink.name,
+            arguments={"value": inspected_value},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateRepairMiddleware()),
+            )
+
+    async def test_security_snapshot_accepts_unchanged_nan(self) -> None:
+        """An unchanged NaN remains stable through security snapshot comparison."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        received: list[float] = []
+
+        class FloatArgs(BaseModel):
+            value: float
+
+        def nan_sink(value: float) -> str:
+            received.append(value)
+            return "nan"
+
+        nan_tool = FunctionTool(
+            func=nan_sink,
+            name="nan_sink",
+            input_model=FloatArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="security-nan",
+            name=nan_tool.name,
+            arguments={"value": "NaN"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={nan_tool.name: nan_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert len(received) == 1 and math.isnan(received[0])
+
+    async def test_security_policy_observes_custom_validator_transform_once(self) -> None:
+        """Security middleware inspects the exact normalized value delivered to the tool."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        validation_count = 0
+        observed: list[str] = []
+        received: list[str] = []
+
+        class TransformArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def transform_value(cls, value: str) -> str:
+                nonlocal validation_count
+                validation_count += 1
+                return "dangerous-operation" if value == "safe" else value
+
+        class ObserveAfterTrackingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                observed.append(cast(dict[str, str], context.arguments)["value"])
+                await call_next()
+
+        def transformed_sink(value: str) -> str:
+            received.append(value)
+            return value
+
+        transformed_tool = FunctionTool(
+            func=transformed_sink,
+            name="transformed_sink",
+            input_model=TransformArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="validator-transform",
+            name=transformed_tool.name,
+            arguments={"value": "safe"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={transformed_tool.name: transformed_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                tracker,
+                ObserveAfterTrackingMiddleware(),
+                policy,
+            ),
+        )
+
+        assert result.type == "function_result"
+        assert observed == ["dangerous-operation"]
+        assert received == ["dangerous-operation"]
+        assert validation_count == 1
+
+    async def test_security_rejects_opaque_mutable_validator_output(self) -> None:
+        """Security fails closed when normalized arguments cannot be safely snapshotted."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        middleware_called = False
+        tool_called = False
+
+        class MutableValue:
+            def __init__(self) -> None:
+                self.value = "initial"
+
+        class MutableArgs(BaseModel):
+            value: Any
+
+            @field_validator("value")
+            @classmethod
+            def create_mutable_value(cls, value: Any) -> Any:
+                return MutableValue() if value == "mutable" else value
+
+        class MutatingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                nonlocal middleware_called
+                middleware_called = True
+                assert isinstance(context.arguments, dict)
+                cast(Any, context.arguments["value"]).value = "changed"
+                await call_next()
+
+        def opaque_security_tool(value: Any) -> str:
+            nonlocal tool_called
+            tool_called = True
+            return value.value
+
+        function = FunctionTool(
+            func=opaque_security_tool,
+            name="opaque_security_tool",
+            input_model=MutableArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="opaque-security",
+            name=function.name,
+            arguments={"value": "mutable"},
+        )
+
+        with pytest.raises(
+            MiddlewareFailure,
+            match="Cannot safely bind security policy to opaque mutable function arguments",
+        ):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={function.name: function},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, MutatingMiddleware()),
+            )
+
+        assert not middleware_called
+        assert not tool_called
+
+    async def test_argument_mutation_after_security_short_circuit_fails_closed(self) -> None:
+        """Post-policy mutation cannot evade the guard by short-circuiting execution."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateShortCircuitMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                del call_next
+                context.arguments = {"value": "changed after policy"}
+                context.result = "short-circuited"
+
+        function_call = Content.from_function_call(
+            call_id="late-short-circuit",
+            name=sink.name,
+            arguments={"value": "approved value"},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateShortCircuitMiddleware()),
+            )
 
     async def test_private_hidden_argument_is_blocked_from_public_sink(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
@@ -5968,3 +8234,552 @@ class TestVariableArgumentPolicy:
 
         assert executed is True
         assert replay.metadata["user_approved_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_no_rewrites():
+    """Verify normal/non-expanded path returns empty dict."""
+    tracker = LabelTrackingFunctionMiddleware()
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(
+        name="my_tool",
+        func=my_tool,
+        additional_properties={"accepts_untrusted": True},
+    )
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["one.txt", "two.txt"]},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_explicit_context():
+    """Verify the explicit context API works inside a tool."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+    captured_context: FunctionInvocationContext | None = None
+
+    async def my_tool(files: list[str]):
+        captured["explicit"] = rewritten_arguments(captured_context)
+        captured["implicit"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+    captured_context = context
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["explicit"] == {"files": {0}}
+    assert captured["implicit"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_args():
+    """Verify tracking works across multiple top-level arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id1 = store.store("file_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("msg_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str], message: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", "safe.txt"], "message": f"[{var_id2}]"}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}, "message": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_duplicate_equal_values():
+    """Test that duplicate/equal final values are tracked per position."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id1 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", f"[{var_id2}]", "normal.txt"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["same_string", "same_string", "normal.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_list_positions():
+    """Test multiple list positions alongside untouched positions."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id}]", "untouched.txt", f"[{var_id}]"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_scalar():
+    """Test scalar (non-list) arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(text: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"text": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"text": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_nested_dict_semantics():
+    """Test that nested rewrites are reported against the top-level argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"config": {"path": f"[{var_id}]", "safe": "txt"}})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_whole_list_substitution():
+    """Test that whole-list substitution reports all resulting indices."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store(["hidden1.txt", "hidden2.txt"], ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["hidden1.txt", "hidden2.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_asyncio_to_thread():
+    """Verify async/thread/context behavior with asyncio.to_thread."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("thread_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def threaded_tool(files: list[str]):
+        def worker():
+            return rewritten_arguments()
+
+        captured["rewritten"] = await asyncio.to_thread(worker)
+        return "ok"
+
+    tool = FunctionTool(name="threaded_tool", func=threaded_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _reorder_files(v: list[str]) -> list[str]:
+    """A validator that reorders the list, invalidating original indices."""
+    return sorted(v, reverse=True)
+
+
+def _preserve_files(v: list[str]) -> list[str]:
+    """A validator that runs but does not mutate the list."""
+    return v
+
+
+ReorderedFiles = Annotated[list[str], AfterValidator(_reorder_files)]
+PreservedFiles = Annotated[list[str], AfterValidator(_preserve_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders():
+    """Verify indices degrade to -1 when a Pydantic validator mutates a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate():
+    """Verify indices are preserved when a validator runs but doesn't mutate the list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _filter_files(v: list[str]) -> list[str]:
+    """A validator that filters out items, invalidating original indices."""
+    return [f for f in v if f != "drop_me"]
+
+
+FilteredFiles = Annotated[list[str], AfterValidator(_filter_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters():
+    """Verify indices degrade to -1 when a Pydantic validator filters a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator reorders a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY (public direct-middleware path)."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator filters a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate_without_auto_prep():
+    """Indices are preserved when a validator runs but doesn't mutate,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_kwargs_collision_excluded():
+    """Rewrites in context.kwargs for a name also in context.arguments
+    must not be published — _top_level_argument_value prefers
+    context.arguments, so a kwargs rewrite for a shared name would
+    report indices against the untouched callable argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["safe.txt", "also_safe.txt"]},
+    )
+    context.kwargs = {"files": [f"[{var_id}]", "safe.txt"]}
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["safe.txt", "also_safe.txt"]
+    assert captured["rewritten"] == {}
+
+
+def test_degrade_rewritten_arguments_remaps_when_keys_differ():
+    """Auto-prep path: when validation changes top-level keys (e.g., a
+    Pydantic field alias ``fileNames`` normalizes to the callable parameter
+    ``files``), ``_degrade_rewritten_arguments`` must fail closed under the
+    final key set rather than leaving the rewritten entry stranded under the
+    pre-validation name where a tool's lookup would miss it."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={_REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}}},
+    )
+
+    LabelTrackingFunctionMiddleware._degrade_rewritten_arguments(context)
+    assert context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] == {"files": {0, 1}}
+
+
+def test_rewritten_arguments_fail_closed_when_keys_differ():
+    """Public ``rewritten_arguments()`` snapshot branch: when validation
+    changes top-level keys (e.g., a Pydantic field alias ``fileNames``
+    normalizes to the callable parameter ``files``), fail closed under the
+    final key set so a tool looking up the actual callable parameter does
+    not miss hidden content."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={
+            _REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}},
+            _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: "pre-validation-token",
+        },
+    )
+
+    assert rewritten_arguments(context) == {"files": {0, 1}}

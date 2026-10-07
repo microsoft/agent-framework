@@ -30,6 +30,7 @@ from ._participant_output_config import (
 from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Concurrent"
 
 """Concurrent builder for agent-only fan-out/fan-in workflows.
 
@@ -213,6 +214,7 @@ class ConcurrentBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
@@ -221,6 +223,7 @@ class ConcurrentBuilder:
         """Initialize the ConcurrentBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Concurrent"``.
             participants: Sequence of agent or executor instances to run in parallel.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
             output_from: Optional participant names or instances whose ``yield_output`` calls
@@ -230,6 +233,7 @@ class ConcurrentBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: list[SupportsAgentRun | Executor] = []
         self._aggregator: Executor | None = None
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
@@ -421,6 +425,7 @@ class ConcurrentBuilder:
             extra_output_executors=[aggregator],
         )
         builder = WorkflowBuilder(
+            name=self._name,
             start_executor=dispatcher,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

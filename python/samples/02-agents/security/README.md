@@ -11,6 +11,7 @@ security model, middleware behavior, and API reference.
 |--------|-------|--------------|
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
+| `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
 
 ## Prerequisites
@@ -86,6 +87,25 @@ What to look for:
 - Reading public content keeps the context public
 - Reading private content taints the context as private
 - Posting private data to a public destination triggers an approval request
+
+### `user_identity_security_example.py`
+
+This sample creates source and destination tools from a host-authenticated
+tenant/user principal. It demonstrates the canonical principal metadata format
+and wires policy enforcement with `SecureAgentConfig`.
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/user_identity_security_example.py
+```
+
+What to look for:
+
+- Data read for Alice carries Alice's tenant/user principal
+- Saving that data to Alice's destination is allowed
+- Sending the same data to Bob's destination is blocked and audited
+- Principal identity comes from host configuration, not model tool arguments
 
 ### `github_mcp_example.py`
 

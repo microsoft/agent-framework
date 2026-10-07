@@ -20,6 +20,8 @@ from agent_framework_purview._models import (
     ProcessContentResponse,
     ProtectionScopeActivities,
     ProtectionScopeState,
+    PurviewBinaryContent,
+    PurviewTextContent,
     RestrictionAction,
 )
 from agent_framework_purview._processor import ScopedContentProcessor, _is_valid_guid
@@ -144,6 +146,126 @@ class TestScopedContentProcessor:
         assert requests[0].tenant_id == "12345678-1234-1234-1234-123456789012"
         assert user_id == "12345678-1234-1234-1234-123456789012"
 
+    async def test_map_messages_submits_each_content_item_in_separate_request(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _map_messages submits every content item in a separate request.
+
+        Non-text content flattened to Message.text is empty for binary, tool-call and
+        tool-result content, which would have Purview classify an empty string.
+        """
+        from agent_framework import Content
+
+        secret = b"credit card 4532667785213500"
+        messages = [
+            Message(
+                role="user",
+                contents=[
+                    Content.from_data(data=secret, media_type="application/octet-stream"),
+                    Content(
+                        "function_call",
+                        call_id="call-1",
+                        name="send_email",
+                        arguments={"body": "ssn 120-98-1437"},
+                    ),
+                    Content("function_result", call_id="call-1", result="account 999-12345"),
+                ],
+            )
+        ]
+
+        requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert len(requests) == 3
+        entries = [request.content_to_process.content_entries[0] for request in requests]
+        assert all(len(request.content_to_process.content_entries) == 1 for request in requests)
+        binary_entry, call_entry, result_entry = entries
+        assert isinstance(binary_entry.content, PurviewBinaryContent)
+        assert binary_entry.content.data == secret
+
+        assert isinstance(call_entry.content, PurviewTextContent)
+        assert "send_email" in call_entry.content.data
+        assert "120-98-1437" in call_entry.content.data
+
+        assert isinstance(result_entry.content, PurviewTextContent)
+        assert "999-12345" in result_entry.content.data
+
+        # Every entry must carry real content; an empty payload would not be evaluated.
+        assert all(entry.content is not None for entry in entries)
+        assert not any(isinstance(entry.content, PurviewTextContent) and entry.content.data == "" for entry in entries)
+
+    async def test_map_messages_skips_empty_text_and_data(self, processor: ScopedContentProcessor) -> None:
+        """Test _map_messages does not create requests for empty text or binary data."""
+        from agent_framework import Content
+
+        messages = [
+            Message(
+                role="user",
+                contents=[
+                    "",
+                    Content.from_data(data=b"", media_type="application/octet-stream"),
+                ],
+            )
+        ]
+
+        requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert requests == []
+
+    async def test_map_messages_decodes_data_uri_with_media_type_parameters(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _map_messages decodes base64 data URIs whose media type carries parameters.
+
+        A data URI may carry any number of ";parameter=value" segments between the media type and
+        ";base64". Failing to decode one leaves the payload as a base64 string that no classifier
+        can read.
+        """
+        from agent_framework import Content
+
+        secret = b"credit card 4532667785213500"
+        content = Content.from_data(data=secret, media_type="text/plain;charset=utf-8")
+        assert content.uri is not None
+        assert content.uri.startswith("data:text/plain;charset=utf-8;base64,")
+
+        messages = [Message(role="user", contents=[content])]
+
+        requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        entries = requests[0].content_to_process.content_entries
+        assert len(entries) == 1
+        assert isinstance(entries[0].content, PurviewBinaryContent)
+        assert entries[0].content.data == secret
+
+    async def test_map_messages_submits_additional_properties_on_structured_content(
+        self, processor: ScopedContentProcessor
+    ) -> None:
+        """Test _map_messages serializes structured content whole, including additional_properties.
+
+        Building an entry from name/arguments alone drops additional_properties, leaving a
+        data channel on tool calls and tool results that Purview never sees.
+        """
+        from agent_framework import Content
+
+        call = Content("function_call", call_id="call-1", name="send_email", arguments={"body": "hello"})
+        call.additional_properties = {"hidden": "ssn 120-98-1437"}
+        result = Content("function_result", call_id="call-1", result="ok")
+        result.additional_properties = {"hidden": "card 4532667785213500"}
+
+        messages = [Message(role="user", contents=[call, result])]
+
+        requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert len(requests) == 2
+        call_entry = requests[0].content_to_process.content_entries[0]
+        result_entry = requests[1].content_to_process.content_entries[0]
+
+        assert isinstance(call_entry.content, PurviewTextContent)
+        assert "120-98-1437" in call_entry.content.data
+        assert "send_email" in call_entry.content.data
+
+        assert isinstance(result_entry.content, PurviewTextContent)
+        assert "4532667785213500" in result_entry.content.data
+
     async def test_map_messages_without_defaults_gets_token_info(self, mock_client: AsyncMock) -> None:
         """Test _map_messages gets token info when settings lack some defaults."""
         settings = PurviewSettings(app_name="Test App", tenant_id="12345678-1234-1234-1234-123456789012")
@@ -220,6 +342,207 @@ class TestScopedContentProcessor:
         assert len(actions) == 1
         assert actions[0].action == DlpAction.BLOCK_ACCESS
 
+    async def test_check_applicable_scopes_matches_location_case_insensitively(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes matches location values regardless of GUID casing.
+
+        A casing difference between the request location and the scope location would
+        otherwise hide an applicable block scope.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationApplication",
+            value="A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationApplication",
+                    value="a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, execution_mode = ScopedContentProcessor._check_applicable_scopes(
+            pc_request, ps_response
+        )
+
+        assert should_process is True
+        assert execution_mode == ExecutionMode.EVALUATE_INLINE
+        assert dlp_actions
+
+    async def test_check_applicable_scopes_matches_url_location_host_case_insensitively(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes ignores host casing on URL locations.
+
+        The scheme and host of a URL are case-insensitive, so a casing difference there must not
+        hide an applicable scope.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationUrl",
+            value="HTTPS://Contoso.com/sites/marketing",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationUrl",
+                    value="https://contoso.com/sites/marketing",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, _ = ScopedContentProcessor._check_applicable_scopes(pc_request, ps_response)
+
+        assert should_process is True
+        assert dlp_actions
+
+    async def test_check_applicable_scopes_treats_url_location_path_as_case_sensitive(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes keeps URL path casing significant.
+
+        URL paths are case-sensitive, so a scope scoped to one path must not match a different path
+        that differs only in casing.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationUrl",
+            value="https://contoso.com/sites/Marketing",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationUrl",
+                    value="https://contoso.com/sites/marketing",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, _ = ScopedContentProcessor._check_applicable_scopes(pc_request, ps_response)
+
+        assert should_process is False
+        assert dlp_actions == []
+
+    async def test_check_applicable_scopes_treats_url_location_query_as_case_sensitive(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes keeps URL query casing significant.
+
+        A query value is case-sensitive, and it may follow the host directly with no path between
+        them, so the authority has to end at the query delimiter as well as the path delimiter.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationUrl",
+            value="https://contoso.com?label=Secret",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationUrl",
+                    value="https://contoso.com?label=secret",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, _ = ScopedContentProcessor._check_applicable_scopes(pc_request, ps_response)
+
+        assert should_process is False
+        assert dlp_actions == []
+
+    async def test_check_applicable_scopes_treats_url_location_fragment_as_case_sensitive(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes keeps URL fragment casing significant.
+
+        A fragment may follow the host directly, so the authority has to end at the fragment
+        delimiter as well.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationUrl",
+            value="https://contoso.com#Section",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationUrl",
+                    value="https://contoso.com#section",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, _ = ScopedContentProcessor._check_applicable_scopes(pc_request, ps_response)
+
+        assert should_process is False
+        assert dlp_actions == []
+
+    async def test_check_applicable_scopes_treats_url_location_userinfo_as_case_sensitive(
+        self, process_content_request_factory
+    ) -> None:
+        """Test _check_applicable_scopes keeps URL userinfo casing significant.
+
+        Credentials embedded in the authority are case-sensitive, so only the host half of the
+        authority may be folded.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        pc_request.content_to_process.protected_app_metadata.application_location = PolicyLocation(
+            data_type="microsoft.graph.policyLocationUrl",
+            value="https://alice:SecretPass@contoso.com/docs",
+        )
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_INLINE,
+            locations=[
+                PolicyLocation(
+                    data_type="#microsoft.graph.policyLocationUrl",
+                    value="https://alice:secretpass@contoso.com/docs",
+                )
+            ],
+            policy_actions=[DlpActionInfo(action=DlpAction.BLOCK_ACCESS)],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+
+        should_process, dlp_actions, _ = ScopedContentProcessor._check_applicable_scopes(pc_request, ps_response)
+
+        assert should_process is False
+        assert dlp_actions == []
+
     async def test_combine_policy_actions(self, processor: ScopedContentProcessor) -> None:
         """Test _combine_policy_actions merges action lists."""
         action1 = DlpActionInfo(action=DlpAction.BLOCK_ACCESS, restrictionAction=RestrictionAction.BLOCK)
@@ -289,6 +612,115 @@ class TestScopedContentProcessor:
         await asyncio.gather(*list(processor._background_tasks))
         mock_client.get_protection_scopes.assert_called_once()
         mock_client.send_content_activities.assert_called_once()
+
+    async def test_process_with_scopes_isolates_the_background_refresh_request(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test a cold scopes cache evaluates inline and hands the background refresh its own request.
+
+        The background refresh must not observe foreground mutations of the request it was given.
+        """
+        pc_request = process_content_request_factory()
+        cast(Any, processor._cache).get = AsyncMock(return_value=None)
+        mock_client.process_content.return_value = ProcessContentResponse(id="1")
+
+        captured: list[Any] = []
+
+        async def capture_refresh(ps_req: Any, cache_key: str, request: Any) -> None:
+            captured.append(request)
+
+        cast(Any, processor)._refresh_protection_scopes_background = capture_refresh
+
+        await processor._process_with_scopes(pc_request)
+        await asyncio.gather(*list(processor._background_tasks))
+
+        # Content was evaluated inline, so there is no window in which it goes unevaluated.
+        mock_client.process_content.assert_called_once()
+        assert pc_request.process_inline is True
+
+        # The background task got its own request object.
+        assert captured and captured[0] is not pc_request
+
+    async def test_process_with_scopes_evaluates_unknown_execution_mode_inline(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test an unrecognised executionMode is evaluated inline.
+
+        executionMode is an evolvable enum, so an unknown member must not skip enforcement.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.UNKNOWN_FUTURE_VALUE,
+            locations=[PolicyLocation(data_type="microsoft.graph.policyLocationApplication", value="app-id")],
+            policy_actions=[],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+        cast(Any, processor._cache).get = AsyncMock(side_effect=[None, ps_response])
+        mock_client.process_content.return_value = ProcessContentResponse(id="1")
+
+        await processor._process_with_scopes(pc_request)
+
+        mock_client.process_content.assert_called_once()
+        assert pc_request.process_inline is True
+
+    async def test_process_with_scopes_reports_block_action_on_offline_scope(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test a block verdict known from an offline scope is still reported rather than discarded."""
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_OFFLINE,
+            locations=[PolicyLocation(data_type="microsoft.graph.policyLocationApplication", value="app-id")],
+            policy_actions=[
+                DlpActionInfo(action=DlpAction.RESTRICT_ACCESS, restriction_action=RestrictionAction.BLOCK)
+            ],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+        cast(Any, processor._cache).get = AsyncMock(side_effect=[None, ps_response])
+        mock_client.process_content.return_value = ProcessContentResponse(id="1")
+
+        response = await processor._process_with_scopes(pc_request)
+        await asyncio.gather(*list(processor._background_tasks))
+
+        assert response.policy_actions
+        assert all(
+            action.action == DlpAction.RESTRICT_ACCESS and action.restriction_action == RestrictionAction.BLOCK
+            for action in response.policy_actions
+        )
+
+    async def test_process_with_scopes_ignores_non_blocking_restriction_on_offline_scope(
+        self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
+    ) -> None:
+        """Test a restrictAccess scope whose restriction mode does not block is not reported as blocking.
+
+        restrictAccess carries a separate restriction mode which may be audit, warn or allow. Only an
+        explicit block mode withholds the content, so the other modes must not surface as a verdict.
+        """
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        pc_request = process_content_request_factory()
+        scope = PolicyScope(
+            activities=ProtectionScopeActivities.UPLOAD_TEXT,
+            execution_mode=ExecutionMode.EVALUATE_OFFLINE,
+            locations=[PolicyLocation(data_type="microsoft.graph.policyLocationApplication", value="app-id")],
+            policy_actions=[
+                DlpActionInfo(action=DlpAction.RESTRICT_ACCESS, restriction_action=RestrictionAction.OTHER)
+            ],
+        )
+        ps_response = ProtectionScopesResponse(scopes=[scope])
+        cast(Any, processor._cache).get = AsyncMock(side_effect=[None, ps_response])
+        mock_client.process_content.return_value = ProcessContentResponse(id="1")
+
+        response = await processor._process_with_scopes(pc_request)
+        await asyncio.gather(*list(processor._background_tasks))
+
+        assert not response.policy_actions
 
     async def test_process_with_scopes_preserves_restriction_only_policy_actions(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
@@ -516,8 +948,8 @@ class TestScopedContentProcessor:
         assert user_id == "32345678-1234-1234-1234-123456789012"
         assert requests[0].user_id == "32345678-1234-1234-1234-123456789012"
 
-    async def test_map_messages_returns_empty_when_no_user_id(self, mock_client: AsyncMock) -> None:
-        """Test that empty results are returned when user_id cannot be resolved."""
+    async def test_map_messages_raises_when_no_user_id(self, mock_client: AsyncMock) -> None:
+        """Test that an unresolvable user_id fails closed instead of skipping evaluation."""
         settings = PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
@@ -533,10 +965,8 @@ class TestScopedContentProcessor:
 
         messages = [Message(role="user", contents=["Test message"])]
 
-        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
-
-        assert len(requests) == 0
-        assert user_id is None
+        with pytest.raises(ValueError, match="No user id"):
+            await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
     async def test_process_content_sends_activities_when_not_applicable(
         self, mock_client: AsyncMock, process_content_request_factory
@@ -705,11 +1135,9 @@ class TestUserIdResolution:
             )
         ]
 
-        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
-
-        # Should return empty since author_name is not a valid GUID
-        assert user_id is None
-        assert len(requests) == 0
+        # author_name is not a valid GUID, so no identity resolves and evaluation fails closed
+        with pytest.raises(ValueError, match="No user id"):
+            await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
     async def test_provided_user_id_used_as_last_resort(
         self, mock_client: AsyncMock, settings: PurviewSettings
@@ -739,10 +1167,29 @@ class TestUserIdResolution:
 
         messages = [Message(role="user", contents=["Test"])]
 
-        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT, provided_user_id="not-a-guid")
+        with pytest.raises(ValueError, match="No user id"):
+            await processor._map_messages(messages, Activity.UPLOAD_TEXT, provided_user_id="not-a-guid")
 
-        assert user_id is None
-        assert len(requests) == 0
+    async def test_unresolvable_user_id_blocks_processing(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test process_messages raises rather than sending content when no user id resolves.
+
+        Without a user id there is no policy to evaluate against, so the content must not be
+        forwarded to Purview or on to the model.
+        """
+        mock_client.get_user_info_from_token.return_value = {
+            "tenant_id": "12345678-1234-1234-1234-123456789012",
+            "client_id": "12345678-1234-1234-1234-123456789012",
+        }
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [Message(role="user", contents=["ssn 120-98-1437"])]
+
+        with pytest.raises(ValueError, match="No user id"):
+            await processor.process_messages(messages, Activity.UPLOAD_TEXT)
+
+        mock_client.process_content.assert_not_called()
 
     async def test_multiple_messages_same_user_id(self, mock_client: AsyncMock, settings: PurviewSettings) -> None:
         """Test that all messages use the same resolved user_id."""

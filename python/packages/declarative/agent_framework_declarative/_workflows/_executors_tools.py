@@ -243,24 +243,23 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
         return None
 
-    def _get_output_config(self) -> tuple[str | None, str | None, bool]:
-        """Parse output configuration from action definition.
+    def _get_output_config(self) -> tuple[str | None, str | None, Any]:
+        """Parse output bindings and the unevaluated autoSend setting.
 
         Returns:
-            Tuple of (messages_var, result_var, auto_send)
+            Tuple of (messages_var, result_var, auto_send_expr)
         """
-        output_config: dict[str, str | bool] = self._action_def.get("output", {})
+        output_config: dict[str, Any] = self._action_def.get("output", {})
 
         if not isinstance(output_config, Mapping):
             return None, None, True
 
         messages_var = output_config.get("messages")
         result_var = output_config.get("result")
-        auto_send = bool(output_config.get("autoSend", True))
         return (
             str(messages_var) if messages_var else None,
             str(result_var) if result_var else None,
-            auto_send,
+            output_config.get("autoSend", True),
         )
 
     def _store_result(
@@ -443,7 +442,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         state = await self._ensure_state_initialized(ctx, trigger)
 
         # Parse output configuration early so we can store errors
-        messages_var, result_var, auto_send = self._get_output_config()
+        messages_var, result_var, auto_send_expr = self._get_output_config()
 
         # Get and evaluate function name (required)
         function_name_expr = self._action_def.get("functionName")
@@ -496,6 +495,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
             return
 
         # No approval required - invoke directly
+        auto_send = bool(state.eval_if_expression(auto_send_expr))
         result = await self._execute_tool_invocation(
             function_name=function_name,
             arguments=arguments,
@@ -521,12 +521,14 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         ``function_name`` and ``arguments`` are sourced from
         ``original_request`` (the payload the reviewer approved); output
         configuration is re-derived from the executor's action definition.
+        Rejected calls store the rejection and complete without evaluating
+        ``autoSend``.
         """
         state = self._get_state(ctx.state)
 
         function_name = original_request.function_name
         arguments = original_request.arguments
-        messages_var, result_var, auto_send = self._get_output_config()
+        messages_var, result_var, auto_send_expr = self._get_output_config()
 
         # Check if approved
         if response.approved is not True:
@@ -551,6 +553,7 @@ class BaseToolExecutor(DeclarativeActionExecutor):
             return
 
         # Approved - execute the invocation
+        auto_send = bool(state.eval_if_expression(auto_send_expr))
         result = await self._execute_tool_invocation(
             function_name=function_name,
             arguments=arguments,
@@ -571,6 +574,12 @@ class BaseToolExecutor(DeclarativeActionExecutor):
 
 class InvokeFunctionToolExecutor(BaseToolExecutor):
     """Executor that invokes a Python function as a tool.
+
+    ``output.autoSend`` defaults to true and accepts a Boolean or a
+    ``=``-prefixed PowerFx Boolean expression, such as ``=Local.publishResult``.
+    Expressions use current state immediately before direct or approved
+    invocation. False suppresses automatic output, not tool execution or result
+    storage; later actions can explicitly emit the stored results.
 
     This executor supports invoking registered Python functions with:
     - Expression evaluation for functionName and arguments

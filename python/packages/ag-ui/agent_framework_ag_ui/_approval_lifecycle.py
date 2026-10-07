@@ -132,6 +132,7 @@ class ClaimRecoveryPolicy(str, Enum):
     """Proof required to release authority before execution begins."""
 
     SAFE_TO_RETRY = "safe_to_retry"
+    PRESERVE_PENDING_RETENTION = "preserve_pending_retention"
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,7 @@ class ApprovalOccurrence:
     already_approved_requests: tuple[dict[str, Any], ...] = ()
     server_label: str | None = None
     idempotency_key: str | None = None
+    requires_client_resume: bool = True
     status: ApprovalStatus = ApprovalStatus.PENDING
     pending_since: float = 0
     replayable_results: list[ReplayableToolResult] = field(default_factory=list)
@@ -284,6 +286,7 @@ class ApprovalLifecycle:
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
+        requires_client_resume: bool = True,
     ) -> ApprovalOccurrence:
         """Register one approval occurrence with its pending transition owner."""
         if (thread_ids is None) == (thread_id is None):
@@ -303,6 +306,7 @@ class ApprovalLifecycle:
             already_approved_requests=already_approved_requests,
             server_label=server_label,
             idempotency_key=idempotency_key,
+            requires_client_resume=requires_client_resume,
         )
 
     @_serialized_registration
@@ -322,6 +326,7 @@ class ApprovalLifecycle:
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
+        requires_client_resume: bool = True,
     ) -> ApprovalOccurrence:
         self._purge_expired_terminal()
         if scope == "":
@@ -356,6 +361,7 @@ class ApprovalLifecycle:
                 or occurrence.idempotency_key != idempotency_key
                 or occurrence.already_approved_requests != tuple(already_approved_requests or ())
                 or occurrence.server_label != server_label
+                or occurrence.requires_client_resume is not requires_client_resume
             ):
                 raise ValueError("Approval alias conflicts with an existing pending occurrence.")
             occurrence.thread_ids = tuple(dict.fromkeys((*occurrence.thread_ids, *unique_thread_ids)))
@@ -388,6 +394,7 @@ class ApprovalLifecycle:
             already_approved_requests=tuple(already_approved_requests or ()),
             server_label=server_label,
             idempotency_key=idempotency_key,
+            requires_client_resume=requires_client_resume,
             pending_since=self._clock(),
         )
         self._occurrences[identity] = occurrence
@@ -442,6 +449,18 @@ class ApprovalLifecycle:
                 occurrence.active_interrupt_id
                 for occurrence in self._occurrences.values()
                 if thread_id in occurrence.thread_ids and occurrence.status is ApprovalStatus.PENDING
+            }
+
+    def pending_client_resume_interrupt_ids(self, *, thread_id: str) -> set[str]:
+        """Return pending interrupt identities that require another client decision."""
+        with self._index_lock:
+            self._purge_expired_terminal()
+            return {
+                occurrence.active_interrupt_id
+                for occurrence in self._occurrences.values()
+                if thread_id in occurrence.thread_ids
+                and occurrence.status is ApprovalStatus.PENDING
+                and occurrence.requires_client_resume
             }
 
     def reconcile_snapshot(
@@ -845,6 +864,7 @@ class ApprovalLifecycle:
         occurrence.aliases = (request_id,)
         occurrence.active_interrupt_id = request_id
         occurrence.response_id = request_id
+        occurrence.requires_client_resume = True
         occurrence.decision = None
         occurrence.pending_since = self._clock()
         for thread_id in occurrence.thread_ids:
@@ -872,12 +892,16 @@ class ApprovalLifecycle:
     def release_claim(self, intent: AuthorizedExecution, *, policy: ClaimRecoveryPolicy) -> None:
         """Release reserved authority when execution is known not to have begun."""
         occurrence = self._occurrences[intent.identity]
-        if policy is not ClaimRecoveryPolicy.SAFE_TO_RETRY:
+        if policy not in {
+            ClaimRecoveryPolicy.SAFE_TO_RETRY,
+            ClaimRecoveryPolicy.PRESERVE_PENDING_RETENTION,
+        }:
             raise ValueError("Claim recovery policy does not permit retry.")
         if occurrence.status is not ApprovalStatus.CLAIMED:
             raise ValueError(f"Approval occurrence is not claimed: {occurrence.status}.")
         occurrence.status = ApprovalStatus.PENDING
-        occurrence.pending_since = self._clock()
+        if policy is ClaimRecoveryPolicy.SAFE_TO_RETRY:
+            occurrence.pending_since = self._clock()
 
     @_serialized_by_occurrence
     def mark_indeterminate(
@@ -924,6 +948,31 @@ class ApprovalLifecycle:
             return intent
         self.mark_indeterminate(intent, owner=owner)
         return None
+
+    @_serialized_by_occurrence
+    def retain_collected_decision(self, intent: AuthorizedExecution) -> None:
+        """Keep a server-collected grant pending without asking the client to submit it again."""
+        occurrence = self._occurrences[intent.identity]
+        if (
+            occurrence.status is not ApprovalStatus.CLAIMED
+            or occurrence.decision is None
+            or not occurrence.decision.accepted
+        ):
+            raise ValueError("Only an unstarted accepted claim can be retained as a collected decision.")
+        occurrence.requires_client_resume = False
+        self.release_claim(intent, policy=ClaimRecoveryPolicy.PRESERVE_PENDING_RETENTION)
+
+    @_serialized_by_occurrence
+    def recover_unfinished(self, intent: AuthorizedExecution) -> None:
+        """Release unstarted authority or recover an execution without replaying uncertain work."""
+        occurrence = self._occurrences.get(intent.identity)
+        if occurrence is None:
+            # A terminal outcome may have expired before the enclosing stream closes.
+            return
+        if occurrence.status is ApprovalStatus.EXECUTING:
+            self.recover_execution(intent, owner=intent.owner)
+        if occurrence.status is ApprovalStatus.CLAIMED:
+            self.release_claim(intent, policy=ClaimRecoveryPolicy.PRESERVE_PENDING_RETENTION)
 
     @_serialized_by_occurrence
     def settle(self, intent: AuthorizedExecution, results: list[Content]) -> ApprovalOutcome:
@@ -1011,11 +1060,21 @@ class ApprovalLifecycle:
         return outcome
 
     @_serialized_by_occurrence
-    def defer(self, intent: AuthorizedExecution, results: list[Content]) -> ApprovalOutcome:
+    def defer(
+        self,
+        intent: AuthorizedExecution,
+        results: list[Content],
+        *,
+        owner: ApprovalExecutionOwner = ApprovalExecutionOwner.LOCAL,
+    ) -> ApprovalOutcome:
         """Return an execution that yielded only follow-up requests to pending."""
         occurrence = self._occurrences[intent.identity]
-        if intent.owner is not ApprovalExecutionOwner.LOCAL or occurrence.owner is not ApprovalExecutionOwner.LOCAL:
-            raise ValueError("Only the local transition owner can defer a local execution.")
+        if (
+            owner not in {ApprovalExecutionOwner.LOCAL, ApprovalExecutionOwner.DEFERRED}
+            or intent.owner is not owner
+            or occurrence.owner is not owner
+        ):
+            raise ValueError("Only the owning local or deferred transition owner can defer execution.")
         if occurrence.status is not ApprovalStatus.EXECUTING:
             raise ValueError(f"Approval occurrence is not executing: {occurrence.status}.")
         occurrence.status = ApprovalStatus.PENDING

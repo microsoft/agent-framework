@@ -34,7 +34,10 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </para>
 /// <para>
 /// If the <see cref="HttpContext"/> is unavailable, the user is not authenticated, or the specified claim
-/// is missing, the provider returns <see langword="null"/>. Consuming stores then enforce strict or
+/// is missing or blank on the user's authenticated identities, the provider returns <see langword="null"/>.
+/// Claims on unauthenticated identities attached to the same principal are never used. Claims added to an
+/// authenticated identity (for example, by claims transformation) are trusted, so such code must not copy
+/// client-supplied values into the configured claim type. Consuming stores then enforce strict or
 /// pass-through behavior based on their configuration.
 /// </para>
 /// <para>
@@ -73,13 +76,15 @@ public class ClaimsIdentityAgentIsolationKeyProvider : AgentIsolationKeyProvider
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains the value of the
     /// configured claim type from the current user's identity, or <see langword="null"/> if the HTTP
-    /// context is unavailable, the user is not authenticated, or the claim is not present.
+    /// context is unavailable, the user is not authenticated, or the claim is missing or blank.
     /// </returns>
     /// <remarks>
-    /// This method only reads claims from an authenticated principal: if the current request has no
-    /// authenticated user, it returns <see langword="null"/> rather than trusting claims on an
-    /// unauthenticated identity. The claim value is retrieved from <c>HttpContext.User.Claims</c>; if
-    /// multiple claims of the specified type exist, the first match is returned.
+    /// This method only reads claims from authenticated identities: if the current request's primary
+    /// identity is not authenticated, it returns <see langword="null"/>. Otherwise, the configured claim
+    /// is read only from identities in <c>HttpContext.User.Identities</c> whose
+    /// <see cref="ClaimsIdentity.IsAuthenticated"/> is <see langword="true"/>; claims on unauthenticated
+    /// identities attached to the same principal are ignored. If multiple matching claims exist, the first
+    /// match is returned.
     /// </remarks>
     public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
     {
@@ -89,8 +94,10 @@ public class ClaimsIdentityAgentIsolationKeyProvider : AgentIsolationKeyProvider
             return new ValueTask<string?>((string?)null);
         }
 
-        Claim? claim = user?.Claims.FirstOrDefault(c => c.Type == this._claimType);
-
-        return new ValueTask<string?>(claim?.Value);
+        string? value = user.Identities
+            .Where(identity => identity.IsAuthenticated)
+            .SelectMany(identity => identity.Claims)
+            .FirstOrDefault(c => c.Type == this._claimType)?.Value;
+        return new ValueTask<string?>(string.IsNullOrWhiteSpace(value) ? null : value);
     }
 }

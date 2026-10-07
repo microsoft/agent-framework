@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import Executor, WorkflowContext, handler
+from agent_framework import Executor, WorkflowContext, handler, response_handler
 
 
 class MyTypeA(BaseModel):
@@ -20,6 +21,18 @@ class MyTypeB(BaseModel):
 
 class MyTypeC(BaseModel):
     pass
+
+
+if TYPE_CHECKING:
+
+    class NonExistentType:
+        pass
+
+    class MissingType:
+        pass
+
+
+_T = TypeVar("_T")
 
 
 class TestExecutorFutureAnnotations:
@@ -109,6 +122,71 @@ class TestExecutorFutureAnnotations:
         assert spec["output_types"] == [MyTypeA, MyTypeB]
         assert spec["workflow_output_types"] == [MyTypeC]
 
+    def test_response_handler_decorator_future_annotations(self):
+        """Test @response_handler with stringified annotations and future annotations."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_response(
+                self, original_request: str, response: int, ctx: WorkflowContext[str, bool]
+            ) -> None:
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        assert (str, int) in exec_instance._response_handlers  # pyright: ignore[reportPrivateUsage]
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int
+        assert spec["output_types"] == [str]
+        assert spec["workflow_output_types"] == [bool]
+
+    def test_response_handler_unresolvable_annotation_raises(self):
+        """Test that an unresolvable response-handler annotation raises ValueError."""
+        with pytest.raises(ValueError, match="Response handler parameter 'ctx' must be annotated as"):
+
+            class BadResponseHandler(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(
+                    self,
+                    original_request: NonExistentType,
+                    response: int,
+                    ctx: WorkflowContext[MyTypeA, MyTypeB],
+                ) -> None:
+                    pass
+
+    def test_response_handler_rejects_unresolved_typevar_in_request_annotation(self):
+        """Test that response handlers reject an unresolved request TypeVar during registration."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class GenericRequestResponseExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(self, original_request: _T, response: int, ctx: WorkflowContext) -> None:
+                    pass
+
+    def test_response_handler_rejects_unresolved_typevar_in_response_annotation(self):
+        """Test that response handlers reject an unresolved response TypeVar during registration."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class GenericResponseExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(self, original_request: str, response: _T, ctx: WorkflowContext) -> None:
+                    pass
+
+    def test_annotation_resolver_falls_back_to_raw_annotations(self):
+        """Test that annotation resolution preserves raw annotations when a hint is unresolved."""
+        from agent_framework._workflows._typing_utils import _resolve_function_annotations
+
+        def sample(value: MissingType) -> None:
+            pass
+
+        params = list(inspect.signature(sample).parameters.values())
+
+        assert _resolve_function_annotations(sample, params)["value"] == "MissingType"
+
     def test_handler_unresolvable_annotation_raises(self):
         """Test that an unresolvable forward-reference annotation raises ValueError.
 
@@ -120,5 +198,5 @@ class TestExecutorFutureAnnotations:
 
             class Bad(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler  # pyright: ignore[reportUnknownArgumentType]
-                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
+                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:
                     pass

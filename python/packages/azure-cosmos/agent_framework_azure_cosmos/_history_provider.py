@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, TypedDict
 
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider
+from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from azure.core.credentials import TokenCredential
@@ -36,7 +36,20 @@ class AzureCosmosHistorySettings(TypedDict, total=False):
 
 
 class CosmosHistoryProvider(HistoryProvider):
-    """Azure Cosmos DB-backed history provider using HistoryProvider hooks."""
+    """Azure Cosmos DB-backed history provider using HistoryProvider hooks.
+
+    Providers using the same Cosmos DB account, database, and container with
+    identical ``source_id`` and non-empty ``session_id`` values access the same
+    persisted history for reads, writes, and clearing. This supports resuming
+    conversations across provider instances. ``session_id`` is the partition key;
+    ``source_id`` filters history within that partition.
+
+    These identifiers select stored history; they are not authentication or
+    authorization boundaries. Applications must bind them to authenticated and
+    authorized context and use distinct, trusted namespaces when isolation is
+    intended. Different identifiers prevent accidental overlap but do not restrict
+    a client whose Cosmos DB credentials already authorize access to that data.
+    """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_cosmos_history"
     _BATCH_OPERATION_LIMIT: ClassVar[int] = 100
@@ -62,7 +75,8 @@ class CosmosHistoryProvider(HistoryProvider):
         """Initialize the Azure Cosmos DB history provider.
 
         Args:
-            source_id: Unique identifier for this provider instance.
+            source_id: Provider identifier used to scope stored history within a session.
+                Defaults to ``azure_cosmos_history`` and is shared across instances.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
@@ -187,10 +201,15 @@ class CosmosHistoryProvider(HistoryProvider):
 
         await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
+        existing_messages = await self.get_messages(session_key, state=state, **kwargs)
+        new_messages = filter_new_messages(existing_messages, messages)
+
+        if not new_messages:
+            return
 
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
-        for index, message in enumerate(messages):
+        for index, message in enumerate(new_messages):
             document = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_key,

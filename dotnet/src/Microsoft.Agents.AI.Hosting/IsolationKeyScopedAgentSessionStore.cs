@@ -1,18 +1,24 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// A delegating <see cref="AgentSessionStore"/> that scopes session keys by an isolation key
-/// provided by an <see cref="AgentIsolationKeyProvider"/>, ensuring that sessions are isolated
-/// per logical partition (e.g., user, tenant, or composite key).
+/// A delegating <see cref="AgentSessionStore"/> that adds an isolation partition from an
+/// <see cref="AgentIsolationKeyProvider"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
 {
+    private const string IsolationPartitionName = "isolation";
+    private static readonly AsyncLocal<string?> s_capturedIsolationKey = new();
+
     private readonly AgentIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
 
@@ -50,67 +56,98 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </exception>
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
-        string? key = this._keyProvider != null
-                    ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
-                    : null;
-
-        if (this._strict && key == null)
+        // Background execution supplies the trusted request-time key through the async call flow.
+        // This takes precedence over ambient providers such as IHttpContextAccessor, whose request
+        // may already have ended by the time a nested isolation decorator is reached.
+        string? key = s_capturedIsolationKey.Value;
+        if (key is null)
         {
-            throw new InvalidOperationException("Agent isolation key is required but was not provided by the configured AgentIsolationKeyProvider.");
+            key = this._keyProvider != null
+                ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                : null;
+        }
+
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            if (this._strict)
+            {
+                throw new InvalidOperationException("Agent isolation key is required but was not provided by the configured AgentIsolationKeyProvider.");
+            }
+
+            return null;
         }
 
         return key;
     }
 
     /// <summary>
-    /// Escapes special characters in the isolation key to ensure unambiguous scoped session store IDs.
+    /// Adds the isolation value from the current hosting context to the session key.
     /// </summary>
-    /// <param name="key">The raw isolation key.</param>
-    /// <returns>The escaped isolation key.</returns>
-    /// <remarks>
-    /// Backslashes are escaped first (\ becomes \\), then colons (: becomes \:).
-    /// This ensures the scoped session store ID format {key}::{sessionStoreId} can be parsed correctly.
-    /// </remarks>
-    private static string EscapeIsolationKey(string key) => key.Replace("\\", "\\\\").Replace(":", "\\:");
+    private async ValueTask<AgentSessionStoreKey> GetScopedKeyAsync(
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken)
+    {
+        _ = Throw.IfNull(key);
+
+        string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
+        return isolationKey is null ? key : key.WithPartition(IsolationPartitionName, isolationKey);
+    }
 
     /// <summary>
-    /// Constructs a scoped session store ID by prefixing the bare session store ID with the escaped isolation key.
+    /// Overrides ambient isolation lookup for the current asynchronous operation.
     /// </summary>
-    /// <param name="bareSessionStoreId">The original session store ID.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>
-    /// The scoped session store ID in the format {escapedKey}::{sessionStoreId}, or the bare session store ID
-    /// if no isolation key is available and non-strict mode is enabled.
-    /// </returns>
-    private async ValueTask<string> GetScopedSessionStoreIdAsync(string bareSessionStoreId, CancellationToken cancellationToken)
+    internal static IDisposable UseCapturedIsolationKey(string isolationKey) =>
+        new CapturedIsolationKeyScope(Throw.IfNullOrWhitespace(isolationKey));
+
+    /// <inheritdoc />
+    public override async ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
     {
-        string? key = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
-        if (key == null)
+        AgentSessionStoreKey scopedKey = await this.GetScopedKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        return await this.InnerStore.GetSessionAsync(agent, scopedKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<AgentSession> GetOrCreateSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        AgentSessionStoreKey scopedKey = await this.GetScopedKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        return await this.InnerStore.GetOrCreateSessionAsync(agent, scopedKey, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
+    {
+        AgentSessionStoreKey scopedKey = await this.GetScopedKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        await this.InnerStore.SaveSessionAsync(agent, scopedKey, session, cancellationToken).ConfigureAwait(false);
+    }
+
+    private sealed class CapturedIsolationKeyScope : IDisposable
+    {
+        private readonly string? _previousIsolationKey;
+        private bool _disposed;
+
+        public CapturedIsolationKeyScope(string isolationKey)
         {
-            return bareSessionStoreId;
+            this._previousIsolationKey = s_capturedIsolationKey.Value;
+            s_capturedIsolationKey.Value = isolationKey;
         }
 
-        return $"{EscapeIsolationKey(key)}::{bareSessionStoreId}";
-    }
-
-    /// <inheritdoc />
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-    {
-        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
-        return await this.InnerStore.GetSessionAsync(agent, scopedSessionStoreId, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
-    {
-        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
-        await this.InnerStore.SaveSessionAsync(agent, scopedSessionStoreId, session, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public override async ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-    {
-        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
-        await this.InnerStore.DeleteSessionAsync(agent, scopedSessionStoreId, cancellationToken).ConfigureAwait(false);
+        public void Dispose()
+        {
+            if (!this._disposed)
+            {
+                s_capturedIsolationKey.Value = this._previousIsolationKey;
+                this._disposed = true;
+            }
+        }
     }
 }

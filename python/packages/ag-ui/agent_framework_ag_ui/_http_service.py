@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterable, Mapping, Sequence
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, cast
 
 import httpx
@@ -151,12 +152,22 @@ class AGUIHttpService:
 
         Args:
             endpoint: AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx AsyncClient. If None, creates a new one.
+            http_client: Optional httpx AsyncClient. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and
+                remain caller-owned; scope cookie-based authentication to a single authenticated
+                principal rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
         """
         self.endpoint = endpoint.rstrip("/")
         self._owns_client = http_client is None
-        self.http_client = http_client or httpx.AsyncClient(timeout=timeout)
+        if http_client is not None:
+            self.http_client = http_client
+        else:
+            # An empty domain allowlist prevents response cookies from persisting across runs.
+            self.http_client = httpx.AsyncClient(
+                timeout=timeout,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
 
     async def post_run(
         self,

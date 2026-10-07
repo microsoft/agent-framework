@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
+import time
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, cast
 
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
@@ -16,6 +19,7 @@ from agent_framework import (
     Content,
     Message,
     WorkflowEvent,
+    WorkflowInvocationKwargs,
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -29,7 +33,9 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
 )
 
-from agent_framework_orchestrations import BaseGroupChatOrchestrator
+from agent_framework_orchestrations import AgentBasedGroupChatOrchestrator, BaseGroupChatOrchestrator
+from agent_framework_orchestrations._base_group_chat_orchestrator import ParticipantRegistry
+from agent_framework_orchestrations._orchestrator_helpers import extract_markdown_fence_bodies
 
 
 class StubAgent(BaseAgent):
@@ -177,6 +183,65 @@ class ConcatenatedJsonManagerAgent(Agent):
         )
 
 
+class FencedJsonManagerAgent(Agent):
+    """Manager agent that ignores response_format and wraps its JSON in a Markdown code fence."""
+
+    def __init__(self) -> None:
+        super().__init__(client=cast(Any, MockChatClient()), name="fenced_manager", description="Fenced JSON manager")
+        self._call_count = 0
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        if self._call_count == 0:
+            self._call_count += 1
+            text = (
+                "```json\n"
+                '{"terminate": false, "reason": "delegate", "next_speaker": "agent", "final_message": null}\n'
+                "```"
+            )
+        else:
+            text = (
+                "```json\n"
+                "{\n"
+                '  "terminate": true,\n'
+                '  "reason": "Task complete",\n'
+                '  "final_message": "fenced manager final"\n'
+                "}\n"
+                "```"
+            )
+        return AgentResponse(messages=[Message(role="assistant", contents=[text], author_name=self.name)])
+
+
+class ScriptedManagerAgent(Agent):
+    """Manager agent that picks the given speakers in order, then terminates."""
+
+    def __init__(self, speakers: list[str]) -> None:
+        super().__init__(client=cast(Any, MockChatClient()), name="scripted_manager", description="Scripted manager")
+        self._speakers = list(speakers)
+        self.received: list[list[Message]] = []
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        self.received.append(list(cast(list[Message], messages)))
+        if self._speakers:
+            payload = {"terminate": False, "reason": "delegate", "next_speaker": self._speakers.pop(0)}
+        else:
+            payload = {"terminate": True, "reason": "done", "next_speaker": None, "final_message": "scripted final"}
+        return AgentResponse(
+            messages=[Message(role="assistant", contents=[json.dumps(payload)], author_name=self.name)]
+        )
+
+
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
 
@@ -253,6 +318,23 @@ async def test_group_chat_builder_basic_flow() -> None:
     assert updates[0].author_name == "manager"
 
 
+def test_group_chat_builder_uses_stable_default_and_custom_name() -> None:
+    participant = StubAgent("agent", "response")
+
+    default_workflow = GroupChatBuilder(
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+    custom_workflow = GroupChatBuilder(
+        name="custom-group-chat",
+        participants=[participant],
+        selection_func=make_sequence_selector(),
+    ).build()
+
+    assert default_workflow.name == "GroupChat"
+    assert custom_workflow.name == "custom-group-chat"
+
+
 async def test_group_chat_as_agent_accepts_conversation() -> None:
     selector = make_sequence_selector()
     alpha = StubAgent("alpha", "ack from alpha")
@@ -275,6 +357,103 @@ async def test_group_chat_as_agent_accepts_conversation() -> None:
     assert response.messages, "Expected agent conversation output"
 
 
+class KwargsRecordingManagerAgent(StubManagerAgent):
+    """Manager agent that records the run kwargs it was invoked with."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_kwargs: list[dict[str, Any]] = []
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        self.seen_kwargs.append(dict(kwargs))
+        return await super().run(messages, session=session, **kwargs)
+
+
+async def test_agent_manager_receives_workflow_run_kwargs() -> None:
+    """The orchestrator agent gets the same run kwargs the participants already get.
+
+    ``workflow.run(function_invocation_kwargs=...)`` is stored in workflow state and
+    ``AgentExecutor`` forwards it to every participant agent. The orchestrator agent runs
+    outside ``AgentExecutor``, so it has to resolve the same state itself or hosts that put
+    request-scoped values there (a user id for tool ACL, say) silently get them on the
+    participants and not on the orchestrator.
+    """
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    async for _ in workflow.run(
+        "coordinate task",
+        stream=True,
+        function_invocation_kwargs={"user_id": "user-123"},
+        client_kwargs={"trace_id": "trace-abc"},
+    ):
+        pass
+
+    assert manager.seen_kwargs, "Expected the orchestrator agent to be invoked"
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") == {"user_id": "user-123"}
+        assert call.get("client_kwargs") == {"trace_id": "trace-abc"}
+
+
+async def test_agent_manager_receives_resolved_global_and_specific_run_kwargs() -> None:
+    """The #8312 GroupChat path consumes collision-free state through the shared resolver."""
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(participants=[worker], orchestrator_agent=manager).build()
+    invocation_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "G", "overridden": "global"},
+        executor_kwargs={"manager_agent": {"specific": "M", "overridden": "specific"}},
+    )
+
+    async for _ in workflow.run(
+        "coordinate task",
+        stream=True,
+        function_invocation_kwargs=invocation_kwargs,
+        client_kwargs=invocation_kwargs,
+    ):
+        pass
+
+    expected = {"shared": "G", "specific": "M", "overridden": "specific"}
+    assert manager.seen_kwargs
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") == expected
+        assert call.get("client_kwargs") == expected
+
+
+async def test_agent_manager_receives_no_run_kwargs_when_none_supplied() -> None:
+    """With nothing declared on the run, the orchestrator is invoked with both kwargs as None.
+
+    This pins the shape rather than just the happy path: the resolution has to return None,
+    not an empty dict, so a client that distinguishes the two is not handed a stray {}.
+    """
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    async for _ in workflow.run("coordinate task", stream=True):
+        pass
+
+    assert manager.seen_kwargs, "Expected the orchestrator agent to be invoked"
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") is None
+        assert call.get("client_kwargs") is None
+
+
 async def test_agent_manager_handles_concatenated_json_output() -> None:
     manager = ConcatenatedJsonManagerAgent()
     worker = StubAgent("agent", "worker response")
@@ -294,6 +473,100 @@ async def test_agent_manager_handles_concatenated_json_output() -> None:
     # Terminal update is the orchestrator's completion message.
     assert final_update.author_name == manager.name
     assert final_update.text == "concatenated manager final"
+
+
+async def test_agent_manager_handles_fenced_json_output() -> None:
+    manager = FencedJsonManagerAgent()
+    worker = StubAgent("agent", "worker response")
+
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    updates: list[AgentResponseUpdate] = []
+    async for event in workflow.run("coordinate task", stream=True):
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            updates.append(event.data)
+
+    assert updates
+    final_update = updates[-1]
+    # terminate=true inside the fence must end the chat, not fall through to max_rounds.
+    assert final_update.author_name == manager.name
+    assert final_update.text == "fenced manager final"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```JSON\r\n{"terminate": true, "reason": "done", "final_message": "bye"}\r\n```',
+        '```json {"terminate": true, "reason": "done", "final_message": "bye"} ```',
+        'Here is my decision:\n```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```application/json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '``` json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```',
+        '```{"terminate": true, "reason": "done", "final_message": "bye"}```',
+        '````json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n````',
+        (
+            'Draft:\n```json\n{"terminate": false, "reason": "draft"}\n```\n'
+            'Final:\n```json\n{"terminate": true, "reason": "done", "final_message": "bye"}\n```'
+        ),
+    ],
+)
+def test_agent_orchestrator_parses_fenced_json(text: str) -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=[text])])
+
+    output = AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+
+    assert output.terminate is True
+    assert output.final_message == "bye"
+
+
+def test_agent_orchestrator_parses_fenced_json_with_nested_fence_in_final_message() -> None:
+    final_message = "Run this:\n```python\nprint('hi')\n```\nDone."
+    payload = json.dumps({"terminate": True, "reason": "done", "final_message": final_message}, indent=2)
+    response = AgentResponse(messages=[Message(role="assistant", contents=[f"```json\n{payload}\n```"])])
+
+    output = AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+
+    assert output.terminate is True
+    assert output.final_message == final_message
+
+
+def test_agent_orchestrator_rejects_unterminated_fence_in_linear_time() -> None:
+    # A backtracking extractor stalled for seconds on an unterminated fence followed by
+    # whitespace, and this parser runs on the event loop.
+    text = "```json\n" + " " * 200_000 + "\n" + "\t" * 200_000
+    response = AgentResponse(messages=[Message(role="assistant", contents=[text])])
+
+    started = time.perf_counter()
+    with pytest.raises(ValueError, match="Failed to parse agent orchestration output"):
+        AgentBasedGroupChatOrchestrator._parse_agent_output(response)
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("no fences here", []),
+        ("```json\n{}\n```", ["{}"]),
+        ("```\nfirst\n```\ntext\n```py\nsecond\n```", ["first", "second"]),
+        ("````md\nouter\n```py\ninner\n```\n````", ["outer\n```py\ninner\n```"]),
+        ('```json\n{"a": "x ``` y"}\n```', ['{"a": "x ``` y"}']),
+        ("```json\n{}", []),
+        ("```\n```", []),
+    ],
+)
+def test_extract_markdown_fence_bodies(text: str, expected: list[str]) -> None:
+    assert extract_markdown_fence_bodies(text) == expected
+
+
+def test_agent_orchestrator_rejects_fenced_non_json() -> None:
+    response = AgentResponse(messages=[Message(role="assistant", contents=["```json\nnot json\n```"])])
+
+    with pytest.raises(ValueError, match="Failed to parse agent orchestration output"):
+        AgentBasedGroupChatOrchestrator._parse_agent_output(response)
 
 
 # Comprehensive tests for group chat functionality
@@ -397,6 +670,7 @@ class TestGroupChatWorkflow:
             selection_func=selector,
         ).build()
 
+        assert workflow.name == "GroupChat"
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):
             if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
@@ -543,6 +817,37 @@ class TestGroupChatWorkflow:
             async for _ in workflow.run("test task", stream=True):
                 pass
 
+    async def test_agent_manager_unknown_participant_error(self) -> None:
+        """Test that a manager agent picking an unknown participant raises instead of stalling."""
+        writer = StubAgent("writer", "draft")
+        manager = ScriptedManagerAgent(["Writer"])
+
+        workflow = GroupChatBuilder(participants=[writer], orchestrator_agent=manager).build()
+
+        with pytest.raises(ValueError, match="unknown participant 'Writer'"):
+            await workflow.run("test task")
+
+    async def test_agent_manager_retries_after_unknown_participant(self) -> None:
+        """Test that an unknown participant pick counts as a failed attempt and is retried."""
+        writer = StubAgent("writer", "draft")
+        manager = ScriptedManagerAgent(["Writer", "writer"])
+        orchestrator = AgentBasedGroupChatOrchestrator(
+            agent=manager,
+            participant_registry=ParticipantRegistry([AgentExecutor(writer)]),
+            retry_attempts=1,
+        )
+
+        workflow = GroupChatBuilder(participants=[writer], orchestrator=orchestrator).build()
+        result = await workflow.run("test task")
+
+        outputs = result.get_outputs()
+        assert len(outputs) == 1
+        assert outputs[0].text == "scripted final"
+        # The retry prompt tells the manager which name was wrong.
+        assert "unknown participant 'Writer'" in manager.received[1][0].text
+        # The corrected pick reached the participant before the manager terminated.
+        assert any(m.author_name == "writer" and m.text == "draft" for m in manager.received[2])
+
 
 class TestCheckpointing:
     """Tests for checkpointing functionality."""
@@ -562,6 +867,7 @@ class TestCheckpointing:
             checkpoint_storage=storage,
             selection_func=selector,
         ).build()
+        assert workflow.name == "GroupChat"
 
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):

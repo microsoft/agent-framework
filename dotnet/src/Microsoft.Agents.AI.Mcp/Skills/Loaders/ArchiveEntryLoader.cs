@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -15,15 +17,17 @@ namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Loads <c>archive</c> index entries: each entry's <c>url</c> points to a single archive resource
-/// (<c>application/zip</c>, <c>application/x-tar</c>, or gzip-compressed TAR) whose content unpacks
-/// into the skill's namespace. Archives are downloaded, extracted to a local directory, and the
-/// resulting files are discovered via an internal <see cref="AgentFileSkillsSource"/> that this
-/// loader proxies to.
+/// in ZIP format whose content unpacks into the skill's namespace. Archives are downloaded,
+/// extracted to a local directory, and the resulting files are discovered via an internal
+/// <see cref="AgentFileSkillsSource"/> that this loader proxies to.
 /// </summary>
 /// <remarks>
 /// Because MCP-delivered skills are treated strictly as instructor-format text, scripts bundled
 /// inside an archive are surfaced as readable resources only; they are never discovered as
-/// executable scripts.
+/// executable scripts. Supplied SHA-256 digests are verified before extraction; archives without
+/// a digest remain supported.
+/// Archive members resolving to the same file keep the first file; later colliding members are
+/// skipped with a warning.
 /// </remarks>
 internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDisposable
 {
@@ -144,7 +148,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             try
             {
                 Directory.Delete(directory, recursive: true);
-                LogArchiveSkillPruned(this._logger, name, SanitizePathForLog(directory));
+                LogArchiveSkillPruned(this._logger, name, AgentMcpSkillArchiveExtractor.SanitizePathForLog(directory));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -238,7 +242,8 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
                 format,
                 skillDirectory,
                 this._options?.ArchiveMaxFileCount,
-                this._options?.ArchiveMaxUncompressedSizeBytes);
+                this._options?.ArchiveMaxUncompressedSizeBytes,
+                logger: this._logger);
         }
         catch (Exception ex)
         {
@@ -250,14 +255,15 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             return [];
         }
 
-        LogArchiveExtracted(this._logger, entry.Name!, SanitizePathForLog(skillDirectory));
+        LogArchiveExtracted(this._logger, entry.Name!, AgentMcpSkillArchiveExtractor.SanitizePathForLog(skillDirectory));
 
         return [skillDirectory];
     }
 
     /// <summary>
     /// Downloads and decodes the binary content of a skill's archive resource. Returns <see langword="null"/>
-    /// bytes when the resource cannot be read, contains no binary content, or is empty.
+    /// bytes when the resource cannot be read, contains no binary content, is empty, exceeds the
+    /// size limit, or has an invalid or mismatched digest.
     /// </summary>
     private async Task<(byte[]? Bytes, string? MimeType)> DownloadSkillBytesAsync(McpSkillIndexEntry entry, CancellationToken cancellationToken)
     {
@@ -307,8 +313,37 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             return (null, null);
         }
 
+        if (entry.Digest is not null && !this.VerifyDigest(entry.Name!, entry.Digest, bytes))
+        {
+            return (null, null);
+        }
+
         return (bytes, blobContent.MimeType);
     }
+
+    /// <summary>
+    /// Verifies a supplied digest against decoded archive bytes before extraction.
+    /// </summary>
+    private bool VerifyDigest(string skillName, string digest, byte[] bytes)
+    {
+        if (!ArchiveDigestRegex().IsMatch(digest))
+        {
+            LogArchiveDigestVerificationFailed(this._logger, skillName, "digest must be 'sha256:' followed by 64 lowercase hexadecimal characters");
+            return false;
+        }
+
+        string actualDigest = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!actualDigest.AsSpan().Equals(digest.AsSpan("sha256:".Length), StringComparison.OrdinalIgnoreCase))
+        {
+            LogArchiveDigestVerificationFailed(this._logger, skillName, "digest does not match downloaded content");
+            return false;
+        }
+
+        return true;
+    }
+
+    [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ArchiveDigestRegex();
 
     /// <summary>
     /// Filters archive entries to those that are valid for materialization. Entries with missing or
@@ -362,25 +397,6 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
     }
 
     /// <summary>
-    /// Replaces control characters in a file-system path with <c>?</c> so the path is safe to include
-    /// in log messages without risking terminal-escape injection.
-    /// </summary>
-    private static string SanitizePathForLog(string path)
-    {
-        char[]? chars = null;
-        for (int i = 0; i < path.Length; i++)
-        {
-            if (char.IsControl(path[i]))
-            {
-                chars ??= path.ToCharArray();
-                chars[i] = '?';
-            }
-        }
-
-        return chars is null ? path : new string(chars);
-    }
-
-    /// <summary>
     /// Attempts to recursively delete a skill directory.
     /// </summary>
     private bool TryDeleteSkillDirectory(string skillName, string directory)
@@ -421,6 +437,9 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
 
     [LoggerMessage(LogLevel.Warning, "Failed to decode archive resource for skill '{SkillName}'.")]
     private static partial void LogArchiveDecodeFailed(ILogger logger, string skillName, Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping archive skill '{SkillName}': {Reason}")]
+    private static partial void LogArchiveDigestVerificationFailed(ILogger logger, string skillName, string reason);
 
     [LoggerMessage(LogLevel.Warning, "Failed to extract archive for skill '{SkillName}'.")]
     private static partial void LogArchiveExtractFailed(ILogger logger, string skillName, Exception exception);

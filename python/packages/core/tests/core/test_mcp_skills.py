@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
-import tarfile
+import warnings
 import zipfile
-from unittest.mock import AsyncMock
+from collections.abc import Iterator, Mapping, Sequence
+from datetime import timedelta
+from unittest.mock import AsyncMock, patch
+from urllib.parse import unquote
 
 import pytest
 from mcp.shared.exceptions import McpError
@@ -21,8 +25,8 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from agent_framework import MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _parse_mcp_skill_index
+from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
+from agent_framework._skills import _fully_unquote, _parse_mcp_skill_index
 
 from .conftest import MockAgent
 
@@ -32,7 +36,7 @@ from .conftest import MockAgent
 
 
 # Shared context for exercising skill sources where the agent/session are irrelevant.
-_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 SAMPLE_SKILL_MD = """\
 ---
@@ -96,6 +100,43 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_name_decode_cache() -> Iterator[None]:
+    _fully_unquote.cache_clear()
+    yield
+    _fully_unquote.cache_clear()
+
+
+def _encode(depth: int) -> str:
+    """Return ``"A"`` percent-encoded *depth* times, e.g. ``%2541`` for depth 2."""
+    return "%" + "25" * (depth - 1) + "41"
+
+
+# ---------------------------------------------------------------------------
+# _fully_unquote tests
+# ---------------------------------------------------------------------------
+
+
+class TestFullyUnquote:
+    """Tests for recursive, cached resource-name decoding."""
+
+    def test_reuses_cached_layers(self) -> None:
+        assert _fully_unquote("guide%2520one.md") == "guide one.md"
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            # A repeated name is served entirely from the cache.
+            assert _fully_unquote("guide%2520one.md") == "guide one.md"
+            decode.assert_not_called()
+            # A different name reaching a cached layer ("guide%20one.md") decodes only its first layer.
+            assert _fully_unquote("guide%25%32%30one.md") == "guide one.md"
+            decode.assert_called_once_with("guide%25%32%30one.md")
+
+    @pytest.mark.parametrize("depths", [(32, 33), (33, 32)])
+    def test_cached_layers_preserve_depth_limit(self, depths: tuple[int, int]) -> None:
+        for depth in depths:
+            assert _fully_unquote(_encode(depth)) == ("A" if depth <= 32 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +335,60 @@ class TestMCPSkill:
             "..\\escape.md",
             "/etc/passwd",
             "http://attacker.example.com/payload",
+            "%2e%2e/escape.md",
+            "%2E./escape.md",
+            ".%2e/escape.md",
+            "references/%2e%2e/escape.md",
+            "references%2f..%2f..%2fescape.md",
+            "%2e%2e%5cescape.md",
+            "%252e%252e%252fescape.md",
+            "%25252e%25252e/escape.md",
+            "%2fescape.md",
+            "%5cescape.md",
+            "%68ttp%3a%2f%2fexample.com/other",
+            "..?download=1",
+            "..#fragment",
+            "%2e%2e%3fdownload=1",
+            "references%3f/../../escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md",
+            "references%23/%2e%2e/%2e%2e/escape.md",
+            "references%3f%2f%2e%2e%2f%2e%2e%2fescape.md",
+            "references%23%5c%2e%2e%5c%2e%2e%5cescape.md",
+            "references%253f%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%2523%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%3f/%252e%252e/%252e%252e/escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md?version=1",
+            "references%23/%2e%2e/%2e%2e/escape.md#section",
+            "references%3f%2f%2e%2e%20",
+            ".\t./escape.md",
+            ".%09./escape.md",
+            "references/\x00/guide.md",
+            ".. ",
+            ".%2e ",
+            "%2e%2e ",
+            "..%20",
+            "%252e%252e%2520",
+            "references/.. ",
+            "references/.. ?version=1",
+            "references/guide.md?value=%00",
+            "references/guide.md#value=%2509",
+            "references/guide.md?value=%C2%85",
+            "references/%2500guide.md?version=1",
+            "references/guide.md?version=1#value=%2509",
+            "references/guide.md#section?value=%2509",
         ],
     )
-    async def test_get_resource_path_traversal_returns_none(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "skill_md_uri",
+        [
+            "skill://unit-converter/SKILL.md",
+            "skill://unit-converter/private/SKILL.md",
+            "https://example.com/skills/private/SKILL.md",
+            "file:///skills/private/SKILL.md",
+            "custom:skills/private/SKILL.md",
+        ],
+    )
+    async def test_get_resource_path_traversal_returns_none(self, name: str, skill_md_uri: str) -> None:
         # Register a permissive mock that would happily return content for any URI,
         # so the test fails unless the client-side validation rejects the name
         # before issuing the read.
@@ -306,11 +398,88 @@ class TestMCPSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=skill_md_uri, client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
         client.read_resource.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/100%.md",
+            "references/guide.md?version=1#section",
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
+            "references/guide.md ",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "root",
+        [
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/",
+        ],
+    )
+    async def test_get_resource_preserves_safe_names_and_schemes(self, name: str, root: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+
+        resource = await skill.get_resource(name)
+
+        assert resource is not None
+        assert resource.name == name
+        assert await resource.read() == "safe content"
+        client.read_resource.assert_awaited_once_with(AnyUrl(root + name.replace("\\", "/")))
+
+    @pytest.mark.parametrize("depth", [1, 31, 32, 33, 4096])
+    @pytest.mark.parametrize(
+        "template",
+        ["references/{}.md", "references/guide.md?value={}", "references/guide.md#value={}", "../{}.md"],
+    )
+    async def test_get_resource_decoding_depth_is_bounded(self, depth: int, template: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        root = "skill://unit-converter/private/"
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+        name = template.format(_encode(depth))
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            resource = await skill.get_resource(name)
+
+        # One pass decodes the unencoded part; the encoded part takes depth + 1 passes, capped at 33.
+        assert decode.call_count == min(depth + 1, 33) + 1
+        if depth <= 32 and not name.startswith("../"):
+            assert resource is not None
+            assert resource.name == name
+            client.read_resource.assert_awaited_once_with(AnyUrl(root + name))
+        else:
+            assert resource is None
+            client.read_resource.assert_not_called()
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
@@ -389,6 +558,29 @@ class TestMCPSkill:
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
 
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/skills/SKILL.md",
+            "file:///skills/SKILL.md",
+            "custom:skills/SKILL.md",
+        ],
+    )
+    async def test_index_preserves_mcp_resource_schemes(self, uri: str) -> None:
+        index = json.loads(SAMPLE_SKILL_INDEX)
+        index["skills"][0]["url"] = uri
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index)),
+            uri: _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert await skills[0].get_content() == SAMPLE_SKILL_MD
+        assert str(client.read_resource.call_args.args[0]) == uri
+
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{
             "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
@@ -454,7 +646,6 @@ class TestMCPSkillsSource:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_archive_missing_resource_is_skipped(self) -> None:
         # An archive entry whose archive resource is not available on the server
         # is skipped (the index is read, but the archive download fails).
@@ -705,31 +896,15 @@ class TestMCPSkillsSourceErrorCodeBranching:
 # ---------------------------------------------------------------------------
 
 
-def _make_zip(files: dict[str, bytes]) -> bytes:
-    """Build an in-memory ZIP archive from a ``{path: content}`` mapping."""
+def _make_zip(files: Mapping[str, bytes] | Sequence[tuple[str, bytes]]) -> bytes:
+    """Build an in-memory ZIP from a mapping or ordered entries, including duplicate names."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
-    return buffer.getvalue()
-
-
-def _make_tar(files: dict[str, bytes], *, gzipped: bool) -> bytes:
-    """Build an in-memory TAR (optionally gzip-compressed) archive."""
-    buffer = io.BytesIO()
-
-    def _write(archive: tarfile.TarFile) -> None:
-        for name, data in files.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            archive.addfile(info, io.BytesIO(data))
-
-    if gzipped:
-        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-            _write(archive)
-    else:
-        with tarfile.open(fileobj=buffer, mode="w:") as archive:
-            _write(archive)
+    entries = files.items() if isinstance(files, Mapping) else files
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Duplicate name:", category=UserWarning, module="zipfile")
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in entries:
+                archive.writestr(name, data)
     return buffer.getvalue()
 
 
@@ -744,7 +919,7 @@ Instructions from an archive.
 """
 
 
-def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str:
+def _make_archive_index(name: str, url: str, entry_type: str = "archive", *, digest: object = None) -> str:
     """Build a skill index JSON document with a single archive entry."""
     return json.dumps({
         "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -754,6 +929,7 @@ def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str
                 "type": entry_type,
                 "description": "A skill delivered as an archive.",
                 "url": url,
+                **({"digest": digest} if digest is not None else {}),
             }
         ],
     })
@@ -775,7 +951,161 @@ def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mim
 class TestMCPSkillsSourceArchive:
     """Tests for archive-type skill discovery via MCPSkillsSource (in-memory)."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        "fields",
+        (
+            "description: First\ndescription: >-\n  Second",
+            "description: |-\n  First\nDescription: Second",
+            "description: Valid\nmetadata:\n  author: First\nmetadata:\n  author: Second",
+            "description: Valid\nAllowed-Tools: read",
+            'description: Valid\nallowed-tools: read\n"allowed-tools": other',
+            "description: Valid\n'allowed-tools': other\nallowed-tools: read",
+            'description: Valid\n"description": Other text',
+            "'description': Other text\ndescription: Valid",
+            'description: Valid\n"Allowed-Tools": other',
+            'description: Valid\nmetadata:\n  author: First\n"metadata":\n  author: Second',
+            "description: Valid\nlicense: MIT\n'license':",
+            'description: Valid\ncompatibility: Any runtime\n"compatibility": Other runtime',
+            'description: Valid\n"name": packaged-skill',
+            'description: First\n"descrip\\u0074ion": Second',
+            'description: First\n"\\x44escription": Second',
+            "description: Valid\nmetadata: [unterminated",
+            'description: "\\U00110000"',
+            'description: "\\UFFFFFFFF"',
+            'description: "\\uD800"',
+            'description: "\\uDFFF"',
+        ),
+    )
+    async def test_ambiguous_archive_frontmatter_is_skipped(self, fields: str, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\n{fields}\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_yaml_escapes_and_invalid_metadata(
+        self, newline: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            '---\nname: packaged-skill\n"\\x64escription": "Read\\nfiles"\n'
+            '"\\u006detadata": {author: First, "\\u0061uthor": Second, invalid: [value]}\n---\nBody.'
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read\nfiles"
+        assert skills[0].frontmatter.metadata == {"author": "First"}
+        assert len(caplog.records) == 2
+        assert all(record.levelname == "WARNING" for record in caplog.records)
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_value_on_indented_next_line_is_preserved(self, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = "---\nname: packaged-skill\ndescription:\n  'Read files'\nlicense: MIT\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT"
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("license", "compatibility", "allowed-tools"))
+    async def test_archive_empty_optional_scalar_remains_none(self, field: str, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\ndescription: Read files\n{field}:  \n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license is None
+        assert skills[0].frontmatter.compatibility is None
+        assert skills[0].frontmatter.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("second_key", ("author", "Author"))
+    @pytest.mark.parametrize("quote", ("", "'", '"'))
+    async def test_archive_duplicate_metadata_keeps_first_value_and_warns(
+        self, newline: str, second_key: str, quote: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            f"---\n{quote}name{quote}: packaged-skill\n{quote}description{quote}: >-\n  Read\n  files\n"
+            f"{quote}compatibility{quote}:\n  Any runtime\n{quote}allowed-tools{quote}: 'read'\n"
+            f"{quote}metadata{quote}:\n"
+            f"  author:\n    'First'\n  {second_key}: Second\n  author: Third\n  version: '1.0'\n"
+            f"{quote}license{quote}: |-\n  MIT\n  License\n---\nBody."
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        expected = {"author": "First", "version": "1.0"}
+        if second_key == "Author":
+            expected["Author"] = "Second"
+        assert skills[0].frontmatter.metadata == expected
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT\nLicense"
+        assert skills[0].frontmatter.compatibility == "Any runtime"
+        assert skills[0].frontmatter.allowed_tools == "read"
+        assert "Body." in await skills[0].get_content()
+        assert len(caplog.records) == (2 if second_key == "author" else 1)
+        assert all(record.levelname == "WARNING" for record in caplog.records)
+        assert all(
+            "duplicate metadata key 'author'; keeping the first value" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            ("First", "First"),
+            ("\n    'First'", "First"),
+            ("|-\n    First\n    Second", "First\nSecond"),
+            (">-\n    First\n    Second", "First Second"),
+        ),
+    )
+    async def test_archive_yaml_metadata_scalar_formats(
+        self, newline: str, value: str, expected: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            "---\nname: packaged-skill\ndescription: Read files\n"
+            f"metadata:\n  author: {value}\n  version: '1.0'\n---\nBody."
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.metadata == {"author": expected, "version": "1.0"}
+        assert "Body." in await skills[0].get_content()
+        assert not caplog.records
+
     async def test_zip_archive_discovered_as_file_skill(self) -> None:
         from agent_framework import FileSkill
 
@@ -794,33 +1124,28 @@ class TestMCPSkillsSourceArchive:
         content = await skill.get_content()
         assert "Instructions from an archive." in content
 
-    @pytest.mark.asyncio
-    async def test_targz_archive_discovered(self) -> None:
+    async def test_targz_archive_is_rejected(self) -> None:
         url = "skill://archives/packaged-skill.tar.gz"
         index = _make_archive_index("packaged-skill", url)
-        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=True)
+        archive = b"\x1f\x8b"
         client = _archive_client(index, url, archive, "application/gzip")
 
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
 
-        assert len(skills) == 1
-        assert skills[0].frontmatter.name == "packaged-skill"
+        assert skills == []
 
-    @pytest.mark.asyncio
-    async def test_tar_archive_discovered(self) -> None:
+    async def test_tar_archive_is_rejected(self) -> None:
         url = "skill://archives/packaged-skill.tar"
         index = _make_archive_index("packaged-skill", url)
-        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=False)
+        archive = b"tar"
         client = _archive_client(index, url, archive, "application/x-tar")
 
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
 
-        assert len(skills) == 1
-        assert skills[0].frontmatter.name == "packaged-skill"
+        assert skills == []
 
-    @pytest.mark.asyncio
     async def test_archive_reference_resource_is_readable(self) -> None:
         # A bundled reference file is served as an in-memory resource, read on demand.
         url = "skill://archives/packaged-skill.zip"
@@ -838,7 +1163,6 @@ class TestMCPSkillsSourceArchive:
         assert resource is not None
         assert "REF-CANARY-9001" in await resource.read()
 
-    @pytest.mark.asyncio
     async def test_wrapped_archive_root_is_discovered(self) -> None:
         # An archive whose SKILL.md sits under a top-level folder is still discovered,
         # and resources are resolved relative to the SKILL.md's directory.
@@ -858,7 +1182,6 @@ class TestMCPSkillsSourceArchive:
         assert resource is not None
         assert "REF-CANARY-42" in await resource.read()
 
-    @pytest.mark.asyncio
     async def test_bundled_script_is_never_runnable(self) -> None:
         # An archive that bundles a .py script must not expose it as a runnable script,
         # nor (with default resource extensions) as a resource.
@@ -878,7 +1201,6 @@ class TestMCPSkillsSourceArchive:
         content = await skill.get_content()
         assert "<available_scripts />" in content
 
-    @pytest.mark.asyncio
     async def test_oversized_archive_download_is_skipped(self) -> None:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
@@ -889,7 +1211,6 @@ class TestMCPSkillsSourceArchive:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_archive_exceeding_file_count_is_skipped(self) -> None:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
@@ -904,7 +1225,6 @@ class TestMCPSkillsSourceArchive:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_frontmatter_name_mismatch_is_skipped(self) -> None:
         # The SKILL.md frontmatter name must match the advertised entry name.
         url = "skill://archives/packaged-skill.zip"
@@ -934,7 +1254,6 @@ class TestMCPSkillsSourceArchive:
             for record in caplog.records
         )
 
-    @pytest.mark.asyncio
     async def test_archive_without_skill_md_is_skipped(self) -> None:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
@@ -945,7 +1264,6 @@ class TestMCPSkillsSourceArchive:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_unsupported_archive_format_is_skipped(self) -> None:
         url = "skill://archives/packaged-skill.bin"
         index = _make_archive_index("packaged-skill", url)
@@ -955,7 +1273,6 @@ class TestMCPSkillsSourceArchive:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    @pytest.mark.asyncio
     async def test_archive_download_internal_error_propagates(self) -> None:
         # A non-"not found" MCP error while downloading an archive must propagate,
         # not silently drop the skill (which would corrupt a CachingSkillsSource refresh).
@@ -975,7 +1292,6 @@ class TestMCPSkillsSourceArchive:
         with pytest.raises(McpError):
             await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_archive_download_connection_error_propagates(self) -> None:
         # A plain ConnectionError while downloading an archive must propagate.
         url = "skill://archives/packaged-skill.zip"
@@ -994,7 +1310,6 @@ class TestMCPSkillsSourceArchive:
         with pytest.raises(ConnectionError):
             await source.get_skills(_SOURCE_CTX)
 
-    @pytest.mark.asyncio
     async def test_mixed_skill_md_and_archive_entries(self) -> None:
         archive_url = "skill://archives/packaged-skill.zip"
         index = json.dumps({
@@ -1027,7 +1342,6 @@ class TestMCPSkillsSourceArchive:
         names = sorted(s.frontmatter.name for s in skills)
         assert names == ["packaged-skill", "unit-converter"]
 
-    @pytest.mark.asyncio
     async def test_zip_slip_archive_skips_whole_skill(self) -> None:
         # An archive with a path-traversal member is treated as hostile: the whole
         # skill is dropped (extraction raises, and _build_skill skips it).
@@ -1044,6 +1358,328 @@ class TestMCPSkillsSourceArchive:
         assert skills == []
 
 
+class TestMCPSkillsSourceArchiveCollisions:
+    """Colliding archive members warn and preserve the first file through discovery."""
+
+    @pytest.mark.parametrize(
+        "alias",
+        [
+            "refs/policy.md",
+            ".//refs//policy.md",
+            "refs\\policy.md",
+            "refs/./policy.md",
+            "/refs/policy.md",
+            "refs/POLICY.md",
+            "REFS\\POLICY.MD",
+        ],
+    )
+    @pytest.mark.parametrize("alias_first", [False, True])
+    @pytest.mark.parametrize("identical", [False, True])
+    @pytest.mark.parametrize("with_digest", [False, True])
+    async def test_colliding_resources_keep_first_file_and_warn(
+        self, alias: str, alias_first: bool, identical: bool, with_digest: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "refs/policy.md") if alias_first else ("refs/policy.md", alias)
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("refs/", b""),
+            (first_name, b"First resource."),
+            (second_name, b"First resource." if identical else b"Substituted resource."),
+            (".//refs//other.md", b"Unaffected resource."),
+        ])
+        digest = f"sha256:{hashlib.sha256(archive).hexdigest()}" if with_digest else None
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        source = MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip"))
+
+        for _ in range(2):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+            assert len(skills) == 1
+            for resource_name in ("refs/policy.md", "REFS/POLICY.MD"):
+                resource = await skills[0].get_resource(resource_name)
+                assert resource is not None
+                assert await resource.read() == "First resource."
+            other = await skills[0].get_resource("refs/other.md")
+            assert other is not None
+            assert await other.read() == "Unaffected resource."
+
+        collisions = [record for record in caplog.records if "duplicate archive member" in record.getMessage()]
+        assert len(collisions) == 2
+        assert all(record.levelname == "WARNING" for record in collisions)
+        assert all("keeping the first file" in record.getMessage() for record in collisions)
+        assert all("Substituted resource." not in record.getMessage() for record in collisions)
+
+    @pytest.mark.parametrize("alias", ["SKILL.md", ".//SKILL.md", "/SKILL.md", "skill.md", "Skill.MD"])
+    @pytest.mark.parametrize("alias_first", [False, True])
+    async def test_colliding_skill_md_keeps_first_file_and_warns(
+        self, alias: str, alias_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "SKILL.md") if alias_first else ("SKILL.md", alias)
+        archive = _make_zip([
+            (first_name, ARCHIVE_SKILL_MD.encode()),
+            (second_name, ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: other-skill").encode()),
+            ("reference.md", b"Unaffected resource."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+        assert "Instructions from an archive." in await skills[0].get_content()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    async def test_collision_does_not_skip_other_skills(self, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"First."),
+            ("./reference.md", b"Second."),
+        ])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert sorted(skill.frontmatter.name for skill in skills) == ["packaged-skill", "unit-converter"]
+        assert "duplicate archive member" in caplog.text
+
+
+class TestMCPSkillsSourceArchiveDigest:
+    """Tests for archive digest verification through the MCP discovery pipeline."""
+
+    @pytest.mark.parametrize("digest_mode", ["omitted", "null", "matching"])
+    async def test_valid_archive_loads(self, digest_mode: str) -> None:
+        from agent_framework._skills import _ArchiveEntryLoader
+
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "references/guide.md": b"Verified resource.",
+        })
+        index_data = json.loads(_make_archive_index("packaged-skill", url))
+        if digest_mode == "null":
+            index_data["skills"][0]["digest"] = None
+        elif digest_mode == "matching":
+            index_data["skills"][0]["digest"] = f"sha256:{hashlib.sha256(archive).hexdigest()}"
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        with patch.object(
+            _ArchiveEntryLoader, "_verify_digest", wraps=_ArchiveEntryLoader._verify_digest
+        ) as verify_digest:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        if digest_mode == "matching":
+            verify_digest.assert_called_once()
+        else:
+            verify_digest.assert_not_called()
+        assert "Instructions from an archive." in await skills[0].get_content()
+        resource = await skills[0].get_resource("references/guide.md")
+        assert resource is not None
+        assert await resource.read() == "Verified resource."
+
+    @pytest.mark.parametrize(
+        "digest",
+        [
+            "",
+            " ",
+            "0" * 64,
+            "sha256:" + "a" * 63,
+            "sha256:" + "a" * 65,
+            "sha256:" + "g" * 64,
+            "sha256:" + "A" * 64,
+            "SHA256:" + "a" * 64,
+            " sha256:" + "a" * 64,
+            "sha256:" + "a" * 64 + "\n",
+            "sha512:" + "a" * 128,
+            123,
+            False,
+            [],
+            {"value": "untrusted"},
+        ],
+    )
+    async def test_invalid_digest_skips_before_extraction(
+        self, digest: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        with patch("agent_framework._skills._ArchiveEntryLoader._build_skill") as build_skill:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        build_skill.assert_not_called()
+        assert "Skipping skill 'packaged-skill': archive digest must be" in caplog.text
+        assert url not in caplog.text
+        assert ARCHIVE_SKILL_MD not in caplog.text
+
+    @pytest.mark.parametrize("digest_source", ["wrong", "original", "base64", "skill-md"])
+    async def test_mismatched_digest_skips_before_extraction(
+        self, digest_source: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        original = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        tampered_content = ARCHIVE_SKILL_MD.replace("Instructions from an archive.", "Substituted instructions.")
+        archive = _make_zip({"SKILL.md": tampered_content.encode()})
+        digest_inputs = {
+            "original": original,
+            "base64": base64.b64encode(archive),
+            "skill-md": tampered_content.encode(),
+        }
+        expected = "0" * 64 if digest_source == "wrong" else hashlib.sha256(digest_inputs[digest_source]).hexdigest()
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{expected}")
+        client = _archive_client(index, url, archive, "application/zip")
+
+        with patch("agent_framework._skills._ArchiveEntryLoader._build_skill") as build_skill:
+            skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        build_skill.assert_not_called()
+        assert "Skipping skill 'packaged-skill': archive digest does not match downloaded content" in caplog.text
+        assert expected not in caplog.text
+        assert "Substituted instructions." not in caplog.text
+        assert url not in caplog.text
+        assert client.read_resource.await_count == 2
+
+    @pytest.mark.parametrize("digest", ["sha256:" + "0" * 64, "", 123])
+    async def test_rejected_entry_does_not_hide_valid_archive(self, digest: object) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        rejected_url = "skill://archives/rejected-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        rejected_archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: rejected-skill").encode()
+        })
+        index_data = json.loads(_make_archive_index("rejected-skill", rejected_url, digest=digest))
+        index_data["skills"].extend(
+            json.loads(
+                _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+            )["skills"]
+        )
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index_data)),
+            url: _make_blob_result(archive, uri=url, mime_type="application/zip"),
+            rejected_url: _make_blob_result(rejected_archive, uri=rejected_url, mime_type="application/zip"),
+        })
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+
+    async def test_size_guard_runs_before_hashing(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = MCPSkillsSource(client=client, archive_max_size_bytes=len(archive) - 1)
+
+        with patch("agent_framework._skills.hashlib.sha256") as sha256:
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        sha256.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "failure", ["invalid-zip", "gzip", "traversal", "file-count", "uncompressed-size", "name-mismatch"]
+    )
+    async def test_matching_digest_does_not_bypass_archive_guards(self, failure: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        files = {"SKILL.md": ARCHIVE_SKILL_MD.encode()}
+        if failure == "traversal":
+            files["../escape.md"] = b"Outside skill."
+        elif failure == "file-count":
+            files["extra.md"] = b"Extra resource."
+        elif failure == "name-mismatch":
+            files["SKILL.md"] = ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: another-skill").encode()
+        archive = _make_zip(files)
+        if failure == "invalid-zip":
+            archive = b"PK\x03\x04invalid"
+        elif failure == "gzip":
+            archive = b"\x1f\x8b"
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = MCPSkillsSource(
+            client=client,
+            archive_max_file_count=1 if failure == "file-count" else 20,
+            archive_max_uncompressed_size_bytes=1 if failure == "uncompressed-size" else 1_000_000,
+        )
+
+        assert await source.get_skills(_SOURCE_CTX) == []
+
+    @pytest.mark.parametrize("entry_type", ["archive", "ARCHIVE", " Archive "])
+    async def test_verification_applies_to_all_archive_type_spellings(self, entry_type: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, entry_type, digest="sha256:" + "0" * 64)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        assert await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX) == []
+
+    @pytest.mark.parametrize("digest", ["sha256:" + "0" * 64, 123])
+    async def test_skill_md_digest_does_not_change_lazy_discovery(self, digest: object) -> None:
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"][0]["digest"] = digest
+        client = _make_client(**{"skill://index.json": _make_text_result(json.dumps(index_data))})
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert isinstance(skills[0], MCPSkill)
+        client.read_resource.assert_awaited_once_with(AnyUrl("skill://index.json"))
+
+    @pytest.mark.parametrize("refresh_failure", ["digest", "transport"])
+    async def test_cache_refresh_handles_verification_and_transport_failures(
+        self, refresh_failure: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("time.monotonic", lambda: clock["now"])
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{hashlib.sha256(archive).hexdigest()}")
+        client = _archive_client(index, url, archive, "application/zip")
+        source = CachingSkillsSource(MCPSkillsSource(client=client), refresh_interval=timedelta(seconds=60))
+
+        first = await source.get_skills(_SOURCE_CTX)
+        assert len(first) == 1
+        assert await source.get_skills(_SOURCE_CTX) is first
+        client.read_resource.assert_any_await(AnyUrl(url))
+        assert client.read_resource.await_count == 2
+
+        tampered = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.replace("Instructions", "Substituted instructions").encode()
+        })
+        client.read_resource.side_effect = [
+            _make_text_result(index),
+            ConnectionError("connection lost")
+            if refresh_failure == "transport"
+            else _make_blob_result(tampered, uri=url, mime_type="application/zip"),
+        ]
+        clock["now"] += 60
+        if refresh_failure == "transport":
+            with pytest.raises(ConnectionError, match="connection lost"):
+                await source.get_skills(_SOURCE_CTX)
+            assert list(source._cached_skills.values()) == [first]
+            client.read_resource.side_effect = [_make_text_result(index), _make_blob_result(archive, uri=url)]
+            recovered = await source.get_skills(_SOURCE_CTX)
+            assert len(recovered) == 1
+            assert recovered is not first
+        else:
+            refreshed = await source.get_skills(_SOURCE_CTX)
+            assert refreshed == []
+            assert await source.get_skills(_SOURCE_CTX) is refreshed
+            assert client.read_resource.await_count == 4
+
+
 # ---------------------------------------------------------------------------
 # Archive extractor unit tests
 # ---------------------------------------------------------------------------
@@ -1055,22 +1691,22 @@ class TestArchiveExtractor:
     def test_detect_format_from_magic_bytes(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
-        assert _detect_archive_format(b"\x1f\x8b\x08\x00", None, None) is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"\x1f\x8b\x08\x00", None, None) is _ArchiveFormat.UNKNOWN
         assert _detect_archive_format(b"PK\x03\x04rest", None, None) is _ArchiveFormat.ZIP
 
     def test_detect_format_from_media_type(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
         assert _detect_archive_format(b"xx", "application/zip", None) is _ArchiveFormat.ZIP
-        assert _detect_archive_format(b"xx", "application/x-tar", None) is _ArchiveFormat.TAR
-        assert _detect_archive_format(b"xx", "application/gzip", None) is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"xx", "application/x-tar", None) is _ArchiveFormat.UNKNOWN
+        assert _detect_archive_format(b"xx", "application/gzip", None) is _ArchiveFormat.UNKNOWN
 
     def test_detect_format_from_url_suffix(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
         assert _detect_archive_format(b"xx", None, "skill://a.zip") is _ArchiveFormat.ZIP
-        assert _detect_archive_format(b"xx", None, "skill://a.tgz") is _ArchiveFormat.TAR_GZ
-        assert _detect_archive_format(b"xx", None, "skill://a.tar") is _ArchiveFormat.TAR
+        assert _detect_archive_format(b"xx", None, "skill://a.tgz") is _ArchiveFormat.UNKNOWN
+        assert _detect_archive_format(b"xx", None, "skill://a.tar") is _ArchiveFormat.UNKNOWN
 
     def test_detect_format_unknown(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
@@ -1120,6 +1756,60 @@ class TestArchiveExtractor:
         with pytest.raises(ValueError, match="file count"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 2, 1024 * 1024)
 
+    def test_duplicate_members_count_toward_file_limit(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip([("reference.md", b"First."), ("reference.md", b"Second.")])
+
+        with pytest.raises(ValueError, match="file count"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 1, 1024 * 1024)
+
+    def test_skipped_duplicate_is_not_decompressed(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory, _read_member_with_limit
+
+        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"x" * 100)])
+        with patch("agent_framework._skills._read_member_with_limit", wraps=_read_member_with_limit) as read:
+            files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, len(b"First."))
+
+        assert files == {"reference.md": b"First."}
+        read.assert_called_once()
+        assert "duplicate archive member" in caplog.text
+
+    @pytest.mark.parametrize("first_name", ["reference.md", "REFERENCE.md"])
+    def test_case_collision_keeps_first_name_and_warns(self, first_name: str, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        second_name = "REFERENCE.md" if first_name == "reference.md" else "reference.md"
+        archive = _make_zip([(first_name, b"First."), (second_name, b"Second.")])
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {first_name: b"First."}
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    def test_distinct_lowercase_resource_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        # Resource lookup uses lower(), not Unicode casefold().
+        archive = _make_zip({"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."}
+        assert not caplog.records
+
+    def test_distinct_trailing_dot_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"reference.md": b"First.", "reference.md.": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"reference.md": b"First.", "reference.md.": b"Second."}
+        assert not caplog.records
+
     def test_uncompressed_size_limit_is_enforced(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
@@ -1127,21 +1817,8 @@ class TestArchiveExtractor:
         with pytest.raises(ValueError, match="uncompressed size"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 10)
 
-    def test_tar_symlink_member_is_skipped(self) -> None:
+    def test_unknown_format_is_rejected(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:") as archive:
-            link = tarfile.TarInfo(name="link")
-            link.type = tarfile.SYMTYPE
-            link.linkname = "/etc/passwd"
-            archive.addfile(link)
-            data = b"regular"
-            reg = tarfile.TarInfo(name="regular.md")
-            reg.size = len(data)
-            archive.addfile(reg, io.BytesIO(data))
-
-        files = _extract_archive_to_memory(buffer.getvalue(), _ArchiveFormat.TAR, 20, 1024 * 1024)
-
-        assert "link" not in files
-        assert files == {"regular.md": b"regular"}
+        with pytest.raises(ValueError, match="Unsupported skill archive format"):
+            _extract_archive_to_memory(b"", _ArchiveFormat.UNKNOWN, 20, 1024 * 1024)

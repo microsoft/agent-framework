@@ -32,7 +32,7 @@ def _make_connected_mcp_tool(
     supports_prompts: bool = True,
 ) -> MCPTool:
     """Create an MCPTool with a mocked session, ready for testing."""
-    tool = MCPTool(name=name)  # type: ignore[abstract]
+    tool = MCPTool(name=name)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock()
     tool.is_connected = True
     tool._supports_tools = supports_tools
@@ -101,7 +101,7 @@ def _make_get_prompt_result(text: str = "prompt result") -> types.GetPromptResul
 
 async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     """session.initialize() should produce an MCP CLIENT span named 'initialize'."""
-    tool = MCPTool(name="test-server")  # type: ignore[abstract]
+    tool = MCPTool(name="test-server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session_cls = AsyncMock()
     init_result = Mock()
@@ -124,7 +124,9 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     with pytest.MonkeyPatch.context() as m:
         m.setattr(tool, "get_mcp_client", lambda: mock_transport)
 
-        async def patched_connect(self_: Any, *, reset: bool = False, load_configured: bool = True) -> None:
+        async def patched_connect(
+            self_: Any, *, reset: bool = False, load_configured: bool = True, reset_discovery: bool = False
+        ) -> None:
             # Simulate _connect_on_owner: create initialize span and call session.initialize()
             from agent_framework._mcp import create_mcp_client_span
             from agent_framework.observability import OtelAttr

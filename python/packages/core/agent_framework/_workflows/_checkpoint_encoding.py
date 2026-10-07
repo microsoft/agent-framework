@@ -10,9 +10,10 @@ This hybrid approach provides:
 When ``allowed_types`` is supplied to :func:`decode_checkpoint_value`, a
 ``RestrictedUnpickler`` is used that limits which classes may be instantiated
 during deserialization.  The default built-in safe set covers common Python
-value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
-types, and all ``openai.types`` types.  Callers can extend the set by passing
-additional ``"module:qualname"`` strings.
+value types (primitives, datetime, uuid, ...), all ``agent_framework`` and
+``agent_framework_orchestrations`` internal types, and all ``openai.types``
+types.  Callers can extend the set by passing additional ``"module:qualname"``
+strings.
 
 Security Model
 --------------
@@ -90,8 +91,11 @@ _RESERVED_DICT_KEYS: frozenset[str] = frozenset({
 # Types that are natively JSON-serializable and don't need pickling
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
 
-# Module prefix for framework-internal types that are always allowed
-_FRAMEWORK_MODULE_PREFIX = "agent_framework."
+# Module prefixes for framework-internal types that are always allowed
+_FRAMEWORK_MODULE_PREFIXES = (
+    "agent_framework.",
+    "agent_framework_orchestrations.",
+)
 
 # Module prefix for OpenAI SDK types that are always allowed
 _OPENAI_MODULE_PREFIX = "openai.types."
@@ -145,6 +149,7 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
     "collections:OrderedDict",
     "collections:defaultdict",
     "collections:deque",
+    "collections:Counter",
 })
 
 _GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
@@ -172,7 +177,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         return (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
             or type_key in self._allowed_types
-            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
+            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIXES)
             or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
         )
 
@@ -219,7 +224,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
                 return resolved
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
 
-        if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
+        if module.startswith(_FRAMEWORK_MODULE_PREFIXES) or module.startswith(_OPENAI_MODULE_PREFIX):
             # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
             # top-level classes rather than helper callables reachable through module attributes.
             if "." in name:
@@ -310,16 +315,28 @@ def _encode(value: Any) -> Any:
     if isinstance(value, _JSON_NATIVE_TYPES):
         return value
 
-    # Recursively encode dict values (keys become strings)
-    if isinstance(value, dict):
+    # Recursively encode dict values (keys become strings). Only plain dicts
+    # take the JSON path: subclasses such as ``defaultdict``, ``Counter``, and
+    # ``OrderedDict`` carry behavior/type that a plain JSON object cannot
+    # represent, so they are pickled to preserve object fidelity.
+    if type(value) is dict:
         typed_dict = cast(dict[Any, Any], value)
-        if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
+        # Stringify each key once so reserved-key checks, collision detection, and
+        # the encoded mapping all observe the same strings (stateful ``__str__``).
+        stringified_items = [(str(k), v) for k, v in typed_dict.items()]
+        if any(key in _RESERVED_DICT_KEYS for key, _ in stringified_items):
             return _encode_pickle(value)
-        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
+        # Distinct Python keys can collapse after str(); pickle those mappings so
+        # values are not silently overwritten (for example {1: "a", "1": "b"}).
+        if len({key for key, _ in stringified_items}) != len(stringified_items):
+            return _encode_pickle(value)
+        encoded_dict: dict[str, Any] = {key: _encode(v) for key, v in stringified_items}
         return encoded_dict
 
-    # Recursively encode list items (lists are JSON-native collections)
-    if isinstance(value, list):
+    # Recursively encode list items (lists are JSON-native collections).
+    # As with dicts, only plain lists take the JSON path so list subclasses
+    # keep their type through a round trip.
+    if type(value) is list:
         return [_encode(item) for item in value]  # type: ignore
 
     # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
@@ -403,7 +420,7 @@ def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = 
             format is incompatible, or a disallowed type is encountered.
     """
     try:
-        pickled = base64.b64decode(encoded.encode("ascii"))
+        pickled = base64.b64decode(encoded.encode("ascii"), validate=True)
         if allowed_types is not None:
             return _RestrictedUnpickler(pickled, allowed_types).load()
         return pickle.loads(pickled)  # nosec  # ruff:ignore[suspicious-pickle-usage]

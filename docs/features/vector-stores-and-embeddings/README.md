@@ -11,6 +11,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | Vector search | Unified search interface with `search_type` parameter (`"vector"`, `"keyword_hybrid"`) |
 | Data model decorator | `@vectorstoremodel` decorator for defining vector store data models (supports Pydantic, dataclasses, plain classes, dicts) |
 | Agent tools | `create_vector_search_tool`, `create_upsert_tool`, `create_get_tool`, `create_delete_tool` for agent-usable vector store operations |
+| Agent providers | `VectorStoreHistoryProvider` for provider-owned scoped history and `VectorCollectionContextProvider` for caller-owned collections |
 | In-memory store | Zero-dependency vector store for testing and development |
 | 13+ connectors | Azure AI Search, Qdrant, Redis, PostgreSQL, MongoDB, Cosmos DB, Pinecone, Chroma, Weaviate, Oracle, SQL Server, FAISS |
 
@@ -130,6 +131,11 @@ Options considered:
 | `SupportsVectorUpsert` | `_vectors.py` | Protocol for collection CRUD |
 | `SupportsVectorSearch` | `_vectors.py` | Protocol for vector search |
 | `create_vector_search_tool` | `_vectors.py` | Creates AF `FunctionTool` from vector search |
+| `create_upsert_tool` | `_vectors.py` | Creates an agent tool for record upserts |
+| `create_get_tool` | `_vectors.py` | Creates an agent tool for key-based retrieval |
+| `create_delete_tool` | `_vectors.py` | Creates an agent tool for key-based deletion |
+| `VectorStoreHistoryProvider` | `_vectors.py` | Stores scoped full history with optional compacted loading and search |
+| `VectorCollectionContextProvider` | `_vectors.py` | Adds CRUD and one or more search tools for a caller-owned collection |
 
 ## Source Files Reference (SK → AF mapping)
 
@@ -437,7 +443,7 @@ Each connector follows the AF package structure:
 ---
 
 ### Phase 8: Vector Store CRUD Tools
-**Goal:** Provide a full set of agent-usable tools for CRUD operations on vector store collections.
+**Goal:** Provide agent-usable CRUD tools plus generic history and context providers for vector stores.
 **Mergeable:** Yes — adds tools without changing existing APIs.
 
 #### 8.1 — `create_upsert_tool` — tool for upserting records into a collection
@@ -447,6 +453,8 @@ Each connector follows the AF package structure:
 - Consider if this overlaps with filtered search and document when to use which
 #### 8.3 — `create_delete_tool` — tool for deleting records by key
 #### 8.4 — Tests and samples for CRUD tools
+#### 8.5 — `VectorStoreHistoryProvider` — provider-owned scoped history with optional embeddings, compaction, and search
+#### 8.6 — `VectorCollectionContextProvider` — configurable tools and instructions for a caller-owned collection
 
 ---
 
@@ -502,9 +510,26 @@ Each connector follows the AF package structure:
    - `create_upsert_tool(...)` → tool for upserting records
    - `create_get_tool(...)` → tool for retrieving records by key
    - `create_delete_tool(...)` → tool for deleting records
-   - These are separate from search and are placed in a later phase
+   - Upsert and delete require approval by default; get is read-only by default
+   - Collection key hooks provide JSON schemas and JSON/native conversion for UUID and connector-native keys
+   - Auto-generated keys are optional only when the record model can represent an omitted key
+   - Connector errors propagate without inventing partial-success results; retry behavior follows the collection's
+     documented stable-key versus generated-key contract
 
-10. **Score threshold filtering**: Scoring, filter execution, score thresholds, and paging belong to the connector
+10. **Generic vector providers**:
+    - `VectorStoreHistoryProvider` takes a store because it owns the history model and collection. Every operation
+      is filtered by application, optional tenant/agent, provider source, and session. Compaction changes only the
+      messages loaded into model context; optional search still queries the full scoped transcript. Content arrays
+      can be stored as JSON text or base64-wrapped msgspec MessagePack. Non-vector default collection names are
+      schema-derived; embedding-enabled history requires an explicit name so callers version the embedding space.
+      Physical retention and paging/clear consistency follow the backing collection.
+    - `VectorCollectionContextProvider` takes a caller-owned collection and adds generated instructions plus
+      configurable CRUD/search tools. A required `scope_filter` argument defines best-effort logical record grouping,
+      not a security boundary; scoped upserts are validated locally before writing and scoped deletes use a
+      read/check/delete cycle whose atomicity remains backend-defined. Additional `create_vector_search_tool`
+      instances can expose different filters and result mappings and retain their own scope configuration.
+
+11. **Score threshold filtering**: Scoring, filter execution, score thresholds, and paging belong to the connector
     and backing store (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). Core passes
     `score_threshold` through without requiring a known distance function or an explicit metric and does not
     post-filter returned results, including results without scores. Each connector defines its score units,

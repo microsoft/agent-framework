@@ -138,7 +138,7 @@ _TELEMETRY_CONVERSATION_ID: Final[contextvars.ContextVar[str | None]] = contextv
 
 
 @contextlib.contextmanager
-def _use_telemetry_conversation_id(  # pyright: ignore[reportUnusedFunction]
+def _use_telemetry_conversation_id(
     conversation_id: str | None,
 ) -> Generator[None]:
     """Set an application-managed OTel conversation id for the current execution."""
@@ -1556,6 +1556,7 @@ def disable_instrumentation() -> None:
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
+    enable_message_events: bool | None = None,
     force: bool = False,
 ) -> None:
     """Enable instrumentation for Microsoft Agent Framework.
@@ -1568,9 +1569,17 @@ def enable_instrumentation(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        enable_message_events: Emit the baseline v1.36.0 GenAI message events for
+            model invocation when sensitive data capture is enabled. Explicit values
+            override the current setting, including values from ENABLE_MESSAGE_EVENTS.
+            Default is None, which preserves the current setting without re-reading
+            the environment. Does not affect experimental message span attributes.
         force: When True, clears any sticky disable previously set by
             ``disable_instrumentation()`` before enabling. Without it, calls are
             no-ops if instrumentation has been explicitly disabled.
+
+    Note:
+        This function does not configure or replace OpenTelemetry providers or exporters.
     """
     global OBSERVABILITY_SETTINGS
     if OBSERVABILITY_SETTINGS._user_disabled and not force:  # type: ignore[reportPrivateUsage]
@@ -1587,6 +1596,8 @@ def enable_instrumentation(
     else:
         # Re-read from current environment in case env vars were set after import (e.g. load_dotenv())
         OBSERVABILITY_SETTINGS.enable_sensitive_data = _read_bool_env("ENABLE_SENSITIVE_DATA")
+    if enable_message_events is not None:
+        OBSERVABILITY_SETTINGS.enable_message_events = enable_message_events
 
 
 def configure_otel_providers(
@@ -2064,59 +2075,85 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_operation_error(
+                    attributes=attributes,
+                    exception=exception,
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
+                    duration=perf_counter() - start_time,
+                )
                 _close_span()
                 raise
 
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
 
-                try:
-                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
-                        # Stream errored; skip get_final_response() to avoid firing
-                        # result hooks such as after_run context providers on error
-                        # paths. Capture the error on the span before returning.
-                        capture_exception(
-                            span=span,
-                            exception=result_stream._stream_error,  # type: ignore
-                            timestamp=time_ns(),
-                        )
-                        return
-                    response: ChatResponse[Any] = await result_stream.get_final_response()
-                    duration = duration_state.get("duration")
-                    response_attributes = _get_response_attributes(attributes, response)
-                    self._backfill_request_model(span, response_attributes)
-                    _capture_response(
+                if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                    # Stream errored; skip get_final_response() to avoid firing
+                    # result hooks such as after_run context providers on error
+                    # paths. Capture the error on the span before returning.
+                    capture_exception(
                         span=span,
-                        attributes=response_attributes,
-                        token_usage_histogram=getattr(self, "token_usage_histogram", None),
-                        operation_duration_histogram=getattr(self, "duration_histogram", None),
-                        duration=duration,
+                        exception=result_stream._stream_error,  # type: ignore
+                        timestamp=time_ns(),
                     )
-                    _mark_inner_response_telemetry_captured(response)
-                    if (
-                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
-                        and isinstance(response, ChatResponse)
-                        and response.messages
-                        and span.is_recording()
-                    ):
-                        finish_reason = _get_response_finish_reason(response)
-                        # Activate the span: this cleanup hook runs after the final pull has
-                        # exited its _activate_span context, so it wouldn't otherwise be current.
-                        with _activate_span(span):
-                            _capture_message_events_v1_36(
-                                provider_name=provider_name,
+                    _capture_operation_error(
+                        attributes=attributes,
+                        exception=result_stream._stream_error,  # type: ignore
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
+                        duration=duration_state.get("duration", perf_counter() - start_time),
+                    )
+                    _close_span()
+                    return
+
+                try:
+                    try:
+                        response: ChatResponse[Any] = await result_stream.get_final_response()
+                    except Exception as exception:
+                        capture_exception(span=span, exception=exception, timestamp=time_ns())
+                        _capture_operation_error(
+                            attributes=attributes,
+                            exception=exception,
+                            operation_duration_histogram=getattr(self, "duration_histogram", None),
+                            duration=duration_state.get("duration", perf_counter() - start_time),
+                        )
+                        raise
+
+                    try:
+                        duration = duration_state.get("duration")
+                        response_attributes = _get_response_attributes(attributes, response)
+                        self._backfill_request_model(span, response_attributes)
+                        _capture_response(
+                            span=span,
+                            attributes=response_attributes,
+                            token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                            operation_duration_histogram=getattr(self, "duration_histogram", None),
+                            duration=duration,
+                        )
+                        _mark_inner_response_telemetry_captured(response)
+                        if (
+                            OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
+                            and isinstance(response, ChatResponse)
+                            and response.messages
+                            and span.is_recording()
+                        ):
+                            finish_reason = _get_response_finish_reason(response)
+                            # Activate the span: this cleanup hook runs after the final pull has
+                            # exited its _activate_span context, so it wouldn't otherwise be current.
+                            with _activate_span(span):
+                                _capture_message_events_v1_36(
+                                    provider_name=provider_name,
+                                    messages=response.messages,
+                                    finish_reason=finish_reason,
+                                    output=True,
+                                )
+                            _capture_message_span_attributes_latest_experimental(
+                                span=span,
                                 messages=response.messages,
                                 finish_reason=finish_reason,
                                 output=True,
                             )
-                        _capture_message_span_attributes_latest_experimental(
-                            span=span,
-                            messages=response.messages,
-                            finish_reason=finish_reason,
-                            output=True,
-                        )
-                except Exception as exception:
-                    capture_exception(span=span, exception=exception, timestamp=time_ns())
+                    except Exception as telemetry_exception:
+                        logger.debug("Failed to capture telemetry for stream: %s", telemetry_exception)
                 finally:
                     _close_span()
 
@@ -2171,6 +2208,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
+                    _capture_operation_error(
+                        attributes=attributes,
+                        exception=exception,
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
+                        duration=perf_counter() - start_time_stamp,
+                    )
                     raise
                 duration = perf_counter() - start_time_stamp
                 response_attributes = _get_response_attributes(attributes, response)
@@ -2256,6 +2299,12 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
                 )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_operation_error(
+                    attributes=attributes,
+                    exception=exception,
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
+                    duration=perf_counter() - start_time_stamp,
+                )
                 raise
             duration = perf_counter() - start_time_stamp
             response_attributes: dict[str, Any] = {**attributes}
@@ -3517,6 +3566,30 @@ GEN_AI_METRIC_ATTRIBUTES = (
 )
 
 
+def _filter_metric_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+    """Filter attributes to only the GenAI metric attribute set."""
+    return {key: attributes[key] for key in GEN_AI_METRIC_ATTRIBUTES if key in attributes}
+
+
+def _capture_operation_error(
+    attributes: dict[str, Any],
+    exception: BaseException,
+    operation_duration_histogram: metrics.Histogram | None = None,
+    duration: float | None = None,
+) -> None:
+    """Record the operation duration metric for a call that failed.
+
+    The GenAI semantic conventions define ``gen_ai.client.operation.duration`` for failed
+    operations as well as successful ones, with ``error.type`` set to the class of the error.
+    Recording only successes leaves error latency out of the metric and gives no error rate.
+    """
+    if operation_duration_histogram is None or duration is None:
+        return
+    attrs = _filter_metric_attributes(attributes)
+    attrs[OtelAttr.ERROR_TYPE] = type(exception).__name__
+    operation_duration_histogram.record(duration, attributes=attrs)
+
+
 def _capture_response(
     span: trace.Span,
     attributes: dict[str, Any],
@@ -3526,7 +3599,7 @@ def _capture_response(
 ) -> None:
     """Set the response for a given span."""
     span.set_attributes(attributes)
-    attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
+    attrs = _filter_metric_attributes(attributes)
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)) is not None:
         token_usage_histogram.record(input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT})
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)) is not None:

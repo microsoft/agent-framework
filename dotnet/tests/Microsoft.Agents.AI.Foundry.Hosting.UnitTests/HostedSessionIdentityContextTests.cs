@@ -123,7 +123,12 @@ public class HostedSessionIdentityContextTests
         // when it has a conversation id; here we plant it directly so we can drive a resume request).
         // The session is scoped to the same user ("alice") that will resume it.
         const string ConversationId = "resume-chat-id";
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession, "alice", CancellationToken.None);
+        AIAgent storageAgent = new FoundryHostingAgent(capturingAgent, "default");
+        await sessionStore.SaveSessionAsync(
+            storageAgent,
+            new AgentSessionStoreKey(ConversationId).WithPartition("user", "alice"),
+            capturingAgent.LastSession,
+            CancellationToken.None);
 
         // Step 3: drive a resume request with the same isolation keys.
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
@@ -151,12 +156,17 @@ public class HostedSessionIdentityContextTests
         var (freshRequest, freshContext) = BuildFreshRequest();
         await DrainAsync(aliceHandler.CreateAsync(freshRequest, freshContext.Object, CancellationToken.None));
         const string ConversationId = "resume-chat-id";
+        AIAgent storageAgent = new FoundryHostingAgent(capturingAgent, "default");
 
         // Plant Alice's stamped session UNDER BOB'S partition to simulate a session that reached Bob's
         // key despite the per-user path partitioning (e.g. a non-partitioning custom store, or in-process
         // tampering). The 403 identity check is the defense-in-depth layer that must still reject it even
         // when the physical partition was bypassed.
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, capturingAgent.LastSession!, "bob", CancellationToken.None);
+        await sessionStore.SaveSessionAsync(
+            storageAgent,
+            new AgentSessionStoreKey(ConversationId).WithPartition("user", "bob"),
+            capturingAgent.LastSession!,
+            CancellationToken.None);
 
         // Bob attempts to resume Alice's conversation.
         var bobProvider = new FakeHostedSessionIsolationKeyProvider("bob");
@@ -181,7 +191,12 @@ public class HostedSessionIdentityContextTests
         var sessionStore = new InMemoryAgentSessionStore();
         const string ConversationId = "untagged-chat-id";
         var untagged = await capturingAgent.CreateSessionAsync(CancellationToken.None);
-        await sessionStore.SaveSessionAsync(capturingAgent, ConversationId, untagged, "alice", CancellationToken.None);
+        AIAgent storageAgent = new FoundryHostingAgent(capturingAgent, "default");
+        await sessionStore.SaveSessionAsync(
+            storageAgent,
+            new AgentSessionStoreKey(ConversationId).WithPartition("user", "alice"),
+            untagged,
+            CancellationToken.None);
 
         var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);

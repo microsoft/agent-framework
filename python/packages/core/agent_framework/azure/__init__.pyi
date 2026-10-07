@@ -10,6 +10,7 @@ from agent_framework_azure_ai_search import (
     AzureAISearchStore,
 )
 from agent_framework_azure_cosmos import CosmosHistoryProvider
+from agent_framework_azure_cosmos._vector_store import AzureCosmosSettings, CosmosCollection, CosmosStore
 from agent_framework_azurefunctions import AgentFunctionApp, WorkflowHitlContext
 from agent_framework_durabletask import (
     AgentCallbackContext,
@@ -29,7 +30,10 @@ __all__ = [
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
     "AzureAISearchStore",
+    "AzureCosmosSettings",
+    "CosmosCollection",
     "CosmosHistoryProvider",
+    "CosmosStore",
     "DurableAIAgent",
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",

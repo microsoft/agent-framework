@@ -32,8 +32,9 @@ from typing import Any, ClassVar, Literal, cast
 from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentSession, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
-from agent_framework._workflows._agent_utils import resolve_agent_id
+from agent_framework._workflows._agent_utils import prepare_agent_run_args, resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -51,7 +52,7 @@ from ._base_group_chat_orchestrator import (
 )
 from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor
-from ._orchestrator_helpers import clean_conversation_for_handoff
+from ._orchestrator_helpers import clean_conversation_for_handoff, extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -68,6 +69,7 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "GroupChat"
 
 
 @dataclass(frozen=True)
@@ -353,7 +355,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
 
-        agent_orchestration_output = await self._invoke_agent()
+        agent_orchestration_output = await self._invoke_agent(cast(WorkflowContext[Any, Any], ctx))
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
             cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
@@ -393,7 +395,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
 
-        agent_orchestration_output = await self._invoke_agent()
+        agent_orchestration_output = await self._invoke_agent(cast(WorkflowContext[Any, Any], ctx))
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
             cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
@@ -448,7 +450,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         Preferred path is structured output (`agent_response.value`) when available.
         If only text is available, first attempt strict JSON parsing and then apply a
-        temporary concatenated-JSON fallback as a stop-gap.
+        temporary concatenated-JSON fallback as a stop-gap. Providers that ignore
+        `response_format` often wrap the JSON in a Markdown code fence, so the body of
+        the last fenced block is tried as well.
         """
         try:
             structured_value = agent_response.value
@@ -468,6 +472,11 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         if response_text and response_text not in text_candidates:
             text_candidates.append(response_text)
 
+        for candidate in list(text_candidates):
+            fence_bodies = extract_markdown_fence_bodies(candidate)
+            if fence_bodies and fence_bodies[-1] not in text_candidates:
+                text_candidates.append(fence_bodies[-1])
+
         last_error: Exception | None = None
         for candidate in text_candidates:
             try:
@@ -486,8 +495,17 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         raise ValueError("Failed to parse agent orchestration output.") from last_error
 
-    async def _invoke_agent(self) -> AgentOrchestrationOutput:
-        """Invoke the orchestrator agent to determine the next speaker and termination."""
+    async def _invoke_agent(self, ctx: WorkflowContext[Any, Any]) -> AgentOrchestrationOutput:
+        """Invoke the orchestrator agent to determine the next speaker and termination.
+
+        Args:
+            ctx: The workflow context, read for the run kwargs stored by ``Workflow.run``.
+                The orchestrator agent runs outside ``AgentExecutor``, so it has to resolve
+                those itself or it is the only agent in the group chat that does not see them.
+        """
+        raw_run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        resolved_run_kwargs: Any = ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY)
+        function_invocation_kwargs, client_kwargs = prepare_agent_run_args(self.id, raw_run_kwargs, resolved_run_kwargs)
 
         async def _invoke_agent_helper(conversation: list[Message]) -> AgentOrchestrationOutput:
             # Run the agent in non-streaming mode for simplicity
@@ -495,12 +513,21 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 messages=conversation,
                 session=self._session,
                 options={"response_format": AgentOrchestrationOutput},
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
             )
             # Parse and validate the structured output
             agent_orchestration_output = self._parse_agent_output(agent_response)
 
-            if not agent_orchestration_output.terminate and not agent_orchestration_output.next_speaker:
-                raise ValueError("next_speaker must be provided if not terminating the conversation.")
+            if not agent_orchestration_output.terminate:
+                next_speaker = agent_orchestration_output.next_speaker
+                if not next_speaker:
+                    raise ValueError("next_speaker must be provided if not terminating the conversation.")
+                if next_speaker not in self._participant_registry.participants:
+                    raise ValueError(
+                        f"Orchestrator agent selected unknown participant '{next_speaker}'. "
+                        f"Valid participants: {', '.join(self._participant_registry.participants)}."
+                    )
 
             return agent_orchestration_output
 
@@ -617,6 +644,7 @@ class GroupChatBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor] | None = None,
         participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
         # Orchestrator config (exactly one required)
@@ -634,6 +662,7 @@ class GroupChatBuilder:
         """Initialize the GroupChatBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"GroupChat"``.
             participants: Optional sequence of agent or executor instances for the group chat.
             participant_factories: Optional sequence of callables returning agent or executor instances.
             orchestrator_agent: An instance of Agent or a callable that produces one to manage the group chat.
@@ -653,6 +682,7 @@ class GroupChatBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
         self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
@@ -1027,6 +1057,7 @@ class GroupChatBuilder:
             extra_output_executors=[orchestrator],
         )
         workflow_builder = WorkflowBuilder(
+            name=self._name,
             start_executor=orchestrator,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

@@ -138,7 +138,9 @@ only to approved first-party endpoints.
 | 17 | `core.session_store` | Agent session store | `agent_framework.SessionStore` / `FileSessionStore` |
 | 18 | `core.agent_hooks` | Agent Hooks middleware | `agent_framework.create_agent_hooks_middleware` |
 | 19 | `core.vector_stores` | Vector store abstractions | `BaseVectorCollection` / `BaseVectorSearch` operations |
-| 20–31 | _reserved_ | core growth | — |
+| 20 | `core.vector_store_history_provider` | Vector-store history provider | `agent_framework.VectorStoreHistoryProvider` |
+| 21 | `core.vector_collection_context_provider` | Vector-collection context provider | `agent_framework.VectorCollectionContextProvider` |
+| 22–31 | _reserved_ | core growth | — |
 | 32 | `orchestration.sequential` | Sequential orchestration | `agent_framework_orchestrations.SequentialBuilder` |
 | 33 | `orchestration.concurrent` | Concurrent orchestration | `agent_framework_orchestrations.ConcurrentBuilder` |
 | 34 | `orchestration.group_chat` | Group-chat orchestration | `agent_framework_orchestrations.GroupChatBuilder` |
@@ -156,7 +158,7 @@ only to approved first-party endpoints.
 | 56 | `openai` | OpenAI clients | `agent_framework_openai` |
 | 57 | `anthropic` | Anthropic clients | `agent_framework_anthropic` |
 | 58 | `bedrock` | AWS Bedrock clients | `agent_framework_bedrock` |
-| 59 | `gemini` | Gemini chat client | `agent_framework_gemini` |
+| 59 | `gemini` | Gemini chat and embedding clients | `agent_framework_gemini` |
 | 60 | `mistral` | Mistral embedding client | `agent_framework_mistral` |
 | 61 | `ollama` | Ollama clients | `agent_framework_ollama` |
 | 62 | `claude` | Claude Agent SDK agent | `agent_framework_claude` |

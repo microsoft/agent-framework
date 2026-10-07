@@ -31,7 +31,7 @@ We use typing as a helper, it is not a goal in and of itself, so be pragmatic ab
 In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
 This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
 because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
-use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+use `item.attribute` to ensure it fails at that point, rather than somewhere downstream where a value is expected but none was found.
 
 ### Future Annotations
 
@@ -159,6 +159,38 @@ This is not a strict rule, but a guideline to help maintain consistency across t
 
 ## Implementation Decisions
 
+### Settings Resolution in Connectors
+
+Connector constructors should use `load_settings` to resolve explicit keyword
+arguments, an explicitly selected `.env` file, process environment variables,
+and defaults before deciding that a required value is missing.
+
+When a preconfigured SDK client can be injected, both the client and individual
+settings may be omitted at the constructor boundary. Make settings required only
+for the branch that creates the SDK client:
+
+```python
+settings = load_settings(
+    ProviderSettings,
+    env_prefix="PROVIDER_",
+    required_fields=[] if client is not None else ["api_key"],
+    api_key=api_key,
+    env_file_path=env_file_path,
+    env_file_encoding=env_file_encoding,
+)
+
+if client is None:
+    client = ProviderClient(
+        api_key=cast(SecretString, settings.get("api_key")).get_secret_value(),
+    )
+```
+
+Do not prevalidate optional constructor arguments before settings resolution.
+In particular, do not reject an injected client merely because an optional
+credential or model argument was also supplied. The injected client owns its
+transport and authentication; resolved settings are used only when constructing
+a client.
+
 ### Asynchronous Programming
 
 It's important to note that most of this library is written with asynchronous in mind. The
@@ -240,6 +272,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── AgentContentFilterException              # Agent content filter triggered
 │
 ├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ResponseInvalidatedException             # Provider invalidated partial response output
 │   ├── ChatClientInvalidAuthException           # Chat client auth failures
 │   ├── ChatClientInvalidRequestException        # Invalid request to chat client
 │   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
@@ -284,6 +317,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 | Object in wrong state (e.g., client not initialized) | `RuntimeError` |
 | External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
 | External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Chat provider invalidates partial response output containing local function calls | `ResponseInvalidatedException` |
 | Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
 | Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
 | Agent not found in registry | `AgentInvalidRequestException` |

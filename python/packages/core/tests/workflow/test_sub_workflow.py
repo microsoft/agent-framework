@@ -219,6 +219,34 @@ async def test_basic_sub_workflow() -> None:
     assert parent.result.is_valid is True
 
 
+async def test_propagated_sub_workflow_response_receives_runtime_tools() -> None:
+    """Runtime tools supplied on parent resume reach the child response handler."""
+    captured_runtime_tools: list[Any] = []
+
+    class RequestingExecutor(Executor):
+        @handler
+        async def start(self, input_data: str, ctx: WorkflowContext) -> None:
+            del input_data
+            await ctx.request_info("Continue?", str, request_id="child-request")
+
+        @response_handler
+        async def resume(self, request: str, response: str, ctx: WorkflowContext) -> None:
+            del request, response
+            captured_runtime_tools.append(ctx.get_runtime_tools())
+
+    child = WorkflowBuilder(start_executor=RequestingExecutor(id="child-requester")).build()
+    child_executor = WorkflowExecutor(child, id="child", propagate_request=True)
+    parent = WorkflowBuilder(start_executor=child_executor).build()
+
+    result = await parent.run("start")
+    assert [event.request_id for event in result.get_request_info_events()] == ["child-request"]
+
+    runtime_tool = object()
+    await parent.run(responses={"child-request": "yes"}, tools=[runtime_tool])
+
+    assert captured_runtime_tools == [[runtime_tool]]
+
+
 async def test_sub_workflow_with_interception():
     """Test sub-workflow with parent interception and conditional forwarding."""
     # Create sub-workflow

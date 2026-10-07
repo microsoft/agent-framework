@@ -4,11 +4,11 @@
 # pyright: reportPrivateUsage=false, reportUnknownVariableType=false
 # pyright: reportGeneralTypeIssues=false
 
-"""Path-segment validation tests for DeclarativeWorkflowState.
+"""Path-segment validation tests for workflow state.
 
-Path segments handed to ``get``/``set``/``append`` and ``{Variable.Path}``
-placeholders in ``interpolate_string`` are subject to three distinct rules
-that this module pins:
+For DeclarativeWorkflowState, path segments handed to ``get``/``set``/``append``
+and ``{Variable.Path}`` placeholders in ``interpolate_string`` are subject to
+three distinct rules that this module pins:
 
 - **Empty segments** (e.g. ``""``, ``"Local."``, ``"Local..foo"``) are rejected
   by all of ``get``/``set``/``append`` and ``interpolate_string``. ``get`` and
@@ -21,6 +21,9 @@ that this module pins:
 - **Dict-keyed segments** — segments that resolve via dict lookup because the
   parent is a ``dict`` — may use arbitrary non-empty string keys (e.g. UUIDs
   or hyphenated identifiers like ``System.conversations.<uuid>.messages``).
+
+Standalone WorkflowState shares the object-member rule, but retains its
+existing empty-dictionary-key behavior.
 """
 
 import logging
@@ -29,8 +32,11 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agent_framework._workflows._state import State
 
+from agent_framework_declarative import WorkflowState
 from agent_framework_declarative._workflows import DeclarativeWorkflowState
+from agent_framework_declarative._workflows import _declarative_base as base
 
 try:
     import powerfx  # noqa: F401
@@ -79,6 +85,126 @@ class _PlainObj:
     """Non-dict object so ``get`` falls through to attribute access."""
 
     text: str = "hi"
+
+
+@dataclass
+class _MemberRecord(_PlainObj):
+    _private: str = "private-marker"
+
+
+class TestStateMemberAccess:
+    """Both state implementations distinguish object members from dictionary keys."""
+
+    @pytest.fixture(params=["standalone", "modern"])
+    def member_state(self, request: pytest.FixtureRequest) -> WorkflowState | DeclarativeWorkflowState:
+        if request.param == "standalone":
+            return WorkflowState(inputs={"record": _MemberRecord()})
+        state = DeclarativeWorkflowState(State())
+        state.initialize({"record": _MemberRecord()})
+        return state
+
+    @pytest.mark.parametrize("name", ["_private", "__marker__", "text-other", "1text", "text other", "text\n"])
+    def test_rejects_existing_invalid_members(
+        self, member_state: WorkflowState | DeclarativeWorkflowState, name: str
+    ) -> None:
+        record = _PlainObj()
+        setattr(record, name, "member-marker")
+        member_state.set("Local.record", record)
+        default = object()
+
+        assert member_state.get(f"Local.record.{name}", default) is default
+
+    def test_rejects_before_reading_attribute(
+        self, member_state: WorkflowState | DeclarativeWorkflowState, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class Record:
+            @property
+            def _private(self) -> str:
+                raise AssertionError("Rejected attribute was read")
+
+        member_state.set("Local.record", Record())
+        default = object()
+        with caplog.at_level(logging.WARNING):
+            assert member_state.get("Local.record._private", default) is default
+
+        assert any("rejecting attribute segment" in record.message for record in caplog.records)
+
+    @pytest.mark.parametrize(
+        "namespace", ["Workflow.Inputs", "Workflow.Outputs", "Local", "System", "Agent", "Conversation", "Custom"]
+    )
+    def test_member_rule_applies_across_namespaces(
+        self, member_state: WorkflowState | DeclarativeWorkflowState, namespace: str
+    ) -> None:
+        if namespace != "Workflow.Inputs":
+            member_state.set(f"{namespace}.record", _MemberRecord())
+
+        assert member_state.get(f"{namespace}.record._private") is None
+        assert member_state.get(f"{namespace}.record.text") == "hi"
+
+    def test_mixed_dictionary_and_attribute_steps(self, member_state: WorkflowState | DeclarativeWorkflowState) -> None:
+        class Record:
+            class_value = "class-marker"
+            _private = "private-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "instance-marker"
+                self.child = {"nested": _PlainObj()}
+
+        member_state.set("Local.bag", {"record": Record()})
+        member_state.set("Local.nested", {"record": _MemberRecord(_private="nested-marker")})
+
+        assert member_state.get("Local.bag.record.class_value") == "class-marker"
+        assert member_state.get("Local.bag.record.public_value") == "instance-marker"
+        assert member_state.get("Local.bag.record.child.nested.text") == "hi"
+        assert member_state.get("Local.bag.record._private") is None
+        assert member_state.get("Local.nested.record._private") is None
+        default = object()
+        assert member_state.get("Local.bag.record.missing", default) is default
+
+    @pytest.mark.parametrize("key", ["_private", "__marker__", "text-other", "123", "text other", "text\n"])
+    def test_dictionary_keys_are_not_member_identifiers(
+        self, member_state: WorkflowState | DeclarativeWorkflowState, key: str
+    ) -> None:
+        member_state.set("Local.bag", {key: "dictionary-marker"})
+        assert member_state.get(f"Local.bag.{key}") == "dictionary-marker"
+
+    @pytest.mark.parametrize("mode", ["absent", "error"])
+    def test_modern_engine_errors_do_not_fall_back(self, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+        state = DeclarativeWorkflowState(State())
+        state.initialize()
+        state.set("Local.record", _PlainObj())
+        get = MagicMock(side_effect=AssertionError("Unexpected member lookup"))
+        monkeypatch.setattr(state, "get", get)
+        if mode == "absent":
+            monkeypatch.setattr(base, "Engine", None)
+            with pytest.raises(RuntimeError, match="PowerFx is not available"):
+                state.eval("=Local.record.text")
+        else:
+            engine = MagicMock()
+            engine.eval.side_effect = ValueError("synthetic engine error")
+            monkeypatch.setattr(base, "Engine", MagicMock(return_value=engine))
+            with pytest.raises(ValueError, match="synthetic engine error"):
+                state.eval("=Local.record.text")
+        get.assert_not_called()
+
+    @_requires_powerfx
+    def test_modern_projection_preserves_instance_data(self) -> None:
+        class Record:
+            _class_value = "class-marker"
+
+            def __init__(self) -> None:
+                self._declared = "instance-marker"
+                self.public_value = "public-marker"
+
+        state = DeclarativeWorkflowState(State())
+        state.initialize()
+        state.set("Local.record", Record())
+
+        assert state.get("Local.record._declared") is None
+        assert state.get("Local.record._class_value") is None
+        assert state.eval("=Local.record.public_value") == "public-marker"
+        assert state.eval("=Local.record._declared") == "instance-marker"
+        assert state.eval("=Local.record._class_value") is None
 
 
 # ---------------------------------------------------------------------------
@@ -301,12 +427,251 @@ class TestInterpolateString:
 # ---------------------------------------------------------------------------
 
 
+class TestMessageTextPreprocessing:
+    def test_replacement_text_is_not_rescanned_as_formula(
+        self,
+        state: DeclarativeWorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[str] = []
+
+        def replace_message_text(inner_expr: str) -> str:
+            calls.append(inner_expr)
+            if inner_expr == "Local.Messages":
+                return "MessageText(Local.Secret)"
+            pytest.fail(f"Replacement text was re-scanned: {inner_expr}")
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", replace_message_text)
+        temp_writes: list[tuple[str, Any]] = []
+
+        formula = state._preprocess_custom_functions("Upper(MessageText(Local.Messages))", temp_writes)
+
+        assert formula == "Upper(Local._TempMessageText0)"
+        assert calls == ["Local.Messages"]
+        assert state.get("Local._TempMessageText0") == "MessageText(Local.Secret)"
+
+    def test_interpolation_preprocesses_only_original_expression_sections(
+        self, state: DeclarativeWorkflowState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+        message_text = '$"MessageText(Local.Secret) {MessageText(Local.Secret)}"'
+
+        def replace_message_text(inner_expr: str) -> str:
+            calls.append(inner_expr)
+            return message_text
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", replace_message_text)
+        temp_writes: list[tuple[str, Any]] = []
+        formula = '$"Literal MessageText(Local.Messages) {{MessageText(Local.Messages)}} {MessageText(Local.Messages)}"'
+
+        result = state._preprocess_custom_functions(formula, temp_writes)
+
+        assert result == (
+            '$"Literal MessageText(Local.Messages) {{MessageText(Local.Messages)}} {Local._TempMessageText0}"'
+        )
+        assert calls == ["Local.Messages"]
+        assert state.get("Local._TempMessageText0") == message_text
+        assert temp_writes == [("Local._TempMessageText0", state._MISSING)]
+
+    def test_message_text_inside_string_literal_is_not_preprocessed(
+        self,
+        state: DeclarativeWorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[str] = []
+
+        def replace_message_text(inner_expr: str) -> str:
+            calls.append(inner_expr)
+            return "hello"
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", replace_message_text)
+
+        formula = state._preprocess_custom_functions(
+            'Concatenate("MessageText(Local.Secret)", MessageText(Local.Messages))',
+            [],
+        )
+
+        assert formula == 'Concatenate("MessageText(Local.Secret)", Local._TempMessageText0)'
+        assert calls == ["Local.Messages"]
+
+    @pytest.mark.parametrize(
+        "formula",
+        [
+            'Upper("Say ""MessageText(ignored)""")',
+            "Upper(Local.'MessageText(ignored)')",
+            "Upper(Local.'Archived'' MessageText(ignored)')",
+            "1 // MessageText(ignored)",
+            "1 // MessageText(ignored)\n + 2",
+            "1 // MessageText(ignored)\r + 2",
+            "1 // MessageText(ignored)\r\n + 2",
+            "/* MessageText(ignored) */ 1",
+            "1 /* unmatched ) ' \" MessageText(ignored) */",
+        ],
+    )
+    def test_quoted_tokens_and_comments_are_not_preprocessed(
+        self, state: DeclarativeWorkflowState, monkeypatch: pytest.MonkeyPatch, formula: str
+    ) -> None:
+        def unexpected_call(inner_expr: str) -> str:
+            pytest.fail(f"Processed a call inside a quoted token or comment: {inner_expr}")
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", unexpected_call)
+        temp_writes: list[tuple[str, Any]] = []
+
+        assert state._preprocess_custom_functions(formula, temp_writes) == formula
+        assert temp_writes == []
+
+    @pytest.mark.parametrize(
+        "inner_expr",
+        [
+            "Local.'Messages) archive'",
+            "Local.'Messages'' ) archive'",
+            'If(")""(" = ")""(", Local.Messages, Local.Messages)',
+            "Local.Messages /* ) ' \" MessageText(ignored) */",
+            "Local.Messages // ) MessageText(ignored)\n",
+            "Local.Messages // ) MessageText(ignored)\r",
+            "Local.Messages // ) MessageText(ignored)\r\n",
+        ],
+    )
+    def test_call_boundaries_ignore_quoted_tokens_and_comments(
+        self, state: DeclarativeWorkflowState, monkeypatch: pytest.MonkeyPatch, inner_expr: str
+    ) -> None:
+        calls: list[str] = []
+
+        def replace_message_text(expression: str) -> str:
+            calls.append(expression)
+            return "hello"
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", replace_message_text)
+
+        formula = state._preprocess_custom_functions(f"Upper(MessageText({inner_expr}))", [])
+
+        assert formula == "Upper(Local._TempMessageText0)"
+        assert calls == [inner_expr]
+
+    @pytest.mark.parametrize(
+        ("existing_name", "existing_value"),
+        [("_TempMessageText0", None), ("_tempmessagetext0", "user-value")],
+    )
+    def test_temporary_binding_avoids_existing_names(
+        self,
+        state: DeclarativeWorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+        existing_name: str,
+        existing_value: str | None,
+    ) -> None:
+        state.set(f"Local.{existing_name}", existing_value)
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", lambda inner_expr: "hello")
+        temp_writes: list[tuple[str, Any]] = []
+
+        formula = state._preprocess_custom_functions("Upper(MessageText(Local.Messages))", temp_writes)
+
+        assert formula == "Upper(Local._TempMessageText1)"
+        assert state.get_state_data()["Local"] == {existing_name: existing_value, "_TempMessageText1": "hello"}
+        assert temp_writes == [("Local._TempMessageText1", state._MISSING)]
+
+    @pytest.mark.parametrize(
+        "reference", ["Local._TempMessageText0", "Local.'_TempMessageText0'", "Local._tempmessagetext0"]
+    )
+    def test_temporary_binding_avoids_formula_references(
+        self,
+        state: DeclarativeWorkflowState,
+        monkeypatch: pytest.MonkeyPatch,
+        reference: str,
+    ) -> None:
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", lambda inner_expr: "hello")
+
+        formula = state._preprocess_custom_functions(f"Upper(MessageText(Local.Messages) & {reference})", [])
+
+        assert formula == f"Upper(Local._TempMessageText1 & {reference})"
+        assert "_TempMessageText0" not in state.get_state_data()["Local"]
+
+
 @_requires_powerfx
 class TestPowerFxStillWorks:
     def test_simple_powerfx_expression_evaluates(self, state: DeclarativeWorkflowState) -> None:
         state.set("Local.x", 6)
         state.set("Local.y", 7)
         assert state.eval("=Local.x * Local.y") == 42
+
+    @pytest.mark.parametrize("name", ["Messages) archive", "Messages' ) archive"])
+    def test_message_text_argument_with_quoted_identifier(self, state: DeclarativeWorkflowState, name: str) -> None:
+        state.set(f"Local.{name}", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        quoted_name = name.replace("'", "''")
+        original_local = state.get_state_data()["Local"].copy()
+
+        assert state.eval(f"=Upper(MessageText(Local.'{quoted_name}'))") == "HELLO"
+        assert state.get_state_data()["Local"] == original_local
+
+    @pytest.mark.parametrize(
+        ("formula", "expected"),
+        [
+            ('$"Message: {MessageText(Local.Messages)}"', "Message: hello"),
+            (
+                '$"Literal MessageText(ignored) ""{{{MessageText(Local.Messages)}}}"""',
+                'Literal MessageText(ignored) "{hello}"',
+            ),
+            (
+                '$"{With({nested: {text: $"Inner {MessageText(Local.Messages)}"}}, nested.text)}"',
+                "Inner hello",
+            ),
+            ('$"{MessageText(Local.Messages)}:{Upper(MessageText(Local.Other))}"', "hello:OTHER"),
+            ('$"{/* } MessageText(Local.Secret) */ MessageText(Local.Messages)}"', "hello"),
+            (
+                (
+                    'Upper(MessageText(If($"Literal ) {MessageText(Local.Messages)}" = "Literal ) hello", '
+                    "Local.Messages, Local.Other)))"
+                ),
+                "HELLO",
+            ),
+        ],
+        ids=[
+            "basic",
+            "literal-text-and-escapes",
+            "nested-records-and-interpolation",
+            "multiple-expressions",
+            "commented-interpolation-delimiter",
+            "interpolation-in-function-argument",
+        ],
+    )
+    def test_expression_sections_evaluate_with_powerfx(
+        self, state: DeclarativeWorkflowState, formula: str, expected: str
+    ) -> None:
+        """Only expression sections of interpolated strings may evaluate MessageText calls."""
+        state.set("Local.Messages", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        state.set("Local.Other", [{"text": "other", "contents": [{"type": "text", "text": "other"}]}])
+        original_local = state.get_state_data()["Local"].copy()
+
+        assert state.eval(f"={formula}") == expected
+        assert state.get_state_data()["Local"] == original_local
+
+    @pytest.mark.parametrize("name", ["MessageText(ignored)", "Archived' MessageText(ignored)"])
+    def test_quoted_identifier_with_function_like_text(self, state: DeclarativeWorkflowState, name: str) -> None:
+        state.set(f"Local.{name}", "hello")
+        quoted_name = name.replace("'", "''")
+        original_local = state.get_state_data()["Local"].copy()
+
+        assert state.eval(f"=Upper(Local.'{quoted_name}')") == "HELLO"
+        assert state.get_state_data()["Local"] == original_local
+
+    @pytest.mark.parametrize(
+        ("formula", "expected"),
+        [
+            ("1 // MessageText(1 / 0)", 1),
+            ("1 /* MessageText(1 / 0) */", 1),
+            ("/* MessageText(1 / 0) */ Upper(MessageText(Local.Messages))", "HELLO"),
+            ("// MessageText(1 / 0)\n Upper(MessageText(Local.Messages))", "HELLO"),
+            ("Upper(MessageText(Local.Messages /* ) MessageText(1 / 0) */))", "HELLO"),
+            ("Upper(MessageText(Local.Messages // ) MessageText(1 / 0)\n))", "HELLO"),
+        ],
+    )
+    def test_message_text_in_comments_is_not_evaluated(
+        self, state: DeclarativeWorkflowState, formula: str, expected: str | int
+    ) -> None:
+        state.set("Local.Messages", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        original_local = state.get_state_data()["Local"].copy()
+
+        assert state.eval(f"={formula}") == expected
+        assert state.get_state_data()["Local"] == original_local
 
     def test_internal_temp_message_text_still_works(self, state: DeclarativeWorkflowState) -> None:
         """Long MessageText() results round-trip and the temp key is removed after eval."""
@@ -323,25 +688,59 @@ class TestPowerFxStillWorks:
         remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
         assert not remaining, f"Temporary keys remain in Local: {remaining}"
 
-    def test_message_text_eval_preserves_user_temp_value(self, state: DeclarativeWorkflowState) -> None:
-        """User state at the temp key path survives a long MessageText eval."""
-        long_text = "A" * 600
+    @pytest.mark.parametrize("text", ["hello", "A" * 600], ids=["short", "long"])
+    def test_message_text_eval_preserves_user_temp_value(self, state: DeclarativeWorkflowState, text: str) -> None:
+        """Existing symbols retain their values during evaluation, not just after cleanup."""
         state.set("Local._TempMessageText0", "user-important-value")
         state.set(
             "Local.Messages",
-            [{"text": long_text, "contents": [{"type": "text", "text": long_text}]}],
+            [{"text": text, "contents": [{"type": "text", "text": text}]}],
+        )
+        original_local = state.get_state_data()["Local"].copy()
+
+        result = state.eval("=Upper(Local._TempMessageText0 & MessageText(Local.Messages))")
+
+        assert result == f"USER-IMPORTANT-VALUE{text.upper()}"
+        assert state.get_state_data()["Local"] == original_local
+
+    def test_message_text_eval_does_not_define_missing_symbol(self, state: DeclarativeWorkflowState) -> None:
+        state.set("Local.Messages", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        original_local = state.get_state_data()["Local"].copy()
+
+        result = state.eval("=Upper(MessageText(Local.Messages) & Local._TempMessageText0)")
+
+        assert result is None
+        assert state.get_state_data()["Local"] == original_local
+
+    @pytest.mark.parametrize(
+        "second_argument",
+        ["Local.Second", 'If(Upper(MessageText(Local.First)) = "HELLO", Local.Second, Local.First)'],
+    )
+    def test_multiple_message_text_calls_use_distinct_bindings(
+        self, state: DeclarativeWorkflowState, second_argument: str
+    ) -> None:
+        state.set("Local._TempMessageText0", "prefix")
+        state.set("Local._TempMessageText1", "suffix")
+        state.set("Local.First", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        state.set("Local.Second", [{"text": "world", "contents": [{"type": "text", "text": "world"}]}])
+        original_local = state.get_state_data()["Local"].copy()
+
+        result = state.eval(
+            "=Upper(Local._TempMessageText0 & MessageText(Local.First) & "
+            f"MessageText({second_argument}) & Local._TempMessageText1)"
         )
 
-        result = state.eval("=Upper(MessageText(Local.Messages))")
-        assert result == "A" * 600
-        assert state.get("Local._TempMessageText0") == "user-important-value"
+        assert result == "PREFIXHELLOWORLDSUFFIX"
+        assert state.get_state_data()["Local"] == original_local
 
+    @pytest.mark.parametrize("text", ["hello", "A" * 600], ids=["short", "long"])
     def test_message_text_eval_cleans_up_on_powerfx_failure(
         self,
         state: DeclarativeWorkflowState,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
+        text: str,
     ) -> None:
-        """Temp key is removed even when PowerFx evaluation raises."""
+        """New temp keys are removed and existing state survives evaluation errors."""
         from agent_framework_declarative._workflows import _declarative_base as base
 
         class _FailingEngine:
@@ -350,15 +749,16 @@ class TestPowerFxStillWorks:
 
         monkeypatch.setattr(base, "Engine", _FailingEngine)
 
-        long_text = "A" * 600
+        state.set("Local._TempMessageText0", "user-important-value")
+        state.set("Local._TempMessageText1", None)
         state.set(
             "Local.Messages",
-            [{"text": long_text, "contents": [{"type": "text", "text": long_text}]}],
+            [{"text": text, "contents": [{"type": "text", "text": text}]}],
         )
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", lambda inner_expr: text)
+        original_local = state.get_state_data()["Local"].copy()
 
         with pytest.raises(RuntimeError, match="boom"):
             state.eval("=Upper(MessageText(Local.Messages))")
 
-        local = state.get_state_data().get("Local", {})
-        remaining = sorted(k for k in local if k.startswith("_TempMessageText"))
-        assert not remaining, f"Temporary keys remain in Local after PowerFx failure: {remaining}"
+        assert state.get_state_data()["Local"] == original_local

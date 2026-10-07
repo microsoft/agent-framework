@@ -14,6 +14,7 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
+    <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
     <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001;NU1903</NoWarn> <!-- NU1903: Microsoft.Bcl.Memory 9.0.4 transitive vulnerability via Azure SDK; awaiting upstream fix -->
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>

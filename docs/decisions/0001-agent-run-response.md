@@ -200,7 +200,7 @@ var primaryContentOnly = response.Messages.FirstOrDefault();
 ```
 
 - **PROS**: Simple getting started experience, Reusing IChatClient response types.
-- **CONS**: Intermediate updates are only availble in streaming mode.
+- **CONS**: Intermediate updates are only available in streaming mode.
 
 ### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary
 
@@ -212,7 +212,7 @@ we add helpers to process the streaming responses and extract information from i
 var responses = agent.RunStreamingAsync("Do Something");
 // E.g. an extension method that builds the primary content text.
 Console.WriteLine(await responses.AggregateFinalResult());
-// Or an extention method that builds complete messages from the updates.
+// Or an extension method that builds complete messages from the updates.
 Console.WriteLine(await responses.BuildMessage().Text);
 
 // Callers can also iterate through all updates if needed
@@ -406,7 +406,7 @@ We need to consider abstractions for `AIContent` derived types for tool call res
 
 ## StructuredOutputs
 
-Structured outputs is a valueable aspect of any Agent system, since it forces an Agent to produce output in a required format, and may include required fields. This allows turning unstructured data into structured data easily using a general purpose language model.
+Structured outputs is a valuable aspect of any Agent system, since it forces an Agent to produce output in a required format, and may include required fields. This allows turning unstructured data into structured data easily using a general purpose language model.
 
 Not all agent types necessarily support this or necessarily support this in the same way.
 Requesting a specific output schema at invocation time is widely supported by inference services though, and therefore inference based agents would support this well.

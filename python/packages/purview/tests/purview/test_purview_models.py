@@ -91,7 +91,7 @@ class TestComplexModels:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,
@@ -188,7 +188,7 @@ class TestModelDeserialization:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,
@@ -198,6 +198,7 @@ class TestModelDeserialization:
         dumped = content.model_dump(by_alias=True, exclude_none=True, mode="json")
 
         assert "contentEntries" in dumped
+        assert len(dumped["contentEntries"]) == 1
         assert "activityMetadata" in dumped
         assert "deviceMetadata" in dumped
         assert "integratedAppMetadata" in dumped
@@ -224,7 +225,7 @@ class TestModelDeserialization:
         protected_app = ProtectedAppMetadata(name="Protected", version="1.0", application_location=location)
 
         content = ContentToProcess(
-            content_entries=[metadata],
+            content_entry=metadata,
             activity_metadata=activity_meta,
             device_metadata=device_meta,
             integrated_app_metadata=integrated_app,

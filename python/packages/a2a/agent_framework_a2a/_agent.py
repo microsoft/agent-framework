@@ -7,6 +7,7 @@ import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Final, Literal, TypeAlias, cast, overload
 
 import httpx
@@ -244,7 +245,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             agent_card: The agent card for the agent.
             url: The URL for the A2A server.
             client: The A2A client for the agent.
-            http_client: Optional httpx.AsyncClient to use.
+            http_client: Optional httpx.AsyncClient to use. Agent-created clients do not persist
+                response cookies; supplied clients retain their configured cookie behavior and
+                remain caller-owned, including when ``client`` is also supplied.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
@@ -263,15 +266,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
-        # By default, leave a caller-supplied HTTP client open; specific paths may override this below.
-        # every construction path must set this before __aexit__ can run
+        # Only HTTP clients created by this agent are closed on exit.
         self._close_http_client = False
         self._timeout_config = self._create_timeout_config(timeout)
         bindings = supported_protocol_bindings if supported_protocol_bindings is not None else ["JSONRPC"]
         if client is not None:
             self.client = client
             self._non_streaming_client: Client | None = None
-            self._close_http_client = True
             return
         if agent_card is None:
             if url is None:
@@ -282,7 +283,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Create or use provided httpx client
         if http_client is None:
             headers = prepend_agent_framework_to_user_agent()
-            http_client = httpx.AsyncClient(timeout=self._timeout_config, headers=headers)
+            http_client = httpx.AsyncClient(
+                timeout=self._timeout_config,
+                headers=headers,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
@@ -350,8 +355,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 write=10.0,  # 10 seconds to send request
                 pool=5.0,  # 5 seconds to get connection from pool
             )
-        if isinstance(timeout, float):
-            # Simple timeout
+        if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+            # Simple timeout (ints are accepted per PEP 484's numeric tower)
             return httpx.Timeout(timeout)
         if isinstance(timeout, httpx.Timeout):
             # Full timeout configuration provided by user
@@ -405,6 +410,23 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             service_session_id.get("task_id"),
             service_session_id.get("task_state"),
         )
+
+    def _validate_context(self, session: AgentSession | None, context_id: str | None) -> None:
+        """Ensure a context_id returned by the A2A agent matches the session's context_id.
+
+        Args:
+            session: The session the run was started with, if any.
+            context_id: The context_id returned by the A2A agent, if any.
+
+        Raises:
+            RuntimeError: If the session is already bound to a different context_id.
+        """
+        existing_context_id, _, _ = self._extract_a2a_session_state(session)
+        if existing_context_id is not None and context_id and existing_context_id != context_id:
+            raise RuntimeError(
+                f"The context_id returned from the A2A agent ('{context_id}') "
+                f"differs from the session's context_id ('{existing_context_id}')."
+            )
 
     def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
         """Return A2A context_id as OpenTelemetry conversation id."""
@@ -595,6 +617,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if payload_type == "message":
                 # Process A2A Message
                 msg = item.message
+                self._validate_context(session, msg.context_id)
                 if msg.context_id:
                     last_context_id = msg.context_id
                 contents = self._parse_contents_from_a2a(msg.parts)
@@ -611,6 +634,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 yield update
             elif payload_type == "task":
                 task = item.task
+                self._validate_context(session, task.context_id)
                 last_task_id = task.id
                 if task.context_id:
                     last_context_id = task.context_id
@@ -638,6 +662,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     yield update
             elif payload_type == "status_update":
                 status_event = item.status_update
+                self._validate_context(session, status_event.context_id)
                 last_task_id = status_event.task_id
                 if status_event.context_id:
                     last_context_id = status_event.context_id
@@ -673,6 +698,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         pending_updates_by_task.setdefault(status_event.task_id, []).extend(updates)
             elif payload_type == "artifact_update":
                 artifact_event = item.artifact_update
+                self._validate_context(session, artifact_event.context_id)
                 last_task_id = artifact_event.task_id
                 if artifact_event.context_id:
                     last_context_id = artifact_event.context_id
@@ -698,12 +724,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if session is not None and (last_task_id or last_context_id):
             existing_context_id, existing_task_id, existing_task_state = self._extract_a2a_session_state(session)
 
-            # Validate context_id consistency
-            if existing_context_id is not None and last_context_id and existing_context_id != last_context_id:
-                raise RuntimeError(
-                    f"The context_id returned from the A2A agent ('{last_context_id}') "
-                    f"differs from the session's context_id ('{existing_context_id}')."
-                )
+            self._validate_context(session, last_context_id)
 
             persisted_context_id = existing_context_id or last_context_id
             if persisted_context_id is not None:

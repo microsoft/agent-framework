@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 [Collection(FoundryStateStoreLocalFallbackCollectionDefinition.CollectionName)]
 public sealed class SteerableLongRunningIntegrationTests
 {
-    [Fact]
+    [Fact(Skip = "Temporarily skipped: flaky in CI (observed RunCount 2 instead of 1); see https://github.com/microsoft/agent-framework/issues/8376")]
     public async Task ActiveMafTurn_QueuesSteeringThenRunsItOnTheSameSessionAsync()
     {
         // Arrange

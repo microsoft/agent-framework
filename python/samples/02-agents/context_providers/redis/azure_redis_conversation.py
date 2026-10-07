@@ -77,6 +77,8 @@ async def main() -> None:
         port=10000,
         ssl=True,
         key_prefix="chat_messages",
+        application_id="azure-redis-conversation",
+        agent_id="azure-redis-assistant",
         max_messages=100,
     )
 
@@ -96,8 +98,8 @@ async def main() -> None:
     )
 
     # 5. Create a session to provide conversation identity.
-    # The session ID is used as the Redis key — all runs sharing the same session
-    # will read/write the same conversation history in Redis.
+    # The session ID is part of the scoped Redis key, so runs sharing this provider
+    # configuration and session read/write the same conversation history.
     session = agent.create_session()
 
     # 6. Conversation — each run passes the same session for continuity

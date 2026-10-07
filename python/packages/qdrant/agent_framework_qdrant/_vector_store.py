@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Generic, cast
@@ -429,6 +430,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
     async def ensure_collection_exists(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Create the collection and payload indexes, or validate an existing dense schema."""
         options = _validate_operation_options(operation_options, _CREATE_OPTIONS)
+        creation_conflict = False
         if not await self.collection_exists():
             vectors = {
                 field.storage_name or field.name: models.VectorParams(
@@ -445,16 +447,35 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             except UnexpectedResponse as exc:
                 if exc.status_code != 409:
                     raise
+                creation_conflict = True
             except AioRpcError as exc:
                 if exc.code() != StatusCode.ALREADY_EXISTS:
                     raise
+                creation_conflict = True
             except ValueError as exc:
                 if not self._is_local or str(exc) != f"Collection {self.collection_name} already exists":
                     raise
             else:
                 if not created and not await self.collection_exists():
                     raise IntegrationException(f"Qdrant did not create collection '{self.collection_name}'.")
-        info = await self.async_client.get_collection(self.collection_name)
+        attempt = 0
+        while True:
+            try:
+                info = await self.async_client.get_collection(self.collection_name)
+                break
+            except (UnexpectedResponse, AioRpcError) as exc:
+                # Qdrant can report a creation conflict before the winning creator has
+                # initialized its shards. Only retry that specific readiness failure.
+                if isinstance(exc, UnexpectedResponse):
+                    not_ready = exc.status_code == 500 and b"0 of 0 read operations failed" in exc.content
+                else:
+                    not_ready = exc.code() == StatusCode.INTERNAL and "0 of 0 read operations failed" in (
+                        exc.details() or ""
+                    )
+                if not creation_conflict or not not_ready or attempt >= 5:
+                    raise
+                await asyncio.sleep(0.05 * 2**attempt)
+                attempt += 1
         configured = info.config.params.vectors
         if not isinstance(configured, dict):
             raise ValueError("QdrantCollection requires named vectors, not an unnamed-vector collection.")

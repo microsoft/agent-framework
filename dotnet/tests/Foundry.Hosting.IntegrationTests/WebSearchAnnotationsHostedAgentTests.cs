@@ -83,10 +83,8 @@ public sealed class WebSearchAnnotationsHostedAgentTests(
 
     private static CreateResponseOptions CreateRequest()
     {
-        CreateResponseOptions options = new()
-        {
-            StoredOutputEnabled = false,
-        };
+        CreateResponseOptions options = ProjectResponsesTestOptions.Create();
+        options.StoredOutputEnabled = false;
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(
             "Search the web for the official Microsoft .NET support policy. " +
             "Report the current support end date for .NET 10 and cite the official source."));

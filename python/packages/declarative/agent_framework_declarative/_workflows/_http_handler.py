@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 
@@ -122,12 +123,24 @@ class DefaultHttpRequestHandler:
     Construction modes:
 
     1. ``DefaultHttpRequestHandler()`` — owns an internal client created lazily
-       on first ``send()``. Closed by :meth:`aclose`.
+       on first ``send()`` without response-cookie persistence. Closed by :meth:`aclose`.
     2. ``DefaultHttpRequestHandler(client=existing)`` — caller-owned client.
-       Not closed by :meth:`aclose`.
+       Retains its cookie behavior and is not closed by :meth:`aclose`.
     3. ``DefaultHttpRequestHandler(client_provider=cb)`` — per-request client
        lookup (parity with .NET's ``httpClientProvider`` callback). The
-       provider may return ``None`` to fall back to the owned/default client.
+       provider's clients retain their cookie behavior and are not closed by :meth:`aclose`.
+       Returning ``None`` falls back to ``client``, if supplied, then to the owned client.
+
+    The provider receives a new :class:`HttpRequestInfo` with an absolute HTTP(S) URL
+    normalized by ``httpx`` and ``query_parameters`` already appended to ``url``.
+    The snapshot's ``query_parameters`` is empty; the original request is not modified.
+    Client-level query defaults are applied after selection, and supplied clients retain
+    their redirect behavior. The provider is not called again for automatic redirects.
+
+    Applications requiring persistent cookies must supply a client through ``client``
+    or ``client_provider`` scoped to one authenticated principal and manage its lifetime.
+    Explicit outbound ``Cookie`` headers and response ``Set-Cookie`` headers are preserved;
+    the owned-client policy only prevents automatic cookie persistence.
 
     .. warning::
 
@@ -155,6 +168,22 @@ class DefaultHttpRequestHandler:
         if not info.method:
             raise ValueError("HttpRequestInfo.method must be a non-empty string.")
 
+        url = httpx.URL(info.url)
+        if not url.is_absolute_url or url.scheme not in {"http", "https"}:
+            raise ValueError("HttpRequestInfo.url must be an absolute HTTP or HTTPS URL.")
+
+        # Preserve the authored query bytes, appending rather than replacing duplicate
+        # keys. QueryParams would rewrite escapes, bare flags and duplicate ordering.
+        query = urlsplit(info.url).query
+        explicit_pairs = [(key, value) for key, value in info.query_parameters.items() if key]
+        if explicit_pairs:
+            query += ("&" if query else "") + urlencode(explicit_pairs, quote_via=quote)
+        raw_path = url.raw_path.split(b"?", 1)[0]
+        if query:
+            raw_path += b"?" + _encode_query(query)
+        url = url.copy_with(raw_path=raw_path)
+
+        info = replace(info, url=str(url), headers=dict(info.headers), query_parameters={})
         client = await self._resolve_client(info)
 
         timeout: httpx.Timeout | object
@@ -174,54 +203,26 @@ class DefaultHttpRequestHandler:
                 # callers (not just the YAML executor) get sensible defaults.
                 headers["Content-Type"] = info.body_content_type or "text/plain"
 
-        # Compose the query as raw bytes rather than routing it through ``params=``.
-        # Anything that reaches ``httpx.QueryParams`` -- ``params=`` or the client's own
-        # ``AsyncClient.params`` merge -- is decoded and re-encoded. Measured against
-        # httpx 0.28.1, that rewrites ``%20`` in a value as ``+``, expands a bare
-        # ``download`` into ``download=``, and reorders interleaved duplicates
-        # (``x=1&y=2&x=3`` becomes ``x=1&x=3&y=2``), all of it even when nothing needed
-        # merging. Base64 and ``%3A`` round-trip unchanged, so a signature is not
-        # rewritten by itself, but any scheme that signs a value holding an encoded
-        # space is, and a server that distinguishes ``download`` from ``download=`` or
-        # reads repeated keys positionally sees a different request either way.
-        # Building the query here and writing it back over the request's ``raw_path``
-        # keeps the caller's bytes exactly as given.
-        raw = urlsplit(info.url)
-
-        # ``query_parameters`` append rather than replace, so a URL carrying
-        # ``filter=region&filter=status`` plus ``{"filter": "tenant"}`` sends all three,
-        # matching the .NET handler. Client-level params are defaults only: they apply
-        # for a key absent from both request-level sources.
-        explicit_pairs = [(key, value) for key, value in info.query_parameters.items() if key]
-        request_keys = {key for key, _ in parse_qsl(raw.query, keep_blank_values=True)}
-        request_keys.update(key for key, _ in explicit_pairs)
+        # Selected-client params remain defaults for keys absent from the workflow's
+        # composed query. They are host configuration, unavailable before selection.
+        request_keys = {key for key, _ in parse_qsl(url.query.decode("ascii"), keep_blank_values=True)}
         client_defaults = [(key, value) for key, value in client.params.multi_items() if key not in request_keys]
-
-        query_segments: list[str] = []
-        if raw.query:
-            query_segments.append(raw.query)
-        # ``quote_via=quote`` keeps spaces as ``%20`` instead of ``+``, so appended
-        # parameters are encoded the same way the preserved URL query is.
-        for pairs in (explicit_pairs, client_defaults):
-            if pairs:
-                query_segments.append(urlencode(pairs, quote_via=quote))
-        query = "&".join(segment for segment in query_segments if segment)
+        if client_defaults:
+            encoded_query = url.query + (b"&" if url.query else b"")
+            encoded_query += urlencode(client_defaults, quote_via=quote).encode("ascii")
+            url = url.copy_with(query=encoded_query)
 
         # Build without the query so the client's params merge has nothing to clobber --
         # it drops the URL's query outright -- then overwrite the query httpx composed
         # with ours. The fragment stays on the built URL; httpx does not send it.
         request = client.build_request(
             method=info.method,
-            url=urlunsplit((raw.scheme, raw.netloc, raw.path, "", raw.fragment)),
+            url=url.copy_with(query=None),
             headers=headers or None,
             content=content,
             timeout=timeout,
         )
-        # Reuse httpx's own path encoding and replace only the query part of ``raw_path``.
-        raw_path = request.url.raw_path.split(b"?", 1)[0]
-        if query:
-            raw_path += b"?" + _encode_query(query)
-        request.url = request.url.copy_with(raw_path=raw_path)
+        request.url = url
 
         response = await client.send(request)
 
@@ -262,7 +263,9 @@ class DefaultHttpRequestHandler:
             # one of them.
             async with self._owned_client_lock:
                 if self._owned_client is None:
-                    self._owned_client = httpx.AsyncClient()
+                    self._owned_client = httpx.AsyncClient(
+                        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+                    )
         return self._owned_client
 
     async def __aenter__(self) -> DefaultHttpRequestHandler:

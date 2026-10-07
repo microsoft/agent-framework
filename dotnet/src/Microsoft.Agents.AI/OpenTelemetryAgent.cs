@@ -41,6 +41,19 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     // inner agent not directly but rather via OpenTelemetryChatClient, which wraps a ForwardingChatClient that in turn
     // calls back into the inner agent.
 
+    /// <summary>
+    /// Gets the default <see cref="ActivitySource"/> name used by <see cref="OpenTelemetryAgent"/> when no source
+    /// name is supplied to the constructor.
+    /// </summary>
+    /// <remarks>
+    /// Pass this value to the tracing pipeline (for example, <c>TracerProviderBuilder.AddSource</c>) to subscribe to
+    /// the spans emitted by agents that use the default source name, instead of hardcoding the literal name. This is
+    /// a property rather than a constant so that the value is read at run time: a consumer that upgrades the package
+    /// picks up the current source name without recompiling.
+    /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static string DefaultSourceName => OpenTelemetryConsts.DefaultSourceName;
+
     /// <summary>The <see cref="OpenTelemetryChatClient"/> providing the bulk of the telemetry.</summary>
     private readonly OpenTelemetryChatClient _otelClient;
     /// <summary>The provider name extracted from <see cref="AIAgentMetadata"/>.</summary>
@@ -62,8 +75,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
     /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
     /// <param name="sourceName">
-    /// An optional source name that will be used to identify telemetry data from this agent.
-    /// If not provided, a default source name will be used for telemetry identification.
+    /// An optional source name used to identify telemetry data from this agent.
+    /// When specified, register the same value with <c>TracerProviderBuilder.AddSource</c> so the tracing pipeline
+    /// subscribes to these spans. When omitted, <see cref="DefaultSourceName"/> is used.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
     /// <remarks>
@@ -80,8 +94,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>Initializes a new instance of the <see cref="OpenTelemetryAgent"/> class.</summary>
     /// <param name="innerAgent">The underlying <see cref="AIAgent"/> to be augmented with telemetry capabilities.</param>
     /// <param name="sourceName">
-    /// An optional source name that will be used to identify telemetry data from this agent.
-    /// If not provided, a default source name will be used for telemetry identification.
+    /// An optional source name used to identify telemetry data from this agent.
+    /// When specified, register the same value with <c>TracerProviderBuilder.AddSource</c> so the tracing pipeline
+    /// subscribes to these spans. When omitted, <see cref="DefaultSourceName"/> is used.
     /// </param>
     /// <param name="autoWireChatClient">
     /// When <see langword="true"/> and the inner agent is a <see cref="ChatClientAgent"/>, the underlying

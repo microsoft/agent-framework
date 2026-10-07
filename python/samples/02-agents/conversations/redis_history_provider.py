@@ -23,6 +23,7 @@ with Redis as the backend data store.
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+APPLICATION_ID = "redis-history-sample"
 
 
 async def example_manual_memory_store() -> None:
@@ -33,6 +34,8 @@ async def example_manual_memory_store() -> None:
     redis_provider = RedisHistoryProvider(
         source_id="redis_basic_chat",
         redis_url=REDIS_URL,
+        application_id=APPLICATION_ID,
+        agent_id="redis-bot",
     )
 
     # Create agent with Redis history provider
@@ -72,6 +75,9 @@ async def example_user_session_management() -> None:
     redis_provider = RedisHistoryProvider(
         source_id=f"redis_{user_id}",
         redis_url=REDIS_URL,
+        tenant_id="sample-tenant",
+        application_id=APPLICATION_ID,
+        agent_id="session-bot",
         max_messages=10,  # Keep only last 10 messages
     )
 
@@ -114,6 +120,8 @@ async def example_conversation_persistence() -> None:
     redis_provider = RedisHistoryProvider(
         source_id="redis_persistent_chat",
         redis_url=REDIS_URL,
+        application_id=APPLICATION_ID,
+        agent_id="persistent-bot",
     )
 
     agent = Agent(
@@ -164,6 +172,8 @@ async def example_session_serialization() -> None:
     redis_provider = RedisHistoryProvider(
         source_id="redis_serialization_chat",
         redis_url=REDIS_URL,
+        application_id=APPLICATION_ID,
+        agent_id="serialization-bot",
     )
 
     agent = Agent(
@@ -207,6 +217,8 @@ async def example_message_limits() -> None:
     redis_provider = RedisHistoryProvider(
         source_id="redis_limited_chat",
         redis_url=REDIS_URL,
+        application_id=APPLICATION_ID,
+        agent_id="limit-bot",
         max_messages=3,  # Keep only 3 most recent messages
     )
 

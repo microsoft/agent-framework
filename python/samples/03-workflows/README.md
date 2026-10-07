@@ -104,7 +104,11 @@ Builder-oriented request-info samples are maintained in the orchestration sample
 
 ### tool-approval
 
-Builder-based tool approval samples are maintained in the orchestration sample set.
+| Sample | File | Concepts |
+| ------ | ---- | -------- |
+| Agent Tool vs Workflow Approval | [tool-approval/agent_as_tool_vs_workflow_approval.py](./tool-approval/agent_as_tool_vs_workflow_approval.py) | Use child `ToolApprovalMiddleware` policy for immediate delegated approval; use a workflow for delayed or durable approval |
+
+Additional builder-based tool approval samples are maintained in the orchestration sample set.
 
 ### observability
 
@@ -115,6 +119,10 @@ Builder-based tool approval samples are maintained in the orchestration sample s
 For additional observability samples in Agent Framework, see the [observability concept samples](../02-agents/observability/README.md). The [workflow observability sample](../02-agents/observability/workflow_observability.py) demonstrates integrating observability into workflows.
 
 ### orchestration
+
+See [group chat message filtering](./orchestrations/group_chat_message_filtering.py)
+for a custom orchestrator that filters participant responses before other agents
+receive them.
 
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
 `workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.

@@ -6,7 +6,7 @@ import inspect
 import json
 import os
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,6 +24,7 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     FunctionMiddleware,
     Message,
@@ -31,6 +32,7 @@ from agent_framework import (
     WorkflowBuilder,
     tool,
 )
+from agent_framework._types import ResponseStream
 from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework_openai._chat_client import RawOpenAIChatClient
@@ -454,6 +456,77 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_client_side_
     }
     # A single warning is emitted because the caller supplied tools that cannot be sent (#5130).
     assert sum("cannot be sent when an agent is specified" in record.message for record in caplog.records) == 1
+
+
+@pytest.mark.parametrize("allow_preview", [False, True], ids=["stable", "preview"])
+async def test_raw_foundry_agent_chat_client_warns_when_explicit_tool_control_is_ignored(
+    caplog: pytest.LogCaptureFixture,
+    allow_preview: bool,
+) -> None:
+    """Pre-provisioned agents own tool selection, so explicit request overrides are ignored visibly."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        allow_preview=allow_preview,
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={
+                "model": "gpt-4.1",
+                "tool_choice": "none",
+                "parallel_tool_calls": False,
+            },
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tool_choice": "none", "allow_multiple_tool_calls": False},
+        )
+
+    assert "tool_choice" not in result
+    assert "parallel_tool_calls" not in result
+    warning = next(record.message for record in caplog.records if "owns tool selection server-side" in record.message)
+    assert "tool_choice" in warning
+    assert "allow_multiple_tool_calls" in warning
+
+
+@pytest.mark.parametrize("allow_preview", [False, True], ids=["stable", "preview"])
+async def test_raw_foundry_agent_chat_client_does_not_warn_for_framework_default_tool_choice(
+    caplog: pytest.LogCaptureFixture,
+    allow_preview: bool,
+) -> None:
+    """The framework-generated auto mode must not be reported as caller intent."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+        allow_preview=allow_preview,
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1", "tool_choice": "auto"},
+        ),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"tool_choice": "auto"},
+        )
+
+    assert "tool_choice" not in result
+    assert not any("owns tool selection server-side" in record.message for record in caplog.records)
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_tools_when_allow_preview(
@@ -1095,6 +1168,136 @@ def test_raw_foundry_agent_init_with_function_tools() -> None:
     assert agent.default_options.get("tools") is not None
 
 
+async def test_agui_request_state_cannot_choose_foundry_hosted_agent_sandbox() -> None:
+    """A client must not be able to pick which Foundry sandbox the server's credentialed call addresses.
+
+    Reproduces the full reported chain without network access: an ordinary AG-UI request carries
+    ``foundry_hosted_agent_session_id`` in its client-owned ``state``, and the resulting session is then used to
+    prepare the outbound Foundry Responses call. ``agent_session_id`` selects a VM-isolated sandbox with a
+    persistent filesystem, so honouring a caller-supplied value would run the server's own credentialed request
+    inside another session's sandbox.
+    """
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(agent=foundry_agent)
+    events = [
+        event
+        async for event in runner.run({
+            "runId": "attacker-run",
+            "threadId": "attacker-thread",
+            "messages": [{"role": "user", "content": "hello"}],
+            "state": {
+                FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "VICTIM-SANDBOX-9f31c2",
+                "benign": "ok",
+            },
+        })
+    ]
+
+    assert not [event for event in events if getattr(event, "type", None) == "RUN_ERROR"]
+    # The sandbox handle is stripped, while ordinary client Shared State still reaches the agent.
+    assert observed_state == [{"benign": "ok"}]
+
+    # The outbound Foundry call therefore pins no sandbox at all.
+    session = AgentSession()
+    session.state.update(observed_state[0])
+    with patch(
+        "agent_framework._agents.RawAgent._prepare_run_context",
+        new=AsyncMock(return_value={"ok": True}),
+    ) as mock_prepare_run_context:
+        await foundry_agent._prepare_run_context(
+            messages="hi",
+            session=session,
+            tools=None,
+            options={},
+            compaction_strategy=None,
+            tokenizer=None,
+            function_invocation_kwargs=None,
+            client_kwargs=None,
+        )
+
+    assert mock_prepare_run_context.await_args
+    assert "agent_session_id" not in mock_prepare_run_context.await_args.kwargs["options"].get("extra_body", {})
+
+
+async def test_agui_request_state_cannot_overwrite_established_foundry_sandbox() -> None:
+    """A server-established sandbox handle stays authoritative when a later request tries to replace it."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_openai.conversations.create = AsyncMock(return_value=SimpleNamespace(id="conv_server_owned"))
+    mock_project.get_openai_client.return_value = mock_openai
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            # The provider establishes the real sandbox handle, exactly as a live response would.
+            if session is not None:
+                session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = "server-owned-sandbox"
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(
+        agent=foundry_agent,
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    payload: dict[str, Any] = {
+        "threadId": "victim-thread",
+        "__ag_ui_snapshot_scope": "scope",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    _ = [event async for event in runner.run({**payload, "runId": "run-1"})]
+
+    attacker_payload = {
+        **payload,
+        "runId": "run-2",
+        "state": {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "attacker-chosen-sandbox"},
+    }
+    _ = [event async for event in runner.run(attacker_payload)]
+
+    assert observed_state[0] == {}
+    # The second turn resumes the server's own sandbox and ignores the attacker's value.
+    assert observed_state[1] == {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "server-owned-sandbox"}
+
+
+def test_foundry_agents_declare_hosted_agent_session_id_as_server_owned() -> None:
+    """The hosted-agent session ID must stay server-owned so hosts reject client-supplied values.
+
+    ``agent_session_id`` selects the Foundry hosted-agent runtime session, which is a VM-isolated sandbox with a
+    persistent filesystem. A caller-supplied value would redirect the server's own credentialed call into another
+    session's sandbox, so hosts discover this key through ``service_session_state_keys`` and refuse to let
+    untrusted input populate it. Without this test nothing fails if the declaration is dropped.
+    """
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgent.service_session_state_keys
+    # FoundryAgent is the recommended production class, so it must inherit the same protection.
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in FoundryAgent.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgentChatClient.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in _FoundryAgentChatClient.service_session_state_keys
+
+
 async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
     """Test that hosted-agent session state is sent separately from response continuation."""
 
@@ -1131,6 +1334,66 @@ async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_fr
         "runtime": "value",
         "agent_session_id": "agent-session-123",
     }
+
+
+@pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent, None])
+@pytest.mark.parametrize("parent_handle", [None, "parent-agent-session"])
+async def test_foundry_agent_tools_isolate_service_state_between_children(
+    agent_type: type[RawFoundryAgent] | None, parent_handle: str | None
+) -> None:
+    """Delegated Foundry calls retain application state without sharing service handles."""
+    project = MagicMock()
+    project.get_openai_client.return_value = MagicMock()
+    children = [
+        agent_type(project_client=project, agent_name=name)
+        if agent_type is not None
+        else Agent(client=_FoundryAgentChatClient(project_client=project, agent_name=name), name=name)
+        for name in ("first-child", "second-child")
+    ]
+    parent = AgentSession(service_session_id="parent-response")
+    parent.state["ordinary"] = "parent-value"
+    if parent_handle is not None:
+        parent.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    observed_options: list[dict[str, Any]] = []
+    updates: list[AgentResponseUpdate] = []
+
+    def respond(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        assert kwargs["stream"] is True
+        observed_options.append(dict(kwargs["options"]))
+        call_number = len(observed_options)
+
+        async def stream() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(text="done")],
+                conversation_id=f"child-response-{call_number}",
+                additional_properties={"agent_session_id": f"child-agent-session-{call_number}"},
+            )
+
+        return ResponseStream(stream(), finalizer=ChatResponse.from_updates)
+
+    with patch.object(RawFoundryAgentChatClient, "_inner_get_response", side_effect=respond):
+        for child in (children[0], children[1], children[0]):
+            delegated_tool = child.as_tool(propagate_session=True, stream_callback=updates.append)
+            result = await delegated_tool.invoke(
+                context=FunctionInvocationContext(
+                    function=delegated_tool,
+                    arguments={"task": "Run child"},
+                    session=parent,
+                    parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
+                )
+            )
+            assert result[0].text == "done"
+
+    assert len(observed_options) == 3
+    assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
+    assert all(options.get("conversation_id") is None for options in observed_options)
+    assert len(updates) == 3
+    expected_state = {"ordinary": "parent-value"}
+    if parent_handle is not None:
+        expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    assert parent.state == expected_state
+    assert parent.service_session_id == "parent-response"
 
 
 def test_foundry_agent_updates_session_from_response_ids() -> None:

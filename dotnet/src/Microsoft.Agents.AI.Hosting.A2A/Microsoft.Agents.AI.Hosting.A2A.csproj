@@ -4,6 +4,7 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.Hosting.A2A</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
     <Title>Microsoft Agent Framework Hosting A2A</Title>
     <Description>Provides Microsoft Agent Framework support for hosting A2A agents.</Description>
   </PropertyGroup>

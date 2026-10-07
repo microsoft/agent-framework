@@ -24,6 +24,8 @@ from .._types import (
     AgentResponseUpdate,
     AgentRunInputs,
     Content,
+    FinishReason,
+    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -111,8 +113,14 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            context_providers: Optional sequence of context providers for the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            context_providers: Optional sequence of context providers. Provider lifecycle hooks
+                run, and provider-contributed messages are passed to the workflow. Provider-
+                contributed instructions, tools, and chat or function middleware are not
+                propagated to executors; configure them on the agents or clients within the
+                workflow instead.
+            **kwargs: Additional keyword arguments passed to BaseAgent. Middleware stored by
+                BaseAgent is not executed by WorkflowAgent; configure middleware on the agents
+                or clients within the workflow instead.
 
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
@@ -162,7 +170,7 @@ class WorkflowAgent(BaseAgent):
         | Mapping[str, Any]
         | None = None,
         client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+    ) -> Awaitable[AgentResponse]: ...
 
     @overload
     def run(
@@ -422,8 +430,7 @@ class WorkflowAgent(BaseAgent):
 
         # Build the final response from collected updates so after_run providers
         # (e.g. InMemoryHistoryProvider) can persist the response messages.
-        if all_updates:
-            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+        session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
         await self._run_after_providers(session=provider_session, context=session_context)
 
@@ -654,9 +661,17 @@ class WorkflowAgent(BaseAgent):
                         contents=list(data.contents),
                         role=data.role,
                         author_name=data.author_name or executor_id,
+                        agent_id=data.agent_id,
                         response_id=data.response_id,
                         message_id=data.message_id,
                         created_at=data.created_at,
+                        # The attribute is typed wider than the constructor accepts (custom
+                        # connectors may set any string); forward the value unchanged.
+                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                        continuation_token=data.continuation_token,
+                        additional_properties=dict(data.additional_properties)
+                        if data.additional_properties is not None
+                        else None,
                         raw_representation=data.raw_representation,
                     )
                 ]
@@ -676,6 +691,11 @@ class WorkflowAgent(BaseAgent):
                             raw_representation=msg,
                         )
                     )
+                if updates:
+                    updates[-1].agent_id = data.agent_id
+                    updates[-1].finish_reason = data.finish_reason
+                    updates[-1].continuation_token = data.continuation_token
+                    updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):
                 return [
@@ -771,11 +791,11 @@ class WorkflowAgent(BaseAgent):
         input_messages: Sequence[Message],
         pending_requests: Mapping[str, WorkflowEvent[Any]] | None = None,
     ) -> dict[str, Any]:
-        """Extract function responses from input messages.
+        """Extract pending function or computer responses from input messages.
 
         The responses are for pending requests that the workflow is waiting on, and
         will be passed to the workflow. The pending requests are processed to either
-        `function_approval_request` or `function_call` content by `_process_request_info_event`.
+        specialized user-input content or a `function_call` by `_process_request_info_event`.
         """
         pending_requests = pending_requests or {}
         function_responses: dict[str, Any] = {}
@@ -811,6 +831,21 @@ class WorkflowAgent(BaseAgent):
                         else content.result
                     )
                     function_responses[response_request_id] = response_data
+                elif content.type == "computer_tool_result":
+                    if not content.call_id:
+                        raise AgentInvalidResponseException("Computer result is missing its call ID.")
+                    matching_requests = [
+                        pending_id
+                        for pending_id, pending_event in pending_requests.items()
+                        if isinstance(pending_event.data, Content)
+                        and pending_event.data.type == "computer_tool_call"
+                        and pending_event.data.call_id == content.call_id
+                    ]
+                    if len(matching_requests) != 1:
+                        raise AgentInvalidResponseException(
+                            f"Computer result for call {content.call_id!r} must match exactly one pending request."
+                        )
+                    function_responses[matching_requests[0]] = content
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."

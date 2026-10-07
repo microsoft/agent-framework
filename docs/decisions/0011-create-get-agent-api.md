@@ -107,7 +107,7 @@ var agent3 = new AssistantClient(...).CreateAIAgent(...); // Creates a remote ag
 
 ### Possible Python implementations
 
-Methods like `create_agent` and `get_agent` should be implemented separately or defined on some stateless component that will allow to create multiple agents from the same instance/place.
+Methods like `create_agent` and `get_agent` should be implemented separately or defined on some stateless component that will allow creating multiple agents from the same instance/place.
 
 Possible options:
 

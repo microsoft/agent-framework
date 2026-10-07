@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
+import mimetypes
 import shlex
 import sys
+from collections import deque
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -17,6 +21,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from functools import partial
 from itertools import chain
 from typing import (
     TYPE_CHECKING,
@@ -25,6 +30,7 @@ from typing import (
     Generic,
     Literal,
     NoReturn,
+    TypeAlias,
     TypedDict,
     cast,
     overload,
@@ -56,6 +62,7 @@ from agent_framework._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     ContinuationToken,
     FinishReason,
@@ -76,6 +83,12 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseFunctionShellToolCall,
+    ResponseFunctionShellToolCallOutput,
+    ResponseFunctionToolCallOutputItem,
+    ResponseInputFile,
+    ResponseInputImage,
+    ResponseInputText,
     ResponseToolSearchCall,
     response_create_params,
 )
@@ -85,6 +98,7 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_input_item_param import LocalShellCall
 from openai.types.responses.response_stream_event import (
     ResponseStreamEvent as OpenAIResponseStreamEvent,
 )
@@ -96,13 +110,14 @@ from openai.types.responses.tool_param import (
     Mcp,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ._exceptions import OpenAIContentFilterException
 from ._feature_usage import FeatureIndex
 from ._shared import (
     AzureTokenProvider,
     _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
+    _is_mp3_media_type,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -129,6 +144,7 @@ class _PromptCacheOptions(TypedDict, total=False):
 
 
 if TYPE_CHECKING:
+    from agent_framework._sessions import AgentSession
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
@@ -181,7 +197,7 @@ class ReasoningOptions(TypedDict, total=False):
     See: https://platform.openai.com/docs/guides/reasoning
     """
 
-    effort: Literal["none", "low", "medium", "high", "xhigh"]
+    effort: Literal["none", "low", "medium", "high", "xhigh", "max"]
     """The effort level for reasoning. Higher effort means more reasoning tokens."""
 
     summary: Literal["auto", "concise", "detailed"]
@@ -342,6 +358,107 @@ async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
 
     # Already an event stream (or an unrecognized wrapper): iterate it directly.
     yield raw_response
+
+
+# The three input-content parts a `function_call_output.output` list can carry. Named so the
+# mapper takes a concrete type rather than `Any`.
+ResponseFunctionCallOutputPart: TypeAlias = ResponseInputText | ResponseInputImage | ResponseInputFile
+
+
+def _output_part_field(part: ResponseFunctionCallOutputPart | Mapping[str, Any], name: str) -> Any:
+    """Read a field from an output part, which may be an SDK model or a plain mapping."""
+    if isinstance(part, Mapping):
+        return part.get(name)
+    return getattr(part, name, None)
+
+
+def _media_type_from_uri(uri: str) -> str | None:
+    """Best-effort media type for a URI part, so `from_uri` is not left untyped."""
+    if uri.startswith("data:"):
+        declared = uri[5:].split(";", 1)[0].split(",", 1)[0]
+        return declared or None
+    guessed, _ = mimetypes.guess_type(uri.split("?", 1)[0])
+    return guessed
+
+
+def _decode_base64_file_data(file_data: str) -> bytes | None:
+    """Decode a base64 ``file_data`` payload, tolerating a data-URI prefix."""
+    payload = file_data.split(",", 1)[1] if file_data.startswith("data:") else file_data
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        logger.debug("function_call_output file_data was not valid base64; keeping it as text.")
+        return None
+
+
+def _guess_media_type(filename: str | None, fallback: str | None = "application/octet-stream") -> str | None:
+    """Best-effort media type from a filename.
+
+    ``from_data`` requires one, so inline payloads keep the octet-stream fallback. A hosted-file
+    reference does not, so that caller passes ``fallback=None`` rather than assert a type it
+    does not know.
+    """
+    if filename:
+        guessed, _ = mimetypes.guess_type(filename)
+        if guessed:
+            return guessed
+    return fallback
+
+
+# Per-request dedup state for output items and text annotations, carried in the parse `options` mapping
+# rather than on `_parse_chunk_from_openai`'s signature.
+#
+# Adding a parameter would break released `agent-framework-foundry` wheels: they pin
+# `agent-framework-openai>=1.14.2,<2` and implement the older signature, so a user who upgrades
+# only this package would hit `TypeError` on every streaming request. Raising the Foundry floor
+# cannot retract a constraint that already shipped, so the signature has to stay byte-identical.
+# `options` here is the validated *parse* context, not the outbound request body -- the request is
+# built from a separate `run_options` dict -- so a private key cannot leak to the service.
+_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION = "__agent_framework_seen_function_call_output_ids"
+_SEEN_TEXT_ANNOTATION_KEYS_OPTION = "__agent_framework_seen_text_annotation_keys"
+
+
+def _pairable_function_call_output_call_id(item: ResponseFunctionToolCallOutputItem) -> str | None:
+    """Return the ``call_id`` this item can be paired on, or ``None`` when it has no usable result.
+
+    Explicitly in-progress outputs must not claim the deduplication id, even when they carry empty
+    or partial output. Completed empty outputs remain valid. Blank ``call_id`` values are also rejected:
+    unpairable results are dropped by transports or re-sent as invalid ``function_call_output`` input
+    items on the next turn.
+
+    Returning the id rather than a bool threads the validated value to the parse instead of making
+    it re-derive one. ``call_id`` is ``Optional[str]`` on the SDK model, so re-reading it there
+    would need a narrowing this function has already done.
+    """
+    # Typed as required on the SDK model, but an in-progress `.added` item can arrive without
+    # it populated, so it is treated as optional at runtime.
+    if item.status == "in_progress" or cast("object | None", item.output) is None:
+        return None
+    call_id = item.call_id
+    if not call_id:
+        logger.debug("Skipping function_call_output with no call_id: item_id=%s", getattr(item, "id", None))
+        return None
+    return call_id
+
+
+def _claim_function_call_output(seen_item_ids: set[str] | None, item: Any) -> bool:
+    """Claim a ``function_call_output`` item for emission; return ``False`` if already claimed.
+
+    The Responses stream can surface the same output item on both ``response.output_item.added``
+    and ``response.output_item.done``. Whichever event first carries an eligible ``output`` emits
+    the result, and this test-and-set keeps the other from producing a duplicate one. Keyed on the
+    item id rather than ``call_id``, which is not guaranteed to be unique forever. When no set is
+    supplied the item is always claimable, so a single event parsed on its own still yields output.
+    """
+    if seen_item_ids is None:
+        return True
+    item_id = getattr(item, "id", None)
+    if not isinstance(item_id, str) or not item_id:
+        return True
+    if item_id in seen_item_ids:
+        return False
+    seen_item_ids.add(item_id)
+    return True
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
@@ -712,6 +829,8 @@ class RawOpenAIChatClient(
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
+            seen_function_call_output_ids: set[str] = set()
+            seen_text_annotation_keys: set[tuple[str, int, int]] = set()
             validated_options: dict[str, Any] | None = None
             # Captured once request options are validated/prepared so the streaming finalizer can
             # still parse the aggregated response into structured output after the stream completes.
@@ -731,6 +850,8 @@ class RawOpenAIChatClient(
                     if self._FEATURE_USAGE_INDEX is not None:
                         mark_feature_used(self._FEATURE_USAGE_INDEX)
                     validated_options = await self._validate_options(options)
+                    validated_options[_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION] = seen_function_call_output_ids
+                    validated_options[_SEEN_TEXT_ANNOTATION_KEYS_OPTION] = seen_text_annotation_keys
                     response_format = validated_options.get("response_format")
                     try:
                         raw_stream_response = await client.responses.with_raw_response.retrieve(
@@ -753,6 +874,19 @@ class RawOpenAIChatClient(
                                 )
                                 if served_model is not None:
                                     update.model = served_model
+                                if chunk.type in (
+                                    "response.completed",
+                                    "response.incomplete",
+                                    "response.failed",
+                                ) and isinstance(options, dict):
+                                    # Same as the non-streaming path (issue #5394): once the resumed
+                                    # background response has finished, drop the continuation_token
+                                    # from the caller's options dict. FunctionInvocationLayer reuses
+                                    # that dict, so a leftover token makes the next tool-loop iteration
+                                    # retrieve this response again instead of POSTing the tool results,
+                                    # and the tools run again each time. Do it before yielding, so a
+                                    # consumer that stops at the terminal update doesn't keep it.
+                                    options.pop("continuation_token", None)
                                 yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -762,6 +896,8 @@ class RawOpenAIChatClient(
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
+                    validated_options[_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION] = seen_function_call_output_ids
+                    validated_options[_SEEN_TEXT_ANNOTATION_KEYS_OPTION] = seen_text_annotation_keys
                     if extra_headers is not None:
                         run_options["extra_headers"] = dict(extra_headers)
                     response_format = validated_options.get("response_format")
@@ -864,6 +1000,7 @@ class RawOpenAIChatClient(
         self._enrich_streamed_azure_ai_search_citations(updates)
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
+        self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
         logprobs = [
             logprob
             for update in updates
@@ -1071,6 +1208,16 @@ class RawOpenAIChatClient(
         return None
 
     # region Hosted Tool Factory Methods
+
+    @staticmethod
+    def get_computer_tool() -> dict[str, Literal["computer"]]:
+        """Create a computer tool configuration for the Responses API.
+
+        The application executes the returned actions and sends a
+        ``Content.from_computer_tool_result`` with a screenshot. Safety checks
+        must be reviewed and acknowledged explicitly before execution.
+        """
+        return {"type": "computer"}
 
     @staticmethod
     def get_code_interpreter_tool(
@@ -1342,6 +1489,7 @@ class RawOpenAIChatClient(
                 or provide a dict with "always_require_approval" and/or "never_require_approval"
                 keys mapping to lists of tool names.
             allowed_tools: List of tool names that are allowed to be used from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
 
         Returns:
@@ -1391,7 +1539,7 @@ class RawOpenAIChatClient(
         if headers:
             mcp["headers"] = headers
 
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
 
         if approval_mode:
@@ -1601,8 +1749,11 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
-            self._validate_reasoning_groups_for_stateless_replay(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
+            self._validate_reasoning_groups_for_stateless_replay(
+                chat_messages,
+                replayable_reasoning_ids=set(reasoning_items),
+            )
         serialized_reasoning_ids: set[str] = set()
 
         list_of_list = [
@@ -1620,7 +1771,12 @@ class RawOpenAIChatClient(
         # items (drop unmatched). See `_AF_MCP_PENDING_OUTPUT_KEY`.
         return self._coalesce_pending_mcp_results(flat)
 
-    def _validate_reasoning_groups_for_stateless_replay(self, chat_messages: Sequence[Message]) -> None:
+    def _validate_reasoning_groups_for_stateless_replay(
+        self,
+        chat_messages: Sequence[Message],
+        *,
+        replayable_reasoning_ids: set[str],
+    ) -> None:
         """Reject reasoning-bound tool groups that cannot be reconstructed."""
         group_reasoning_contents: dict[str, list[Content]] = {}
         group_call_ids: dict[str, list[str]] = {}
@@ -1641,6 +1797,8 @@ class RawOpenAIChatClient(
                 in {
                     "function_call",
                     "function_result",
+                    "computer_tool_call",
+                    "computer_tool_result",
                     "mcp_server_tool_call",
                     "mcp_server_tool_result",
                 }
@@ -1672,21 +1830,27 @@ class RawOpenAIChatClient(
             group_call_ids.setdefault(group_id, []).extend(call_ids)
 
         invalid_groups: list[str] = []
+        reasoning_id_groups: dict[str, set[str]] = {}
+        for group_id, reasoning_contents in group_reasoning_contents.items():
+            for content in reasoning_contents:
+                if content.id:
+                    reasoning_id_groups.setdefault(content.id, set()).add(group_id)
+        reasoning_ids_reused_across_groups = {
+            reasoning_id for reasoning_id, group_ids in reasoning_id_groups.items() if len(group_ids) > 1
+        }
+
         for group_id in groups_with_reasoning:
             call_ids = list(dict.fromkeys(group_call_ids.get(group_id, [])))
             if not call_ids:
                 continue
             reasoning_contents = group_reasoning_contents.get(group_id, [])
-            replayable_reasoning_ids = {
-                content.id
-                for content in reasoning_contents
-                if content.id and (content.protected_data or content.additional_properties.get("encrypted_content"))
-            }
             missing_reasoning_ids = list(
                 dict.fromkeys(
                     content.id or "<missing provider reasoning id>"
                     for content in reasoning_contents
-                    if not content.id or content.id not in replayable_reasoning_ids
+                    if not content.id
+                    or content.id not in replayable_reasoning_ids
+                    or content.id in reasoning_ids_reused_across_groups
                 )
             )
             if not reasoning_contents:
@@ -1698,9 +1862,9 @@ class RawOpenAIChatClient(
 
         if invalid_groups:
             raise ChatClientInvalidRequestException(
-                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because encrypted reasoning "
-                "content is missing. Use service-side continuation or explicitly configured atomic compaction to "
-                "exclude each complete reasoning/tool-call group."
+                f"Stateless replay cannot reconstruct {'; '.join(invalid_groups)} because required reasoning replay "
+                "data is missing or invalid. Use service-side continuation or explicitly configured atomic "
+                "compaction to exclude each complete reasoning/tool-call group."
             )
 
     def _prepare_message_for_openai(
@@ -1742,16 +1906,6 @@ class RawOpenAIChatClient(
                         serialized_reasoning_ids.add(content.id)
                     continue
                 case "function_result":
-                    if request_uses_service_side_storage:
-                        props = content.additional_properties or {}
-                        # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
-                        # plain function_call_output pairs by call_id and is safe under storage.
-                        if props.get(
-                            OPENAI_SHELL_OUTPUT_TYPE_KEY
-                        ) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and props.get(
-                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
-                        ):
-                            continue
                     new_args: dict[str, Any] = {}
                     new_args.update(
                         self._prepare_content_for_openai(
@@ -1771,7 +1925,40 @@ class RawOpenAIChatClient(
                         replays_local_storage=replays_local_storage,
                     )
                     if function_call:
+                        if function_call.get("type") in {"shell_call", "local_shell_call"} and (
+                            "content" in args or "tool_calls" in args
+                        ):
+                            all_messages.append(args)
+                            args = {"type": "message", "role": message.role}
                         all_messages.append(function_call)
+                case "shell_tool_call" | "shell_tool_result":
+                    if request_uses_service_side_storage:
+                        continue
+                    if "content" in args or "tool_calls" in args:
+                        all_messages.append(args)
+                        args = {"type": "message", "role": message.role}
+                    all_messages.append(
+                        self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                    )
+                case "computer_tool_call" | "computer_tool_result":
+                    if content.type == "computer_tool_call" and request_uses_service_side_storage:
+                        # Skip only outbound replay: the call remains in response/history for audit.
+                        # It is still actionable, so informational_only would be misleading here.
+                        continue
+                    if "content" in args or "tool_calls" in args:
+                        all_messages.append(args)
+                        args = {"type": "message", "role": message.role}
+                    all_messages.append(
+                        self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                    )
                 case "function_approval_request":
                     # Service-stored hosted requests are already present remotely, and local approvals
                     # are resolved in-process; neither should be serialized as an MCP input item.
@@ -1851,6 +2038,8 @@ class RawOpenAIChatClient(
                 None,
             )
             if not encrypted_content:
+                if provider_item := self._prepare_provider_reasoning_item_for_openai(reasoning_id, contents):
+                    reasoning_items[reasoning_id] = provider_item
                 continue
 
             item: dict[str, Any] = {
@@ -1874,6 +2063,14 @@ class RawOpenAIChatClient(
                 item["content"] = reasoning_texts
             reasoning_items[reasoning_id] = item
         return reasoning_items
+
+    def _prepare_provider_reasoning_item_for_openai(
+        self,
+        reasoning_id: str,
+        contents: Sequence[Content],
+    ) -> dict[str, Any] | None:
+        """Return a provider-native reasoning item for stateless replay, when supported."""
+        return None
 
     def _prepare_content_for_openai(
         self,
@@ -1933,9 +2130,10 @@ class RawOpenAIChatClient(
                 openai_content_type = content.additional_properties.get("openai_content_type")
                 if openai_content_type == "input_file":
                     filename = content.additional_properties.get("filename")
+                    file_field = "file_url" if content.uri and not content.uri.startswith("data:") else "file_data"
                     file_obj = {
                         "type": "input_file",
-                        "file_data": content.uri,
+                        file_field: content.uri,
                     }
                     if filename:
                         file_obj["filename"] = filename
@@ -1957,7 +2155,7 @@ class RawOpenAIChatClient(
                 if content.has_top_level_media_type("audio"):
                     if content.media_type and "wav" in content.media_type:
                         format = "wav"
-                    elif content.media_type and "mp3" in content.media_type:
+                    elif _is_mp3_media_type(content.media_type):
                         format = "mp3"
                     else:
                         logger.warning("Unsupported audio media type: %s", content.media_type)
@@ -1984,6 +2182,11 @@ class RawOpenAIChatClient(
                     return _attach_prompt_cache_breakpoint(file_obj, content)
                 return {}
             case "function_call":
+                shell_output_type = content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
+                if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL:
+                    return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
+                if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL:
+                    return self._prepare_shell_transcript_item_for_openai(content, expected_type="local_shell_call")
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
@@ -2006,6 +2209,58 @@ class RawOpenAIChatClient(
                 if status := content.additional_properties.get("status"):
                     function_call_obj["status"] = status
                 return function_call_obj
+            case "shell_tool_call":
+                return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
+            case "shell_tool_result":
+                return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call_output")
+            case "computer_tool_call":
+                if not content.id or not content.call_id or not content.actions:
+                    raise ChatClientInvalidRequestException("Computer calls require an id, call_id, and actions.")
+                computer_call_item: dict[str, Any] = {
+                    "type": "computer_call",
+                    "id": content.id,
+                    "call_id": content.call_id,
+                }
+                if content.additional_properties.get("computer_action_format") == "single":
+                    if len(content.actions) != 1:
+                        raise ChatClientInvalidRequestException("A preview computer call must contain one action.")
+                    computer_call_item["action"] = content.actions[0]
+                else:
+                    computer_call_item["actions"] = content.actions
+                if content.status is not None:
+                    computer_call_item["status"] = content.status
+                if content.pending_safety_checks is not None:
+                    computer_call_item["pending_safety_checks"] = content.pending_safety_checks
+                return computer_call_item
+            case "computer_tool_result":
+                screenshot = content.screenshot
+                if not content.call_id or screenshot is None:
+                    raise ChatClientInvalidRequestException("Computer results require a call_id and screenshot.")
+                screenshot_output: dict[str, Any] = {"type": "computer_screenshot"}
+                if screenshot.type in ("data", "uri") and screenshot.uri:
+                    screenshot_output["image_url"] = screenshot.uri
+                    if file_id := screenshot.additional_properties.get("file_id"):
+                        screenshot_output["file_id"] = file_id
+                elif screenshot.type == "hosted_file" and screenshot.file_id:
+                    screenshot_output["file_id"] = screenshot.file_id
+                    if image_url := screenshot.additional_properties.get("image_url"):
+                        screenshot_output["image_url"] = image_url
+                else:
+                    raise ChatClientInvalidRequestException("A computer screenshot must have an image URL or file ID.")
+                if detail := screenshot.additional_properties.get("detail"):
+                    screenshot_output["detail"] = detail
+                computer_output_item: dict[str, Any] = {
+                    "type": "computer_call_output",
+                    "call_id": content.call_id,
+                    "output": screenshot_output,
+                }
+                if content.id is not None:
+                    computer_output_item["id"] = content.id
+                if content.status is not None:
+                    computer_output_item["status"] = content.status
+                if content.acknowledged_safety_checks is not None:
+                    computer_output_item["acknowledged_safety_checks"] = content.acknowledged_safety_checks
+                return computer_output_item
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
@@ -2047,7 +2302,7 @@ class RawOpenAIChatClient(
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
                     and content.items
-                    and any(item.type in ("data", "uri") for item in content.items)
+                    and any(item.type in ("data", "uri", "hosted_file") for item in content.items)
                 ):
                     output_parts: list[dict[str, Any]] = []
                     for item in content.items:
@@ -2124,63 +2379,138 @@ class RawOpenAIChatClient(
                 return {}
 
     @staticmethod
+    def _shell_output_payloads_from_items(content: Content) -> list[dict[str, Any]] | None:
+        """Extract structured shell output carried by canonical function-result items."""
+        if not content.items:
+            return None
+
+        if all(item.type == "shell_command_output" for item in content.items):
+            payloads: list[dict[str, Any]] = []
+            for item in content.items:
+                payload: dict[str, Any] = {
+                    "stdout": item.stdout or "",
+                    "stderr": item.stderr or "",
+                    "timed_out": item.timed_out is True,
+                }
+                if item.exit_code is not None:
+                    payload["exit_code"] = item.exit_code
+                payloads.append(payload)
+            return payloads
+
+        if len(content.items) != 1 or content.items[0].type != "text":
+            return None
+
+        properties = content.items[0].additional_properties
+        stdout = properties.get("stdout")
+        stderr = properties.get("stderr")
+        exit_code = properties.get("exit_code")
+        truncated = properties.get("truncated", False)
+        timed_out = properties.get("timed_out")
+        if (
+            isinstance(stdout, str)
+            and isinstance(stderr, str)
+            and type(exit_code) is int
+            and type(truncated) is bool
+            and type(timed_out) is bool
+        ):
+            if truncated:
+                stdout = f"{stdout}\n[output truncated]" if stdout else "[output truncated]"
+            return [
+                {
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                }
+            ]
+        return None
+
+    @staticmethod
     def _to_local_shell_output_payload(content: Content) -> str:
         """Convert function tool output to the local shell JSON payload format."""
         payload: dict[str, Any]
         if isinstance(content.result, Mapping):
             payload = dict(content.result)  # type: ignore[assignment]
+        elif structured_payloads := RawOpenAIChatClient._shell_output_payloads_from_items(content):
+            payload = structured_payloads[0] if len(structured_payloads) == 1 else {"output": structured_payloads}
         else:
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
-        if "exit_code" not in payload:
-            payload["exit_code"] = 1 if content.exception else 0
+        if "exit_code" not in payload and not bool(payload.get("timed_out", False)):
+            payload["exit_code"] = 1 if content.exception is not None else 0
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
     def _to_shell_call_output_payload(content: Content) -> list[dict[str, Any]]:
         """Convert function tool output to shell_call_output payload format."""
-        payload: dict[str, Any]
+        payloads: list[dict[str, Any]]
         if isinstance(content.result, Mapping):
-            payload = dict(content.result)  # type: ignore[assignment]
+            mapped_payload: dict[str, Any] = dict(content.result)  # type: ignore[assignment]
+            payloads = [mapped_payload]
+        elif structured_payloads := RawOpenAIChatClient._shell_output_payloads_from_items(content):
+            payloads = structured_payloads
         else:
-            payload = {
-                "stdout": "" if content.result is None else str(content.result),
-            }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
+            payloads = [{"stdout": "" if content.result is None else str(content.result)}]
 
         # Pass through native payload shape when tool already returns shell output entries.
-        direct_output = payload.get("output")
-        if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):  # type: ignore[reportUnknownMemberType]
-            return [dict(item) for item in direct_output]  # type: ignore[reportUnknownMemberType]
+        if len(payloads) == 1:
+            direct_output = payloads[0].get("output")
+            if isinstance(direct_output, list) and all(isinstance(item, Mapping) for item in direct_output):  # type: ignore[reportUnknownMemberType]
+                return [dict(item) for item in direct_output]  # type: ignore[reportUnknownMemberType]
 
-        stdout = str(payload.get("stdout", ""))
-        stderr = str(payload.get("stderr", ""))
-        timed_out = bool(payload.get("timed_out", False))
-        if timed_out:
-            outcome: dict[str, Any] = {"type": "timeout"}
-        else:
-            exit_code_raw = payload.get("exit_code")
-            try:
-                exit_code = int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception else 0)
-            except (TypeError, ValueError):
-                exit_code = 1 if content.exception else 0
-            outcome = {"type": "exit", "exit_code": exit_code}
-        return [
-            {
+        output: list[dict[str, Any]] = []
+        for payload in payloads:
+            stdout = str(payload.get("stdout", ""))
+            stderr = str(payload.get("stderr", ""))
+            timed_out = bool(payload.get("timed_out", False))
+            if timed_out:
+                outcome: dict[str, Any] = {"type": "timeout"}
+            else:
+                exit_code_raw = payload.get("exit_code")
+                try:
+                    exit_code = (
+                        int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception is not None else 0)
+                    )
+                except (TypeError, ValueError):
+                    exit_code = 1 if content.exception is not None else 0
+                outcome = {"type": "exit", "exit_code": exit_code}
+            output.append({
                 "stdout": stdout,
                 "stderr": stderr,
                 "outcome": outcome,
-            }
-        ]
+            })
+        return output
 
-    @staticmethod
-    def _join_shell_commands(commands: Sequence[str]) -> str:
-        """Join shell commands into a single executable command string."""
-        return "\n".join(command for command in commands if command).strip()
+    def _image_generation_item_to_contents(self, item: Any) -> list[Content]:
+        """Convert a completed ``image_generation_call`` output item into framework ``Content`` objects.
+
+        Used by both the non-streaming parser and the streaming
+        ``response.output_item.done`` handler. With the default ``partial_images=0``
+        no ``response.image_generation_call.partial_image`` events are emitted, so the
+        completed item is the only place the final base64 image is delivered.
+        """
+        image_output: Content | None = None
+        image_result = getattr(item, "result", None)
+        if image_result is not None:
+            # item.result contains raw base64 string
+            # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
+            image_output = Content.from_uri(
+                uri=f"data:{detect_media_type_from_base64(data_str=image_result) or 'image/png'};base64,{image_result}",
+                raw_representation=image_result,
+            )
+        image_id = getattr(item, "id", None)
+        return [
+            Content.from_image_generation_tool_call(
+                image_id=image_id,
+                raw_representation=item,
+            ),
+            Content.from_image_generation_tool_result(
+                image_id=image_id,
+                outputs=image_output,
+                raw_representation=item,
+            ),
+        ]
 
     def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
@@ -2195,21 +2525,42 @@ class RawOpenAIChatClient(
         contents: list[Content] = []
         item_type = getattr(item, "type", None)
         if item_type == "shell_call":
-            shell_call_id = getattr(item, "call_id", None) or ""
-            shell_commands: list[str] = []
-            shell_timeout_ms: int | None = None
-            shell_max_output: int | None = None
-            if action := getattr(item, "action", None):
-                shell_commands = list(getattr(action, "commands", []) or [])
-                shell_timeout_ms = getattr(action, "timeout_ms", None)
-                shell_max_output = getattr(action, "max_output_length", None)
-            if local_shell_tool_name:
-                command_text = self._join_shell_commands(shell_commands)
+            raw_shell_call_id = getattr(item, "call_id", None)
+            shell_call_id = raw_shell_call_id if isinstance(raw_shell_call_id, str) else ""
+            raw_shell_call_item_id = getattr(item, "id", None)
+            shell_call_item_id = raw_shell_call_item_id if isinstance(raw_shell_call_item_id, str) else ""
+            action = getattr(item, "action", None)
+            raw_shell_commands = getattr(action, "commands", None)
+            shell_commands: list[str] = (
+                cast("list[str]", raw_shell_commands)
+                if isinstance(raw_shell_commands, list)
+                and raw_shell_commands
+                and all(isinstance(command, str) for command in cast("list[object]", raw_shell_commands))
+                else []
+            )
+            shell_timeout_ms = getattr(action, "timeout_ms", None)
+            shell_max_output = getattr(action, "max_output_length", None)
+            item_environment: object = getattr(item, "environment", None)
+            env_type: object = (
+                cast("Mapping[str, object]", item_environment).get("type")
+                if isinstance(item_environment, Mapping)
+                else getattr(item_environment, "type", None)
+            )
+            is_local_environment: bool = bool(
+                env_type == "local" or (item_environment is None and local_shell_tool_name is not None)
+            )
+            if (
+                local_shell_tool_name
+                and is_local_environment
+                and shell_call_id
+                and shell_call_item_id
+                and shell_commands
+            ):
                 contents.append(
                     Content.from_function_call(
                         call_id=shell_call_id,
                         name=local_shell_tool_name,
-                        arguments=json.dumps({"command": command_text}),
+                        arguments=json.dumps({"command": "\n".join(shell_commands).strip()}),
                         additional_properties={
                             OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
                             OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
@@ -2229,10 +2580,20 @@ class RawOpenAIChatClient(
                     )
                 )
         elif item_type == "local_shell_call":
-            local_call_id = getattr(item, "call_id", None) or ""
-            local_command_parts = list(getattr(getattr(item, "action", None), "command", []) or [])
+            raw_local_call_id = getattr(item, "call_id", None)
+            local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
+            raw_local_call_item_id = getattr(item, "id", None)
+            local_call_item_id = raw_local_call_item_id if isinstance(raw_local_call_item_id, str) else ""
+            raw_local_command_parts = getattr(getattr(item, "action", None), "command", None)
+            local_command_parts: list[str] = (
+                cast("list[str]", raw_local_command_parts)
+                if isinstance(raw_local_command_parts, list)
+                and raw_local_command_parts
+                and all(isinstance(part, str) for part in cast("list[object]", raw_local_command_parts))
+                else []
+            )
             local_command = shlex.join(local_command_parts) if local_command_parts else ""
-            if local_shell_tool_name:
+            if local_shell_tool_name and local_call_id and local_call_item_id and local_command_parts:
                 contents.append(
                     Content.from_function_call(
                         call_id=local_call_id,
@@ -2240,7 +2601,7 @@ class RawOpenAIChatClient(
                         arguments=json.dumps({"command": local_command}),
                         additional_properties={
                             OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
-                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: getattr(item, "id", None),
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: local_call_item_id,
                             OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
                         },
                         raw_representation=item,
@@ -2298,6 +2659,101 @@ class RawOpenAIChatClient(
             return json.dumps(arguments)
         except (TypeError, ValueError):
             return str(arguments)
+
+    @staticmethod
+    def _function_call_output_result(
+        output: str | Sequence[ResponseFunctionCallOutputPart | Mapping[str, Any]],
+    ) -> str | list[Content]:
+        """Map a ``function_call_output`` result to framework content.
+
+        ``output`` is either a string or a list of input-content parts. Returning the parts as a
+        ``list[Content]`` is the shape `Content.from_function_result` documents as canonical. This
+        preserves rich parts for framework consumers and OpenAI replay. The flat ``result`` still
+        contains only text; transports such as the ordinary AG-UI result emitter read that field,
+        not the rich items. String-shaped output remains unchanged.
+
+        Parts are read field-by-field rather than through `isinstance`, because the field is typed
+        as SDK models but transports and test doubles also deliver plain mappings, and the previous
+        behaviour extracted text from those. A part carrying none of the payload fields, or a type
+        this SDK version does not know, degrades to its JSON instead of disappearing.
+        """
+        if isinstance(output, str):
+            return output
+
+        parts: list[Content] = []
+        for part in output:
+            try:
+                parts.append(RawOpenAIChatClient._output_part_content(part))
+            except Exception:
+                # A content factory validates its input, so odd provider data could otherwise
+                # raise out of a streaming parse and fail the whole request. The part still
+                # degrades to its JSON, which is the same promise the unknown-type path makes.
+                logger.debug("Falling back to JSON for a function_call_output part.", exc_info=True)
+                parts.append(RawOpenAIChatClient._output_part_as_text(part))
+        return parts
+
+    @staticmethod
+    def _output_part_as_text(part: ResponseFunctionCallOutputPart | Mapping[str, Any]) -> Content:
+        """Render a part as JSON text -- the degrade path, never a drop."""
+        return Content.from_text(
+            RawOpenAIChatClient._stringify_mcp_output(RawOpenAIChatClient._serialize_provider_payload(part)),
+            raw_representation=part,
+        )
+
+    @staticmethod
+    def _output_part_content(part: ResponseFunctionCallOutputPart | Mapping[str, Any]) -> Content:
+        """Map one output part to framework content.
+
+        Dispatched on the payload fields rather than on `type`, so a part shape a later SDK adds
+        still maps if it carries a field we understand, and otherwise degrades through the caller.
+        """
+        field = partial(_output_part_field, part)
+        detail = field("detail")
+        extra: dict[str, Any] = {"detail": detail} if detail else {}
+        if (part_type := field("type")) in ("input_image", "input_file"):
+            extra["openai_content_type"] = part_type
+        if filename := field("filename"):
+            extra["filename"] = filename
+
+        if part_type == "input_text" and isinstance(text := field("text"), str):
+            return Content.from_text(text, raw_representation=part)
+
+        if uri := (field("image_url") or field("file_url")):
+            # Media type inferred from the URI so the content is not left untyped; a data URI
+            # declares its own, and an unrecognised extension simply stays unset.
+            return Content.from_uri(
+                uri,
+                media_type=_media_type_from_uri(uri),
+                additional_properties=extra or None,
+                raw_representation=part,
+            )
+
+        if file_id := field("file_id"):
+            # Kept as a hosted-file reference rather than flattened to text. It is only resolvable
+            # by the provider that issued it, but staying addressable lets a consumer decide that;
+            # text would destroy the information.
+            return Content.from_hosted_file(
+                file_id,
+                # Only when the filename yields one: a hosted reference whose type we do not
+                # know is better left unset than asserted as octet-stream.
+                media_type=_guess_media_type(field("filename"), fallback=None),
+                name=field("filename"),
+                additional_properties=extra or None,
+                raw_representation=part,
+            )
+
+        if (
+            isinstance(file_data := field("file_data"), str)
+            and (decoded := _decode_base64_file_data(file_data)) is not None
+        ):
+            return Content.from_data(
+                decoded,
+                _guess_media_type(field("filename")) or "application/octet-stream",
+                additional_properties=extra or None,
+                raw_representation=part,
+            )
+
+        return RawOpenAIChatClient._output_part_as_text(part)
 
     @staticmethod
     def _stringify_mcp_output(output: Any) -> str:
@@ -2372,6 +2828,35 @@ class RawOpenAIChatClient(
             out.append(item)
         return out
 
+    @classmethod
+    def _prepare_shell_transcript_item_for_openai(
+        cls,
+        content: Content,
+        *,
+        expected_type: Literal["shell_call", "shell_call_output", "local_shell_call"],
+    ) -> dict[str, Any]:
+        """Restore a provider-issued shell transcript item for stateless replay."""
+        payload = cls._serialize_provider_payload(content.raw_representation)
+        if isinstance(payload, Mapping):
+            typed_payload = cast("Mapping[str, Any]", payload)
+            raw_call_id = typed_payload.get("call_id")
+            try:
+                if expected_type == "shell_call":
+                    ResponseFunctionShellToolCall.model_validate(typed_payload)
+                elif expected_type == "shell_call_output":
+                    ResponseFunctionShellToolCallOutput.model_validate(typed_payload)
+                else:
+                    TypeAdapter(LocalShellCall).validate_python(typed_payload)
+            except ValidationError:
+                pass
+            else:
+                if isinstance(raw_call_id, str) and raw_call_id and raw_call_id == content.call_id:
+                    return dict(typed_payload)
+        raise ChatClientInvalidRequestException(
+            f"Stateless replay cannot reconstruct {expected_type} for shell call {content.call_id!r}. "
+            "Use service-side continuation or preserve the original provider response item."
+        )
+
     @staticmethod
     def _serialize_provider_payload(value: Any) -> Any:
         """Convert OpenAI SDK objects into JSON-serializable Python values."""
@@ -2382,6 +2867,113 @@ class RawOpenAIChatClient(
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return [RawOpenAIChatClient._serialize_provider_payload(item) for item in value]  # type: ignore[reportUnknownVariableType]
         return value
+
+    def _parse_computer_safety_checks(self, value: Any) -> list[ComputerSafetyCheck] | None:
+        if value is None:
+            return None
+        serialized = self._serialize_provider_payload(value)
+        if not isinstance(serialized, list):
+            raise ChatClientInvalidRequestException("Computer safety checks must be a list.")
+        checks: list[ComputerSafetyCheck] = []
+        for check in cast("list[object]", serialized):
+            if not isinstance(check, Mapping):
+                raise ChatClientInvalidRequestException("Computer safety checks require an id.")
+            check_fields = cast("Mapping[str, object]", check)
+            check_id = check_fields.get("id")
+            if not isinstance(check_id, str) or not check_id:
+                raise ChatClientInvalidRequestException("Computer safety checks require an id.")
+            parsed: ComputerSafetyCheck = {"id": check_id}
+            code = check_fields.get("code")
+            if code is not None:
+                if not isinstance(code, str):
+                    raise ChatClientInvalidRequestException("Computer safety check code must be a string.")
+                parsed["code"] = code
+            message = check_fields.get("message")
+            if message is not None:
+                if not isinstance(message, str):
+                    raise ChatClientInvalidRequestException("Computer safety check message must be a string.")
+                parsed["message"] = message
+            checks.append(parsed)
+        return checks
+
+    def _parse_computer_tool_call_content(self, item: Any) -> Content:
+        actions = getattr(item, "actions", None)
+        singular_action = getattr(item, "action", None)
+        is_preview = actions is None and singular_action is not None
+        serialized = self._serialize_provider_payload([singular_action] if is_preview else actions)
+        if not isinstance(serialized, list) or not serialized:
+            raise ChatClientInvalidRequestException("Computer call is missing its ordered actions.")
+        parsed_actions: list[dict[str, Any]] = []
+        for action in cast("list[object]", serialized):
+            if not isinstance(action, Mapping):
+                raise ChatClientInvalidRequestException("Computer call actions must be objects.")
+            parsed_actions.append(dict(cast("Mapping[str, Any]", action)))
+        item_id = getattr(item, "id", None)
+        call_id = getattr(item, "call_id", None)
+        if not isinstance(item_id, str) or not isinstance(call_id, str):
+            raise ChatClientInvalidRequestException("Computer call is missing its item id or call_id.")
+        additional_properties = {"computer_action_format": "single"} if is_preview else None
+        return Content.from_computer_tool_call(
+            id=item_id,
+            call_id=call_id,
+            actions=parsed_actions,
+            status=getattr(item, "status", None),
+            pending_safety_checks=self._parse_computer_safety_checks(getattr(item, "pending_safety_checks", None)),
+            additional_properties=additional_properties,
+            raw_representation=item,
+        )
+
+    def _parse_computer_tool_result_content(self, item: Any) -> Content:
+        raw_output = self._serialize_provider_payload(getattr(item, "output", None))
+        if not isinstance(raw_output, Mapping):
+            raise ChatClientInvalidRequestException("Computer call output must contain a computer screenshot.")
+        output = cast("Mapping[str, object]", raw_output)
+        if output.get("type") != "computer_screenshot":
+            raise ChatClientInvalidRequestException("Computer call output must contain a computer screenshot.")
+        image_url = output.get("image_url")
+        file_id = output.get("file_id")
+        detail = output.get("detail")
+        screenshot_properties: dict[str, Any] = {}
+        if detail is not None:
+            screenshot_properties["detail"] = detail
+        if isinstance(image_url, str) and image_url:
+            if file_id is not None:
+                screenshot_properties["file_id"] = file_id
+            screenshot = Content.from_uri(image_url, additional_properties=screenshot_properties)
+        elif isinstance(file_id, str) and file_id:
+            screenshot = Content.from_hosted_file(file_id=file_id, additional_properties=screenshot_properties)
+        else:
+            raise ChatClientInvalidRequestException("Computer screenshot is missing its image URL or file ID.")
+        call_id = getattr(item, "call_id", None)
+        if not isinstance(call_id, str) or not call_id:
+            raise ChatClientInvalidRequestException("Computer call output is missing its call_id.")
+        return Content.from_computer_tool_result(
+            id=getattr(item, "id", None),
+            call_id=call_id,
+            screenshot=screenshot,
+            status=getattr(item, "status", None),
+            acknowledged_safety_checks=self._parse_computer_safety_checks(
+                getattr(item, "acknowledged_safety_checks", None)
+            ),
+            raw_representation=item,
+        )
+
+    @staticmethod
+    def _mark_completed_computer_calls(contents: Sequence[Content]) -> None:
+        """Pair completed outputs with preceding calls without hiding either transcript item."""
+        open_calls: dict[str, deque[Content]] = {}
+        for content in contents:
+            if content.type == "computer_tool_call" and content.user_input_request and content.call_id:
+                open_calls.setdefault(content.call_id, deque()).append(content)
+            elif (
+                content.type == "computer_tool_result"
+                and content.call_id
+                and content.status in (None, "completed")
+                and (calls := open_calls.get(content.call_id))
+            ):
+                call = calls.popleft()
+                call.user_input_request = False
+                call.informational_only = True
 
     @staticmethod
     def _parse_azure_ai_search_output_payload(output: Any) -> Mapping[str, Any] | None:
@@ -2628,6 +3220,33 @@ class RawOpenAIChatClient(
             raw_representation=item,
         )
 
+    def _parse_function_call_output_content(self, item: ResponseFunctionToolCallOutputItem, call_id: str) -> Content:
+        """Create function result content for a Responses ``function_call_output`` item.
+
+        A hosted tool that executes server-side -- for example a Foundry Toolbox dispatching
+        through its generic ``call_tool`` wrapper -- returns its result as a standalone
+        ``function_call_output`` item rather than on the originating call item. Parsing it keeps
+        the call/result pair intact for transports such as AG-UI, which otherwise sees a tool call
+        with no result and falls back to treating it as declaration-only (issue #8068).
+
+        ``output`` is either a string or a list of input-content parts. The list form is mapped to
+        canonical ``Content`` items by :meth:`_function_call_output_result`, so a returned image or
+        file stays addressable instead of arriving as JSON inside a text item.
+        """
+        additional_properties: dict[str, Any] = {"item_type": item.type, "status": item.status}
+        if item.id:
+            additional_properties["item_id"] = item.id
+        # `name` (and the other caller-attribution fields) only exist on newer openai SDKs; the
+        # declared floor of 2.25.0 ships only call_id/id/output/status/type.
+        if tool_name := getattr(item, "name", None):
+            additional_properties["name"] = tool_name
+        return Content.from_function_result(
+            call_id=call_id,
+            result=self._function_call_output_result(item.output),
+            additional_properties=additional_properties,
+            raw_representation=item,
+        )
+
     # region Parse methods
     def _get_finish_reason_from_openai_response(self, response: Any) -> FinishReason | None:
         """Get the framework finish reason from a terminal Responses API response."""
@@ -2638,7 +3257,10 @@ class RawOpenAIChatClient(
             return FinishReason("length")
         if getattr(response, "status", None) != "completed":
             return None
-        if any(getattr(item, "type", None) == "function_call" for item in getattr(response, "output", ())):
+        if any(
+            getattr(item, "type", None) in ("function_call", "computer_call")
+            for item in getattr(response, "output", ())
+        ):
             return FinishReason("tool_calls")
         return FinishReason("stop")
 
@@ -2851,10 +3473,21 @@ class RawOpenAIChatClient(
                             call_id=item.call_id,
                             name=item.name,
                             arguments=item.arguments,
+                            informational_only=item.name == local_shell_tool_name,
                             additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
                     )
+                case "computer_call":
+                    contents.append(self._parse_computer_tool_call_content(item))
+                case _ if getattr(item, "type", None) == "computer_call_output":
+                    # The 2.25 SDK omits this model from the response output union.
+                    contents.append(self._parse_computer_tool_result_content(item))
+                case _ if getattr(item, "type", None) == "function_call_output":
+                    # The 2.25 SDK exposes this model but omits it from the response output union.
+                    output_item = cast(ResponseFunctionToolCallOutputItem, item)
+                    if (output_call_id := _pairable_function_call_output_call_id(output_item)) is not None:
+                        contents.append(self._parse_function_call_output_content(output_item, output_call_id))
                 case "custom_tool_call":
                     contents.append(
                         self._parse_hosted_function_call_content(item, name=item.name, arguments=item.input)
@@ -2903,33 +3536,12 @@ class RawOpenAIChatClient(
                             )
                         )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    image_output: Content | None = None
-                    if item.result is not None:
-                        # item.result contains raw base64 string
-                        # so we call detect_media_type_from_base64 to get the media type and fallback to image/png
-                        image_output = Content.from_uri(
-                            uri=f"data:{detect_media_type_from_base64(data_str=item.result) or 'image/png'}"
-                            f";base64,{item.result}",
-                            raw_representation=item.result,
-                        )
-                    image_id = item.id
-                    contents.append(
-                        Content.from_image_generation_tool_call(
-                            image_id=image_id,
-                            raw_representation=item,
-                        )
-                    )
-                    contents.append(
-                        Content.from_image_generation_tool_result(
-                            image_id=image_id,
-                            outputs=image_output,
-                            raw_representation=item,
-                        )
-                    )
+                    contents.extend(self._image_generation_item_to_contents(item))
                 case "shell_call" | "local_shell_call" | "shell_call_output":
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
+        self._mark_completed_computer_calls(contents)
         response_message = Message(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
@@ -2960,6 +3572,61 @@ class RawOpenAIChatClient(
             self._enrich_mcp_search_citations(chat_response.messages[0].contents)
         return chat_response
 
+    def _parse_annotation_from_openai(self, annotation: Any, annotation_index: int) -> Annotation | None:
+        """Parse a text annotation from an SDK object or streaming annotation dictionary."""
+
+        def get_value(key: str) -> Any:
+            if isinstance(annotation, dict):
+                return cast("dict[str, Any]", annotation).get(key)
+            return getattr(annotation, key, None)
+
+        annotation_type = get_value("type")
+        properties: dict[str, Any] = {"annotation_index": annotation_index}
+        if annotation_type in ("file_path", "file_citation", "container_file_citation"):
+            file_id = get_value("file_id")
+            if not file_id:
+                logger.debug("Skipping %s annotation without a file_id", annotation_type)
+                return None
+            parsed = Annotation(
+                type="citation",
+                file_id=str(file_id),
+                additional_properties=properties,
+                raw_representation=annotation,
+            )
+            if annotation_type == "container_file_citation":
+                properties["container_id"] = get_value("container_id")
+            else:
+                properties["index"] = get_value("index")
+            if annotation_type != "file_path":
+                parsed["url"] = get_value("filename")
+        elif annotation_type == "url_citation":
+            url = get_value("url")
+            if not url:
+                logger.debug("Skipping url_citation annotation without a url")
+                return None
+            parsed = Annotation(
+                type="citation",
+                title=get_value("title") or "",
+                url=str(url),
+                additional_properties=properties,
+                raw_representation=annotation,
+            )
+            get_url = get_value("get_url")
+            if get_url is not None:
+                properties["get_url"] = get_url
+        else:
+            logger.debug("Unparsed annotation type in streaming: %s", annotation_type)
+            return None
+
+        if annotation_type in ("url_citation", "container_file_citation"):
+            start_index = get_value("start_index")
+            end_index = get_value("end_index")
+            if start_index is not None and end_index is not None:
+                parsed["annotated_regions"] = [
+                    TextSpanRegion(type="text_span", start_index=start_index, end_index=end_index)
+                ]
+        return parsed
+
     def _parse_chunk_from_openai(
         self,
         event: OpenAIResponseStreamEvent,
@@ -2968,6 +3635,12 @@ class RawOpenAIChatClient(
         seen_reasoning_delta_item_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
+        # Read from `options` rather than a parameter; see
+        # `_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION` for why the signature must not grow.
+        seen_function_call_output_ids = cast("set[str] | None", options.get(_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION))
+        seen_text_annotation_keys = cast(
+            "set[tuple[str, int, int]] | None", options.get(_SEEN_TEXT_ANNOTATION_KEYS_OPTION)
+        )
         metadata: dict[str, Any] = {}
         contents: list[Content] = []
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
@@ -2986,6 +3659,26 @@ class RawOpenAIChatClient(
             if not isinstance(serialized, list):
                 return None
             return {"logprobs": serialized}
+
+        def parse_annotations(
+            annotations: Sequence[Any],
+            item_id: str,
+            content_index: int,
+            *,
+            annotation_index: int = 0,
+        ) -> list[Annotation]:
+            parsed_annotations: list[Annotation] = []
+            for index, annotation in enumerate(annotations, start=annotation_index):
+                key = (item_id, content_index, index)
+                can_deduplicate = isinstance(item_id, str) and bool(item_id) and isinstance(content_index, int)
+                if seen_text_annotation_keys is not None and can_deduplicate and key in seen_text_annotation_keys:
+                    continue
+                parsed = self._parse_annotation_from_openai(annotation, index)
+                if parsed is not None:
+                    parsed_annotations.append(parsed)
+                    if seen_text_annotation_keys is not None and can_deduplicate:
+                        seen_text_annotation_keys.add(key)
+            return parsed_annotations
 
         match event.type:
             # types:
@@ -3046,9 +3739,11 @@ class RawOpenAIChatClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
+                        annotations = parse_annotations(event_part.annotations, event.item_id, event.content_index)
                         contents.append(
                             Content.from_text(
                                 text=event_part.text,
+                                annotations=annotations or None,
                                 additional_properties=output_text_properties(cast(Any, event_part)),
                                 raw_representation=event,
                             )
@@ -3064,6 +3759,12 @@ class RawOpenAIChatClient(
                         )
                     case _:
                         pass
+            case "response.content_part.done":
+                event_part = event.part
+                if event_part.type == "output_text":
+                    annotations = parse_annotations(event_part.annotations, event.item_id, event.content_index)
+                    if annotations:
+                        contents.append(Content.from_text(text="", annotations=annotations, raw_representation=event))
             case "response.output_text.delta":
                 contents.append(
                     Content.from_text(
@@ -3289,11 +3990,15 @@ class RawOpenAIChatClient(
                                 raw_representation=event_item,
                             )
                         )
-                    case "shell_call" | "local_shell_call" | "shell_call_output":
-                        # Shell items carry their command/output only on the
-                        # `response.output_item.done` event; the `.added` snapshot is an
-                        # in-progress skeleton with an empty action. Parsed in the
-                        # `response.output_item.done` handler instead.
+                    case (
+                        "shell_call"
+                        | "local_shell_call"
+                        | "shell_call_output"
+                        | "computer_call"
+                        | "computer_call_output"
+                    ):
+                        # These items carry their full actions or output only on the
+                        # `response.output_item.done` event.
                         pass
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
@@ -3330,6 +4035,16 @@ class RawOpenAIChatClient(
                             )
                     case "web_search_call" | "file_search_call":
                         contents.append(self._parse_search_tool_call_content(event_item))
+                    case _ if getattr(event_item, "type", None) == "function_call_output":
+                        # Emitted from whichever of `.added` / `.done` first carries an eligible
+                        # `output`; the item id is recorded so the other event cannot emit a second
+                        # result for the same item (issue #8068).
+                        output_item = cast(ResponseFunctionToolCallOutputItem, event_item)
+                        added_call_id = _pairable_function_call_output_call_id(output_item)
+                        if added_call_id is not None and _claim_function_call_output(
+                            seen_function_call_output_ids, output_item
+                        ):
+                            contents.append(self._parse_function_call_output_content(output_item, added_call_id))
                     case _:
                         if getattr(event_item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                             logger.debug("Unparsed event of type: %s: %s", event.type, event)
@@ -3350,6 +4065,7 @@ class RawOpenAIChatClient(
                             call_id=call_id,
                             name=name,
                             arguments=event.delta,
+                            informational_only=name == local_shell_tool_name,
                             additional_properties={
                                 "output_index": event.output_index,
                                 "fc_id": event.item_id,
@@ -3386,104 +4102,14 @@ class RawOpenAIChatClient(
                     )
                 )
             case "response.output_text.annotation.added":
-                # Handle streaming text annotations (file citations, file paths, etc.)
-                annotation: Any = event.annotation
-
-                def _get_ann_value(key: str) -> Any:
-                    """Extract value from annotation (dict or object)."""
-                    if isinstance(annotation, dict):
-                        return cast("dict[str, Any]", annotation).get(key)
-                    return getattr(annotation, key, None)
-
-                ann_type = _get_ann_value("type")
-                ann_file_id = _get_ann_value("file_id")
-                # Hosted-file citations attach as text annotations (matching the non-streaming path)
-                # so they don't roundtrip as standalone `input_file` items in assistant history.
-                if ann_type == "file_path":
-                    if ann_file_id:
-                        annotation_obj = Annotation(
-                            type="citation",
-                            file_id=str(ann_file_id),
-                            additional_properties={
-                                "annotation_index": event.annotation_index,
-                                "index": _get_ann_value("index"),
-                            },
-                            raw_representation=annotation,
-                        )
-                        contents.append(
-                            Content.from_text(text="", annotations=[annotation_obj], raw_representation=event)
-                        )
-                elif ann_type == "file_citation":
-                    if ann_file_id:
-                        ann_filename = _get_ann_value("filename")
-                        annotation_obj = Annotation(
-                            type="citation",
-                            file_id=str(ann_file_id),
-                            url=ann_filename,
-                            additional_properties={
-                                "annotation_index": event.annotation_index,
-                                "index": _get_ann_value("index"),
-                            },
-                            raw_representation=annotation,
-                        )
-                        contents.append(
-                            Content.from_text(text="", annotations=[annotation_obj], raw_representation=event)
-                        )
-                elif ann_type == "container_file_citation":
-                    if ann_file_id:
-                        ann_filename = _get_ann_value("filename")
-                        ann_start = _get_ann_value("start_index")
-                        ann_end = _get_ann_value("end_index")
-                        annotation_obj = Annotation(
-                            type="citation",
-                            file_id=str(ann_file_id),
-                            url=ann_filename,
-                            additional_properties={
-                                "annotation_index": event.annotation_index,
-                                "container_id": _get_ann_value("container_id"),
-                            },
-                            raw_representation=annotation,
-                        )
-                        if ann_start is not None and ann_end is not None:
-                            annotation_obj["annotated_regions"] = [
-                                TextSpanRegion(
-                                    type="text_span",
-                                    start_index=ann_start,
-                                    end_index=ann_end,
-                                )
-                            ]
-                        contents.append(
-                            Content.from_text(text="", annotations=[annotation_obj], raw_representation=event)
-                        )
-                elif ann_type == "url_citation":
-                    ann_url = _get_ann_value("url")
-                    if ann_url:
-                        ann_start = _get_ann_value("start_index")
-                        ann_end = _get_ann_value("end_index")
-                        annotation_properties: dict[str, Any] = {"annotation_index": event.annotation_index}
-                        ann_get_url = _get_ann_value("get_url")
-                        if ann_get_url is not None:
-                            annotation_properties["get_url"] = ann_get_url
-                        annotation_obj = Annotation(
-                            type="citation",
-                            title=_get_ann_value("title") or "",
-                            url=str(ann_url),
-                            additional_properties=annotation_properties,
-                            raw_representation=annotation,
-                        )
-                        if ann_start is not None and ann_end is not None:
-                            annotation_obj["annotated_regions"] = [
-                                TextSpanRegion(
-                                    type="text_span",
-                                    start_index=ann_start,
-                                    end_index=ann_end,
-                                )
-                            ]
-                        contents.append(
-                            Content.from_text(text="", annotations=[annotation_obj], raw_representation=event)
-                        )
-                else:
-                    logger.debug("Unparsed annotation type in streaming: %s", ann_type)
+                annotations = parse_annotations(
+                    [event.annotation],
+                    event.item_id,
+                    event.content_index,
+                    annotation_index=event.annotation_index,
+                )
+                if annotations:
+                    contents.append(Content.from_text(text="", annotations=annotations, raw_representation=event))
             case "response.output_item.done":
                 done_item = event.item
                 if getattr(done_item, "type", None) == "reasoning":
@@ -3497,6 +4123,14 @@ class RawOpenAIChatClient(
                                 raw_representation=done_item,
                             )
                         )
+                elif done_item.type == "message":
+                    for content_index, part in enumerate(done_item.content):
+                        if part.type == "output_text":
+                            annotations = parse_annotations(part.annotations, done_item.id, content_index)
+                            if annotations:
+                                contents.append(
+                                    Content.from_text(text="", annotations=annotations, raw_representation=event)
+                                )
                 elif getattr(done_item, "type", None) == "mcp_call":
                     call_id = getattr(done_item, "id", None) or getattr(done_item, "call_id", None) or ""
                     output_text = getattr(done_item, "output", None)
@@ -3516,6 +4150,14 @@ class RawOpenAIChatClient(
                     # Shell items are parsed here (not on `response.output_item.added`) because the
                     # command/output is only populated on the completed item.
                     contents.extend(self._shell_item_to_contents(done_item, local_shell_tool_name))
+                elif getattr(done_item, "type", None) == "computer_call":
+                    contents.append(self._parse_computer_tool_call_content(done_item))
+                elif getattr(done_item, "type", None) == "computer_call_output":
+                    contents.append(self._parse_computer_tool_result_content(done_item))
+                elif getattr(done_item, "type", None) == "image_generation_call":
+                    # The final image is only delivered on the completed item; with the default
+                    # `partial_images=0` there are no `partial_image` events at all.
+                    contents.extend(self._image_generation_item_to_contents(done_item))
                 elif getattr(done_item, "type", None) == "custom_tool_call":
                     custom_tool_call = cast(ResponseCustomToolCall, done_item)
                     contents.append(
@@ -3534,6 +4176,16 @@ class RawOpenAIChatClient(
                             arguments=tool_search_call.arguments,
                         )
                     )
+                elif getattr(done_item, "type", None) == "function_call_output":
+                    # Counterpart to the `response.output_item.added` branch: whichever event first
+                    # carries an eligible `output` emits the result, and the shared seen-id set
+                    # keeps the other from duplicating it (issue #8068).
+                    output_item = cast(ResponseFunctionToolCallOutputItem, done_item)
+                    done_call_id = _pairable_function_call_output_call_id(output_item)
+                    if done_call_id is not None and _claim_function_call_output(
+                        seen_function_call_output_ids, done_item
+                    ):
+                        contents.append(self._parse_function_call_output_content(output_item, done_call_id))
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
@@ -3820,6 +4472,22 @@ class OpenAIChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+
+    @override
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        super()._update_function_invocation_continuation_state(kwargs, response, session=session, options=options)
+        # _inner_get_response drops the token from the options that reached the service call, which
+        # chat middleware may have replaced. Drop it from the function loop's own options as well once
+        # the background response has finished, or the next iteration retrieves it again.
+        if options is not None and response.continuation_token is None:
+            options.pop("continuation_token", None)
 
 
 def _apply_openai_chat_client_docstrings() -> None:

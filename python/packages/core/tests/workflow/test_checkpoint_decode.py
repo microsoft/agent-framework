@@ -8,6 +8,7 @@ import pytest
 
 from agent_framework import WorkflowCheckpointException
 from agent_framework._workflows._checkpoint_encoding import (
+    _PICKLE_MARKER,  # type: ignore
     _TYPE_MARKER,  # type: ignore
     decode_checkpoint_value,
     encode_checkpoint_value,
@@ -185,6 +186,16 @@ def test_decode_raises_on_type_mismatch() -> None:
     encoded[_TYPE_MARKER] = "nonexistent.module:FakeClass"
 
     with pytest.raises(WorkflowCheckpointException, match="Type mismatch"):
+        decode_checkpoint_value(encoded)
+
+
+def test_decode_raises_on_malformed_base64() -> None:
+    """Test that decoding rejects non-Base64 characters in a pickle payload."""
+    encoded = encode_checkpoint_value((1, 2, 3))
+    assert isinstance(encoded, dict)
+    encoded[_PICKLE_MARKER] = cast(str, encoded[_PICKLE_MARKER]) + "!!!!"
+
+    with pytest.raises(WorkflowCheckpointException, match="Failed to decode pickled checkpoint data"):
         decode_checkpoint_value(encoded)
 
 

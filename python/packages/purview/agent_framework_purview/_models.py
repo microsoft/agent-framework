@@ -153,6 +153,7 @@ def serialize_flag(
 
 class DlpAction(str, Enum):
     BLOCK_ACCESS = "blockAccess"
+    RESTRICT_ACCESS = "restrictAccess"
     OTHER = "other"
 
 
@@ -611,7 +612,7 @@ class ContentToProcess(_AliasSerializable):
 
     def __init__(
         self,
-        content_entries: list[ProcessConversationMetadata | MutableMapping[str, Any]],
+        content_entry: ProcessConversationMetadata | MutableMapping[str, Any],
         activity_metadata: ActivityMetadata | MutableMapping[str, Any],
         device_metadata: DeviceMetadata | MutableMapping[str, Any],
         integrated_app_metadata: IntegratedAppMetadata | MutableMapping[str, Any],
@@ -619,8 +620,6 @@ class ContentToProcess(_AliasSerializable):
         **kwargs: Any,
     ) -> None:
         # Extract aliased values from kwargs
-        if "contentEntries" in kwargs:
-            content_entries = kwargs["contentEntries"]
         if "activityMetadata" in kwargs:
             activity_metadata = kwargs["activityMetadata"]
         if "deviceMetadata" in kwargs:
@@ -631,10 +630,11 @@ class ContentToProcess(_AliasSerializable):
             protected_app_metadata = kwargs["protectedAppMetadata"]
 
         # Convert nested objects
-        entries = [
-            e if isinstance(e, ProcessConversationMetadata) else ProcessConversationMetadata(**e)
-            for e in content_entries
-        ]
+        entry = (
+            content_entry
+            if isinstance(content_entry, ProcessConversationMetadata)
+            else ProcessConversationMetadata(**content_entry)
+        )
         if isinstance(activity_metadata, MutableMapping):
             activity_metadata = ActivityMetadata(**activity_metadata)
         if isinstance(device_metadata, MutableMapping):
@@ -646,7 +646,7 @@ class ContentToProcess(_AliasSerializable):
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
-        self.content_entries = entries
+        self.content_entries = [entry]
         self.activity_metadata = activity_metadata
         self.device_metadata = device_metadata
         self.integrated_app_metadata = integrated_app_metadata

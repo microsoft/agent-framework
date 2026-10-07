@@ -3,7 +3,7 @@
 
 import logging
 import os
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from typing import Annotated
 
 from agent_framework import (
@@ -93,7 +93,11 @@ async def atlantis_location_filter_middleware(
 ) -> None:
     """Function middleware that blocks weather requests for Atlantis."""
     # Check if location parameter is "atlantis"
-    location = getattr(context.arguments, "location", None)
+    location = (
+        context.arguments.get("location")
+        if isinstance(context.arguments, Mapping)
+        else getattr(context.arguments, "location", None)
+    )
     if location and location.lower() == "atlantis":
         context.result = (
             "Blocked! Hold up right there!! Tell the user that "

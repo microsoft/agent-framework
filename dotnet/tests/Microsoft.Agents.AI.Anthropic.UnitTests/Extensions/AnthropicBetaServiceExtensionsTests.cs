@@ -1,10 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 #pragma warning disable IDE0052 // Remove unread private members
+#pragma warning disable MAAIANTHROPIC001 // Tests exercise experimental Anthropic beta service extensions.
 
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +25,22 @@ namespace Microsoft.Agents.AI.Anthropic.UnitTests.Extensions;
 /// </summary>
 public sealed class AnthropicBetaServiceExtensionsTests
 {
+    [Fact]
+    public void PublicSurface_OnlyBetaExtensionsAreExperimental()
+    {
+        // Arrange
+        Type betaExtensionsType = typeof(AnthropicBetaServiceExtensions);
+        Type stableExtensionsType = typeof(global::Anthropic.AnthropicClientExtensions);
+
+        // Act
+        string? betaDiagnosticId = GetExperimentalDiagnosticId(betaExtensionsType);
+        string? stableDiagnosticId = GetExperimentalDiagnosticId(stableExtensionsType);
+
+        // Assert
+        Assert.Equal("MAAIANTHROPIC001", betaDiagnosticId);
+        Assert.Null(stableDiagnosticId);
+    }
+
     /// <summary>
     /// Verify that CreateAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
@@ -210,11 +228,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // When tools are provided, ChatOptions is created but instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -310,11 +328,11 @@ public sealed class AnthropicBetaServiceExtensionsTests
         Assert.Equal("Test Agent", agent.Name);
         Assert.Equal("Test instructions", agent.Instructions);
 
-        // Verify that tools are registered in the FunctionInvokingChatClient
-        var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
-        Assert.NotNull(functionInvokingClient);
-        Assert.NotNull(functionInvokingClient.AdditionalTools);
-        Assert.Contains(functionInvokingClient.AdditionalTools, t => t is AIFunction func && func.Name == "TestFunction");
+        // Verify that tools are registered on the agent's ChatOptions, which are merged into the
+        // invocation-scoped ChatOptions on every call (see ChatClientAgent.CreateConfiguredChatOptions).
+        var agentTools = agent.GetService<ChatOptions>()?.Tools;
+        Assert.NotNull(agentTools);
+        Assert.Contains(agentTools, t => t is AIFunction func && func.Name == "TestFunction");
     }
 
     /// <summary>
@@ -339,7 +357,7 @@ public sealed class AnthropicBetaServiceExtensionsTests
         // With empty tools and no instructions, agent instructions remain null
         Assert.Null(agent.Instructions);
 
-        // Verify that FunctionInvokingChatClient has no additional tools assigned
+        // Verify that the FunctionInvokingChatClient is not used as a fallback tool store.
         var functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         Assert.NotNull(functionInvokingClient);
         Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });
@@ -425,6 +443,19 @@ public sealed class AnthropicBetaServiceExtensionsTests
         public void Dispose() => this._innerClient.Dispose();
     }
 
+    private static string? GetExperimentalDiagnosticId(Type type)
+    {
+        foreach (CustomAttributeData attribute in type.GetCustomAttributesData())
+        {
+            if (attribute.AttributeType.FullName == "System.Diagnostics.CodeAnalysis.ExperimentalAttribute")
+            {
+                return attribute.ConstructorArguments[0].Value as string;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Creates a test ChatClient implementation for testing.
     /// </summary>
@@ -454,6 +485,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
         public IFileService Files => throw new NotImplementedException();
 
         public ISkillService Skills => throw new NotImplementedException();
+
+        public IOrganizationService Organization => throw new NotImplementedException();
 
         public IBetaService Beta => this.BetaService;
 

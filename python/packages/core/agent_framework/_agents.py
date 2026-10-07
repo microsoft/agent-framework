@@ -63,7 +63,12 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
+from .exceptions import (
+    AgentInvalidRequestException,
+    AgentInvalidResponseException,
+    ToolExecutionException,
+    UserInputRequiredException,
+)
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -76,6 +81,8 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from mcp import types
     from mcp.server.lowlevel import Server
     from pydantic import BaseModel
@@ -95,6 +102,51 @@ logger = logging.getLogger("agent_framework")
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
+_DELEGATED_STATE_MISSING = object()
+
+
+def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
+    """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
+    from ._harness._tool_approval import ToolApprovalMiddleware
+
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
+
+
+def _provider_service_session_state_keys(agent: object) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by an agent or its client."""
+    keys: set[str] = set()
+    # A generic Agent can use a provider client that persists its own continuation state.
+    for owner in (agent, getattr(agent, "client", None)):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast("Collection[Any]", declared) if isinstance(key, str))
+    return frozenset(keys)
+
+
+def _merge_delegated_session_state(
+    parent_state: MutableMapping[str, Any],
+    initial_child_state: Mapping[str, Any],
+    final_child_state: Mapping[str, Any],
+    *,
+    excluded_keys: frozenset[str],
+) -> None:
+    """Merge child application-state changes without copying framework continuation state."""
+    for key, initial_value in initial_child_state.items():
+        if key in excluded_keys or key in final_child_state:
+            continue
+        if parent_state.get(key, _DELEGATED_STATE_MISSING) is initial_value:
+            parent_state.pop(key, None)
+
+    for key, final_value in final_child_state.items():
+        if key in excluded_keys:
+            continue
+        initial_value = initial_child_state.get(key, _DELEGATED_STATE_MISSING)
+        if initial_value is _DELEGATED_STATE_MISSING or final_value is not initial_value:
+            parent_state[key] = final_value
+
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -624,11 +676,30 @@ class BaseAgent(SerializationMixin):
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
             propagate_session: If True, the parent agent's session is forwarded
-                to this sub-agent's ``run()`` call so both agents share the
-                same session. Defaults to False.
+                to this sub-agent's ``run()`` call. Application-state changes
+                propagate back to the parent, while framework approval continuation
+                state and provider-owned service session state remain isolated.
+                Defaults to False. The sub-agent always receives an AgentSession
+                so session-backed middleware can run. When False, that session is
+                private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
+
+        Note:
+            Child function approvals are not propagated into the calling agent.
+            Configure ToolApprovalMiddleware with runtime auto-approval rules on
+            the child for immediate policy decisions. Use a workflow when approval
+            is interactive, delayed, or durable.
+
+            When parent and child both use ToolApprovalMiddleware with
+            ``propagate_session=True``, configure distinct middleware ``source_id``
+            values. The delegated call raises ToolExecutionException before running
+            the child when their shared session-state keys overlap.
+
+            Direct or custom-loop invocation with ``propagate_session=True`` must set
+            :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
+            the parent session is non-empty. Automatic function calling supplies it.
 
         Examples:
             .. code-block:: python
@@ -676,39 +747,132 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = ctx.session if propagate_session else None
+            parent_session = ctx.session
+            session = AgentSession()
+            child_approval_source_ids = _tool_approval_source_ids(self.middleware)
+            parent_approval_source_ids: frozenset[str] = frozenset()
+            parent_service_session_state_keys: frozenset[str] = frozenset()
 
-            # Create a child session that shares the parent's state dict but has
-            # an isolated service_session_id. This avoids mutating the parent
-            # session in-place, which would race under concurrent asyncio.gather
-            # tool invocations sharing the same session.
-            if session is not None:
-                child_session = AgentSession(session_id=session.session_id)
-                child_session.state = session.state  # shared by reference
-                child_session.service_session_id = None
-                session = child_session
+            if propagate_session and parent_session is not None:
+                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
-            stream = self.run(
-                str(kwargs.get(arg_name, "")),
-                stream=True,
-                session=session,
-                function_invocation_kwargs=dict(ctx.kwargs),
-            )
-            if stream_callback is not None:
-                # The callback is a host-facing observer: feed it the *released*
-                # updates by consuming the stream, never by registering a transform
-                # hook on it. Hooks can end up applied to buffered content ahead of an
-                # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
-                # hook-registered observer could see denied or unredacted content.
-                async for update in stream:
-                    callback_result = stream_callback(update)
-                    if isawaitable(callback_result):
-                        await callback_result
-            final_response = await stream.get_final_response()
-            if final_response.user_input_requests:
-                raise UserInputRequiredException(contents=final_response.user_input_requests)
-            # TODO(Copilot): update once #4331 merges
-            return final_response.text
+                # A custom loop can bypass the framework seam that identifies the parent provider's state.
+                # Refuse a non-empty shared session rather than guessing which keys are safe to delegate.
+                if ctx.parent_service_session_state_keys is None:
+                    if parent_session.state:
+                        raise ToolExecutionException(
+                            f"Agent tool {tool_name!r} cannot safely propagate a non-empty parent session because "
+                            "the invocation path did not provide parent provider-owned session state keys. "
+                            "Use the automatic function-calling loop, set "
+                            "FunctionInvocationContext.parent_service_session_state_keys in a custom loop, "
+                            "or set propagate_session=False."
+                        )
+                else:
+                    parent_service_session_state_keys = ctx.parent_service_session_state_keys
+                raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+                parent_approval_source_ids = (
+                    cast("frozenset[str]", raw_parent_approval_source_ids)
+                    if isinstance(raw_parent_approval_source_ids, frozenset)
+                    else frozenset()
+                )
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
+                if overlapping_source_ids:
+                    formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
+                    raise ToolExecutionException(
+                        f"Agent tool {tool_name!r} cannot share its parent session because parent and child "
+                        f"ToolApprovalMiddleware instances use the same source_id: {formatted_source_ids}. "
+                        "Configure distinct source_id values or set propagate_session=False."
+                    )
+
+            parent_state: MutableMapping[str, Any] | None = None
+            initial_child_state: dict[str, Any] | None = None
+            excluded_state_keys: frozenset[str] = frozenset()
+
+            # Propagate application state through a child-owned copy. Framework
+            # approval continuation state stays isolated so an unresolved child
+            # request can never become pending authority in the parent session.
+            if propagate_session and parent_session is not None:
+                from ._tools import (
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _TOOL_APPROVAL_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                )
+
+                excluded_state_keys = frozenset({
+                    _TOOL_APPROVAL_STATE_KEY,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    # Service handles belong to one agent's remote resources, not shared application state.
+                    # Exclude them in both directions so later children cannot inherit an earlier child's handles.
+                    *_provider_service_session_state_keys(self),
+                    *parent_service_session_state_keys,
+                    *child_approval_source_ids,
+                    *parent_approval_source_ids,
+                })
+                parent_state = parent_session.state
+                child_state = {key: value for key, value in parent_state.items() if key not in excluded_state_keys}
+                initial_child_state = dict(child_state)
+                session = AgentSession(session_id=parent_session.session_id)
+                session.state = child_state
+
+            try:
+                stream = self.run(
+                    str(kwargs.get(arg_name, "")),
+                    stream=True,
+                    session=session,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
+                if stream_callback is not None:
+                    # The callback is a host-facing observer: feed it the *released*
+                    # updates by consuming the stream, never by registering a transform
+                    # hook on it. Hooks can end up applied to buffered content ahead of an
+                    # egress gate's verdict, so a
+                    # hook-registered observer could see denied or unredacted content.
+                    async for update in stream:
+                        callback_result = stream_callback(update)
+                        if isawaitable(callback_result):
+                            await callback_result
+                final_response = await stream.get_final_response()
+                approval_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type == "function_approval_request"
+                ]
+                other_input_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type != "function_approval_request"
+                ]
+                if approval_requests:
+                    requested_tools = sorted(
+                        {
+                            request.function_call.name or "<unknown>"
+                            for request in approval_requests
+                            if request.function_call is not None
+                        }
+                        or {"<unknown>"}
+                    )
+                    approval_error = (
+                        f"Agent tool {tool_name!r} cannot continue because its sub-agent requested approval for "
+                        f"{', '.join(requested_tools)}. Configure ToolApprovalMiddleware with auto_approval_rules on "
+                        "the sub-agent for immediate policy decisions. Use a workflow for interactive, delayed, or "
+                        "durable approval."
+                    )
+                    if other_input_requests:
+                        raise UserInputRequiredException(contents=other_input_requests, message=approval_error)
+                    raise ToolExecutionException(approval_error)
+                if other_input_requests:
+                    raise UserInputRequiredException(contents=other_input_requests)
+                # TODO(Copilot): update once #4331 merges
+                return final_response.text
+            finally:
+                if parent_state is not None and initial_child_state is not None:
+                    _merge_delegated_session_state(
+                        parent_state,
+                        initial_child_state,
+                        session.state,
+                        excluded_keys=excluded_state_keys,
+                    )
 
         from ._tools import FunctionTool
 
@@ -767,8 +931,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 name="weather-agent",
                 instructions="You are a weather assistant.",
                 tools=get_weather,
-                temperature=0.7,
-                max_tokens=500,
+                default_options={"temperature": 0.7, "max_tokens": 500},
             )
 
             # Use streaming responses
@@ -787,20 +950,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
-                name="reasoning-agent",
-                instructions="You are a reasoning assistant.",
-                options={
+                name="typed-agent",
+                instructions="You are a helpful assistant.",
+                default_options={
                     "temperature": 0.7,
                     "max_tokens": 500,
-                    "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
+                    "include": ["message.output_text.logprobs"],  # OpenAI-specific option
                 },
             )
 
-            # Or pass options at runtime
+            # Or override default options at runtime
             response = await agent.run(
                 "What is 25 * 47?",
-                options={"temperature": 0.0, "logprobs": True},
+                options={"temperature": 0.0},
             )
+
+        Explicit resource management (equivalent to ``async with agent``):
+
+        .. code-block:: python
+
+            await agent.open()
+            try:
+                response = await agent.run("Hello")
+            finally:
+                await agent.close()
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -924,22 +1097,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
-    async def __aenter__(self) -> Self:
-        """Enter the async context manager.
+    async def open(self) -> Self:
+        """Open the client's and configured MCP tools' async contexts.
 
-        If any of the client or local_mcp_tools are context managers,
-        they will be entered into the async exit stack to ensure proper cleanup.
-
-        Note:
-            This list might be extended in the future.
+        Call ``await agent.close()`` when finished, or use ``async with agent``
+        to open and close automatically. Already-entered contexts are closed if
+        a later context fails to open.
 
         Returns:
-            The Agent instance.
+            The agent instance.
         """
-        for context_manager in chain([self.client], self.mcp_tools):
-            if isinstance(context_manager, AbstractAsyncContextManager):
-                await self._async_exit_stack.enter_async_context(context_manager)
+        try:
+            for context_manager in chain([self.client], self.mcp_tools):
+                if isinstance(context_manager, AbstractAsyncContextManager):
+                    await self._async_exit_stack.enter_async_context(context_manager)
+        except BaseException:
+            await self.close()
+            raise
         return self
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager by opening managed resources."""
+        return await self.open()
 
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
@@ -970,22 +1149,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             )
         return history_providers
 
+    async def close(self) -> None:
+        """Close managed client and MCP contexts, including lazily opened MCP tools."""
+        await self._async_exit_stack.aclose()
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Exit the async context manager.
-
-        Close the async exit stack to ensure all context managers are exited properly.
-
-        Args:
-            exc_type: The exception type if an exception was raised, None otherwise.
-            exc_val: The exception value if an exception was raised, None otherwise.
-            exc_tb: The exception traceback if an exception was raised, None otherwise.
-        """
-        await self._async_exit_stack.aclose()
+        """Exit the async context manager by closing managed resources."""
+        await self.close()
 
     def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
@@ -1405,8 +1580,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             self.context_providers.append(InMemoryHistoryProvider())
 
         active_session = session
+        framework_created_session = False
         if active_session is None and self.context_providers:
             active_session = AgentSession()
+            framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
@@ -1448,6 +1625,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
+        from ._tools import (
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1465,11 +1646,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
+                await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 if not tool.is_connected:
                     # The handshake and discovery requests are issued before any tool call, so the run's
                     # kwargs must reach header_provider here or those requests go out unauthenticated.
-                    tool._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                     await self._async_exit_stack.enter_async_context(tool)
+                    await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 _append_unique_tools(
                     final_tools,
                     tool.functions,
@@ -1479,14 +1661,25 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 _append_unique_tools(final_tools, [tool])
 
         for mcp_server in self.mcp_tools:
+            await mcp_server._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
             if not mcp_server.is_connected:
-                mcp_server._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 await self._async_exit_stack.enter_async_context(mcp_server)
+                await mcp_server._prepare_for_run(  # pyright: ignore[reportPrivateUsage]
+                    additional_function_arguments
+                )
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
+
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
+            self.middleware
+        )
+        # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
+        additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
+            _provider_service_session_state_keys(self)
+        )
 
         model = opts.pop("model", None)
 
@@ -1525,8 +1718,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
+
+        effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+            effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
@@ -1717,7 +1914,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     logger.error("Failed to send log message to server: %s", e)
 
         @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:  # type: ignore
+        async def _list_tools() -> list[types.Tool]:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
@@ -1731,7 +1928,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return [tool]
 
         @server.call_tool()
-        async def _call_tool(  # type: ignore
+        async def _call_tool(
             name: str, arguments: dict[str, Any]
         ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
             """Call a tool in the agent."""
@@ -1774,7 +1971,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return mcp_content or [types.TextContent(type="text", text="")]
 
         @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore
+        async def _set_logging_level(level: types.LoggingLevel) -> None:
             """Set the logging level for the server."""
             logger.setLevel(LOG_LEVEL_MAPPING[level])
             # emit this log with the new minimum level
@@ -1804,6 +2001,9 @@ class Agent(
     - OpenTelemetry-based telemetry for observability
 
     For a minimal implementation without these features, use :class:`RawAgent`.
+
+    Use ``await agent.open()`` and ``await agent.close()`` for explicit resource
+    management, or ``async with agent`` to close managed resources automatically.
     """
 
     @overload

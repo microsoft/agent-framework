@@ -20,7 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.2.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="1.5.0" />
+    <!-- both those dependencies need to be kept behind until https://github.com/neo4j-labs/neo4j-maf-provider/pull/6 is merged and released -->
     <PackageReference Include="Neo4j.AgentFramework.GraphRAG" Version="0.1.0-preview.2" />
     <PackageReference Include="Neo4j.Driver" Version="5.28.0" />
   </ItemGroup>

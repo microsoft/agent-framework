@@ -7,10 +7,9 @@ Most tests exercise the real handler against a fake ``MCPStreamableHTTPTool``
 exercisable through the executor stub: cache hit/miss/eviction, concurrent
 connect via in-flight futures, header isolation across cache keys,
 string-result normalisation, ``load_prompts=False`` verification, and
-owned-vs-caller httpx close semantics.
+owned-vs-caller httpx close semantics, and provider-backed invocation lifetimes.
 
-The shared-client regression also exercises the real MCP SDK transport against
-an in-process HTTPX mock server.
+Two lifecycle cases use the real MCP SDK with an inert HTTPX mock transport.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ import asyncio
 import json
 import sys
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -102,7 +101,7 @@ class FakeTool:
         self.connect_delay: float = 0.0
         self.connect_error: BaseException | None = None
         self.call_handler: Any = lambda **_a: [Content.from_text("ok")]
-        self._httpx_client: httpx.AsyncClient | None = None
+        self._httpx_client: httpx.AsyncClient | None = kwargs.get("http_client")
         self.session: FakeMcpSession | None = None
         # Mimic MCPStreamableHTTPTool: when no caller client AND header_provider
         # is set, lazily allocate an owned httpx client during connect.
@@ -150,81 +149,671 @@ def _invocation(
     )
 
 
-@pytest.mark.parametrize("cache_max_size", [1, 2])
-async def test_shared_client_isolates_cached_authentication_and_cleans_up_hooks(cache_max_size: int) -> None:
-    sessions: dict[str, str] = {}
-    calls: list[tuple[str, str]] = []
-    writes: dict[str, list[str]] = {"token-a": [], "token-b": []}
+# ---------- Provider-backed invocation lifetimes --------------------------
 
-    async def caller_hook(request: httpx.Request) -> None:
-        request.headers["X-Caller"] = "preserved"
 
-    async def handle(request: httpx.Request) -> httpx.Response:
-        assert request.headers["X-Caller"] == "preserved"
-        principal = request.headers.get("Authorization", "")
-        if principal not in writes:
-            return httpx.Response(401)
-        if request.method == "GET":
-            return httpx.Response(405)
-        if request.method == "DELETE":
-            return httpx.Response(200)
-        body = json.loads(request.content)
-        headers: dict[str, str] = {}
-        result: dict[str, Any] = {}
-        if body.get("method") == "initialize":
-            session_id = f"session-{len(sessions)}"
-            sessions[session_id] = principal
-            headers["mcp-session-id"] = session_id
-            result = {
-                "protocolVersion": body["params"]["protocolVersion"],
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "auth-test", "version": "1"},
-            }
-        elif body.get("method") == "tools/list":
-            result = {
-                "tools": [
-                    {
-                        "name": "search",
-                        "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
-                    }
-                ]
-            }
-        elif body.get("method") == "tools/call":
-            calls.append((request.headers["mcp-session-id"], principal))
-            if marker := body["params"].get("arguments", {}).get("marker"):
-                writes[principal].append(marker)
-            result = {"content": [{"type": "text", "text": principal}]}
-        if "id" not in body:
-            return httpx.Response(202)
-        return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+class TestProviderLifetimes:
+    @pytest.mark.parametrize("returns_none", [False, True])
+    async def test_actual_sdk_lifecycle_and_hook_cleanup(
+        self, returns_none: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import agent_framework
+        from agent_framework import MCPStreamableHTTPTool
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle), event_hooks={"request": [caller_hook]}
-    ) as client:
+        caplog.set_level("DEBUG", logger="agent_framework_declarative._workflows._mcp_handler")
+        initialized: list[str] = []
+        terminated: list[str] = []
+        methods: list[str] = []
+        tools: list[MCPStreamableHTTPTool] = []
+        clients: list[RecordingClient] = []
+        caller_hook = AsyncMock()
 
-        async def client_provider(invocation: MCPToolInvocation) -> httpx.AsyncClient:
-            return client
+        async def respond(request: httpx.Request) -> httpx.Response:
+            assert request.headers["X-Test"] == "lifecycle"
+            if request.method == "GET":
+                return httpx.Response(405)
+            if request.method == "DELETE":
+                terminated.append(request.headers["mcp-session-id"])
+                return httpx.Response(200)
 
-        async with DefaultMCPToolHandler(client_provider=client_provider, cache_max_size=cache_max_size) as handler:
-            outputs: list[str | None] = []
-            for index, principal in enumerate(("token-a", "token-b", "token-a")):
-                result = await handler.invoke_tool(
-                    _invocation(
-                        headers={"Authorization": principal},
-                        arguments={"marker": "a-only"} if index == 2 else {},
-                    )
+            body = json.loads(request.content)
+            method = body["method"]
+            methods.append(method)
+            if "id" not in body:
+                return httpx.Response(202)
+            headers: dict[str, str] = {}
+            if method == "initialize":
+                session_id = f"lifecycle-{len(initialized) + 1}"
+                initialized.append(session_id)
+                headers["mcp-session-id"] = session_id
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "lifecycle", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {
+                    "tools": [{"name": "ok", "inputSchema": {"type": "object", "properties": {}}}],
+                }
+            elif method == "tools/call":
+                result = {"content": [{"type": "text", "text": "ok"}]}
+            else:
+                assert method == "ping"
+                result = {}
+            return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+        class RecordingClient(httpx.AsyncClient):
+            def __init__(self, **kwargs: Any) -> None:
+                super().__init__(
+                    transport=httpx.MockTransport(respond), event_hooks={"request": [caller_hook]}, **kwargs
                 )
-                assert not result.is_error
-                outputs.append(result.outputs[0].text)
-            assert outputs == ["token-a", "token-b", "token-a"]
-            assert len(client.event_hooks["request"]) == 1 + cache_max_size
+                self.close_count = 0
+                clients.append(self)
 
-        assert [principal for _, principal in calls] == ["token-a", "token-b", "token-a"]
-        assert all(sessions[session_id] == principal for session_id, principal in calls)
-        assert len(sessions) == (3 if cache_max_size == 1 else 2)
-        assert writes == {"token-a": ["a-only"], "token-b": []}
-        assert client.event_hooks["request"] == [caller_hook]
-        assert not client.is_closed
+            async def aclose(self) -> None:
+                self.close_count += 1
+                await super().aclose()
+
+        def create_tool(**kwargs: Any) -> MCPStreamableHTTPTool:
+            tool = MCPStreamableHTTPTool(**kwargs)
+            tools.append(tool)
+            return tool
+
+        caller_client = None if returns_none else RecordingClient()
+        provider = AsyncMock(return_value=caller_client)
+        try:
+            with (
+                patch.object(httpx, "AsyncClient", RecordingClient),
+                patch.object(agent_framework, "MCPStreamableHTTPTool", side_effect=create_tool),
+            ):
+                async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                    for index, tool_name in enumerate(("ok", "tools/list", "ok", "tools/list"), start=1):
+                        result = await handler.invoke_tool(
+                            _invocation(tool_name=tool_name, headers={"X-Test": "lifecycle"})
+                        )
+                        assert not result.is_error
+                        if tool_name == "ok":
+                            assert result.outputs[0].text == "ok"
+                        else:
+                            assert result.outputs[0].text is not None
+                            assert json.loads(result.outputs[0].text)["tools"][0]["name"] == "ok"
+                        assert provider.await_count == index
+                        assert len(tools) == index
+                        assert len(initialized) == index
+                        assert terminated == initialized
+                        assert not handler._active_invocations
+                        assert not handler._cache
+                        tool = tools[-1]
+                        assert tool.session is None
+                        assert not tool.is_connected
+                        assert tool._lifecycle_owner_task is None
+                        assert tool._header_hook_client is None
+                        assert all(client.event_hooks["request"] == [caller_hook] for client in clients)
+                        if returns_none:
+                            assert len(clients) == index
+                            assert all(client.is_closed and client.close_count == 1 for client in clients)
+                        else:
+                            assert caller_client is not None
+                            assert not caller_client.is_closed
+                            assert caller_client.close_count == 0
+            assert len({id(tool) for tool in tools}) == 4
+            assert methods.count("tools/call") == 2
+            assert methods.count("tools/list") == 6
+            assert not any(
+                "Could not cleanly close MCP exit stack" in record.getMessage()
+                or "DefaultMCPToolHandler: error closing" in record.getMessage()
+                for record in caplog.records
+            )
+        finally:
+            for client in clients:
+                if not client.is_closed:
+                    await client.aclose()
+
+    @pytest.mark.parametrize("returns_none", [False, True])
+    async def test_sequential_invocations_get_fresh_tools(self, returns_none: bool) -> None:
+        async with httpx.AsyncClient() as client:
+            provider = AsyncMock(return_value=None if returns_none else client)
+            with _patch_tool():
+                async with DefaultMCPToolHandler(client_provider=provider, cache_max_size=1) as handler:
+                    for index, tool_name in enumerate(("search", "tools/list", "search", "tools/list"), start=1):
+                        invocation = _invocation(tool_name=tool_name, headers={"X-Test": "1"})
+                        result = await handler.invoke_tool(invocation)
+                        assert not result.is_error
+                        assert result.outputs[0].text == ('{\n  "tools": []\n}' if tool_name == "tools/list" else "ok")
+                        assert provider.await_count == index
+                        assert provider.await_args is not None
+                        assert provider.await_args.args[0] is invocation
+                        assert len(FakeTool.instances) == index
+                        tool = FakeTool.instances[-1]
+                        assert tool.connect_count == 1
+                        assert tool.close_count == 1
+                        assert tool.kwargs["http_client"] is (None if returns_none else client)
+                        if returns_none:
+                            assert tool._httpx_client is not None
+                            assert tool._httpx_client.is_closed
+                        assert not client.is_closed
+                        assert not handler._cache
+                        assert not handler._inflight
+                        assert not handler._active_invocations
+            assert len({id(tool.session) for tool in FakeTool.instances}) == 4
+            assert all(tool.close_count == 1 for tool in FakeTool.instances)
+            assert not client.is_closed
+
+    @pytest.mark.parametrize("returns_none", [False, True])
+    async def test_concurrent_invocations_get_fresh_tools(self, returns_none: bool) -> None:
+        all_connecting = asyncio.Event()
+        release = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def gated_connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            if len(FakeTool.instances) == 3:
+                all_connecting.set()
+            await release.wait()
+
+        async with httpx.AsyncClient() as client:
+            provider = AsyncMock(return_value=None if returns_none else client)
+            with _patch_tool(), patch.object(FakeTool, "connect", gated_connect):
+                async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                    tasks = [
+                        asyncio.create_task(handler.invoke_tool(_invocation(tool_name=name, headers={"X-Test": "1"})))
+                        for name in ("search", "tools/list", "search")
+                    ]
+                    try:
+                        await asyncio.wait_for(all_connecting.wait(), timeout=5)
+                        assert provider.await_count == 3
+                        assert len({id(tool.session) for tool in FakeTool.instances}) == 3
+                        assert all(tool.close_count == 0 for tool in FakeTool.instances)
+                        assert not handler._cache
+                        assert not handler._inflight
+                    finally:
+                        release.set()
+                        results = await asyncio.gather(*tasks)
+                    assert all(not result.is_error for result in results)
+                    assert all(tool.close_count == 1 for tool in FakeTool.instances)
+                    if returns_none:
+                        assert all(tool._httpx_client and tool._httpx_client.is_closed for tool in FakeTool.instances)
+                    assert not handler._active_invocations
+            assert not client.is_closed
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("stage", ["provider", "connect", "search", "tools/list", "close"])
+    @pytest.mark.parametrize("in_child_task", [False, True])
+    async def test_reentrant_shutdown_is_rejected_without_closing_handler(
+        self, stage: str, in_child_task: bool
+    ) -> None:
+        original_connect = FakeTool.connect
+        original_close = FakeTool.close
+        original_call = FakeTool.call_tool
+        original_list = FakeMcpSession.list_tools
+        rejected = 0
+
+        async def check_shutdown(phase: str) -> None:
+            nonlocal rejected
+            if stage != phase:
+                return
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                if in_child_task:
+                    await asyncio.create_task(handler.aclose())
+                else:
+                    await handler.aclose()
+            rejected += 1
+            assert not handler._closed
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            await check_shutdown("provider")
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            await check_shutdown("connect")
+
+        async def close(tool: FakeTool) -> None:
+            await check_shutdown("close")
+            await original_close(tool)
+
+        async def call(tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            await check_shutdown("search")
+            return await original_call(tool, tool_name, **arguments)
+
+        async def list_tools(session: FakeMcpSession, params: Any = None) -> FakeListToolsResult:
+            await check_shutdown("tools/list")
+            return await original_list(session, params)
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "close", close),
+            patch.object(FakeTool, "call_tool", call),
+            patch.object(FakeMcpSession, "list_tools", list_tools),
+        ):
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                for _ in range(2):
+                    result = await handler.invoke_tool(
+                        _invocation(tool_name="tools/list" if stage == "tools/list" else "search")
+                    )
+                    assert not result.is_error
+                    assert handler._invocation_context.get() == ()
+                    assert not handler._active_invocations
+                    assert not handler._closed
+        assert rejected == 2
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_nested_invocations_restore_context_and_keep_active_ancestry(self) -> None:
+        release_child = asyncio.Event()
+        children: list[asyncio.Task[None]] = []
+
+        async def close_from_inherited_context() -> None:
+            await release_child.wait()
+            outer, inner = handler._invocation_context.get()
+            assert not outer.done()
+            assert inner.done()
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                await handler.aclose()
+            assert not handler._closed
+
+        async def provider(invocation: MCPToolInvocation) -> None:
+            if invocation.tool_name == "inner":
+                children.append(asyncio.create_task(close_from_inherited_context()))
+                return
+            outer_context = handler._invocation_context.get()
+            assert len(outer_context) == 1
+            nested_result = await handler.invoke_tool(_invocation(tool_name="inner"))
+            assert not nested_result.is_error
+            assert handler._invocation_context.get() is outer_context
+            release_child.set()
+            await children[-1]
+            with pytest.raises(RuntimeError, match="cannot be called from an active provider-backed invocation"):
+                await handler.aclose()
+
+        with _patch_tool():
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                try:
+                    result = await handler.invoke_tool(_invocation(tool_name="outer"))
+                    assert not result.is_error
+                    assert handler._invocation_context.get() == ()
+                    assert not handler._active_invocations
+                finally:
+                    release_child.set()
+                    await asyncio.gather(*children)
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_provider_can_invoke_and_close_another_handler(self) -> None:
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            async with DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None)) as other:
+                result = await other.invoke_tool(_invocation)
+                assert not result.is_error
+                assert other._invocation_context.get() == ()
+                assert handler._invocation_context.get()
+            assert other._closed
+            assert not handler._closed
+
+        with _patch_tool():
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                result = await handler.invoke_tool(_invocation())
+                assert not result.is_error
+                assert handler._invocation_context.get() == ()
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    @pytest.mark.timeout(10)
+    async def test_inherited_context_can_close_after_invocation_completes(self) -> None:
+        release_child = asyncio.Event()
+        children: list[asyncio.Task[None]] = []
+
+        async def close_from_inherited_context() -> None:
+            await release_child.wait()
+            context = handler._invocation_context.get()
+            assert len(context) == 1
+            assert context[0].done()
+            await handler.aclose()
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            children.append(asyncio.create_task(close_from_inherited_context()))
+
+        with _patch_tool():
+            handler = DefaultMCPToolHandler(client_provider=provider)
+            try:
+                result = await handler.invoke_tool(_invocation())
+                assert not result.is_error
+                assert handler._invocation_context.get() == ()
+                assert not handler._active_invocations
+                assert not handler._closed
+            finally:
+                release_child.set()
+                await asyncio.gather(*children)
+                await handler.aclose()
+        assert handler._closed
+        assert len(FakeTool.instances) == 1
+        assert FakeTool.instances[0].close_count == 1
+
+    async def test_list_tools_paginates_within_each_invocation(self) -> None:
+        original_connect = FakeTool.connect
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            assert tool.session is not None
+            tool.session.list_tools_pages = [
+                FakeListToolsResult([FakeMcpTool("first")], next_cursor="next"),
+                FakeListToolsResult([FakeMcpTool("second")]),
+            ]
+
+        provider = AsyncMock(return_value=None)
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "call_tool", new_callable=AsyncMock) as call_tool,
+        ):
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                for _ in range(2):
+                    result = await handler.invoke_tool(_invocation(tool_name="tools/list"))
+                    assert not result.is_error
+                    assert result.outputs[0].text is not None
+                    payload = json.loads(result.outputs[0].text)
+                    assert [tool["name"] for tool in payload["tools"]] == ["first", "second"]
+            call_tool.assert_not_awaited()
+        assert provider.await_count == 2
+        assert len(FakeTool.instances) == 2
+        for tool in FakeTool.instances:
+            assert tool.close_count == 1
+            assert tool.session is not None
+            assert len(tool.session.list_tools_calls) == 2
+            assert tool.session.list_tools_calls[0] is None
+            assert tool.session.list_tools_calls[1].cursor == "next"
+
+    @pytest.mark.parametrize("stage", ["provider", "connect", "search", "tools/list"])
+    @pytest.mark.parametrize(
+        "error_type", [httpx.ReadTimeout, ToolExecutionException, RuntimeError, asyncio.CancelledError]
+    )
+    @pytest.mark.parametrize("returns_none", [False, True])
+    async def test_errors_clean_up_and_preserve_mapping(
+        self, stage: str, error_type: type[BaseException], returns_none: bool
+    ) -> None:
+        error = error_type("operation stopped")
+        original_connect = FakeTool.connect
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            if stage == "connect":
+                raise error
+
+        async with httpx.AsyncClient() as client:
+            provider = AsyncMock(
+                return_value=None if returns_none else client,
+                side_effect=error if stage == "provider" else None,
+            )
+            with (
+                _patch_tool(),
+                patch.object(FakeTool, "connect", connect),
+                patch.object(FakeTool, "call_tool", new_callable=AsyncMock, side_effect=error),
+                patch.object(FakeMcpSession, "list_tools", new_callable=AsyncMock, side_effect=error),
+            ):
+                async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                    invocation = _invocation(
+                        tool_name="tools/list" if stage == "tools/list" else "search", headers={"X-Test": "1"}
+                    )
+                    if error_type is asyncio.CancelledError or (
+                        error_type is RuntimeError and stage in ("search", "tools/list")
+                    ):
+                        with pytest.raises(error_type, match="operation stopped"):
+                            await handler.invoke_tool(invocation)
+                    else:
+                        result = await handler.invoke_tool(invocation)
+                        assert result.is_error
+                        assert "operation stopped" in (result.error_message or "")
+                        assert result.outputs[0].text is not None
+                        assert result.outputs[0].text.startswith("Error:")
+                    assert handler._invocation_context.get() == ()
+                    assert not handler._active_invocations
+                    assert not handler._cache
+                    assert not handler._inflight
+            assert provider.await_count == 1
+            assert len(FakeTool.instances) == (0 if stage == "provider" else 1)
+            for tool in FakeTool.instances:
+                assert tool.close_count == 1
+                if returns_none:
+                    assert tool._httpx_client is not None
+                    assert tool._httpx_client.is_closed
+            assert not client.is_closed
+
+    @pytest.mark.parametrize("tool_name", ["search", "tools/list"])
+    async def test_mcp_error_mapping_cleans_up(self, tool_name: str) -> None:
+        from mcp.shared.exceptions import McpError
+        from mcp.types import ErrorData
+
+        error = McpError(ErrorData(code=-32603, message="operation stopped"))
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "call_tool", new_callable=AsyncMock, side_effect=error),
+            patch.object(FakeMcpSession, "list_tools", new_callable=AsyncMock, side_effect=error),
+        ):
+            async with DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None)) as handler:
+                result = await handler.invoke_tool(_invocation(tool_name=tool_name, headers={"X-Test": "1"}))
+                assert result.is_error
+                assert result.error_message == "operation stopped"
+                assert not handler._active_invocations
+        tool = FakeTool.instances[0]
+        assert tool.close_count == 1
+        assert tool._httpx_client is not None
+        assert tool._httpx_client.is_closed
+
+    async def test_tool_close_failure_still_closes_fallback_client(self) -> None:
+        async def close(tool: FakeTool) -> None:
+            tool.close_count += 1
+            raise RuntimeError("close failed")
+
+        with _patch_tool(), patch.object(FakeTool, "close", close):
+            async with DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None)) as handler:
+                result = await handler.invoke_tool(_invocation(headers={"X-Test": "1"}))
+                assert not result.is_error
+                assert result.outputs[0].text == "ok"
+                assert not handler._active_invocations
+        tool = FakeTool.instances[0]
+        assert tool.close_count == 1
+        assert tool._httpx_client is not None
+        assert tool._httpx_client.is_closed
+
+    @pytest.mark.parametrize("connect_fails", [False, True])
+    async def test_cleanup_cancellation_signals_completion(self, connect_fails: bool) -> None:
+        original_connect = FakeTool.connect
+        completions: list[asyncio.Future[None]] = []
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            if connect_fails:
+                raise httpx.ConnectError("connect stopped")
+
+        async def close(tool: FakeTool) -> None:
+            tool.close_count += 1
+            completions.extend(handler._active_invocations)
+            raise asyncio.CancelledError("cleanup stopped")
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "close", close),
+        ):
+            handler = DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None))
+            # Python 3.10 may drop the message when a cancelled task's result is retrieved again.
+            with pytest.raises(asyncio.CancelledError):
+                await handler.invoke_tool(_invocation(headers={"X-Test": "1"}))
+            assert handler._invocation_context.get() == ()
+            assert not handler._active_invocations
+            assert len(completions) == 1
+            assert completions[0].done()
+            assert completions[0].result() is None
+            await asyncio.wait_for(handler.aclose(), timeout=5)
+        tool = FakeTool.instances[0]
+        assert tool.close_count == 1
+        assert tool._httpx_client is not None
+        assert tool._httpx_client.is_closed
+
+    @pytest.mark.parametrize("stage", ["provider", "connect", "search", "tools/list"])
+    async def test_task_cancellation_cleans_up(self, stage: str) -> None:
+        started = asyncio.Event()
+        original_connect = FakeTool.connect
+
+        async def wait(*_args: Any, **_kwargs: Any) -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            if stage == "provider":
+                await wait()
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            if stage == "connect":
+                await wait()
+
+        async def invoke_and_check_context() -> None:
+            try:
+                await handler.invoke_tool(
+                    _invocation(tool_name="tools/list" if stage == "tools/list" else "search", headers={"X-Test": "1"})
+                )
+            finally:
+                assert handler._invocation_context.get() == ()
+
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "call_tool", new_callable=AsyncMock, side_effect=wait),
+            patch.object(FakeMcpSession, "list_tools", new_callable=AsyncMock, side_effect=wait),
+        ):
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                task = asyncio.create_task(invoke_and_check_context())
+                await asyncio.wait_for(started.wait(), timeout=5)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert not handler._active_invocations
+        assert len(FakeTool.instances) == (0 if stage == "provider" else 1)
+        for tool in FakeTool.instances:
+            assert tool.close_count == 1
+            assert tool._httpx_client is not None
+            assert tool._httpx_client.is_closed
+
+    async def test_repeated_cancellation_waits_for_cleanup(self) -> None:
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        original_close = FakeTool.close
+
+        async def close(tool: FakeTool) -> None:
+            cleanup_started.set()
+            await release_cleanup.wait()
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", close):
+            async with DefaultMCPToolHandler(client_provider=AsyncMock(return_value=None)) as handler:
+                task = asyncio.create_task(handler.invoke_tool(_invocation(headers={"X-Test": "1"})))
+                await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+                for _ in range(2):
+                    task.cancel()
+                    await asyncio.sleep(0)
+                    assert not task.done()
+                    assert handler._active_invocations
+                release_cleanup.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert not handler._active_invocations
+        tool = FakeTool.instances[0]
+        assert tool.close_count == 1
+        assert tool._httpx_client is not None
+        assert tool._httpx_client.is_closed
+
+    @pytest.mark.parametrize("stage", ["provider", "connect", "search", "tools/list", "close"])
+    @pytest.mark.parametrize("cancel_shutdown", [False, True])
+    async def test_shutdown_waits_for_invocation_cleanup(self, stage: str, cancel_shutdown: bool) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original_connect = FakeTool.connect
+        original_close = FakeTool.close
+        original_call = FakeTool.call_tool
+        original_list = FakeMcpSession.list_tools
+
+        async def gate(phase: str) -> None:
+            if stage == phase:
+                started.set()
+                await release.wait()
+
+        async def provider(_invocation: MCPToolInvocation) -> None:
+            await gate("provider")
+
+        async def connect(tool: FakeTool) -> None:
+            await original_connect(tool)
+            await gate("connect")
+
+        async def close(tool: FakeTool) -> None:
+            await gate("close")
+            await original_close(tool)
+
+        async def call(tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            await gate("search")
+            return await original_call(tool, tool_name, **arguments)
+
+        async def list_tools(session: FakeMcpSession, params: Any = None) -> FakeListToolsResult:
+            await gate("tools/list")
+            return await original_list(session, params)
+
+        provider_mock = AsyncMock(side_effect=provider)
+        with (
+            _patch_tool(),
+            patch.object(FakeTool, "connect", connect),
+            patch.object(FakeTool, "close", close),
+            patch.object(FakeTool, "call_tool", call),
+            patch.object(FakeMcpSession, "list_tools", list_tools),
+        ):
+            handler = DefaultMCPToolHandler(client_provider=provider_mock)
+            invocation = _invocation(
+                tool_name="tools/list" if stage == "tools/list" else "search", headers={"X-Test": "1"}
+            )
+            task = asyncio.create_task(handler.invoke_tool(invocation))
+            await asyncio.wait_for(started.wait(), timeout=5)
+            shutdown = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            assert handler._closed
+            assert not shutdown.done()
+            rejected = await handler.invoke_tool(invocation)
+            assert rejected.is_error
+            assert "closed" in (rejected.error_message or "")
+            assert provider_mock.await_count == 1
+            if cancel_shutdown:
+                shutdown.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await shutdown
+            second_shutdown = asyncio.create_task(handler.aclose())
+            await asyncio.sleep(0)
+            assert not second_shutdown.done()
+            release.set()
+            result = await task
+            await second_shutdown
+            if not cancel_shutdown:
+                await shutdown
+            await handler.aclose()
+        assert result.is_error == (stage in ("provider", "connect"))
+        if result.is_error:
+            assert "closed" in (result.error_message or "")
+        assert not handler._active_invocations
+        assert not handler._cache
+        assert not handler._inflight
+        assert len(FakeTool.instances) == (0 if stage == "provider" else 1)
+        for tool in FakeTool.instances:
+            assert tool.close_count == 1
+            assert tool._httpx_client is not None
+            assert tool._httpx_client.is_closed
+
+    async def test_invalid_list_arguments_skip_provider(self) -> None:
+        provider = AsyncMock(return_value=None)
+        with _patch_tool():
+            async with DefaultMCPToolHandler(client_provider=provider) as handler:
+                result = await handler.invoke_tool(_invocation(tool_name="tools/list", arguments={"q": "test"}))
+        assert result.is_error
+        assert "does not accept tool arguments" in (result.error_message or "")
+        provider.assert_not_awaited()
+        assert not FakeTool.instances
 
 
 # ---------- Construction ---------------------------------------------------

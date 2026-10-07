@@ -4,12 +4,12 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import partial
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from agent_framework import (
@@ -38,6 +38,7 @@ from ._base_group_chat_orchestrator import (
     ParticipantRegistry,
 )
 from ._feature_usage import FeatureIndex
+from ._orchestrator_helpers import extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -55,6 +56,7 @@ else:
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "Magentic"
 
 # Consistent author name for messages produced by the Magentic manager/orchestrator
 MAGENTIC_MANAGER_NAME = "magentic_manager"
@@ -412,9 +414,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 
     The `text` method is concatenating multiple text contents from diff msgs into a single string.
     """
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
-    if fence:
-        candidate = fence.group(1)
+    fenced_object = next(
+        (body for body in extract_markdown_fence_bodies(text) if body.startswith("{") and body.endswith("}")),
+        None,
+    )
+    if fenced_object is not None:
+        candidate = fenced_object
     else:
         # Find first balanced JSON object
         start = text.find("{")
@@ -1418,10 +1423,11 @@ class MagenticBuilder:
         task_ledger_plan_update_prompt: str | None = None,
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
         # Existing params
+        name: str | None = None,
         enable_plan_review: bool = False,
         checkpoint_storage: CheckpointStorage | None = None,
         output_from: Sequence[_ParticipantOutputSpecifier] | Literal["all"] | None = cast(Any, UNSET),
@@ -1430,11 +1436,17 @@ class MagenticBuilder:
         """Initialize the Magentic workflow builder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"Magentic"``.
             participants: Sequence of agent or executor instances for the workflow.
             manager: Pre-configured manager instance (subclass of MagenticManagerBase).
-            manager_factory: Callable that returns a new MagenticManagerBase instance.
-            manager_agent: Agent instance for creating a StandardMagenticManager.
-            manager_agent_factory: Callable that returns a new agent instance for creating a StandardMagenticManager.
+                The same instance, including its mutable state, is reused by every workflow
+                built with this builder. Do not share a stateful manager across concurrent or
+                interleaved workflows; use manager_factory to create a fresh manager per build.
+            manager_factory: Callable invoked on each build to return a new MagenticManagerBase instance.
+            manager_agent: Agent instance used to create a new StandardMagenticManager on each build.
+                Each workflow has its own manager, but the supplied agent is shared.
+            manager_agent_factory: Callable invoked on each build to return a new agent instance
+                for a new StandardMagenticManager.
             task_ledger: Optional custom task ledger (used with manager_agent/manager_agent_factory).
             task_ledger_facts_prompt: Custom prompt for extracting facts.
             task_ledger_plan_prompt: Custom prompt for generating initial plan.
@@ -1455,6 +1467,7 @@ class MagenticBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
 
         # Manager related members
@@ -1628,7 +1641,7 @@ class MagenticBuilder:
         progress_ledger_prompt: str | None = None,
         final_answer_prompt: str | None = None,
         # Limits
-        max_stall_count: int | Sentinel = UNSET,  # type: ignore[reportArgumentType]
+        max_stall_count: int | Sentinel = UNSET,
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> None:
@@ -1687,7 +1700,8 @@ class MagenticBuilder:
             self._manager = manager
             _log_warning_if_constructor_args_provided()
         elif manager_agent is not None:
-            self._manager = StandardMagenticManager(
+            self._manager_factory = partial(
+                StandardMagenticManager,
                 agent=manager_agent,
                 task_ledger=task_ledger,
                 task_ledger_facts_prompt=task_ledger_facts_prompt,
@@ -1777,7 +1791,12 @@ class MagenticBuilder:
         return executors
 
     def build(self) -> Workflow:
-        """Build a Magentic workflow with the orchestrator and all agent executors."""
+        """Build a Magentic workflow with the orchestrator and all agent executors.
+
+        A new standard manager is created for each build when configured with manager_agent
+        or manager_agent_factory. An explicitly supplied manager instance is reused unchanged;
+        manager_factory is called on each build to obtain a manager.
+        """
         mark_feature_used(FeatureIndex.ORCHESTRATION_MAGENTIC)
         logger.info(f"Building Magentic workflow with {len(self._participants)} participants")
 
@@ -1794,6 +1813,7 @@ class MagenticBuilder:
             extra_output_executors=[orchestrator],
         )
         workflow_builder = WorkflowBuilder(
+            name=self._name,
             start_executor=orchestrator,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,

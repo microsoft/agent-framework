@@ -557,10 +557,11 @@ internal static class OutputConverter
         var outputTokens = details.OutputTokenCount ?? 0;
         var totalTokens = details.TotalTokenCount ?? 0;
 
-        var cachedTokens = details.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cached) ?? false
-            ? cached : 0;
-        var reasoningTokens = details.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoning) ?? false
-            ? reasoning : 0;
+        // Prefer the dedicated counters, retaining the legacy dictionary keys as a fallback.
+        var cachedTokens = details.CachedInputTokenCount ??
+            (details.AdditionalCounts?.TryGetValue("InputTokenDetails.CachedTokenCount", out var cached) is true ? cached : 0);
+        var reasoningTokens = details.ReasoningTokenCount ??
+            (details.AdditionalCounts?.TryGetValue("OutputTokenDetails.ReasoningTokenCount", out var reasoning) is true ? reasoning : 0);
 
         if (existing is not null)
         {

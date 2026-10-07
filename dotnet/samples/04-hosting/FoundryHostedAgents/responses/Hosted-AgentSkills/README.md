@@ -45,7 +45,7 @@ cp .env.example .env
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
 PROVISION_SAMPLE_SKILLS=true
 SKILL_NAMES=support-style,escalation-policy
 ASPNETCORE_URLS=http://+:8088
@@ -165,9 +165,9 @@ Do not substitute `Azure AI Developer`; Microsoft documents that role as insuffi
 hosted agents. Recreate the role assignment when the agent is deleted and created again, because
 the new agent receives a new identity.
 
-The Skills API is a preview surface. `Program.cs` adds the required
-`Foundry-Features: Skills=V1Preview` header and downloads skills into the writable temporary
-directory. The source-deploy application directory (`/app`) is read-only.
+The Skills API is a preview surface. `Azure.AI.Projects` applies its required feature opt-in
+internally. `Program.cs` downloads skills into the writable temporary directory. The source-deploy
+application directory (`/app`) is read-only.
 
 ### Step 4: clean up
 

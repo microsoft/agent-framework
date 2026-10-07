@@ -34,6 +34,7 @@ class ReleaseProject:
 
     project_path: Path
     package_name: str
+    version: str
     requires_python: str
     dependencies: tuple[str, ...]
     optional_dependencies: dict[str, tuple[str, ...]]
@@ -50,6 +51,7 @@ class ReleaseProbePlan:
     import_modules: tuple[str, ...]
     reported_distributions: tuple[str, ...]
     python_version: str
+    prerelease_requirements: tuple[str, ...] = ()
 
 
 def _utc_now() -> str:
@@ -121,6 +123,9 @@ def _load_release_project(workspace_root: Path, project_path: Path) -> ReleasePr
     package_name = str(project.get("name", "")).strip()
     if not package_name:
         raise RuntimeError(f"Missing project.name in {pyproject_file}")
+    version = str(project.get("version", "")).strip()
+    if not version:
+        raise RuntimeError(f"Missing project.version in {pyproject_file}")
     requires_python = str(project.get("requires-python", "")).strip()
     if not requires_python:
         raise RuntimeError(f"Missing project.requires-python in {pyproject_file}")
@@ -133,6 +138,7 @@ def _load_release_project(workspace_root: Path, project_path: Path) -> ReleasePr
     return ReleaseProject(
         project_path=project_path,
         package_name=package_name,
+        version=version,
         requires_python=requires_python,
         dependencies=_string_requirements(project.get("dependencies", [])),
         optional_dependencies=optional_dependencies,
@@ -150,6 +156,57 @@ def _build_release_project_map(workspace_root: Path) -> dict[str, ReleaseProject
         project = _load_release_project(workspace_root, project_path)
         projects[canonicalize_name(project.package_name)] = project
     return projects
+
+
+def _validate_core_all_dependency_bounds(projects: dict[str, ReleaseProject]) -> None:
+    """Require the Core all-extra to select the current integration cohort."""
+    core = projects.get("agent-framework-core")
+    if core is None:
+        return
+
+    all_requirements = core.optional_dependencies.get("all")
+    if not all_requirements:
+        raise RuntimeError("agent-framework-core[all] dependency bounds are incomplete:\n- all must not be missing or empty")
+
+    errors: list[str] = []
+    for requirement_text in all_requirements:
+        try:
+            requirement = Requirement(requirement_text)
+        except InvalidRequirement as exc:
+            errors.append(f"{requirement_text!r} is invalid: {exc}")
+            continue
+
+        dependency_name = canonicalize_name(requirement.name)
+        if not dependency_name.startswith("agent-framework-"):
+            continue
+
+        specifiers = tuple(requirement.specifier)
+        if not specifiers:
+            errors.append(f"{requirement.name} must declare lower and upper bounds")
+            continue
+        if not any(specifier.operator in {"<", "<="} for specifier in specifiers):
+            errors.append(f"{requirement.name} must declare an upper bound")
+
+        dependency = projects.get(dependency_name)
+        if dependency is None:
+            if not any(specifier.operator in {">=", "=="} for specifier in specifiers):
+                errors.append(f"{requirement.name} must declare a lower bound")
+            continue
+
+        expected_version = Version(dependency.version)
+        release_floors = {
+            Version(specifier.version)
+            for specifier in specifiers
+            if specifier.operator in {">=", "=="} and "*" not in specifier.version
+        }
+        if expected_version not in release_floors:
+            errors.append(
+                f"{requirement.name} must use the current workspace version {dependency.version} as its release floor"
+            )
+
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors)
+        raise RuntimeError(f"agent-framework-core[all] dependency bounds are incomplete:\n{details}")
 
 
 def _changed_release_project_paths(workspace_root: Path, base_ref: str) -> set[Path]:
@@ -232,6 +289,33 @@ def _minimum_python_version(projects: list[ReleaseProject]) -> str:
     return python_version
 
 
+def _prerelease_requirements(
+    projects: dict[str, ReleaseProject],
+    requested_extras: dict[str, set[str]],
+) -> tuple[str, ...]:
+    """Collect external requirements in the closure that carry a pre-release specifier.
+
+    ``uv`` enables pre-releases for a package only when a *direct* requirement carries a
+    pre-release specifier. Internal packages resolved as editables contribute their own
+    requirements transitively, so a pre-release floor declared by one of them would otherwise
+    be ignored. Re-declaring those requirements at the probe root keeps them explicit.
+    """
+    collected: set[str] = set()
+    for package_name, extras in requested_extras.items():
+        project = projects[package_name]
+        for requirement_text in _requirements_for_extras(project, extras):
+            try:
+                requirement = Requirement(requirement_text)
+            except InvalidRequirement:
+                continue
+            if canonicalize_name(requirement.name) in projects:
+                continue
+            if not requirement.specifier.prereleases:
+                continue
+            collected.add(str(requirement))
+    return tuple(sorted(collected))
+
+
 def _build_release_probe_plan(
     workspace_root: Path,
     target: ReleaseProject,
@@ -295,6 +379,7 @@ def _build_release_probe_plan(
         import_modules=target.import_modules,
         reported_distributions=tuple(sorted(reported_distributions)),
         python_version=_minimum_python_version([projects[package_name] for package_name in requested_extras]),
+        prerelease_requirements=_prerelease_requirements(projects, requested_extras),
     )
 
 
@@ -337,6 +422,8 @@ print({_PROBE_RESULT_PREFIX!r} + json.dumps({{"imports": modules, "versions": ve
     ]
     for editable_spec in plan.editable_specs:
         command.extend(["--with-editable", editable_spec])
+    for requirement in plan.prerelease_requirements:
+        command.extend(["--with", requirement])
     command.extend(["python", "-c", probe_script])
     return command
 
@@ -506,6 +593,12 @@ def run_release_mode(
     if not selected:
         print(f"[red]No changed package pyproject.toml files found relative to {base_ref}.[/red]")
         return 1
+    if any(project.package_name == "agent-framework-core" for project in selected):
+        try:
+            _validate_core_all_dependency_bounds(projects)
+        except RuntimeError as exc:
+            print(f"[red]{exc}[/red]")
+            return 1
 
     lock_result = _refresh_lockfile(workspace_root=workspace_root, deadline=deadline, dry_run=dry_run)
     if lock_result["status"] == "failed":

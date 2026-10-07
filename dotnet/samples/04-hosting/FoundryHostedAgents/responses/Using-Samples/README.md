@@ -47,6 +47,8 @@ never hits the TLS check.
 | [`SimpleAgent/`](./SimpleAgent/) | Any hosted agent | Generic, agent-agnostic REPL. Point it at any `Hosted-*` server via `AZURE_AI_AGENT_NAME`. Used by `Hosted-Toolbox`, `Hosted-Toolbox-AuthPaths`, and `Hosted-McpTools`. |
 | [`Hosted-Toolbox-AuthPaths-Client/`](./Hosted-Toolbox-AuthPaths-Client/) | Hosted toolbox agents | Handles OAuth consent, function-tool approvals, and native MCP approvals. Use it with `Hosted-Toolbox-AuthPaths` or `Hosted-ToolboxMcpSkills`. |
 | [`SessionFilesClient/`](./SessionFilesClient/) | [`Hosted-Files`](../Hosted-Files/) | Same shape as `SimpleAgent`, framed around the bundled-files demo. |
+| [`FoundryHostedSession/`](./FoundryHostedSession/) | Any deployed hosted agent | Creates a hosted session explicitly, pins an `AgentSession` to it, explains session pools, and deletes the session on exit. |
+| [`UserIsolationAgent/`](./UserIsolationAgent/) | Any deployed hosted agent | Shares one hosted session across several application users while keeping an independent conversation and delegated identity for each user. |
 
 For a self-contained demonstration that covers both crash and shutdown recovery, see
 [`Using-E2E-Resilience`](../Using-E2E-Resilience/).

@@ -38,6 +38,7 @@ from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature
 from agent_framework._mcp import (
     _MCP_HEADER_OWNER_EXTENSION,
     _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    MCPSpecificApproval,
     MCPTool,
     _build_prefixed_mcp_name,
     _describe_error,
@@ -74,7 +75,7 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
     return text or str(result)
 
 
-_HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]
+_HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
 
 def _raise_result_parser(_: Any) -> str:
@@ -171,13 +172,14 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
     )
 
 
-async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration():
+@pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
+async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration(configured_name: str):
     """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="docs",
         tool_name_prefix="docs",
-        allowed_tools=["search_docs"],
-        approval_mode={"always_require_approval": ["search_docs"]},
+        allowed_tools=[configured_name],
+        approval_mode={"always_require_approval": [configured_name]},
     )
 
     mock_session = AsyncMock()
@@ -202,9 +204,346 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     assert tool.functions[0].approval_mode == "always_require"
 
 
+@pytest.mark.parametrize(
+    "allowed_tools,approval_mode",
+    [
+        (["docs_search"], None),
+        (None, {"always_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"]}),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+@pytest.mark.parametrize("paginated", [False, True])
+@pytest.mark.parametrize("progressive", [False, True])
+async def test_load_tools_rejects_ambiguous_policy_names(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    remote_names: tuple[str, str],
+    paginated: bool,
+    progressive: bool,
+) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="docs",
+            tool_name_prefix="docs",
+            allowed_tools=allowed_tools,
+            approval_mode=approval_mode,
+            use_progressive_disclosure=progressive,
+        )
+    advertised_tools = [
+        types.Tool(name=name, inputSchema={"type": "object", "properties": {}}) for name in remote_names
+    ]
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == []
+        if paginated:
+            if params is None:
+                return types.ListToolsResult(tools=advertised_tools[:1], nextCursor="second")
+            assert params.cursor == "second"
+            return types.ListToolsResult(tools=advertised_tools[1:])
+        return types.ListToolsResult(tools=advertised_tools)
+
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        await tool.load_tools()
+
+    assert tool._functions == []
+    assert tool._tool_param_names_by_name == {}
+    assert [function.name for function in tool.functions] == (
+        ["docs_list_mcp_tools", "docs_load_tool", "docs_unload_tool"] if progressive else []
+    )
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,approval_mode",
+    [
+        (["docs_search"], None),
+        (None, {"always_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"]}),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+async def test_ambiguous_policy_reload_preserves_previous_discovery(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    remote_names: tuple[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs", tool_name_prefix="docs", allowed_tools=allowed_tools, approval_mode=approval_mode
+    )
+    tool.session = AsyncMock()
+    original = types.Tool(
+        name=remote_names[0],
+        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        _meta={"original": True},
+    )
+    tool.session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[original]))
+    await tool.load_tools()
+    original_functions = list(tool._functions)
+    original_meta = dict(tool._tool_call_meta_by_name)
+    original_params = dict(tool._tool_param_names_by_name)
+    original_tasks = dict(tool._tool_task_support_by_name)
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == original_functions
+        if params is None:
+            return types.ListToolsResult(
+                tools=[original, types.Tool(name="extra", inputSchema={"type": "object"})],
+                nextCursor="second",
+            )
+        return types.ListToolsResult(tools=[types.Tool(name=remote_names[1], inputSchema={"type": "object"})])
+
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        await tool.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert "configuration name 'docs_search' is ambiguous" in caplog.text
+    assert tool._functions == original_functions
+    assert tool.functions == original_functions
+    assert tool._tool_call_meta_by_name == original_meta
+    assert tool._tool_param_names_by_name == original_params
+    assert tool._tool_task_support_by_name == original_tasks
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,approval_mode,expected_approval",
+    [
+        (["docs_search"], None, "never_require"),
+        (None, {"always_require_approval": ["docs_search"]}, "always_require"),
+        (None, {"never_require_approval": ["docs_search"]}, "never_require"),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+async def test_tool_refresh_accepts_unambiguous_rename(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    expected_approval: str,
+    remote_names: tuple[str, str],
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs", tool_name_prefix="docs", allowed_tools=allowed_tools, approval_mode=approval_mode
+    )
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[types.Tool(name=name, inputSchema={"type": "object"})])
+            for name in remote_names
+        ]
+    )
+    await tool.load_tools()
+    await tool.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
+    await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [function.name for function in tool.functions] == [f"docs_{remote_names[1]}"]
+    assert tool.functions[0].approval_mode == expected_approval
+    tool.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await tool.functions[0].invoke(arguments={})
+    assert tool.session.call_tool.call_args.args[0] == remote_names[1]
+
+
+@pytest.mark.parametrize("empty_snapshot", [False, True])
+async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empty_snapshot: bool) -> None:
+    tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock()
+    keep = types.Tool(
+        name="keep",
+        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        _meta={"version": 1},
+    )
+    removed = types.Tool(
+        name="removed",
+        inputSchema={"type": "object", "properties": {}},
+        _meta={"version": 1},
+        execution=types.ToolExecution(taskSupport="required"),
+    )
+    tool.session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[keep, removed]))
+    await tool.load_tools()
+    kept_function = tool._functions[0]
+    parser = Mock(return_value="custom result")
+    kept_function.result_parser = parser
+    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
+    await tool.load_prompts()
+    prompt_function = tool._functions[-1]
+    custom_function = FunctionTool(name="custom", func=lambda: "custom")
+    tool._functions.append(custom_function)
+    original_list = tool._functions
+    original_functions = list(original_list)
+    original_meta = dict(tool._tool_call_meta_by_name)
+    keep.meta = {"version": 2}
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == original_functions
+        assert tool._tool_call_meta_by_name == original_meta
+        if params is None:
+            return types.ListToolsResult(tools=[], nextCursor="second")
+        assert params.cursor == "second"
+        return types.ListToolsResult(tools=[] if empty_snapshot else [keep])
+
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+    await tool.load_tools()
+
+    assert tool._functions is original_list
+    assert {function.name for function in tool._functions} == (
+        {"docs_summary", "custom"} if empty_snapshot else {"docs_keep", "docs_summary", "custom"}
+    )
+    assert next(function for function in tool._functions if function.name == "docs_summary") is prompt_function
+    assert next(function for function in tool._functions if function.name == "custom") is custom_function
+    if not empty_snapshot:
+        assert next(function for function in tool._functions if function.name == "docs_keep") is kept_function
+        assert kept_function.result_parser is parser
+    assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
+    assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
+    assert tool._tool_task_support_by_name == {}
+
+
+async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
+    await tool.load_prompts()
+    prompt_function = tool._functions[0]
+    tool.session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[types.Tool(name="summary", inputSchema={"type": "object"})]),
+            types.ListToolsResult(tools=[]),
+        ]
+    )
+    await tool.load_tools()
+    await tool.load_tools()
+
+    assert tool._functions == [prompt_function]
+
+
+@pytest.mark.parametrize("replacement_name", [None, "search-docs"])
+async def test_tool_refresh_forgets_removed_progressive_tools(replacement_name: str | None) -> None:
+    tool = await _load_progressive_test_server(
+        tool_name_prefix="docs",
+        tools=[types.Tool(name=name, inputSchema={"type": "object"}) for name in ("search/docs", "keep")],
+    )
+    loader = tool.functions[1]
+    context = FunctionInvocationContext(function=loader, arguments={}, tools=list(tool.functions))
+    await loader.invoke(arguments={"tool": ["docs_search-docs", "keep"]}, context=context)
+    assert tool._progressive_loaded_tool_names == {"docs_search-docs", "docs_keep"}
+    kept_function = next(function for function in tool._functions if function.name == "docs_keep")
+    assert tool.session is not None
+    with patch.object(
+        tool.session,
+        "list_tools",
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, inputSchema={"type": "object"})
+                for name in (["keep", replacement_name] if replacement_name else ["keep"])
+            ]
+        ),
+    ):
+        await tool.load_tools()
+
+    assert tool._progressive_loaded_tool_names == {"docs_keep"}
+    assert tool.functions[-1] is kept_function
+    assert [function.name for function in tool.functions] == [
+        "docs_list_mcp_tools",
+        "docs_load_tool",
+        "docs_unload_tool",
+        "docs_keep",
+    ]
+    assert [function.name for function in tool._functions] == (
+        ["docs_keep", "docs_search-docs"] if replacement_name else ["docs_keep"]
+    )
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,expected_names",
+    [
+        (None, ["docs_search", "docs_docs_search"]),
+        ([], []),
+        (["search"], ["docs_search"]),
+        (["docs_docs_search"], ["docs_docs_search"]),
+    ],
+)
+async def test_overlapping_names_accept_unambiguous_policy(
+    allowed_tools: list[str] | None, expected_names: list[str]
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=allowed_tools,
+        approval_mode={
+            "always_require_approval": ["search"],
+            "never_require_approval": ["search", "docs_docs_search"],
+        },
+    )
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, inputSchema={"type": "object", "properties": {}})
+                for name in ("search", "docs_search")
+            ]
+        )
+    )
+    await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == expected_names
+    assert [function.approval_mode for function in tool._functions] == ["always_require", "never_require"]
+
+    tool.allowed_tools = ["docs_search"]
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        _ = tool.functions
+
+
+@pytest.mark.parametrize("load_order", ["prompts", "tools_then_prompts", "prompts_then_tools"])
+async def test_prompts_reject_ambiguous_policy_names(load_order: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=["docs_search"],
+    )
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[types.Prompt(name="search")], nextCursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="docs_search")]),
+        ]
+    )
+    if load_order == "prompts":
+        with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+            await tool.load_prompts()
+        assert tool._functions == []
+        return
+
+    tool.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[types.Tool(name="search", inputSchema={"type": "object", "properties": {}})]
+        )
+    )
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="docs_search")])
+    )
+    first_load, second_load = (
+        (tool.load_tools, tool.load_prompts)
+        if load_order == "tools_then_prompts"
+        else (tool.load_prompts, tool.load_tools)
+    )
+    await first_load()
+    original_functions = list(tool._functions)
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        await second_load()
+    assert tool._functions == original_functions
+
+
 async def test_allowed_tools_does_not_authorize_normalized_remote_name_collision() -> None:
     """A normalized/local allowlist match must not authorize a different raw remote tool."""
-    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]
+    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -229,7 +568,7 @@ async def test_allowed_tools_does_not_authorize_normalized_remote_name_collision
 
 async def test_load_tools_rejects_colliding_normalized_tool_names() -> None:
     """A remote MCP server must not choose which raw tool backs a colliding local name."""
-    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]
+    tool = MCPTool(name="test_server", allowed_tools=["delete-file"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -257,7 +596,7 @@ async def test_load_tools_rejects_colliding_normalized_tool_names() -> None:
 
 async def test_allowed_tools_exact_raw_name_allows_normalized_function_name() -> None:
     """An exact raw remote allowlist entry still exposes that raw tool, regardless of local normalization."""
-    tool = MCPTool(name="test_server", allowed_tools=["delete/file"])  # type: ignore[abstract]
+    tool = MCPTool(name="test_server", allowed_tools=["delete/file"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -283,7 +622,7 @@ async def test_allowed_tools_exact_raw_name_allows_normalized_function_name() ->
 
 async def test_approval_mode_does_not_match_normalized_colliding_name() -> None:
     """Approval rules should not apply to a different raw remote tool through normalization."""
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="test_server",
         approval_mode={"always_require_approval": ["delete-file"]},
     )
@@ -311,7 +650,7 @@ async def test_approval_mode_does_not_match_normalized_colliding_name() -> None:
 
 async def test_load_prompts_with_tool_name_prefix() -> None:
     """Prefixed MCP prompt names should be exposed with the configured prefix."""
-    tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]
+    tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -347,7 +686,7 @@ def test_mcp_prompt_message_to_ai_content():
 
 
 def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
-    tool = MCPTool(name="helper", description="Helper MCP tool")  # type: ignore[abstract]
+    tool = MCPTool(name="helper", description="Helper MCP tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     prompt_result = types.GetPromptResult(
         messages=[
             types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello")),
@@ -546,7 +885,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_with_text():
-    """Test that structuredContent is appended alongside regular content items."""
+    """Default structured_first prefers structuredContent when both are present (#7866)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
         structuredContent={"data": [1, 2, 3]},
@@ -554,24 +893,58 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
     assert isinstance(result, list)
-    assert len(result) == 2
+    assert len(result) == 1
     assert result[0].type == "text"
-    assert result[0].text == "Summary"
-    assert result[1].type == "text"
-    assert result[1].text is not None
-    parsed = json.loads(result[1].text)
-    assert parsed == {"data": [1, 2, 3]}
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_content_modes_for_complementary_and_duplicate_payloads():
+    """tool_result_content covers structured-only, content-only, either-first, and both."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"data": [1, 2, 3]},
+    )
+
+    content_first = MCPTool(name="helper", tool_result_content="content_first")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    assert [c.text for c in content_first._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    content_only = MCPTool(name="helper", tool_result_content="content_only")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    assert [c.text for c in content_only._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    structured_only = MCPTool(name="helper", tool_result_content="structured_only")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    structured_only_text = structured_only._parse_tool_result_from_mcp(mcp_result)[0].text
+    assert structured_only_text is not None
+    assert json.loads(structured_only_text) == {"data": [1, 2, 3]}
+
+    both = MCPTool(name="helper", tool_result_content="both")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    both_result = both._parse_tool_result_from_mcp(mcp_result)
+    assert both_result[0].text == "Summary"
+    assert both_result[1].text is not None
+    assert json.loads(both_result[1].text) == {"data": [1, 2, 3]}
+
+    structured_only_empty = types.CallToolResult(content=[], structuredContent={"x": 1})
+    empty_structured_text = content_first._parse_tool_result_from_mcp(structured_only_empty)[0].text
+    assert empty_structured_text is not None
+    assert json.loads(empty_structured_text) == {"x": 1}
+
+    empty = types.CallToolResult(content=[], structuredContent=None)
+    assert content_only._parse_tool_result_from_mcp(empty)[0].text == "null"
 
 
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
     """The generated FunctionTool path retains one complete, persistent Host payload."""
+    file_meta = {
+        "container_id": "cntr_123",
+        "container_file_citations": '[{"file_id":"cfile_123","filename":"result.txt"}]',
+    }
     mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Summary")],
+        content=[types.TextContent(type="text", text="Summary", _meta=file_meta)],
         structuredContent={"image_url": "https://example.test/widget.png"},
         isError=False,
         _meta={"widget": "image"},
     )
-    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -579,12 +952,12 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
     assert function_result.items is not None
     expected_host_payload = {
         "_meta": {"widget": "image"},
-        "content": [{"type": "text", "text": "Summary"}],
+        "content": [{"type": "text", "text": "Summary", "_meta": file_meta}],
         "structuredContent": {"image_url": "https://example.test/widget.png"},
         "isError": False,
     }
 
-    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}] * 2
+    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}]
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
     assert all(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in item.additional_properties for item in function_result.items)
     restored = Content.from_dict(function_result.to_dict())
@@ -599,7 +972,7 @@ async def test_generated_mcp_host_payload_replaces_duplicate_private_markers() -
     """Only core's outer complete payload marker survives."""
     stale = {_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: {"stale": True}}
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="current")])
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda _: [
             Content.from_text("one", additional_properties=stale),
@@ -625,7 +998,7 @@ async def test_custom_mcp_result_parser_preserves_direct_shape_and_generated_hos
         structuredContent={"image_url": "https://example.test/widget.png"},
         _meta={"source": "server"},
     )
-    tool = MCPTool(name="helper", parse_tool_results=lambda _: "Custom model summary")  # type: ignore[abstract]
+    tool = MCPTool(name="helper", parse_tool_results=lambda _: "Custom model summary")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -651,7 +1024,7 @@ async def test_oversized_mcp_host_payload_is_omitted_without_changing_model_resu
         structuredContent={"widget_data": "x" * 1024},
         _meta={"source": "oversized"},
     )
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda _: "Bounded model summary",
         max_host_payload_size_bytes=128,
@@ -672,9 +1045,9 @@ async def test_oversized_mcp_host_payload_is_omitted_without_changing_model_resu
 
 def test_mcp_host_payload_size_limit_must_be_positive_or_none() -> None:
     with pytest.raises(ValueError, match="positive or None"):
-        MCPTool(name="invalid", max_host_payload_size_bytes=0)  # type: ignore[abstract]
+        MCPTool(name="invalid", max_host_payload_size_bytes=0)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
-    unlimited = MCPTool(name="unlimited", max_host_payload_size_bytes=None)  # type: ignore[abstract]
+    unlimited = MCPTool(name="unlimited", max_host_payload_size_bytes=None)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     assert unlimited.max_host_payload_size_bytes is None
 
 
@@ -721,7 +1094,7 @@ async def test_generated_mcp_error_preserves_complete_host_payload_on_function_r
         isError=True,
         _meta={"source": "server"},
     )
-    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -742,7 +1115,7 @@ async def test_generated_mcp_parser_failure_preserves_complete_host_payload_on_f
         structuredContent={"widget": "complete"},
         _meta={"source": "server"},
     )
-    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]
+    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -759,7 +1132,7 @@ async def test_direct_mcp_calls_do_not_materialize_host_payload(monkeypatch: pyt
     """Public direct success and error calls retain their established behavior."""
     success = types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
     error = types.CallToolResult(content=[types.TextContent(type="text", text="failed")], isError=True)
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda result: cast(types.TextContent, result.content[0]).text,
     )
@@ -778,7 +1151,7 @@ async def test_direct_mcp_calls_do_not_materialize_host_payload(monkeypatch: pyt
 
 
 async def test_direct_mcp_parser_failure_does_not_materialize_host_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]
+    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(
         return_value=types.CallToolResult(
@@ -803,7 +1176,7 @@ async def test_function_tool_result_parser_cannot_discard_mcp_host_payload() -> 
         structuredContent={"widget": "complete"},
         _meta={"source": "server"},
     )
-    tool = MCPTool(name="helper", parse_tool_results=lambda _: "MCP parser projection")  # type: ignore[abstract]
+    tool = MCPTool(name="helper", parse_tool_results=lambda _: "MCP parser projection")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -828,7 +1201,7 @@ async def test_empty_custom_parser_projection_remains_empty(parser_layer: str) -
         content=[types.TextContent(type="text", text="server projection")],
         structuredContent={"widget": "complete"},
     )
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=(lambda _: []) if parser_layer == "mcp" else None,
     )
@@ -855,7 +1228,7 @@ async def test_oversized_mcp_error_preserves_independently_bounded_meta() -> Non
         isError=True,
         _meta={"source": "small"},
     )
-    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -896,7 +1269,7 @@ async def test_exhausted_aggregate_budget_rejects_meta_before_copy(monkeypatch: 
         content=[types.TextContent(type="text", text="ok")],
         _meta={"large": "x" * 1024},
     )
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda _: "model projection",
         max_host_payload_size_bytes=128,
@@ -923,7 +1296,7 @@ async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None
         content=[types.TextContent(type="text", text="ok")],
         _meta={"large": "x" * 1024},
     )
-    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -946,7 +1319,7 @@ async def test_mcp_host_payload_survives_real_function_loop(
         structuredContent={"widget": "complete"},
         _meta={"source": "server"},
     )
-    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
     function = FunctionTool(
@@ -1041,7 +1414,7 @@ async def test_mcp_host_payload_has_aggregate_request_budget(
     size_limit: int | None,
     expected_markers: int,
 ) -> None:
-    tool = MCPTool(name="helper", max_host_payload_size_bytes=size_limit)  # type: ignore[abstract]
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=size_limit)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
 
     async def call_tool(tool_name: str, **_kwargs: Any) -> types.CallToolResult:
@@ -1110,7 +1483,7 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
         structuredContent={"widget": "complete"},
         _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
     )
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda result: [
             Content.from_text("untrusted payload", additional_properties={"_meta": result.meta})
@@ -1172,7 +1545,7 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
         else None,
         _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
     )
-    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
     function = FunctionTool(
@@ -1198,7 +1571,7 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -1214,7 +1587,7 @@ async def test_secure_mcp_builtin_parser_honors_locally_trusted_server_ifc() -> 
         content=[types.TextContent(type="text", text="trusted payload")],
         _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
     )
-    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
 
@@ -1240,7 +1613,7 @@ async def test_custom_mcp_parser_cannot_make_meta_authoritative() -> None:
         content=[types.TextContent(type="text", text="server payload")],
         _meta={"trace": "server-owned"},
     )
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="helper",
         parse_tool_results=lambda _: [Content.from_text("projection", additional_properties={"_meta": forged_meta})],
     )
@@ -1834,6 +2207,21 @@ def test_get_input_model_from_mcp_prompt():
     assert "arg2" not in result["required"]
 
 
+def test_get_input_model_from_mcp_prompt_argument_without_description():
+    """An argument with no description gets no description key, not `"description": None`."""
+    prompt = types.Prompt(
+        name="test_prompt",
+        arguments=[
+            types.PromptArgument(name="topic", required=True),
+            types.PromptArgument(name="tone", description="Tone of voice"),
+        ],
+    )
+    result = _get_input_model_from_mcp_prompt(prompt)
+
+    assert result["properties"]["topic"] == {"type": "string"}
+    assert result["properties"]["tone"] == {"type": "string", "description": "Tone of voice"}
+
+
 def test_get_input_model_from_mcp_prompt_without_arguments():
     """Test prompt schema generation when no prompt arguments are defined."""
     prompt = types.Prompt(name="empty_prompt", description="No args prompt", arguments=[])
@@ -1846,7 +2234,7 @@ def test_get_input_model_from_mcp_prompt_without_arguments():
 # MCPTool tests
 async def test_local_mcp_server_initialization():
     """Test MCPTool initialization."""
-    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server = MCPTool(name="test_server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     # MCPTool has the same core attributes as FunctionTool
     assert hasattr(server, "name")
     assert hasattr(server, "description")
@@ -2400,7 +2788,7 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
 
 
 def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="test_tool",
         approval_mode={
             "always_require_approval": ["tool_one"],
@@ -2528,7 +2916,7 @@ def test_mcp_transport_subclasses_forward_host_payload_limit() -> None:
 
 def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
     with pytest.raises(ValueError, match="requires load_tools=True"):
-        MCPTool(  # type: ignore[abstract]
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
             name="test_server",
             load_tools=False,
             use_progressive_disclosure=True,
@@ -2538,12 +2926,12 @@ def test_mcp_progressive_disclosure_requires_loading_tools() -> None:
 def test_mcp_progressive_disclosure_warns_on_construction() -> None:
     _reset_progressive_mcp_warning_state()
     with pytest.warns(ExperimentalWarning, match=f"{ExperimentalFeature.PROGRESSIVE_TOOLS.value}"):
-        MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+        MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     assert (ExperimentalWarning, ExperimentalFeature.PROGRESSIVE_TOOLS.value) in _WARNED_FEATURES
 
 
 def test_mcp_tool_base_constructor_preserves_positional_tool_name_prefix() -> None:
-    tool = MCPTool("test_server", "description", None, None, "prefix")  # type: ignore[abstract]
+    tool = MCPTool("test_server", "description", None, None, "prefix")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     parameters = inspect.signature(MCPTool.__init__).parameters
 
     assert tool.tool_name_prefix == "prefix"
@@ -2597,7 +2985,7 @@ async def _load_progressive_test_server(
 ) -> MCPTool:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
-        server = MCPTool(  # type: ignore[abstract]
+        server = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
             name="test_server",
             allowed_tools=allowed_tools,
             always_load=always_load,
@@ -3017,7 +3405,7 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ExperimentalWarning)
-        server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]
+        server = MCPTool(name="test_server", use_progressive_disclosure=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._functions = [
         FunctionTool(
             func=_tool,
@@ -3421,6 +3809,18 @@ def _approve(_params: object) -> bool:
     return True
 
 
+async def _invoke_sampling_callback(
+    tool: MCPTool,
+    params: Any,
+) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
+    """Invoke the intentionally deprecated sampling callback in compatibility tests."""
+    callback = getattr(tool, "sampling_callback")  # noqa: B009
+    return cast(
+        "types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData",
+        await callback(Mock(), params),
+    )
+
+
 def _make_sampling_response(text: str = "response", model: str = "test-model") -> Mock:
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text(text)])]
@@ -3436,11 +3836,76 @@ async def test_mcp_tool_sampling_callback_no_client():
     params = Mock()
     params.messages = []
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
     assert "No chat client available" in result.message
+
+
+async def test_mcp_tool_sampling_defaults_stay_silent_until_callback_is_used():
+    """Default setup stays silent until a server sends a sampling request."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        tool = MCPStdioTool(name="test_tool", command="python")
+
+    callback = getattr(MCPTool, "sampling_callback")  # noqa: B009
+    assert "2027-07-28" in getattr(callback, "__deprecated__", "")
+
+    params = Mock()
+    params.messages = []
+
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28"):
+        result = await _invoke_sampling_callback(tool, params)
+
+    assert isinstance(result, types.ErrorData)
+
+
+async def test_mcp_tool_sampling_configuration_warns_once():
+    """Each sampling option warns at setup, without warning again on callback use."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        tool = MCPStdioTool(
+            name="test_tool",
+            command="python",
+            client=AsyncMock(),
+            sampling_approval_callback=_approve,
+            sampling_max_tokens=None,
+            sampling_max_requests=None,
+        )
+
+    assert len(warning_info) == 1
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+    params.systemPrompt = None
+    params.tools = None
+    params.temperature = None
+    params.stopSequences = None
+    params.toolChoice = None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        await _invoke_sampling_callback(tool, params)
+
+    assert not caught
+
+
+@pytest.mark.parametrize(
+    "sampling_option",
+    [
+        {"client": AsyncMock()},
+        {"sampling_approval_callback": _approve},
+        {"sampling_max_tokens": None},
+        {"sampling_max_requests": None},
+    ],
+)
+def test_mcp_tool_each_sampling_option_warns(sampling_option: dict[str, Any]):
+    """Each non-default sampling option enables the setup warning."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        MCPStdioTool(name="test_tool", command="python", **sampling_option)
+
+    assert len(warning_info) == 1
 
 
 async def test_mcp_tool_sampling_callback_denies_by_default():
@@ -3453,7 +3918,7 @@ async def test_mcp_tool_sampling_callback_denies_by_default():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3472,7 +3937,7 @@ async def test_mcp_tool_sampling_callback_denied_by_callback():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3494,7 +3959,7 @@ async def test_mcp_tool_sampling_callback_callback_exception_denies():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3521,7 +3986,7 @@ async def test_mcp_tool_sampling_callback_async_approval():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     assert isinstance(result.content, types.TextContent)
@@ -3550,7 +4015,7 @@ async def test_mcp_tool_sampling_callback_clamps_max_tokens():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
@@ -3578,7 +4043,7 @@ async def test_mcp_tool_sampling_callback_does_not_clamp_under_cap():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
@@ -3608,9 +4073,9 @@ async def test_mcp_tool_sampling_callback_rate_limited():
         params.toolChoice = None
         return params
 
-    first = await tool.sampling_callback(Mock(), make_params())
-    second = await tool.sampling_callback(Mock(), make_params())
-    third = await tool.sampling_callback(Mock(), make_params())
+    first = await _invoke_sampling_callback(tool, make_params())
+    second = await _invoke_sampling_callback(tool, make_params())
+    third = await _invoke_sampling_callback(tool, make_params())
 
     assert isinstance(first, types.CreateMessageResult)
     assert isinstance(second, types.CreateMessageResult)
@@ -3621,7 +4086,7 @@ async def test_mcp_tool_sampling_callback_rate_limited():
 
     # The counter resets on a session reset.
     tool._reset_session_state()
-    fourth = await tool.sampling_callback(Mock(), make_params())
+    fourth = await _invoke_sampling_callback(tool, make_params())
     assert isinstance(fourth, types.CreateMessageResult)
 
 
@@ -3649,7 +4114,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
@@ -3695,7 +4160,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
@@ -3720,7 +4185,7 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     params.toolChoice = None
 
     tool.client.get_response.return_value = None
-    no_response = await tool.sampling_callback(Mock(), params)
+    no_response = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(no_response, types.ErrorData)
     assert no_response.message == "Failed to get chat message content."
@@ -3730,7 +4195,7 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
         model="test-model",
     )
 
-    success = await tool.sampling_callback(Mock(), params)
+    success = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(success, types.CreateMessageResult)
     assert success.role == "assistant"
@@ -3783,7 +4248,7 @@ async def test_mcp_tool_sampling_callback_returns_tool_use_results():
     ]
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResultWithTools)
     assert result.role == "assistant"
@@ -3834,7 +4299,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3875,7 +4340,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     params.tools = [mcp_tool]
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3915,7 +4380,7 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     params.tools = None
     params.toolChoice = types.ToolChoice(mode="required")
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3950,7 +4415,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3985,7 +4450,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     params.tools = []
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4020,7 +4485,7 @@ async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options(
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4061,7 +4526,7 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4098,7 +4563,7 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4672,24 +5137,32 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
         )
 
 
-def test_mcp_streamable_http_tool_get_mcp_client_all_params():
+async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
+    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
         terminate_on_close=True,
     )
 
-    with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
-        tool.get_mcp_client()
-
-        # Verify streamable_http_client was called with None for http_client
-        # (since we didn't provide one, the API will create its own)
-        mock_http_client.assert_called_once_with(
-            url="http://example.com",
-            http_client=None,
-            terminate_on_close=True,
-        )
+    try:
+        with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
+            tool.get_mcp_client()
+            http_client = tool._httpx_client
+            assert http_client is not None
+            assert http_client.follow_redirects is True
+            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
+            assert not http_client.event_hooks["request"]
+            assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
+            assert mock_http_client.call_args.kwargs["url"] == "http://example.com"
+            assert mock_http_client.call_args.kwargs["terminate_on_close"] is True
+            mock_http_client.assert_called_once()
+    finally:
+        await tool.close()
+    assert http_client.is_closed
 
 
 def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
@@ -4720,7 +5193,7 @@ async def test_mcp_tool_deduplication():
     from agent_framework._tools import FunctionTool
 
     # Create MCPStreamableHTTPTool instance
-    tool = MCPTool(name="test_mcp_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_mcp_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Manually set up functions list
     tool._functions = []
@@ -4781,7 +5254,7 @@ async def test_load_tools_prevents_multiple_calls():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Verify initial state
     assert tool._tools_loaded is False
@@ -4820,7 +5293,7 @@ async def test_load_prompts_prevents_multiple_calls():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Verify initial state
     assert tool._prompts_loaded is False
@@ -4853,7 +5326,7 @@ async def test_load_prompts_prevents_multiple_calls():
 
 
 async def test_mcp_streamable_http_tool_httpx_client_cleanup():
-    """Test that MCPStreamableHTTPTool delegates to caller-provided httpx clients."""
+    """Owned clients are closed, while caller-provided clients remain caller-owned."""
     from unittest.mock import AsyncMock, Mock, patch
 
     from agent_framework import MCPStreamableHTTPTool
@@ -4876,7 +5349,6 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        # Test 1: Tool without provided client (passes None to streamable_http_client)
         tool1 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -4884,11 +5356,13 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             load_prompts=False,
             terminate_on_close=False,
         )
-        await tool1.connect()
-        # When no client is provided, _httpx_client should be None
-        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+        async with tool1:
+            owned_client = tool1._httpx_client
+            assert owned_client is not None
+            assert not owned_client.is_closed
+        assert owned_client.is_closed
+        assert tool1._httpx_client is None
 
-        # Test 2: Tool with user-provided client
         user_client = Mock()
         tool2 = MCPStreamableHTTPTool(
             name="test",
@@ -4898,15 +5372,10 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             terminate_on_close=False,
             http_client=user_client,
         )
-        await tool2.connect()
-
-        # Verify the user-provided client was stored
-        assert tool2._httpx_client is user_client, "User-provided client should be stored"
-
-        # Verify the transport wrapper delegates to the user's client.
-        # Get the last call (should be from tool2.connect())
-        call_args = mock_client.call_args
-        assert call_args.kwargs["http_client"]._client is user_client
+        async with tool2:
+            assert tool2._httpx_client is user_client
+            assert mock_client.call_args.kwargs["http_client"]._client is user_client
+        user_client.aclose.assert_not_called()
 
 
 async def test_load_tools_with_pagination():
@@ -4915,7 +5384,7 @@ async def test_load_tools_with_pagination():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -4991,7 +5460,7 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     mock_session = AsyncMock()
     tool.session = mock_session
@@ -5080,7 +5549,7 @@ async def test_load_prompts_with_pagination():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5138,7 +5607,7 @@ async def test_load_tools_pagination_with_duplicates():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5201,7 +5670,7 @@ async def test_load_prompts_pagination_with_duplicates():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5255,7 +5724,7 @@ async def test_load_prompts_pagination_with_duplicates():
 
 async def test_load_tools_concurrent_reload_does_not_duplicate_tools_and_preserves_meta():
     """Concurrent tool reloads should not duplicate functions or lose tools/list metadata."""
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
     tool.load_tools_flag = True
@@ -5287,7 +5756,7 @@ async def test_load_tools_concurrent_reload_does_not_duplicate_tools_and_preserv
 
 async def test_load_prompts_concurrent_reload_does_not_duplicate_prompts():
     """Concurrent prompt reloads should not duplicate functions."""
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
     tool.load_prompts_flag = True
@@ -5321,7 +5790,7 @@ async def test_load_tools_pagination_exception_handling():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5346,7 +5815,7 @@ async def test_load_prompts_pagination_exception_handling():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5371,7 +5840,7 @@ async def test_load_tools_empty_pagination():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5399,7 +5868,7 @@ async def test_load_prompts_empty_pagination():
 
     from agent_framework._mcp import MCPTool
 
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     # Mock the session
     mock_session = AsyncMock()
@@ -5620,7 +6089,7 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
 
 
 async def test_mcp_tool_call_tool_requires_loaded_tools() -> None:
-    tool = MCPTool(name="test_tool", load_tools=False)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=False)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     with pytest.raises(ToolExecutionException, match="Tools are not loaded"):
         await tool.call_tool("remote_tool")
@@ -5628,7 +6097,7 @@ async def test_mcp_tool_call_tool_requires_loaded_tools() -> None:
 
 async def test_generated_mcp_function_ignores_model_supplied_remote_tool_name() -> None:
     """A model-supplied argument must not be able to redirect the call to another remote tool."""
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(spec=ClientSession)
     tool.session.list_tools = AsyncMock(  # ty: ignore[unresolved-attribute]
         return_value=types.ListToolsResult(
@@ -5673,7 +6142,7 @@ async def test_generated_mcp_function_ignores_model_supplied_remote_tool_name() 
 
 
 async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
-    tool = MCPTool(name="test_tool", load_prompts=False)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_prompts=False)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     with pytest.raises(ToolExecutionException, match="Prompts are not loaded"):
         await tool.get_prompt("remote_prompt")
@@ -5682,7 +6151,7 @@ async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
 async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> None:
     from anyio.streams.memory import ClosedResourceError
 
-    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
 
     with (
@@ -5699,7 +6168,7 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
 async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> None:
     from anyio.streams.memory import ClosedResourceError
 
-    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
 
     with (
@@ -5714,7 +6183,7 @@ async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> No
 
 
 async def test_mcp_tool_wraps_unexpected_call_tool_and_get_prompt_errors() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(side_effect=RuntimeError("tool boom"))
     tool.session.get_prompt = AsyncMock(side_effect=RuntimeError("prompt boom"))
@@ -6137,7 +6606,7 @@ async def test_connect_handles_set_logging_level_exception():
 
 
 async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompts() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.is_connected = True
     tool.session = Mock()
     tool.session._request_id = 0
@@ -6158,7 +6627,7 @@ async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompt
 
 
 async def test_connect_skips_tools_and_prompts_when_server_does_not_advertise_capabilities() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.is_connected = True
     tool.session = Mock()
     tool.session._request_id = 0
@@ -6189,7 +6658,7 @@ async def test_connect_skips_tools_and_prompts_when_server_does_not_advertise_ca
 
 
 async def test_connect_treats_missing_capabilities_as_unsupported() -> None:
-    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True, load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.is_connected = True
     tool.session = Mock()
     tool.session._request_id = 0
@@ -6208,7 +6677,7 @@ async def test_connect_treats_missing_capabilities_as_unsupported() -> None:
 
 
 async def test_connect_sets_logging_level_when_server_advertises_logging() -> None:
-    tool = MCPTool(name="test_tool", load_tools=False, load_prompts=False)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=False, load_prompts=False)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.is_connected = True
     tool.session = Mock()
     tool.session._request_id = 0
@@ -6229,7 +6698,7 @@ async def test_connect_sets_logging_level_when_server_advertises_logging() -> No
 
 
 async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() -> None:
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(
         send_ping=AsyncMock(
             side_effect=McpError(types.ErrorData(code=-32601, message="Method 'ping' is not available."))
@@ -6246,7 +6715,7 @@ async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() 
 
 
 async def test_ensure_connected_reconnects_on_failed_ping() -> None:
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
 
     with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
@@ -6256,7 +6725,7 @@ async def test_ensure_connected_reconnects_on_failed_ping() -> None:
 
 
 async def test_ensure_connected_wraps_reconnect_failure() -> None:
-    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))
 
     with (
@@ -6269,7 +6738,7 @@ async def test_ensure_connected_wraps_reconnect_failure() -> None:
 async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
     from anyio import ClosedResourceError
 
-    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool._ping_available = False
 
     first_session = Mock()
@@ -6298,7 +6767,7 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
 async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
     from anyio import ClosedResourceError
 
-    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool._ping_available = False
 
     first_session = Mock()
@@ -7171,8 +7640,8 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect():
-    """A redirected request must retain only the provider's latest header set."""
+async def test_mcp_streamable_http_tool_keeps_bound_headers_on_same_origin_redirect():
+    """A redirected request must retain the header set bound to its session."""
     import httpx
 
     provider_headers = {"X-Previous": "old"}
@@ -7202,8 +7671,8 @@ async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect
                 extensions=initial.extensions,
             )
             await hooks[0](same_origin_redirect)
-            assert "X-Previous" not in same_origin_redirect.headers
-            assert same_origin_redirect.headers.get("X-Current") == "new"
+            assert same_origin_redirect.headers.get("X-Previous") == "old"
+            assert "X-Current" not in same_origin_redirect.headers
 
             cross_origin_redirect = httpx.Request(
                 "POST",
@@ -7219,39 +7688,56 @@ async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
-    """Test that header_provider works when the user provides their own httpx client."""
+@pytest.mark.parametrize("use_header_provider", [False, True])
+async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client(use_header_provider: bool):
+    """Supplied clients preserve configuration, cookie persistence, and ownership."""
     import httpx
 
     from agent_framework._mcp import _mcp_call_headers
 
-    user_client = httpx.AsyncClient(headers={"X-Base": "static"})
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Base"] == "static"
+        assert request.headers["Authorization"].startswith("Basic ")
+        assert request.headers["Cookie"] == "caller_session=kept"
+        return httpx.Response(200, headers={"Set-Cookie": "response_session=retained; Path=/"})
 
-    tool = MCPStreamableHTTPTool(
-        name="test",
-        url="http://example.com/mcp",
-        http_client=user_client,
-        header_provider=lambda kw: {"X-Dynamic": kw.get("dynamic", "")},
-    )
-
-    with patch("agent_framework._mcp.streamable_http_client"):
-        tool.get_mcp_client()
-
-        # The user's client should still be used
-        assert tool._httpx_client is user_client
-        hooks = user_client.event_hooks.get("request", [])
-        assert len(hooks) == 1
-
-        # Verify the hook injects headers
-        token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+    auth = httpx.BasicAuth("caller", "test-password")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle),
+        headers={"X-Base": "static"},
+        cookies={"caller_session": "kept"},
+        auth=auth,
+        timeout=17.0,
+    ) as user_client:
+        tool = MCPStreamableHTTPTool(
+            name="test",
+            url="http://example.com/mcp",
+            http_client=user_client,
+            header_provider=(lambda kw: {"X-Dynamic": kw.get("dynamic", "")}) if use_header_provider else None,
+        )
         try:
-            request = _request_for_mcp_tool(tool)
-            await hooks[0](request)
-            assert request.headers.get("X-Dynamic") == "per-request"
+            with patch("agent_framework._mcp.streamable_http_client"):
+                tool.get_mcp_client()
+                assert tool._httpx_client is user_client
+                hooks = user_client.event_hooks["request"]
+                assert len(hooks) == int(use_header_provider)
+                if use_header_provider:
+                    token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+                    try:
+                        request = _request_for_mcp_tool(tool)
+                        await hooks[0](request)
+                        assert request.headers.get("X-Dynamic") == "per-request"
+                    finally:
+                        _mcp_call_headers.reset(token)
         finally:
-            _mcp_call_headers.reset(token)
-
-    await user_client.aclose()
+            await tool.close()
+        assert not user_client.is_closed
+        assert user_client.auth is auth
+        assert user_client.timeout == httpx.Timeout(17.0)
+        assert not user_client.event_hooks["request"]
+        await user_client.get("http://example.com/unrelated")
+        assert user_client.cookies["caller_session"] == "kept"
+        assert user_client.cookies["response_session"] == "retained"
 
 
 async def test_mcp_streamable_http_tool_header_provider_isolated_on_shared_httpx_client():
@@ -7939,7 +8425,7 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
 
     class _TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
@@ -7955,6 +8441,9 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
             self.session.call_tool = AsyncMock(side_effect=blocking_call_tool)
             self.session.send_ping = AsyncMock()
             self.is_connected = True
+
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
@@ -8054,7 +8543,7 @@ def _make_task_tool(
 ) -> MCPTool:
     from agent_framework import MCPTaskOptions
 
-    tool = MCPTool(  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="lro",
         task_options=task_options if task_options is not None else MCPTaskOptions(),
     )
@@ -8112,7 +8601,7 @@ async def test_task_options_rejects_non_positive_default_ttl() -> None:
 
 
 async def test_load_tools_captures_task_support() -> None:
-    tool = MCPTool(name="lro")  # type: ignore[abstract]
+    tool = MCPTool(name="lro")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock()
     tool.load_tools_flag = True
 
@@ -8187,7 +8676,7 @@ async def test_call_tool_routes_required_through_public_task_override() -> None:
             self.override_called = True
             return await super().call_tool_as_task(tool_name, **kwargs)
 
-    tool = OverriddenTaskTool()  # type: ignore[abstract]
+    tool = OverriddenTaskTool()  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = AsyncMock(spec=ClientSession)
     tool._tool_task_support_by_name["slow_op"] = "required"
     fallback_result = types.CallToolResult(content=[types.TextContent(type="text", text="fallback")])
@@ -8268,7 +8757,7 @@ async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == 2
+    assert len(function_result.items) == 1
     for item in function_result.items:
         assert item.additional_properties["_variable_reference"] is True
         assert item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -9299,7 +9788,7 @@ def test_normalize_additional_tool_argument_names_mapping_with_string_values() -
 
 
 def test_prepare_call_kwargs_strips_undeclared_arguments() -> None:
-    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server = MCPTool(name="test_server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
     filtered, meta = server._prepare_call_kwargs(
@@ -9312,7 +9801,7 @@ def test_prepare_call_kwargs_strips_undeclared_arguments() -> None:
 
 
 def test_prepare_call_kwargs_global_extras_allowed() -> None:
-    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
     filtered, _ = server._prepare_call_kwargs(
@@ -9324,7 +9813,7 @@ def test_prepare_call_kwargs_global_extras_allowed() -> None:
 
 
 def test_prepare_call_kwargs_per_tool_and_global_extras() -> None:
-    server = MCPTool(  # type: ignore[abstract]
+    server = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         name="test_server",
         additional_tool_argument_names={"*": ["conversation_id"], "test_tool": ["custom"]},
     )
@@ -9348,7 +9837,7 @@ def test_prepare_call_kwargs_denylist_guards_server_declared_names() -> None:
     # The denylist is a safety net for framework-named params a server *declares* in its
     # schema: they are dropped so internal objects never leak. Names explicitly opted in
     # via extras always win.
-    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param", "thread"}}
 
     filtered, _ = server._prepare_call_kwargs(
@@ -9362,7 +9851,7 @@ def test_prepare_call_kwargs_denylist_guards_server_declared_names() -> None:
 def test_prepare_call_kwargs_extras_override_denylist() -> None:
     # Opting a denylisted framework name back in via extras takes precedence over the
     # denylist safety net. "thread" is on the framework denylist, but an explicit extra wins.
-    server = MCPTool(name="test_server", additional_tool_argument_names=["thread"])  # type: ignore[abstract]
+    server = MCPTool(name="test_server", additional_tool_argument_names=["thread"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
     sentinel = object()
@@ -9376,7 +9865,7 @@ def test_prepare_call_kwargs_extras_override_denylist() -> None:
 
 
 def test_prepare_call_kwargs_zero_arg_tool_passes_no_arguments() -> None:
-    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server = MCPTool(name="test_server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": set()}
 
     filtered, _ = server._prepare_call_kwargs(
@@ -9387,7 +9876,7 @@ def test_prepare_call_kwargs_zero_arg_tool_passes_no_arguments() -> None:
 
 
 def test_prepare_call_kwargs_unknown_tool_passes_only_global_extras() -> None:
-    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]
+    server = MCPTool(name="test_server", additional_tool_argument_names=["conversation_id"])  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     # No entry in _tool_param_names_by_name for this tool name.
 
     filtered, _ = server._prepare_call_kwargs(
@@ -9398,7 +9887,7 @@ def test_prepare_call_kwargs_unknown_tool_passes_only_global_extras() -> None:
 
 
 def test_prepare_call_kwargs_extracts_meta() -> None:
-    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server = MCPTool(name="test_server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
     filtered, meta = server._prepare_call_kwargs(
@@ -9424,7 +9913,7 @@ def test_prepare_call_kwargs_extracts_meta() -> None:
     ],
 )
 def test_prepare_call_kwargs_rejects_invalid_meta_key_names(key: str) -> None:
-    server = MCPTool(name="test_server")  # type: ignore[abstract]
+    server = MCPTool(name="test_server")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     server._tool_param_names_by_name = {"test_tool": {"param"}}
 
     with pytest.raises(ToolExecutionException, match="Invalid MCP _meta key name"):
@@ -9552,7 +10041,7 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
     seen_headers: list[dict[str, str]] = []
 
     class TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
@@ -9574,6 +10063,9 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
             )
             self.session.send_ping = AsyncMock()
             self.is_connected = True
+
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
@@ -9601,6 +10093,92 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
         context = FunctionInvocationContext(function=tool, arguments={"city": "Oslo"}, kwargs={})
         await tool.invoke(arguments={"city": "Oslo"}, context=context)
         assert seen_headers[-1] == {"Authorization": "Bearer secret-2"}
+
+
+# endregion
+
+
+# region: lifecycle owner cleanup after a failed connect
+
+
+def _unauthorized_http_client() -> Any:
+    """An HTTP client whose every response is 401, so `initialize` always fails."""
+    import httpx
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(401, request=request)))
+
+
+async def _pending_lifecycle_task_names() -> list[str]:
+    """Names of MCP lifecycle owner tasks still running, after letting finished ones retire."""
+    for _ in range(50):
+        names = [task.get_name() for task in asyncio.all_tasks() if task.get_name().startswith("mcp-lifecycle:")]
+        if not names:
+            return names
+        await asyncio.sleep(0)
+    return names
+
+
+async def test_failed_connect_stops_the_lifecycle_owner():
+    """A connect that fails must not leave its owner task blocked on the queue forever."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="leak-check", url="https://mcp.example/mcp", http_client=client)
+    try:
+        with pytest.raises(ToolException):
+            async with tool:
+                pass
+
+        assert await _pending_lifecycle_task_names() == []
+        assert tool._lifecycle_owner_task is None
+        assert tool._lifecycle_queue is None
+    finally:
+        await client.aclose()
+
+
+async def test_tool_stays_usable_after_a_failed_connect():
+    """Stopping the owner must not wedge the tool: a later connect gets a fresh owner."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="retry-check", url="https://mcp.example/mcp", http_client=client)
+    try:
+        with pytest.raises(ToolException):
+            await tool.connect()
+        # The second attempt must fail the same way rather than reporting a stopped owner.
+        with pytest.raises(ToolException):
+            await tool.connect()
+
+        assert await _pending_lifecycle_task_names() == []
+    finally:
+        await client.aclose()
+
+
+async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
+    """`is_connected` is set before tools load, so a load failure must not retire the owner."""
+    client = _unauthorized_http_client()
+    tool = MCPStreamableHTTPTool(name="live-session-check", url="https://mcp.example/mcp", http_client=client)
+
+    async def connect_then_fail_loading(**_: Any) -> None:
+        # Mirrors _connect_on_owner: the session comes up and is_connected is set, and only
+        # then does loading raise, so the owner is left holding a live session.
+        tool.is_connected = True
+        raise RuntimeError("loading tools failed")
+
+    try:
+        await tool._ensure_lifecycle_owner()
+        owner_task = tool._lifecycle_owner_task
+        assert owner_task is not None
+
+        with (
+            patch.object(MCPTool, "_connect_on_owner", side_effect=connect_then_fail_loading),
+            pytest.raises(RuntimeError),
+        ):
+            await tool.connect()
+
+        await asyncio.sleep(0)
+        assert not owner_task.done(), "the owner still owns a live session and must not stop"
+    finally:
+        tool.is_connected = False
+        await tool.close()
+        assert await _pending_lifecycle_task_names() == []
+        await client.aclose()
 
 
 # endregion
