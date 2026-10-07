@@ -22,6 +22,10 @@ _WORKFLOW_AGENT_REUSE_MESSAGE = (
     "The agent factory must return a fresh WorkflowAgent with a fresh workflow and executors for each request; "
     "it returned an object that was already served by an earlier request."
 )
+_WORKFLOW_AGENT_WEAKREF_MESSAGE = (
+    "Every workflow, executor, and wrapped agent produced by the agent factory must support weak references "
+    "so the host can verify it is not shared across requests without retaining it; got an instance of {type}."
+)
 
 
 def is_agent(value: object) -> TypeGuard[SupportsAgentRun]:
@@ -53,16 +57,15 @@ class WorkflowAgentReuseGuard:
 
     Identity is tracked by ``id()`` and is only meaningful while the object is alive, so every served object is
     tracked through a weak reference whose callback forgets the identity on collection. ``WorkflowAgent``,
-    ``Workflow``, and ``Executor`` all support weak references (including slotted subclasses, since no base in
-    their hierarchy defines ``__slots__``). A duck-typed object that cannot be weakly referenced is retained
-    strongly for the lifetime of the guard instead: that keeps the check exact at the cost of host memory
-    proportional to how many such objects the factory creates, which is preferred over an eviction window
-    that would silently accept reuse in a long-lived host.
+    ``Workflow``, ``Executor``, and ``Agent`` all support weak references (including slotted subclasses, since
+    no base in their hierarchy defines ``__slots__``). A duck-typed object that cannot be weakly referenced is
+    rejected up front: retaining it strongly would grow host memory for every request the factory serves, and
+    evicting it after a bound would silently accept reuse in a long-lived host. Rejecting is the only option that
+    keeps both memory and the sharing check exact.
     """
 
     def __init__(self) -> None:
         self._owned: dict[int, weakref.ReferenceType[Any]] = {}
-        self._retained: dict[int, object] = {}
 
     def claim(self, agent: WorkflowAgent) -> None:
         resources: list[object] = [agent]
@@ -77,16 +80,18 @@ class WorkflowAgentReuseGuard:
         collect(agent.workflow)
         resources.extend(workflow_agents(agent.workflow))
         unique_resources = {id(resource): resource for resource in resources}
-        # Check every identity before recording any, so a rejected claim leaves no partial state behind.
-        for identifier, resource in unique_resources.items():
-            previous = self._owned.get(identifier)
-            if (previous is not None and previous() is resource) or self._retained.get(identifier) is resource:
-                raise RuntimeError(_WORKFLOW_AGENT_REUSE_MESSAGE)
+        # Validate and check every identity before recording any, so a rejected claim leaves no partial state
+        # behind that could wrongly block the next fresh agent.
+        references: dict[int, weakref.ReferenceType[Any]] = {}
         for identifier, resource in unique_resources.items():
             try:
-                self._owned[identifier] = weakref.ref(resource, lambda ref, key=identifier: self._forget(key, ref))
+                references[identifier] = weakref.ref(resource, lambda ref, key=identifier: self._forget(key, ref))
             except TypeError:
-                self._retained[identifier] = resource
+                raise TypeError(_WORKFLOW_AGENT_WEAKREF_MESSAGE.format(type=type(resource).__qualname__)) from None
+            previous = self._owned.get(identifier)
+            if previous is not None and previous() is resource:
+                raise RuntimeError(_WORKFLOW_AGENT_REUSE_MESSAGE)
+        self._owned.update(references)
 
     def _forget(self, key: int, reference: weakref.ReferenceType[Any]) -> None:
         if self._owned.get(key) is reference:

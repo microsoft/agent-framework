@@ -710,26 +710,41 @@ def _fake_workflow_agent(executors: list[object]) -> WorkflowAgent:
 
 
 class TestWorkflowAgentReuseGuard:
-    def test_non_weakrefable_executor_reuse_is_rejected(self) -> None:
-        shared_executor = _NonWeakrefExecutor("shared")
+    def test_non_weakrefable_resource_is_rejected_without_retention(self) -> None:
+        """Objects without weak-reference support are refused up front instead of being retained or evicted.
+
+        Retaining them would grow host memory per request; evicting them would silently accept reuse later.
+        """
         guard = WorkflowAgentReuseGuard()
-        guard.claim(_fake_workflow_agent([shared_executor]))
 
-        with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
-            guard.claim(_fake_workflow_agent([shared_executor]))
+        with pytest.raises(TypeError, match="weak references"):
+            guard.claim(_fake_workflow_agent([_NonWeakrefExecutor("slotted")]))
 
-    def test_non_weakrefable_executor_reuse_is_rejected_after_many_requests(self) -> None:
-        """The guarantee must not decay in a long-lived host: an executor served long ago is still rejected."""
-        shared_executor = _NonWeakrefExecutor("shared")
+        assert guard._owned == {}  # pyright: ignore[reportPrivateUsage]
+        # A valid agent is still accepted after the rejection; nothing was recorded for the rejected claim.
+        guard.claim(_build_transcript_workflow_agent())
+
+    def test_rejected_claim_records_nothing(self) -> None:
+        """A rejection must not leave identities behind that would wrongly block the next fresh agent."""
+        shared_inner = _make_agent()
+
+        def create_agent(inner: _FakeAgent) -> WorkflowAgent:
+            @executor
+            async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+                await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+            workflow = WorkflowBuilder(name="wrapped-workflow", start_executor=start).add_edge(start, inner).build()
+            return WorkflowAgent(workflow=workflow, name="Wrapped Workflow Agent")
+
         guard = WorkflowAgentReuseGuard()
-        guard.claim(_fake_workflow_agent([shared_executor]))
-
-        fresh_executors = [_NonWeakrefExecutor(str(index)) for index in range(2_000)]
-        for fresh in fresh_executors:
-            guard.claim(_fake_workflow_agent([fresh]))
-
+        guard.claim(create_agent(shared_inner))
+        rejected = create_agent(shared_inner)
         with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
-            guard.claim(_fake_workflow_agent([shared_executor]))
+            guard.claim(rejected)
+
+        # The rejected outer agent and workflow were never recorded, so a fresh agent is still accepted.
+        assert id(rejected) not in guard._owned  # pyright: ignore[reportPrivateUsage]
+        guard.claim(create_agent(_make_agent()))
 
     def test_shared_subworkflow_reuse_is_rejected(self) -> None:
         """A fresh outer agent must not smuggle a previously served child workflow through a WorkflowExecutor."""
