@@ -589,9 +589,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["cwd"] = cwd
         if permission_mode := self._settings.get("permission_mode"):
             opts["permission_mode"] = permission_mode
-        if max_turns := self._settings.get("max_turns"):
+        max_turns = self._settings.get("max_turns")
+        if max_turns is not None:
             opts["max_turns"] = max_turns
-        if max_budget_usd := self._settings.get("max_budget_usd"):
+        max_budget_usd = self._settings.get("max_budget_usd")
+        if max_budget_usd is not None:
             opts["max_budget_usd"] = max_budget_usd
 
         # Apply default options
