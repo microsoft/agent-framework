@@ -352,6 +352,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
 - **`FoundryAgentSessionStore`** - Experimental Foundry-hosting session store, lazily re-exported from
   `agent-framework-foundry-hosting`; currently backed by `azure.ai.agentserver.core.storage.FoundryStateStore`
+- Documentation and examples that show a literal Foundry project endpoint must use the full project-scoped form
+  `https://your-account.services.ai.azure.com/api/projects/your-project`, including the `/api/projects/your-project`
+  path.
 
 ## Key Patterns
 

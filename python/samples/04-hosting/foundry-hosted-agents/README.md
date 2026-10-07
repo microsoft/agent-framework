@@ -79,6 +79,7 @@ An opaque call ID correlates one request; it is not a storage namespace.
 | 1 | [Basic](invocations/basic/) | An Invocations agent with a custom JSON parser, durable MAF history, and JSON/SSE responses. |
 | 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 | 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
+| 4 | [Native Workflow](invocations/basic/README.md#native-workflow-with-typed-tickets) | An explicit JSON parser maps typed tickets and pending review replies to a freshly built native workflow, with scoped exact-checkpoint continuation and JSON/SSE output. |
 
 ## Running the Agent Host Locally
 
@@ -137,7 +138,7 @@ This will create the following Azure resources:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+export FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -145,7 +146,7 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+$env:FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -279,7 +280,7 @@ azd deploy
 > The Foundry hosting infrastructure will inject the following environment variables into your agent at runtime:
 >
 > - `FOUNDRY_PROJECT_ENDPOINT`: The endpoint URL for the Foundry project where the agent is deployed.
-> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of the model deployment in your Foundry project. This is configured during the agent initialization process with `azd ai agent init`.
+> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The azd-managed model deployment name configured by `azd ai agent init`. Sample code prefers `FOUNDRY_MODEL` for local runs and falls back to this hosted value.
 > - `APPLICATIONINSIGHTS_CONNECTION_STRING`: The connection string for Application Insights to enable telemetry for your agent.
 
 This will package your agent and deploy it to the Foundry environment, making it accessible through the Foundry project endpoint. Once it's deployed, you can also access the agent through the Foundry UI.
