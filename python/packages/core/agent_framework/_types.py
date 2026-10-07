@@ -2387,6 +2387,10 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     if _content_items_are_complete_value(incoming):
         return deepcopy(incoming)
 
+    # Empty accumulation (e.g. initial outputs=[]) keeps the first real payload.
+    if isinstance(existing, list) and len(cast(list[object], existing)) == 0:
+        return deepcopy(incoming)
+
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:

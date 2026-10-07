@@ -480,6 +480,26 @@ def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() ->
     assert joined == "import os\nimport sys"
 
 
+def test_code_interpreter_tool_result_empty_outputs_then_text() -> None:
+    """Initial empty outputs=[] must not IndexError when a text chunk arrives."""
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_result(call_id="ci_1", outputs=[])]
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_result(
+                    call_id="ci_1",
+                    outputs=[Content.from_text(text="ok")],
+                )
+            ]
+        ),
+    ]
+    resp = ChatResponse.from_updates(updates)
+    outputs = resp.messages[0].contents[0].outputs or []
+    assert "".join(o.text or "" for o in outputs if o.type == "text") == "ok"
+
+
 def test_code_interpreter_tool_result_content_outputs():
     result = Content.from_code_interpreter_tool_result(
         call_id="call-2",

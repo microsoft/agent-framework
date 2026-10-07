@@ -673,7 +673,14 @@ class TestHistoryProviderBase:
                 contents=[
                     Content.from_code_interpreter_tool_call(
                         call_id="ci_123",
-                        inputs=[Content.from_text(text="import pandas as pd")],
+                        # Final snapshot mimics OpenAI code_interpreter_call_code.done
+                        # (authoritative full value, not another incremental delta).
+                        inputs=[
+                            Content.from_text(
+                                text="import pandas as pd",
+                                additional_properties={"stream_complete": True},
+                            )
+                        ],
                         additional_properties={"sequence_number": 3},
                     )
                 ],
