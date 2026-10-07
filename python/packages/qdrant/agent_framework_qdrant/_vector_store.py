@@ -92,6 +92,8 @@ _WRITE_OPTIONS = {"ordering", "shard_key_selector", "timeout"}
 _BATCH_SIZE = 256
 _MAX_EXACT_INTEGER = 2**53 - 1
 _SCALAR_FIELD_TYPES = frozenset({"str", "int", "float", "bool"})
+# Data field types that can never hold an array, so ``is_empty`` alone separates a missing key from a value.
+_NON_ARRAY_FIELD_TYPES = _SCALAR_FIELD_TYPES | {"dict"}
 _CREATE_OPTIONS = {
     "shard_number",
     "replication_factor",
@@ -236,9 +238,10 @@ def _prepare_null_condition(name: str) -> models.Filter:
 
 def _prepare_presence_condition(field: VectorStoreField) -> models.Condition:
     name = field.storage_name or field.name
-    if field.type_ in _SCALAR_FIELD_TYPES:
-        # Since Qdrant 1.19.0, values_count treats a missing key as zero values. A declared scalar cannot
-        # hold [], so it is present exactly when it is non-empty or an explicit null.
+    if field.type_ in _NON_ARRAY_FIELD_TYPES:
+        # Since Qdrant 1.19.0, values_count treats a missing key as zero values. A declared scalar or dict
+        # cannot hold [] ({} is not empty for Qdrant), so it is present exactly when it is non-empty or an
+        # explicit null.
         return models.Filter(
             should=[models.Filter(must_not=[_prepare_empty_condition(name)]), _prepare_null_condition(name)]
         )
@@ -248,7 +251,7 @@ def _prepare_presence_condition(field: VectorStoreField) -> models.Condition:
 
 def _prepare_non_null_condition(field: VectorStoreField) -> models.Filter:
     name = field.storage_name or field.name
-    if field.type_ in _SCALAR_FIELD_TYPES:
+    if field.type_ in _NON_ARRAY_FIELD_TYPES:
         return models.Filter(must_not=[_prepare_empty_condition(name)])
     return models.Filter(must=[_prepare_presence_condition(field)], must_not=[_prepare_null_condition(name)])
 
