@@ -30,6 +30,7 @@ from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
     get_or_create_workflow_session_id,
+    restore_workflow_session_id,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -830,6 +831,27 @@ class TestConstruction:
 
 
 class TestWorkflowSessionId:
+    def test_restored_approval_scope_overrides_current_agent_session(self) -> None:
+        state = State()
+        state.set("_workflow_agent_session_id", "session-b")
+        agent_scope = get_or_create_workflow_session_id(state)
+
+        restore_workflow_session_id(state, "approval-scope-a")
+        state.commit()
+
+        assert get_or_create_workflow_session_id(state) == "approval-scope-a"
+        assert get_or_create_workflow_session_id(state) != agent_scope
+
+    @pytest.mark.parametrize("workflow_session_id", ["", None, 42])
+    def test_invalid_restored_approval_scope_preserves_current_scope(self, workflow_session_id: Any) -> None:
+        state = State()
+        current_scope = get_or_create_workflow_session_id(state)
+
+        with pytest.raises(ValueError, match="Invalid MCP approval workflow session state"):
+            restore_workflow_session_id(state, workflow_session_id)
+
+        assert get_or_create_workflow_session_id(state) == current_scope
+
     def test_separate_workflow_states_get_separate_ids(self) -> None:
         first = get_or_create_workflow_session_id(State())
         second = get_or_create_workflow_session_id(State())

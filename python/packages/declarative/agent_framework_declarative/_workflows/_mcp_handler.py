@@ -95,6 +95,14 @@ def activate_workflow_session_id(state: State, *, reset_unscoped: bool) -> None:
         state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
 
 
+def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
+    if not isinstance(workflow_session_id, str) or not workflow_session_id:
+        raise ValueError("Invalid MCP approval workflow session state.")
+    # An approval resumes its originating scope, not the latest agent turn's scope.
+    state.set(_WORKFLOW_AGENT_SESSION_ID_KEY, None)
+    state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+
+
 @dataclass
 class MCPToolInvocation:
     """Description of an MCP tool call to be dispatched by a :class:`MCPToolHandler`.

@@ -53,6 +53,7 @@ from ._mcp_handler import (
     MCPToolInvocation,
     MCPToolResult,
     get_or_create_workflow_session_id,
+    restore_workflow_session_id,
 )
 
 __all__ = [
@@ -334,6 +335,11 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         output_messages_path = _get_output_path(self._action_def, "messages")
         output_result_path = _get_output_path(self._action_def, "result")
 
+        workflow_session_id = getattr(original_request, "workflow_session_id", None)
+        if workflow_session_id is None:
+            workflow_session_id = get_or_create_workflow_session_id(ctx.state)
+        restore_workflow_session_id(ctx.state, workflow_session_id)
+
         if response.approved is not True:
             logger.info(
                 "%s: MCP tool '%s' rejected: %s",
@@ -344,12 +350,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             self._assign_error(state, output_result_path, "MCP tool invocation was not approved by user.")
             await ctx.send_message(ActionComplete())
             return
-
-        workflow_session_id = getattr(original_request, "workflow_session_id", None)
-        if workflow_session_id is None:
-            workflow_session_id = get_or_create_workflow_session_id(ctx.state)
-        elif not isinstance(workflow_session_id, str) or not workflow_session_id:
-            raise ValueError("Invalid MCP approval workflow session state.")
 
         invocation = MCPToolInvocation(
             server_url=original_request.server_url,

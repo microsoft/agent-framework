@@ -40,7 +40,8 @@ Only the opaque binding and header names enter the approval payload; raw headers
 are not checkpointed. Changed or unverifiable headers produce a replacement
 request for the same pinned operation, with a fresh request ID and no dispatch.
 Pending requests also retain their originating workflow session ID across later
-fresh runs and checkpoint restores.
+fresh runs and checkpoint restores. Resuming an MCP approval restores that scope
+for downstream actions instead of inheriting a later run's MCP session.
 Fresh executors verify unchanged approvals using the checkpointed key; legacy
 requests or missing verification state require reapproval for non-empty headers.
 Custom handlers remain responsible for identity changes
