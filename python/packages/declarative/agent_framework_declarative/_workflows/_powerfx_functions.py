@@ -24,7 +24,7 @@ def _content_items_text(items: Any) -> str:
     if not isinstance(items, list):
         return ""
     parts: list[str] = []
-    for item in items:
+    for item in cast(list[Any], items):
         if isinstance(item, str):
             parts.append(item)
         elif isinstance(item, dict):
