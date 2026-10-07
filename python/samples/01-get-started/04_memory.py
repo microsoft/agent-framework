@@ -1,13 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Persist a user's name with a context provider.
+
+The provider stores the name in session state and injects it into later calls.
+"""
+
 import asyncio
 from typing import Any
 
 from agent_framework import Agent, AgentSession, ContextProvider, SessionContext
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""Persist a user's name with a context provider and session state."""
 
 
 class UserMemoryProvider(ContextProvider):

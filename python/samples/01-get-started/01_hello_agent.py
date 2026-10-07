@@ -1,5 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Create and run a minimal Agent Framework agent.
+
+The agent uses a Microsoft Foundry chat client and prints one response.
+"""
+
 import asyncio
 
 from agent_framework import Agent

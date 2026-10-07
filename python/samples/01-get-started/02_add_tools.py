@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Give an agent a function tool.
+
+The weather function is registered with @tool and passed to the agent.
+"""
+
 import asyncio
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""Give an agent a function tool."""
 
 
 # This read-only sample tool can run without approval.

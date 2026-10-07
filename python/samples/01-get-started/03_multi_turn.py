@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Reuse one agent session across multiple turns.
+
+The shared session preserves conversation history between calls.
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""Reuse one agent session across multiple turns."""
 
 
 async def main() -> None:

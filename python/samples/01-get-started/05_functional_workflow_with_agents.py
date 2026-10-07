@@ -1,13 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Call two agents from a functional workflow.
+
+The workflow asks one agent to write a poem and another to review it.
+"""
+
 import asyncio
 
 from agent_framework import Agent, workflow
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-
-"""Call two agents from a functional workflow."""
-
 
 client = FoundryChatClient(
     project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",

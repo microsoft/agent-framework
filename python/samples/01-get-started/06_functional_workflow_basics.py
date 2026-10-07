@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Run two async functions as a functional workflow.
+
+The workflow uppercases text, then reverses it using normal Python control flow.
+"""
+
 import asyncio
 
 from agent_framework import workflow
-
-"""Run two async functions as a functional workflow."""
 
 
 async def to_upper_case(text: str) -> str:

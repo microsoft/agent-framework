@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Connect two function executors with a workflow edge.
+
+The first executor transforms the input and sends it to the terminal executor.
+"""
+
 import asyncio
 
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from typing_extensions import Never
-
-"""Connect two function executors with a workflow edge."""
 
 
 @executor(id="upper_case")
