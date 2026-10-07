@@ -18,8 +18,7 @@ arguments from the `FoundryChatClient` constructor. To read those values from a 
 before creating the client; Agent Framework doesn't load `.env` files automatically.
 
 The hosting sample reads `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` from the environment because hosted
-deployments provide configuration that way. It also accepts the deployment-provided
-`AZURE_AI_MODEL_DEPLOYMENT_NAME`.
+deployments provide configuration that way.
 
 ## Samples
 

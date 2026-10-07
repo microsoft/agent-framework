@@ -30,10 +30,11 @@ def main() -> None:
     agent = Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=DefaultAzureCredential(),
         ),
         instructions="You are a friendly assistant. Keep your answers brief.",
+        default_options={"store": False},
     )
     ResponsesHostServer(agent=agent, history_source="agent_server").run()
 
