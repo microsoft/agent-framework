@@ -4,10 +4,11 @@ import hashlib
 import re
 import tempfile
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
-from ._edge import FanInEdgeGroup, InternalEdgeGroup
+from ._edge import Edge, FanInEdgeGroup, InternalEdgeGroup
 from ._workflow import Workflow
 
 # Import of WorkflowExecutor is performed lazily inside methods to avoid cycles
@@ -239,17 +240,26 @@ class WorkflowViz:
         include_internal_executors: bool = False,
     ) -> list[tuple[str, str, bool]]:
         """Return list of (source_id, target_id, is_conditional) for non-fan-in groups."""
-        edges: list[tuple[str, str, bool]] = []
+        return [
+            (edge.source_id, edge.target_id, getattr(edge, "_condition", None) is not None)
+            for edge, _ in self._iter_normal_edges(workflow, include_internal_executors)
+        ]
+
+    def _iter_normal_edges(
+        self,
+        workflow: Workflow | None = None,
+        include_internal_executors: bool = False,
+    ) -> Iterator[tuple[Edge, bool]]:
+        """Retain internal-source identity even when its ID matches a real executor."""
         workflow = workflow or self._workflow
         for group in workflow.edge_groups:
             if isinstance(group, FanInEdgeGroup):
                 continue
-            if isinstance(group, InternalEdgeGroup) and not include_internal_executors:
+            is_internal = isinstance(group, InternalEdgeGroup)
+            if is_internal and not include_internal_executors:
                 continue
             for edge in group.edges:
-                is_cond = getattr(edge, "_condition", None) is not None
-                edges.append((edge.source_id, edge.target_id, is_cond))
-        return edges
+                yield edge, is_internal
 
     # endregion
 
@@ -365,12 +375,10 @@ class WorkflowViz:
                     if ns:
                         candidates[("subgraph", *ns, executor_id)] = self._sanitize_mermaid_id(executor_id)
                     collect(executor.workflow, (*ns, executor_id))
-            # Internal edge sources are not present in workflow.executors.
-            for source, target, _ in self._compute_normal_edges(
-                workflow, include_internal_executors=include_internal_executors
-            ):
-                for executor_id in (source, target):
-                    candidates[("executor", *ns, executor_id)] = prefix + self._sanitize_mermaid_id(executor_id)
+            for edge, is_internal in self._iter_normal_edges(workflow, include_internal_executors):
+                source_kind = "internal" if is_internal else "executor"
+                candidates[(source_kind, *ns, edge.source_id)] = prefix + self._sanitize_mermaid_id(edge.source_id)
+                candidates[("executor", *ns, edge.target_id)] = prefix + self._sanitize_mermaid_id(edge.target_id)
             for dot_node_id, _, target in self._compute_fan_in_descriptors(workflow):
                 digest = dot_node_id.split("::")[-1]
                 candidates[("fan-in", *ns, dot_node_id)] = (
@@ -433,12 +441,11 @@ class WorkflowViz:
             lines.append(f"{indent}{fan_node_id} --> {map_id(target)};")
 
         # Normal edges
-        for src, tgt, is_cond in self._compute_normal_edges(
-            workflow, include_internal_executors=include_internal_executors
-        ):
-            s = map_id(src)
-            t = map_id(tgt)
-            if is_cond:
+        for edge, is_internal in self._iter_normal_edges(workflow, include_internal_executors):
+            source_kind = "internal" if is_internal else "executor"
+            s = node_ids[(source_kind, *ns, edge.source_id)]
+            t = map_id(edge.target_id)
+            if getattr(edge, "_condition", None) is not None:
                 lines.append(f"{indent}{s} -. conditional .-> {t};")
             else:
                 lines.append(f"{indent}{s} --> {t};")

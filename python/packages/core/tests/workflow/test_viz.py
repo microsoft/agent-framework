@@ -543,6 +543,7 @@ def test_workflow_viz_mermaid_fan_in_id_collision() -> None:
     "executor_ids",
     [
         ("start", "target", "finish"),
+        ("foo", "internal:foo", "internal:internal:foo"),
         ("step-a", "internal_step_a", "internal_step_a_2"),
         ("1step", "internal_1step", "internal_1step_2"),
     ],
@@ -578,12 +579,18 @@ def test_workflow_viz_mermaid_internal_endpoints(
 
 
 @pytest.mark.parametrize("include_internal_executors", [False, True])
-def test_workflow_viz_mermaid_nested_internal_endpoints(include_internal_executors: bool) -> None:
+@pytest.mark.parametrize("colliding_executor", [False, True])
+def test_workflow_viz_mermaid_nested_internal_endpoints(
+    include_internal_executors: bool, colliding_executor: bool
+) -> None:
     """Equal internal endpoints in separate nested scopes must remain separate nodes."""
     wrappers = []
     for wrapper_id in ("left", "right"):
         leaf = MockExecutor(id="leaf")
-        inner = WorkflowExecutor(WorkflowBuilder(start_executor=leaf).build(), id="inner")
+        builder = WorkflowBuilder(start_executor=leaf)
+        if colliding_executor:
+            builder.add_edge(leaf, MockExecutor(id="internal:leaf"))
+        inner = WorkflowExecutor(builder.build(), id="inner")
         wrappers.append(WorkflowExecutor(WorkflowBuilder(start_executor=inner).build(), id=wrapper_id))
     start = MockExecutor(id="inner__internal_leaf")
     workflow = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
@@ -594,12 +601,12 @@ def test_workflow_viz_mermaid_nested_internal_endpoints(include_internal_executo
     edges = re.findall(r"^\s*([A-Za-z][A-Za-z0-9_]*) --> ([A-Za-z][A-Za-z0-9_]*);$", mermaid, re.MULTILINE)
     internal_edges = [(source, target) for source, target in edges if source not in nodes]
 
-    assert len(nodes) == len(set(nodes)) == 7
+    assert len(nodes) == len(set(nodes)) == (9 if colliding_executor else 7)
     assert len(subgraphs) == len(set(subgraphs)) == 4
     assert nodes[0] == "inner__internal_leaf"
     if include_internal_executors:
         internal_sources = {source for source, _ in internal_edges}
-        assert len(internal_edges) == len(internal_sources) == 7
+        assert len(internal_edges) == len(internal_sources) == (9 if colliding_executor else 7)
         assert internal_sources.isdisjoint(subgraphs)
         assert {target for _, target in internal_edges} == set(nodes)
     else:
