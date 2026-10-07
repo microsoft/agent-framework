@@ -102,7 +102,13 @@ def _storage_key_segment(value: str, *, encoded_prefix: str) -> str:  # pyright:
 
     The derivation has three branches:
 
-    * Literal-safe values are returned verbatim, so on-disk layouts stay readable.
+    * Literal-safe values no longer than :data:`_MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH`
+      are returned verbatim, so on-disk layouts stay readable. The length bound is
+      part of the literal branch because a verbatim segment is otherwise unbounded:
+      most filesystems cap a single name at 255 bytes and a caller appends its own
+      extension, so a long literal-safe value would reach the filesystem unchanged
+      and fail there with ``ENAMETOOLONG`` instead of being encoded. Longer values
+      fall through to the branches below.
     * Everything else is encoded under ``encoded_prefix`` using lowercase base32.
       This branch is **injective**: base32 is exactly reversible, and its alphabet
       (``a``-``z`` and ``2``-``7``) is case-stable, so the mapping stays one-to-one
@@ -126,7 +132,7 @@ def _storage_key_segment(value: str, *, encoded_prefix: str) -> str:  # pyright:
     Returns:
         A single path segment containing no path separators.
     """
-    if _is_literal_storage_key_segment_safe(value):
+    if _is_literal_storage_key_segment_safe(value) and len(value) <= _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH:
         return value
     encoded_value = b32encode(value.encode("utf-8")).decode("ascii").rstrip("=").lower()
     encoded_segment = f"{encoded_prefix}{encoded_value}"

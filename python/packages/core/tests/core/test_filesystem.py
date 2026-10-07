@@ -17,6 +17,8 @@ to prevent.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent_framework._filesystem import (  # pyright: ignore[reportPrivateUsage]
@@ -90,7 +92,10 @@ SAFE_IDENTIFIERS: tuple[str, ...] = (
     "session-1",
     "console",
     "cont",
-    "x" * 200,
+    # The literal branch is bounded by the segment cap, so the longest
+    # literal-safe example sits exactly at the cap. Over-cap lengths are
+    # covered by test_long_literal_safe_values_are_length_bounded.
+    "x" * _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH,
 )
 
 
@@ -227,3 +232,91 @@ def test_derivation_is_deterministic(value: str) -> None:
     assert _storage_key_segment(value, encoded_prefix="~scope-") == _storage_key_segment(
         value, encoded_prefix="~scope-"
     )
+
+
+# region Length bound on the literal branch
+#
+# The literal branch used to return any literal-safe value verbatim, with no
+# upper bound, so a long -- but otherwise perfectly safe -- identifier became a
+# path segment longer than any filesystem accepts. Callers append their own
+# extension (``_sessions.FileHistoryProvider`` appends ``.jsonl``), so the
+# failure surfaced at the call site as ``OSError: [Errno 63] File name too long``.
+
+
+@pytest.mark.parametrize("length", [181, 182, 200, 240, 249, 250, 255, 300, 308, 400, 1000])
+def test_long_literal_safe_values_are_length_bounded(length: int) -> None:
+    """A literal-safe value over the cap is encoded rather than returned verbatim.
+
+    Only the length disqualifies these values; their charset is still
+    literal-safe. They must land in the encoded namespace and respect the cap
+    like any other over-long value, so the derived name fits a filesystem slot.
+    """
+    value = "a" * length
+    assert _is_literal_storage_key_segment_safe(value), "charset is still literal-safe; only the length changed"
+
+    segment = _storage_key_segment(value, encoded_prefix="~session-")
+
+    assert segment != value
+    assert segment.startswith("~session-")
+    assert len(segment) <= _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH
+
+
+@pytest.mark.parametrize("length", [1, 2, 175, 178, 179, 180])
+def test_literal_safe_values_within_the_cap_stay_verbatim(length: int) -> None:
+    """The bound must not move: at or under the cap the value is still literal.
+
+    Deployments rely on readable on-disk layouts, so the fix may only affect
+    values that the previous branch would have made unusable on disk.
+    """
+    value = "a" * length
+    assert _storage_key_segment(value, encoded_prefix="~session-") == value
+
+
+@pytest.mark.parametrize("encoded_prefix", ["~scope-", "~session-", "~todo-", "~memory-", "~access-"])
+def test_no_derived_segment_exceeds_the_cap(encoded_prefix: str) -> None:
+    """Every branch honors the cap, so every derived name fits a filesystem slot.
+
+    The cap is this module's own invariant; a segment above it is a name the
+    filesystem rejects at the call site rather than a usable storage location.
+    """
+    probe_values = (
+        *COLLIDING_IDENTIFIERS,
+        *UNSAFE_IDENTIFIERS,
+        *SAFE_IDENTIFIERS,
+        "a" * 1000,
+        "session-" + "a" * 300,
+    )
+    for value in probe_values:
+        segment = _storage_key_segment(value, encoded_prefix=encoded_prefix)
+        assert len(segment) <= _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH, (value[:32], encoded_prefix, len(segment))
+
+
+def test_length_bounded_literals_stay_injective() -> None:
+    """Moving long literals into the encoded namespace must preserve injectivity.
+
+    The segment is an isolation boundary, so two distinct over-long identifiers
+    may not be folded together by the change -- not even after case folding.
+    """
+    values = ["a" * length for length in range(_MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH + 1, 400)]
+    segments = [_storage_key_segment(value, encoded_prefix="~session-") for value in values]
+
+    assert len(set(segments)) == len(values)
+    assert len({segment.lower() for segment in segments}) == len(values)
+
+
+def test_long_literal_safe_value_is_creatable_on_a_real_filesystem(tmp_path: Path) -> None:
+    """Regression guard: the derived name must survive a real ``open()``.
+
+    A 308-character literal-safe session id previously produced a 308-character
+    file stem, which ``open()`` rejects with ``ENAMETOOLONG`` (errno 63) on
+    macOS, Linux and Windows alike -- turning a valid session id into a failed
+    write. Writing ``stem + extension`` is exactly what
+    ``_sessions.FileHistoryProvider`` does.
+    """
+    value = "session-" + "a" * 300
+    segment = _storage_key_segment(value, encoded_prefix="~session-")
+
+    target = tmp_path / f"{segment}.jsonl"
+    target.write_text('{"role":"user"}\n', encoding="utf-8")
+
+    assert target.read_text(encoding="utf-8") == '{"role":"user"}\n'
