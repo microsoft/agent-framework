@@ -6,27 +6,24 @@ concepts of **Agent Framework** one step at a time.
 ## Prerequisites
 
 ```bash
-pip install agent-framework-foundry
+pip install agent-framework-foundry azure-identity
+az login
 ```
 
-Set the required environment variables:
-
-```bash
-export FOUNDRY_PROJECT_ENDPOINT="https://your-project-endpoint"
-export FOUNDRY_MODEL="gpt-4o"
-```
+Each sample hardcodes example values for `project_endpoint` and `model`. Replace them with your Microsoft Foundry
+project endpoint and model deployment name before running the sample.
 
 ## Samples
 
 | # | File | What you'll learn |
 |---|------|-------------------|
-| 1 | [01_hello_agent.py](01_hello_agent.py) | Create your first agent and run it (streaming and non-streaming). |
+| 1 | [01_hello_agent.py](01_hello_agent.py) | Create your first agent and run one request. |
 | 2 | [02_add_tools.py](02_add_tools.py) | Define a function tool with `@tool` and attach it to an agent. |
-| 3 | [03_multi_turn.py](03_multi_turn.py) | Keep conversation history across turns with `AgentSession`. |
-| 4 | [04_memory.py](04_memory.py) | Add dynamic context with a custom `ContextProvider`. |
+| 3 | [03_multi_turn.py](03_multi_turn.py) | Reuse an agent session to keep conversation history across turns. |
+| 4 | [04_memory.py](04_memory.py) | Store and inject session state with a custom `ContextProvider`. |
 | 5 | [05_functional_workflow_with_agents.py](05_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
 | 6 | [06_functional_workflow_basics.py](06_functional_workflow_basics.py) | Write a workflow as a plain async function. |
-| 7 | [07_first_graph_workflow.py](07_first_graph_workflow.py) | Chain executors into a graph workflow with edges. |
+| 7 | [07_first_graph_workflow.py](07_first_graph_workflow.py) | Connect function executors with a graph edge. |
 
 To host agents and workflows with Durable Task or Azure Functions, continue with the [Durable Agent Framework extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
