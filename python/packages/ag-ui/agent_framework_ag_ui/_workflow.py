@@ -164,7 +164,12 @@ def _append_unique_snapshot_messages(
     """
     seen_ids = {message.get("id") for message in existing if message.get("id")}
     content_source = content_dedupe_against if content_dedupe_against is not None else []
-    remaining_content = Counter(_message_content_identity(message) for message in content_source)
+    # Reserve exact-id overlap before content matching, regardless of incoming order.
+    # A client turn matched by id must not also consume a distinct identical reply.
+    matched_ids = seen_ids.intersection(message.get("id") for message in incoming if message.get("id"))
+    remaining_content = Counter(
+        _message_content_identity(message) for message in content_source if message.get("id") not in matched_ids
+    )
     merged = list(existing)
     for message in incoming:
         message_id = message.get("id")
@@ -812,7 +817,7 @@ class AgentFrameworkWorkflow:
             ]
             snapshot_builder.append_resume_messages(
                 hitl_messages,
-                content_dedupe_against=current_turn_client_messages,
+                content_dedupe_against=agui_messages_to_snapshot_format(current_turn_client_messages),
             )
 
         if snapshot_builder is not None and effective_state:

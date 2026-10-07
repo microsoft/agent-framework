@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import Mock
@@ -687,6 +688,130 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
     assert len(yes_turns) >= 2
 
 
+@pytest.mark.parametrize(
+    "client_id",
+    [None, "client-reply", "resume-1", "resume-2"],
+    ids=["without-id", "remapped-id", "matching-first-id", "matching-last-id"],
+)
+@pytest.mark.parametrize(
+    ("parts", "expected_content"),
+    [
+        pytest.param([{"type": "input_text", "text": "yes"}], "yes", id="text-parts"),
+        pytest.param(
+            [
+                {"type": "input_text", "text": "Before"},
+                {
+                    "type": "image",
+                    "source": {"type": "url", "value": "https://example.com/image.png", "mimeType": "image/png"},
+                },
+                {"type": "text", "text": "After"},
+            ],
+            [
+                {"type": "text", "text": "Before"},
+                {"type": "binary", "url": "https://example.com/image.png", "mimeType": "image/png"},
+                {"type": "text", "text": "After"},
+            ],
+            id="mixed-image",
+        ),
+        pytest.param(
+            [{"type": "audio", "source": {"type": "base64", "value": "YWJj", "mimeType": "audio/wav"}}],
+            [{"type": "binary", "data": "YWJj", "mimeType": "audio/wav"}],
+            id="media-only-audio",
+        ),
+    ],
+)
+async def test_workflow_hitl_resume_dedupes_normalized_current_turn_content(
+    client_id: str | None, parts: list[dict[str, Any]], expected_content: Any
+) -> None:
+    """Only current-turn overlap consumes one matching reply after content normalization."""
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    handled: list[list[dict[str, Any]]] = []
+
+    class MessageRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send replies", list[dict[str, Any]], request_id="user-input")
+
+        @response_handler
+        async def capture(
+            self, original_request: str, response: list[dict[str, Any]], ctx: WorkflowContext[Any, str]
+        ) -> None:
+            del original_request
+            handled.append(response)
+            await ctx.yield_output("Captured replies")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    workflow = WorkflowBuilder(start_executor=MessageRequestExecutor(id="message-request")).build()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+    start_message = {"id": "start", "role": "user", "content": "start"}
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "overlap-thread",
+            "messages": [start_message],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert not [event.model_dump() for event in first_events if event.type == "RUN_ERROR"]
+    first_finished = next(event for event in first_events if event.type == "RUN_FINISHED")
+    assert _interrupts_from_finished(first_finished)[0]["id"] == "user-input"
+
+    # A prior identical reply must not consume either of this interrupt's replies.
+    await store.save(
+        scope="tenant-a",
+        thread_id="overlap-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[start_message, {"id": "prior-reply", "role": "user", "content": expected_content}],
+            state=None,
+            interrupt=None,
+        ),
+    )
+    client_reply: dict[str, Any] = {"role": "user", "content": deepcopy(parts)}
+    if client_id is not None:
+        client_reply["id"] = client_id
+    resume_replies = [
+        {"id": "resume-1", "role": "user", "contents": deepcopy(parts)},
+        {"id": "resume-2", "role": "user", "contents": deepcopy(parts)},
+    ]
+    payload = {
+        "thread_id": "overlap-thread",
+        "messages": [
+            start_message,
+            {"id": "prior-reply", "role": "user", "content": deepcopy(parts)},
+            client_reply,
+        ],
+        "resume": {"interrupts": [{"id": "user-input", "value": resume_replies}]},
+        _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+    }
+    original_payload = deepcopy(payload)
+    resumed_events = await _run(agent, payload)
+    assert not [event.model_dump() for event in resumed_events if event.type == "RUN_ERROR"]
+    assert handled == [resume_replies]
+    assert payload == original_payload
+
+    snapshot = await store.get(scope="tenant-a", thread_id="overlap-thread")
+    assert snapshot is not None
+    user_messages = [message for message in snapshot.messages if message.get("role") == "user"]
+    assert [message["content"] for message in user_messages] == ["start", *[expected_content] * 3]
+    assert user_messages[1]["id"] == "prior-reply"
+    if client_id is not None:
+        assert user_messages[2]["id"] == client_id
+    assert user_messages[3]["id"] == ("resume-1" if client_id == "resume-2" else "resume-2")
+
+    hydrated = await _run(agent, {"thread_id": "overlap-thread", "messages": [], _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_users = [
+        message.model_dump(by_alias=True, exclude_none=True)["content"]
+        for message in replay.messages
+        if message.role == "user"
+    ]
+    assert replay_users == [message["content"] for message in user_messages]
+    assert handled == [resume_replies]
+
+
 def test_snapshot_messages_from_resume_keeps_conversational_approval_text() -> None:
     from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
 
@@ -928,6 +1053,22 @@ def test_append_unique_snapshot_messages_keeps_intentional_repeated_replies() ->
     ]
     merged = _append_unique_snapshot_messages(existing, incoming)
     assert [m["id"] for m in merged] == ["u0", "r1", "r2"]
+
+
+def test_append_unique_snapshot_messages_keeps_current_overlap_after_historical_id_match() -> None:
+    """Matching historical ids must not consume a current client turn's content allowance."""
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    history = [{"id": "prior-reply", "role": "user", "content": "yes"}]
+    current = [{"id": "client-reply", "role": "user", "content": "yes"}]
+    incoming = [
+        {"id": "prior-reply", "role": "user", "content": "yes"},
+        {"id": "resume-reply", "role": "user", "content": "yes"},
+    ]
+
+    assert _append_unique_snapshot_messages(history + current, incoming, content_dedupe_against=current) == (
+        history + current
+    )
 
 
 def test_append_unique_snapshot_messages_keeps_second_hitl_yes_without_client_replay() -> None:
