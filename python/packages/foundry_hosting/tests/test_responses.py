@@ -40,6 +40,7 @@ from agent_framework import (
     ChatResponseUpdate,
     ComputerSafetyCheck,
     Content,
+    Executor,
     FinishReason,
     FinishReasonLiteral,
     FunctionInvocationLayer,
@@ -56,6 +57,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     executor,
+    handler,
     tool,
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
@@ -85,7 +87,7 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
-from typing_extensions import Any
+from typing_extensions import Any, Never
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
@@ -1069,6 +1071,11 @@ class TestResponsesHostServerInit:
     def test_init_rejects_invalid_agent_source(self, agent: Any) -> None:
         with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
             ResponsesHostServer(agent)
+
+    def test_init_rejects_workflow_agent_instance(self) -> None:
+        workflow_agent = _build_text_workflow_agent("hello from workflow")
+        with pytest.raises(TypeError, match="WorkflowAgent instances cannot be hosted directly"):
+            ResponsesHostServer(cast(SupportsAgentRun, workflow_agent), response_store=InMemoryResponseProvider())
 
     async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
         server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
@@ -7453,7 +7460,7 @@ class TestCheckpointContextValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
         agent.workflow._runner_context.has_checkpointing.return_value = False
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(lambda: agent, store=InMemoryResponseProvider())
 
         context_kwargs: dict[str, Any] = {"response_id": "response-current", "mode_flags": MagicMock()}
         request = CreateResponse(model="m", input="hi")
@@ -8162,7 +8169,7 @@ class TestIncompleteFinishReasonSurfacing:
 
     async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
         workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
-        server = _make_server(workflow_agent)
+        server = _make_server(lambda: workflow_agent)
 
         resp = await _post(server, input_text="hi", stream=False)
         assert resp.status_code == 200
@@ -8349,7 +8356,7 @@ class TestResponseFailedSurfacing:
         # invokes the agent once (no checkpoint to restore on a fresh
         # request), so this is the call that will raise.
         with patch.object(workflow_agent, "run", side_effect=run_failure):
-            server = _make_server(workflow_agent)
+            server = _make_server(lambda: workflow_agent)
             resp = await _post(server, input_text="hello", stream=False)
 
         assert resp.status_code == 200
@@ -8584,6 +8591,40 @@ def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral 
     return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
 
 
+class _TranscriptExecutor(Executor):
+    """Keeps every input it has seen in instance state and echoes the accumulated list."""
+
+    def __init__(self) -> None:
+        super().__init__(id="transcript")
+        self.seen: list[str] = []
+
+    @handler
+    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+        self.seen.append(" ".join(message.text or "" for message in messages))
+        await ctx.yield_output(Message(role="assistant", contents=[Content.from_text("seen=" + "|".join(self.seen))]))
+
+
+def _build_transcript_workflow() -> Any:
+    return WorkflowBuilder(name="transcript-workflow", start_executor=_TranscriptExecutor()).build()
+
+
+def _workflow_output_text(response: httpx.Response, *, stream: bool) -> str:
+    """Collect the assistant text of one Responses reply, from JSON or SSE."""
+    if stream:
+        return "".join(
+            str(event["data"]["text"])
+            for event in _parse_sse_events(response.text)
+            if event["event"] == "response.output_text.done"
+        )
+    return "".join(
+        part.get("text", "")
+        for item in response.json()["output"]
+        if item["type"] == "message"
+        for part in item.get("content", [])
+        if part.get("type") == "output_text"
+    )
+
+
 class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
     """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
 
@@ -8660,16 +8701,19 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
 
 def _build_multi_update_workflow_agent(
     texts: Sequence[str], *, gate: asyncio.Event | None = None
-) -> tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]:
-    """Build a ``WorkflowAgent`` whose inner agent streams one update per text in ``texts``."""
+) -> tuple[Callable[[], WorkflowAgent], _MultiUpdateWorkflowAgentMock]:
+    """Build a factory of fresh ``WorkflowAgent`` objects sharing one inner agent that streams one update per text."""
     inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts, gate=gate)
 
-    @executor
-    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+    def create_agent() -> WorkflowAgent:
+        @executor
+        async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+            await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
-    return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
+        workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
+        return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent")
+
+    return create_agent, inner
 
 
 @asynccontextmanager
@@ -8697,8 +8741,8 @@ def _build_approval_workflow_agent(
     tool_name: str = "delete_file",
     tool_arguments: dict[str, Any] | None = None,
     final_text: str = "done",
-) -> tuple[WorkflowAgent, _ToolApprovalWorkflowAgentMock]:
-    """Build a ``WorkflowAgent`` whose inner agent emits a tool approval request."""
+) -> tuple[Callable[[], WorkflowAgent], _ToolApprovalWorkflowAgentMock]:
+    """Build a factory of fresh ``WorkflowAgent`` objects sharing one inner agent that emits a tool approval request."""
     mock_agent = _ToolApprovalWorkflowAgentMock(
         name="approval-agent",
         tool_name=tool_name,
@@ -8707,13 +8751,17 @@ def _build_approval_workflow_agent(
         final_text=final_text,
     )
 
-    @executor
-    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+    def create_agent() -> WorkflowAgent:
+        @executor
+        async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+            await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, mock_agent).build()
-    workflow_agent = WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
-    return workflow_agent, mock_agent
+        # A stable workflow name is required so the checkpoint written by one request can be
+        # restored by the next; WorkflowBuilder otherwise generates a unique name per build.
+        workflow = WorkflowBuilder(name="approval-workflow", start_executor=start).add_edge(start, mock_agent).build()
+        return WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
+
+    return create_agent, mock_agent
 
 
 class TestWorkflowAgentHosting:
@@ -8729,7 +8777,8 @@ class TestWorkflowAgentHosting:
         created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
 
         async def create_agent() -> WorkflowAgent:
-            agent, inner = _build_multi_update_workflow_agent(["hello"])
+            factory, inner = _build_multi_update_workflow_agent(["hello"])
+            agent = factory()
             created.append((agent, inner))
             return agent
 
@@ -8748,7 +8797,8 @@ class TestWorkflowAgentHosting:
         runs: list[MagicMock] = []
 
         def create_agent() -> WorkflowAgent:
-            agent, _ = _build_multi_update_workflow_agent(["hello"])
+            factory, _ = _build_multi_update_workflow_agent(["hello"])
+            agent = factory()
             run = MagicMock(wraps=agent.run)
             cast(Any, agent).run = run
             runs.append(run)
@@ -8766,9 +8816,44 @@ class TestWorkflowAgentHosting:
         assert second.status_code == 200
         assert [run.call_count for run in runs] == [1, 2]
 
+    async def test_factory_returning_same_workflow_agent_is_rejected_on_reuse(self) -> None:
+        shared = _build_text_workflow_agent("shared")
+        server = _make_server(lambda: shared)
+
+        first = await _post(server, input_text="one", stream=False)
+        second = await _post(server, input_text="two", stream=False)
+
+        assert first.status_code == 200
+        assert first.json()["status"] == "completed"
+        assert second.status_code == 200
+        second_body = second.json()
+        assert second_body["status"] == "failed"
+        assert "fresh WorkflowAgent" in second_body["error"]["message"]
+
+    async def test_factory_reusing_same_workflow_is_rejected_on_reuse(self) -> None:
+        workflow = _build_transcript_workflow()
+        server = _make_server(lambda: WorkflowAgent(workflow=workflow))
+
+        first = await _post(server, input_text="one", stream=False)
+        second = await _post(server, input_text="two", stream=False)
+
+        assert first.json()["status"] == "completed"
+        assert second.json()["status"] == "failed"
+        assert "fresh WorkflowAgent" in second.json()["error"]["message"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_factory_isolates_executor_state_between_independent_requests(self, stream: bool) -> None:
+        server = _make_server(lambda: WorkflowAgent(workflow=_build_transcript_workflow()))
+
+        first = await _post(server, input_text="first-caller", stream=stream)
+        second = await _post(server, input_text="second-caller", stream=stream)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert _workflow_output_text(second, stream=stream) == "seen=second-caller"
+
     async def test_basic_text_response(self) -> None:
-        workflow_agent = _build_text_workflow_agent("hello from workflow")
-        server = _make_server(workflow_agent)
+        server = _make_server(lambda: _build_text_workflow_agent("hello from workflow"))
 
         resp = await _post(server, input_text="hi", stream=False)
         assert resp.status_code == 200
@@ -8784,8 +8869,7 @@ class TestWorkflowAgentHosting:
         assert text_found, f"Expected workflow output text in {body['output']}"
 
     async def test_basic_text_response_streaming(self) -> None:
-        workflow_agent = _build_text_workflow_agent("hello stream")
-        server = _make_server(workflow_agent)
+        server = _make_server(lambda: _build_text_workflow_agent("hello stream"))
 
         resp = await _post(server, input_text="hi", stream=True)
         assert resp.status_code == 200
@@ -8800,8 +8884,8 @@ class TestWorkflowAgentHosting:
     async def test_cancellation_signal_stops_main_loop_without_completing(self) -> None:
         """Explicit-cancel: the workflow's main loop must break promptly, and the handler must not
         emit a ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
-        server = _make_server(workflow_agent)
+        create_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
+        server = _make_server(create_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
         cancellation_signal = asyncio.Event()
@@ -8835,8 +8919,8 @@ class TestWorkflowAgentHosting:
         """Explicit-cancel must interrupt the workflow's inner agent call stuck awaiting a slow
         model/tool response, not merely be checked between already-produced updates."""
         gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
-        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
-        server = _make_server(workflow_agent)
+        create_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
+        server = _make_server(create_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
         cancellation_signal = asyncio.Event()
@@ -8880,9 +8964,9 @@ class TestWorkflowAgentHosting:
         response, not merely be checked between already-produced updates, and must trigger
         ``exit_for_recovery()`` because it actually preempted the loop -- not on natural completion."""
         gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
-        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
+        create_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
         server = _make_server(
-            workflow_agent,
+            create_agent,
             response_store=FileResponseStore(storage_dir=tmp_path),
             options=ResponsesServerOptions(resilient_background=True),
         )
@@ -8917,8 +9001,8 @@ class TestWorkflowAgentHosting:
         """Explicit-cancel: cancellation set before a continuation turn starts must skip that turn's new
         input entirely, whether caught by the restore-loop's own check or the standalone check
         guarding the start of a brand new workflow run."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(workflow_agent)
+        create_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        server = _make_server(create_agent)
 
         first = await _post(server, conversation_id="conv-1", stream=False)
         assert first.status_code == 200
@@ -8955,9 +9039,9 @@ class TestWorkflowAgentHosting:
         ``exit_for_recovery()`` -- proving the post-loop ``signalled`` check (not a blind re-check of
         the flag) correctly gates this action so it doesn't also fire on a replay that merely
         finished naturally."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        create_agent, inner = _build_multi_update_workflow_agent(["hello"])
         server = _make_server(
-            workflow_agent,
+            create_agent,
             response_store=FileResponseStore(storage_dir=tmp_path),
             options=ResponsesServerOptions(resilient_background=True),
         )
@@ -8991,8 +9075,8 @@ class TestWorkflowAgentHosting:
         """A previous_response_id naming a scope with no checkpoint must fail loudly rather than
         silently starting a fresh workflow run (which could repeat side effects or misinterpret a
         continuation as a new request)."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(workflow_agent)
+        create_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        server = _make_server(create_agent)
         request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
         context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
 
@@ -9013,8 +9097,8 @@ class TestWorkflowAgentHosting:
         assert inner.run_count == 0
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
-        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
-        server = _make_server(workflow_agent)
+        create_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
+        server = _make_server(create_agent)
 
         resp = await _post(server, stream=False)
         assert resp.status_code == 200
@@ -9040,8 +9124,8 @@ class TestWorkflowAgentHosting:
         assert mock_agent.run_count == 1
 
     async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
-        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_st")
-        server = _make_server(workflow_agent)
+        create_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_st")
+        server = _make_server(create_agent)
 
         resp = await _post(server, stream=True)
         assert resp.status_code == 200
@@ -9077,11 +9161,11 @@ class TestWorkflowAgentHosting:
         approval response back to the paused inner agent, and the inner
         agent emits the final assistant text.
         """
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        create_agent, mock_agent = _build_approval_workflow_agent(
             approval_request_id="apr_wf_rt",
             final_text="done with approval",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(create_agent)
         checkpoint_provider = server._checkpoint_storage_provider  # pyright: ignore[reportPrivateUsage]
 
         with patch.object(checkpoint_provider, "get_store", wraps=checkpoint_provider.get_store) as get_store:
@@ -9145,11 +9229,11 @@ class TestWorkflowAgentHosting:
     async def test_round_trip_approval_response_streaming(self) -> None:
         """Streaming variant of the round-trip: turn 2 is requested with
         ``stream=true`` and surfaces the resumed text as SSE events."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        create_agent, mock_agent = _build_approval_workflow_agent(
             approval_request_id="apr_wf_rt_st",
             final_text="streamed-done",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(create_agent)
 
         first = await _post(server, stream=False)
         first_body = first.json()
@@ -9184,11 +9268,11 @@ class TestWorkflowAgentHosting:
     async def test_round_trip_approval_response_rejected(self) -> None:
         """Sending ``approve=False`` must surface as ``approved=False`` to the
         inner agent on resume."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        create_agent, mock_agent = _build_approval_workflow_agent(
             approval_request_id="apr_wf_reject",
             final_text="acknowledged",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(create_agent)
 
         first = await _post(server, stream=False)
         first_body = first.json()
@@ -9232,9 +9316,8 @@ class TestResilientBackgroundCheckpointing:
     """
 
     async def test_workflow_yields_checkpoint_event_when_resilient_background(self, tmp_path: Path) -> None:
-        workflow_agent = _build_text_workflow_agent("hello from workflow")
         server = _make_server(
-            workflow_agent,
+            lambda: _build_text_workflow_agent("hello from workflow"),
             response_store=FileResponseStore(storage_dir=tmp_path),
             options=ResponsesServerOptions(resilient_background=True),
         )
@@ -9289,7 +9372,7 @@ class TestResilientBackgroundCheckpointing:
         """
         workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
         server = _make_server(
-            workflow_agent,
+            lambda: workflow_agent,
             response_store=FileResponseStore(storage_dir=tmp_path),
             options=ResponsesServerOptions(resilient_background=True),
         )

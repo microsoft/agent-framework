@@ -13,9 +13,10 @@ server = ResponsesHostServer(agent=create_agent)
 ```
 
 Passing an instance reuses that object for the lifetime of the host. Pass a callable when the agent keeps mutable state
-outside `AgentSession`. In particular, a `WorkflowAgent` wraps a stateful workflow, so its callable should build a new
-workflow, executors, and wrapped agents. Keep the workflow name and executor IDs stable so later requests can find and
-restore its checkpoints:
+outside `AgentSession`. A `WorkflowAgent` wraps a stateful workflow, so a `WorkflowAgent` instance is rejected at host
+construction: pass a callable that builds a new workflow, executors, and wrapped agents on every call. The host also
+rejects a callable that returns the same `WorkflowAgent`, workflow, or executor object for a later request. Keep the
+workflow name and executor IDs stable so later requests can find and restore its checkpoints:
 
 ```python
 def create_agent():

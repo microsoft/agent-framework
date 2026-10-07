@@ -100,7 +100,7 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from mcp import McpError
 from typing_extensions import Any
 
-from ._agent_source import is_agent, resolve_agent, validate_agent_source
+from ._agent_source import WorkflowAgentReuseGuard, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
 from ._request import (
     HostedResponseRequest,
@@ -939,6 +939,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         )
         self._resilient_background = bool(options and options.resilient_background)
         self._warned_workflow_agent = False
+        # Each WorkflowAgent a factory returns must be new; a reused object would share run state across requests.
+        self._workflow_agent_reuse_guard = WorkflowAgentReuseGuard()
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
 
@@ -977,8 +979,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     (options and options.sse_keep_alive_interval_seconds) or self.config.sse_keepalive_interval
                 ),
             )
-        if isinstance(resolved_agent, WorkflowAgent):
-            self._warn_legacy_workflow()
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -1059,7 +1059,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             if self._agent_source is None:
                 raise RuntimeError("The hosted agent source is not configured.")
-            agent = await resolve_agent(self._agent_source)
+            agent = await resolve_agent(self._agent_source, reuse_guard=self._workflow_agent_reuse_guard)
             configuration = self._configuration or _validate_agent_configuration(
                 agent, self._history_source, self._host_options, background_source=self._background_source
             )

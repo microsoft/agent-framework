@@ -18,6 +18,7 @@ import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import product
 from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,12 +35,17 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Executor,
     FunctionInvocationLayer,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
     ServiceSessionId,
     SessionStore,
+    WorkflowAgent,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
     tool,
 )
 from azure.ai.agentserver.core import (
@@ -53,9 +59,10 @@ from azure.ai.agentserver.core.storage import FoundryStateStore
 from starlette.datastructures import QueryParams
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
-from typing_extensions import Any
+from typing_extensions import Any, Never
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
+from agent_framework_foundry_hosting._agent_source import _MAX_STRONG_RESOURCE_IDENTITIES, WorkflowAgentReuseGuard
 from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
@@ -286,6 +293,31 @@ async def _success_text(response: Response) -> str:
         return "".join(data["text"] for event, data in events if event == "delta")
     assert response.media_type == "application/json"
     return json.loads(bytes(response.body))["response"]
+
+
+class _TranscriptExecutor(Executor):
+    """Keeps every input it has seen in instance state and echoes the accumulated list."""
+
+    def __init__(self) -> None:
+        super().__init__(id="transcript")
+        self.seen: list[str] = []
+
+    @handler
+    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+        self.seen.append(" ".join(message.text or "" for message in messages))
+        await ctx.yield_output(Message(role="assistant", contents=[Content.from_text("seen=" + "|".join(self.seen))]))
+
+
+def _build_transcript_workflow_agent() -> WorkflowAgent:
+    workflow = WorkflowBuilder(name="transcript-workflow", start_executor=_TranscriptExecutor()).build()
+    return WorkflowAgent(workflow=workflow, name="Transcript Workflow Agent")
+
+
+async def _invoke_text(server: InvocationsHostServer, message: str, *, stream: bool, session_id: str) -> Response:
+    with _request_context(session_id=session_id):
+        return await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+            _make_request({"message": message, "stream": stream})
+        )
 
 
 # endregion
@@ -623,6 +655,10 @@ class TestInit:
         with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
             InvocationsHostServer(agent)
 
+    def test_rejects_workflow_agent_instance(self) -> None:
+        with pytest.raises(TypeError, match="WorkflowAgent instances cannot be hosted directly"):
+            InvocationsHostServer(_build_transcript_workflow_agent())
+
     def test_rejects_agent_class_requiring_constructor_arguments(self) -> None:
         with pytest.raises(TypeError, match="agent callable must accept no arguments"):
             InvocationsHostServer(cast(Any, _ContextAgent))
@@ -646,6 +682,79 @@ class TestInit:
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
         with pytest.raises((TypeError, ValueError), match=error):
             InvocationsHostServer(_make_agent(response_text="ok"), **{parameter: value})
+
+
+# endregion
+
+
+# region Request-scoped workflow agents
+
+
+class TestWorkflowAgentReuseGuard:
+    def test_tracks_slotted_executors_without_weakref_support(self) -> None:
+        """Executors that cannot be weakly referenced fall back to bounded strong identity tracking."""
+
+        @dataclass(slots=True)
+        class _SlottedExecutor:
+            id: str
+
+        def _fake_agent(executors: list[object]) -> WorkflowAgent:
+            workflow = MagicMock()
+            workflow.get_executors_list.return_value = executors
+            agent = MagicMock(spec=WorkflowAgent)
+            agent.workflow = workflow
+            return agent
+
+        shared_executor = _SlottedExecutor("shared")
+        guard = WorkflowAgentReuseGuard()
+        guard.claim(_fake_agent([shared_executor]))
+
+        with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
+            guard.claim(_fake_agent([shared_executor]))
+
+        # Fresh slotted executors are accepted, and the strong fallback stays bounded.
+        for index in range(_MAX_STRONG_RESOURCE_IDENTITIES + 5):
+            guard.claim(_fake_agent([_SlottedExecutor(str(index))]))
+        assert len(guard._strong_owned) <= _MAX_STRONG_RESOURCE_IDENTITIES  # pyright: ignore[reportPrivateUsage]
+
+
+class TestRequestScopedWorkflowAgents:
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_factory_isolates_executor_state_between_sessions(self, stream: bool) -> None:
+        server = InvocationsHostServer(_build_transcript_workflow_agent)
+
+        first = await _invoke_text(server, "first-caller", stream=stream, session_id=f"wf-a-{uuid.uuid4()}")
+        second = await _invoke_text(server, "second-caller", stream=stream, session_id=f"wf-b-{uuid.uuid4()}")
+
+        assert await _success_text(first) == "seen=first-caller"
+        assert await _success_text(second) == "seen=second-caller"
+
+    async def test_factory_returning_same_workflow_agent_is_rejected_on_reuse(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        shared = _build_transcript_workflow_agent()
+        server = InvocationsHostServer(lambda: shared)
+
+        first = await _invoke_text(server, "one", stream=False, session_id=f"wf-a-{uuid.uuid4()}")
+        with caplog.at_level(logging.ERROR):
+            second = await _invoke_text(server, "two", stream=False, session_id=f"wf-b-{uuid.uuid4()}")
+
+        assert await _success_text(first) == "seen=one"
+        assert second.status_code == 500
+        assert "fresh WorkflowAgent" in caplog.text
+
+    async def test_factory_returning_same_workflow_agent_is_rejected_on_streaming_reuse(self) -> None:
+        shared = _build_transcript_workflow_agent()
+        server = InvocationsHostServer(lambda: shared)
+
+        first = await _invoke_text(server, "one", stream=True, session_id=f"wf-a-{uuid.uuid4()}")
+        second = await _invoke_text(server, "two", stream=True, session_id=f"wf-b-{uuid.uuid4()}")
+
+        assert await _success_text(first) == "seen=one"
+        assert isinstance(second, StreamingResponse)
+        events = _parse_sse_events(await _collect_stream(second))
+        assert [event for event, _ in events] == ["error"]
+        assert events[0][1]["status"] == 500
 
 
 # endregion

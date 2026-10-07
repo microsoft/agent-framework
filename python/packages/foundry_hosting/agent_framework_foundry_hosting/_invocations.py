@@ -49,7 +49,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 from typing_extensions import Any
 
-from ._agent_source import AgentSource, is_agent, resolve_agent, validate_agent_source
+from ._agent_source import AgentSource, WorkflowAgentReuseGuard, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
 from ._request import (
     InvocationRun,
@@ -402,6 +402,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         self._agent = agent
         self._owns_request_agent = agent is not None and not is_agent(agent)
+        # Each WorkflowAgent a factory returns must be new; a reused object would share run state across requests.
+        self._workflow_agent_reuse_guard = WorkflowAgentReuseGuard()
         self._parse_request = parse_request
         self._prepare_options = prepare_options
         self._unsupported_options = validate_unsupported_options(unsupported_options)
@@ -497,7 +499,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
     async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
         if self._agent is None:
             raise RuntimeError("No agent is configured for Invocations.")
-        agent = await resolve_agent(self._agent)
+        agent = await resolve_agent(self._agent, reuse_guard=self._workflow_agent_reuse_guard)
         async with AsyncExitStack() as resources:
             if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)
