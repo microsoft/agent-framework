@@ -26,6 +26,7 @@ from agent_framework import (
     MemoryStore,
     MemoryTopicRecord,
     Message,
+    SessionContext,
 )
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
@@ -132,6 +133,59 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
     assert record.to_dict() == raw_record
     assert reparsed_record == record
     assert "MemoryTopicRecord(" in repr(record)
+
+
+@pytest.mark.parametrize("slug", [None, "tools", "Chosen Tools"])
+def test_memory_file_store_preserves_topic_slug(tmp_path: Path, slug: str | None) -> None:
+    """Reloaded topics keep their filename identity when the heading differs from the slug."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    record = MemoryTopicRecord(
+        topic="Preferred Tools",
+        slug=slug,
+        summary="Use the preferred tools.",
+        memories=["Use Python for scripts."],
+        updated_at="2026-04-21T10:05:00+00:00",
+        session_ids=[session.session_id],
+    )
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    reopened_store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    loaded = reopened_store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=record.slug)
+    assert loaded == record
+    assert reopened_store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == [record]
+
+    loaded.summary = "Use the updated tools."
+    reopened_store.write_topic(session, loaded, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert reopened_store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == [loaded]
+    assert reopened_store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=record.slug) == loaded
+
+
+async def test_memory_context_provider_loads_topic_with_custom_slug(tmp_path: Path) -> None:
+    """The rebuilt index must point to the existing file so selected memory can be injected."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    record = MemoryTopicRecord(
+        topic="Preferred Tools",
+        slug="tools",
+        summary="Use the preferred tools.",
+        memories=["Use Python for scripts."],
+        updated_at="2026-04-21T10:05:00+00:00",
+    )
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    provider = MemoryContextProvider(store=store)
+    context = SessionContext(session_id=session.session_id, input_messages=[Message("user", ["Which tools?"])])
+
+    await provider.before_run(agent=None, session=session, context=context, state={})
+
+    assert "topics/tools.md" in store.get_index_text(
+        session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=200, line_length=150
+    )
+    assert any(
+        "Use Python for scripts." in message.text for message in context.context_messages[DEFAULT_MEMORY_SOURCE_ID]
+    )
 
 
 async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_path) -> None:
