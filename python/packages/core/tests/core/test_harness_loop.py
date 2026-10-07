@@ -65,9 +65,11 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
         honor_response_format: bool = False,
         service_mode: bool = False,
         usage_per_call: int | None = None,
+        usage_details: UsageDetails | None = None,
     ) -> None:
         super().__init__()
         self._usage_per_call = usage_per_call
+        self._usage_details = usage_details
         self.call_count: int = 0
         self.received_messages: list[list[str]] = []
         self.received_response_formats: list[Any] = []
@@ -78,6 +80,13 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
         if service_mode:
             object.__setattr__(self, "STORES_BY_DEFAULT", True)
         self._conv_counter = 0
+
+    def _usage(self) -> UsageDetails | None:
+        if self._usage_details is not None:
+            return UsageDetails(**self._usage_details)
+        if self._usage_per_call is not None:
+            return UsageDetails(total_token_count=self._usage_per_call)
+        return None
 
     def _next_text(self, messages: Sequence[Message]) -> str:
         if self._texts:
@@ -113,9 +122,7 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
                 messages=Message(role="assistant", contents=[self._next_text(messages)]),
                 response_format=response_format if self._honor_response_format else None,
                 conversation_id=conversation_id,
-                usage_details=(
-                    UsageDetails(total_token_count=self._usage_per_call) if self._usage_per_call is not None else None
-                ),
+                usage_details=self._usage(),
             )
 
         return _get()
@@ -126,8 +133,12 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
         async def _gen() -> AsyncIterable[ChatResponseUpdate]:
             self.call_count += 1
             text = self._next_text(messages)
+            contents = [Content.from_text(text)]
+            usage = self._usage()
+            if usage is not None:
+                contents.append(Content.from_usage(usage))
             yield ChatResponseUpdate(
-                contents=[Content.from_text(text)],
+                contents=contents,
                 role="assistant",
                 finish_reason="stop",
                 conversation_id=conversation_id,
@@ -1723,7 +1734,38 @@ async def test_budget_stops_on_token_limit() -> None:
     assert response.additional_properties.get("loop_exit_reason") == "token_budget_exceeded"
 
 
-async def test_budget_stops_on_duration_limit() -> None:
+async def test_budget_token_limit_falls_back_to_input_plus_output_counts() -> None:
+    # No total_token_count: spend is input + output (30 + 20 = 50 per call), so 100 is hit on call 2.
+    client = RecordingChatClient(usage_details=UsageDetails(input_token_count=30, output_token_count=20))
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=10, budget=AgentBudget(max_tokens=100))],
+    )
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get("loop_exit_reason") == "token_budget_exceeded"
+
+
+async def test_budget_token_limit_falls_back_to_input_plus_output_counts_streaming() -> None:
+    client = RecordingChatClient(usage_details=UsageDetails(input_token_count=30, output_token_count=20))
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=10, budget=AgentBudget(max_tokens=100))],
+    )
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    await stream.get_final_response()
+
+    assert client.call_count == 2
+
+
+async def test_budget_duration_stops_before_next_iteration() -> None:
+    # max_duration is checked between iterations: the in-flight call runs to completion,
+    # then no further iteration is started.
     class _SlowClient(RecordingChatClient):
         def _inner_get_response(self, **kwargs: Any) -> Any:
             time.sleep(0.05)  # exceed the 1ms budget (Windows clock tick is ~15ms)

@@ -176,8 +176,11 @@ class AgentBudget:
     max_duration: float | None = None
     """Maximum wall-clock time in seconds for the entire loop run.
 
-    Checked at the start of each iteration using :func:`time.monotonic`.
-    Catches agents blocked on slow tools that token budgets cannot detect.
+    Measured with :func:`time.monotonic` and checked between iterations, after each
+    iteration completes: once exceeded, no new iteration is started. It does not
+    interrupt an in-flight model or tool call, so a single slow or hung call can run
+    past the deadline. Callers that need a hard deadline should wrap the run in their
+    own cancellation/timeout (for example ``asyncio.timeout``).
     """
 
     def __post_init__(self) -> None:
@@ -401,7 +404,9 @@ class AgentLoopMiddleware(AgentMiddleware):
                 about the criteria its response must satisfy, but available to any loop.
             budget: Optional :class:`AgentBudget` bounding total token spend and/or wall-clock time.
                 Checked after each iteration, before ``should_continue`` is evaluated. When exceeded
-                the loop stops and (non-streaming only) stamps ``loop_exit_reason``.
+                the loop stops and (non-streaming only) stamps ``loop_exit_reason``. Budgets do not
+                interrupt an in-flight model/tool call; use ``asyncio.timeout`` (or similar) around
+                the run for a hard wall-clock deadline.
 
         Raises:
             ValueError: If ``max_iterations`` is not ``None`` and is less than 1.
