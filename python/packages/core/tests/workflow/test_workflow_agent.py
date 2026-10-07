@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
@@ -29,10 +30,12 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowException,
     executor,
     handler,
     response_handler,
 )
+from agent_framework._workflows._const import WORKFLOW_AGENT_SESSION_ID_KEY
 from agent_framework._workflows._typing_utils import deserialize_type
 
 
@@ -192,6 +195,47 @@ class ConversationHistoryCapturingExecutor(Executor):
 
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("rejected_streaming", [False, True])
+    async def test_rejected_concurrent_run_preserves_agent_session_id(
+        self, streaming: bool, rejected_streaming: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        session = AgentSession()
+        rejected_session = AgentSession()
+        original_has_messages = workflow._runner.context.has_messages
+
+        async def gated_has_messages() -> bool:
+            started.set()
+            await release.wait()
+            return await original_has_messages()
+
+        monkeypatch.setattr(workflow._runner.context, "has_messages", gated_has_messages)
+
+        async def run_agent(agent_session: AgentSession, stream: bool) -> AgentResponse:
+            if stream:
+                return await agent.run("Hello", session=agent_session, stream=True).get_final_response()
+            return await agent.run("Hello", session=agent_session)
+
+        task = asyncio.create_task(run_agent(session, streaming))
+        try:
+            await started.wait()
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            with pytest.raises(WorkflowException, match="Workflow is already running"):
+                await run_agent(rejected_session, rejected_streaming)
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        finally:
+            release.set()
+            result = await task
+
+        assert result.text == "Accepted: Hello"
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+        await run_agent(rejected_session, rejected_streaming)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == rejected_session.session_id
 
     async def test_end_to_end_basic_workflow(self):
         """Test basic end-to-end workflow execution with 2 executors emitting AgentResponse."""

@@ -465,8 +465,6 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
-
         # Restore the workflow state if a checkpoint is provided
         if checkpoint_id is not None:
             if checkpoint_storage is None:
@@ -474,23 +472,26 @@ class WorkflowAgent(BaseAgent):
             logger.debug(f"Restoring workflow from checkpoint {checkpoint_id}")
             # Restore the workflow from checkpoint
             if streaming:
-                async for _ in self.workflow.run(
+                restore_stream = self.workflow.run(
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
-                ):
+                )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                async for _ in restore_stream:
                     pass
             else:
-                _ = await self.workflow.run(
+                restore_result = self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                 )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                _ = await restore_result
             if not input_messages:
                 logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
                 return
-            self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
 
         final_state = self._workflow.status
         logger.debug(f"Workflow state: {final_state}")
@@ -505,43 +506,51 @@ class WorkflowAgent(BaseAgent):
             pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
             function_responses = self._extract_function_responses(input_messages, pending_requests)
             if streaming:
-                async for event in self.workflow.run(
+                response_stream = self.workflow.run(
                     responses=function_responses,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                ):
+                )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                async for event in response_stream:
                     yield event
             else:
-                for event in await self.workflow.run(
+                response_result = self.workflow.run(
                     responses=function_responses,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                ):
+                )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                for event in await response_result:
                     yield event
         elif final_state == WorkflowRunState.IDLE:
             if streaming:
-                async for event in self.workflow.run(
+                response_stream = self.workflow.run(
                     message=input_messages,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                ):
+                )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                async for event in response_stream:
                     yield event
             else:
-                for event in await self.workflow.run(
+                response_result = self.workflow.run(
                     message=input_messages,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                ):
+                )
+                self.workflow._set_agent_session_id(agent_session_id)  # pyright: ignore[reportPrivateUsage]
+                for event in await response_result:
                     yield event
         else:
             raise AgentException(f"The underlying workflow is in an invalid state to restart: {final_state}.")
