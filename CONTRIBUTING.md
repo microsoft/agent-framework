@@ -88,6 +88,8 @@ DON'Ts:
 - **DON'T** submit PRs that alter licensing related files or headers. If you believe
   there's a problem with them, file an issue and we'll be happy to discuss it.
 - **DON'T** make new APIs without filing an issue and discussing with us first.
+- **DON'T** combine Python and .NET changes in a single pull request. Open a
+  separate PR for each language, even when the change is the same feature in both.
 
 ### Breaking Changes
 
@@ -197,6 +199,9 @@ We use and recommend the following workflow:
 5. Add new tests corresponding to your change, if applicable.
 6. Run the relevant scripts in [the section below](#development-setup) to ensure that your build is clean and all tests are passing.
 7. Create a PR against the repository's **main** branch.
+   - Keep each PR to a single language: changes under `python/` and changes under
+     `dotnet/` go in separate PRs. Prefix the title with `Python:` or `.NET:`, and
+     link the related PR in the other language from the description.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
 8. Address feedback from the code maintainers. Reply to every review comment with
