@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
@@ -152,6 +153,72 @@ public class SignalProtocolLoopEvaluatorTests
     }
 
     /// <summary>
+    /// Verify that signal tokens in non-assistant messages (tool results, user input) do not stop the loop.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_TokenOnlyInNonAssistantMessages_ContinuesAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(
+        [
+            new ChatMessage(ChatRole.Tool, "TASK_COMPLETE: from tool output"),
+            new ChatMessage(ChatRole.User, "NEED_INPUT: echoed user text"),
+            new ChatMessage(ChatRole.Assistant, "still working"),
+        ]);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.True(evaluation.ShouldReinvoke);
+        Assert.False(context.AdditionalProperties.ContainsKey(LoopExitReason.AdditionalPropertiesKey));
+    }
+
+    /// <summary>
+    /// Verify that a token split across two assistant messages is not treated as a signal.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_TokenSplitAcrossAssistantMessages_ContinuesAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(
+        [
+            new ChatMessage(ChatRole.Assistant, "TASK_"),
+            new ChatMessage(ChatRole.Assistant, "COMPLETE: done"),
+        ]);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.True(evaluation.ShouldReinvoke);
+    }
+
+    /// <summary>
+    /// Verify that a signal in an assistant message is detected alongside non-assistant messages.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_TokenInAssistantMessageAmongOthers_StopsAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(
+        [
+            new ChatMessage(ChatRole.Tool, "tool output"),
+            new ChatMessage(ChatRole.Assistant, "NEED_INPUT: which file?"),
+        ]);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(LoopExitReason.NeedInput, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
     /// Verify that EvaluateAsync throws when the context is null.
     /// </summary>
     [Fact]
@@ -184,9 +251,12 @@ public class SignalProtocolLoopEvaluatorTests
         Assert.Equal("NEED_INPUT:", SignalProtocolLoopEvaluator.NeedInputToken);
     }
 
-    private static LoopContext CreateContext(string responseText) => new(
+    private static LoopContext CreateContext(string responseText) =>
+        CreateContext([new ChatMessage(ChatRole.Assistant, responseText)]);
+
+    private static LoopContext CreateContext(List<ChatMessage> responseMessages) => new(
         new Mock<AIAgent>().Object,
         new ChatClientAgentSession(),
         [new ChatMessage(ChatRole.User, "go")],
-        new AgentResponse([new ChatMessage(ChatRole.Assistant, responseText)]));
+        new AgentResponse(responseMessages));
 }

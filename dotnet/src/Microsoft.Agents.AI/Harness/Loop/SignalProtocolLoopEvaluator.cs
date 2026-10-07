@@ -4,15 +4,16 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// A <see cref="LoopEvaluator"/> implementing the GT1 signal protocol: the loop stops when the agent's latest response
-/// contains <see cref="TaskCompleteToken"/> or <see cref="NeedInputToken"/>, and otherwise continues with feedback
-/// reminding the agent to emit one of the signals.
+/// A <see cref="LoopEvaluator"/> implementing the GT1 signal protocol: the loop stops when an assistant message in the
+/// agent's latest response contains <see cref="TaskCompleteToken"/> or <see cref="NeedInputToken"/>, and otherwise
+/// continues with feedback reminding the agent to emit one of the signals.
 /// </summary>
 /// <remarks>
 /// <see cref="TaskCompleteToken"/> takes priority over <see cref="NeedInputToken"/>. When a signal is detected, the
@@ -49,20 +50,36 @@ public sealed class SignalProtocolLoopEvaluator : LoopEvaluator
     {
         _ = Throw.IfNull(context);
 
-        string text = context.LastResponse.Text;
-
-        if (text.Contains(TaskCompleteToken, StringComparison.Ordinal))
+        if (AssistantMessageContains(context, TaskCompleteToken))
         {
             context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.Completed;
             return new ValueTask<LoopEvaluation>(LoopEvaluation.Stop());
         }
 
-        if (text.Contains(NeedInputToken, StringComparison.Ordinal))
+        if (AssistantMessageContains(context, NeedInputToken))
         {
             context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.NeedInput;
             return new ValueTask<LoopEvaluation>(LoopEvaluation.Stop());
         }
 
         return new ValueTask<LoopEvaluation>(LoopEvaluation.Continue(this._feedbackMessage));
+    }
+
+    /// <summary>
+    /// Determines whether any assistant-role message in the latest response contains <paramref name="token"/>. Messages
+    /// are matched individually so a token cannot be formed across message boundaries, and non-assistant messages (for
+    /// example tool results or echoed user input) never trigger a signal.
+    /// </summary>
+    private static bool AssistantMessageContains(LoopContext context, string token)
+    {
+        foreach (ChatMessage message in context.LastResponse.Messages)
+        {
+            if (message.Role == ChatRole.Assistant && message.Text.Contains(token, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

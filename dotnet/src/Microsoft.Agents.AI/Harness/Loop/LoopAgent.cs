@@ -340,6 +340,9 @@ public sealed class LoopAgent : DelegatingAIAgent
     /// </summary>
     private async ValueTask<LoopNextStep> EvaluateAndBuildNextAsync(LoopContext context, List<string?> feedbackLog, JsonElement? initialSessionSnapshot, CancellationToken cancellationToken)
     {
+        // Clear any exit reason stamped during an earlier pass so only the evaluators of the final iteration can supply it.
+        context.AdditionalProperties.Remove(LoopExitReason.AdditionalPropertiesKey);
+
         // Evaluate in order; the first evaluator that requests a re-invocation wins.
         LoopEvaluation? winner = null;
         foreach (LoopEvaluator evaluator in this._evaluators)
