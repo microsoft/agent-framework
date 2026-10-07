@@ -413,6 +413,7 @@ class Workflow(DictConvertible):
         # ever iterating, the weakref dereferences to ``None`` once Python collects it,
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
+        self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -1151,6 +1152,8 @@ class Workflow(DictConvertible):
             if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
                 _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
+        if self._response_batch_validator is not None:
+            self._response_batch_validator([pending_requests[request_id] for request_id in coerced_responses])
         return coerced_responses
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:

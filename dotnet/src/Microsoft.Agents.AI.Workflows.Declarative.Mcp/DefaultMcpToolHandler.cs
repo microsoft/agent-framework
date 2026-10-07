@@ -848,7 +848,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             this._clientLock.Release();
         }
 
-        clientToDispose?.Dispose();
+        try
+        {
+            clientToDispose?.Dispose();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Trace.TraceWarning("Failed to dispose MCP HTTP client: {0}", exception);
+        }
     }
 
     private HttpClient CreatePinnedHttpClient(string serverUrl)

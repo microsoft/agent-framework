@@ -44,6 +44,8 @@ request for the same pinned operation, with a fresh request ID and no dispatch.
 Pending requests also retain their originating workflow session ID across later
 fresh runs and checkpoint restores. Resuming an MCP approval restores that scope
 for downstream actions instead of inheriting a later run's MCP session.
+Factory-built workflows reject response batches containing MCP approvals from
+different originating scopes before dispatch; resume each scope in a separate run.
 Fresh executors verify unchanged approvals using the checkpointed key; legacy
 requests or missing verification state require reapproval for non-empty headers.
 Custom handlers remain responsible for identity changes

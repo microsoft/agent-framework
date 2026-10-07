@@ -284,8 +284,9 @@ class TestFieldForwarding:
     @pytest.mark.parametrize("agent_sessions", [False, True])
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize("second_approved", [False, True])
     async def test_pending_approval_uses_originating_workflow_session_id(
-        self, restore: bool, agent_sessions: bool, streaming: bool, approved: bool
+        self, restore: bool, agent_sessions: bool, streaming: bool, approved: bool, second_approved: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
 
@@ -318,27 +319,81 @@ class TestFieldForwarding:
         assert second_approval.data.workflow_session_id
         assert first_session_id != second_approval.data.workflow_session_id
 
+        checkpoint_id = None
         if restore:
             checkpoint_id = workflow.get_last_checkpoint_id()
             assert checkpoint_id is not None
             workflow = factory.create_workflow_from_definition(definition)
             await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
 
+        decisions = {first_approval.request_id: approved, second_approval.request_id: second_approved}
+        batch = {request_id: ToolApprovalResponse(approved=decision) for request_id, decision in decisions.items()}
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            if streaming:
+                await workflow.run(
+                    responses=batch,
+                    stream=True,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=storage,
+                ).get_final_response()
+            else:
+                await workflow.run(responses=batch, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        assert handler.call_count == 0
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == set(batch)
+
         for approval in (first_approval, second_approval):
-            responses = {approval.request_id: ToolApprovalResponse(approved=approved)}
+            responses = {approval.request_id: ToolApprovalResponse(approved=decisions[approval.request_id])}
             if streaming:
                 await workflow.run(responses=responses, stream=True).get_final_response()
             else:
                 await workflow.run(responses=responses)
 
-        expected_tools = ["search", "downstream"] if approved else ["downstream"]
-        assert [invocation.tool_name for invocation in handler.invocations] == expected_tools * 2
+        expected_tools = [
+            tool
+            for decision in (approved, second_approved)
+            for tool in (["search", "downstream"] if decision else ["downstream"])
+        ]
+        assert [invocation.tool_name for invocation in handler.invocations] == expected_tools
         expected_sessions = [
-            session_id
-            for session_id in (first_session_id, second_approval.data.workflow_session_id)
-            for _ in expected_tools
+            approval.data.workflow_session_id
+            for approval in (first_approval, second_approval)
+            for _ in range(2 if decisions[approval.request_id] else 1)
         ]
         assert [invocation.workflow_session_id for invocation in handler.invocations] == expected_sessions
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    async def test_same_scope_approval_batch_is_supported(self, streaming: bool, approved: bool) -> None:
+        from agent_framework import WorkflowBuilder
+
+        from agent_framework_declarative._workflows import InvokeMcpToolActionExecutor, ToolApprovalResponse
+        from agent_framework_declarative._workflows._declarative_builder import _validate_mcp_response_batch
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        handler = StubMcpHandler(_ok())
+        entry = JoinExecutor({"kind": "Entry"}, id="entry")
+        actions = [
+            InvokeMcpToolActionExecutor({**_action(require_approval=True), "id": name}, mcp_tool_handler=handler)
+            for name in ("first", "second")
+        ]
+        workflow = WorkflowBuilder(start_executor=entry).add_fan_out_edges(entry, actions).build()
+        workflow._response_batch_validator = _validate_mcp_response_batch
+        paused = await workflow.run({})
+        approvals = paused.get_request_info_events()
+        assert len(approvals) == 2
+        scopes = {approval.data.workflow_session_id for approval in approvals}
+        assert len(scopes) == 1
+        assert all(scopes)
+
+        responses = {approval.request_id: ToolApprovalResponse(approved=approved) for approval in approvals}
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+
+        assert handler.call_count == (2 if approved else 0)
+        assert all(invocation.workflow_session_id in scopes for invocation in handler.invocations)
+        assert not await workflow._runner_context.get_pending_request_info_events()
 
     @pytest.mark.asyncio
     async def test_arguments_evaluated_and_preserves_none(self) -> None:

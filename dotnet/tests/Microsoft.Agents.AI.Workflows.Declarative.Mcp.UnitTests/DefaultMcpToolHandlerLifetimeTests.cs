@@ -234,6 +234,76 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(2, stub.Terminations);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NoProvider_EvictedHttpClientCleanupFailure_PreservesInvocationOutcomeAsync(
+        bool activeEviction, bool failOperation)
+    {
+        // Arrange
+        ProtocolStub stub = new() { FailTransportDisposal = true };
+        using SemaphoreSlim firstStarted = new(0);
+        using SemaphoreSlim releaseFirst = new(0);
+        int operations = 0;
+        stub.BeforeOperationAsync = async token =>
+        {
+            if (activeEviction && Interlocked.Increment(ref operations) == 1)
+            {
+                firstStarted.Release();
+                await releaseFirst.WaitAsync(token);
+            }
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CleanupTraceListener listener = new();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            // Act
+            Task<McpServerToolResultContent> first = handler.InvokeToolInWorkflowSessionAsync(
+                "https://first.example/api", null, "ping", null, null, null, "workflow-a", timeout.Token);
+            Task<McpServerToolResultContent> outcome;
+            if (activeEviction)
+            {
+                await firstStarted.WaitAsync(timeout.Token);
+                await handler.InvokeToolInWorkflowSessionAsync(
+                    "https://second.example/api", null, "ping", null, null, null, "workflow-b", timeout.Token);
+                stub.FailOperation = failOperation;
+                releaseFirst.Release();
+                outcome = first;
+            }
+            else
+            {
+                await first;
+                stub.FailOperation = failOperation;
+                outcome = handler.InvokeToolInWorkflowSessionAsync(
+                    "https://second.example/api", null, "ping", null, null, null, "workflow-b", timeout.Token);
+            }
+
+            // Assert
+            if (failOperation)
+            {
+                await Assert.ThrowsAsync<HttpRequestException>(() => outcome);
+            }
+            else
+            {
+                McpServerToolResultContent result = await outcome;
+                Assert.NotNull(result.Outputs);
+                Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+            }
+
+            Assert.Contains("Failed to dispose MCP HTTP client", listener.Output);
+            Assert.Contains("transport cleanup failed", listener.Output);
+        }
+        finally
+        {
+            releaseFirst.Release();
+            Trace.Listeners.Remove(listener);
+        }
+    }
+
     [Fact]
     public async Task NoProvider_DisposalDuringActiveInvocation_ReportsCleanupCancellationAsync()
     {
@@ -933,13 +1003,15 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(2, stub.Terminations);
     }
 
-    [Fact]
-    public async Task Provider_InitializationAndCleanupFailure_PreservesInitializationErrorAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitializationAndCleanupFailure_PreservesInitializationErrorAsync(bool hasProvider)
     {
         // Arrange
         ProtocolStub stub = new() { FailInitialization = true, FailTransportDisposal = true };
         await using DefaultMcpToolHandler handler = new(
-            (_, _) => Task.FromResult<HttpClient?>(null), stub.CreateMessageHandler);
+            hasProvider ? (_, _) => Task.FromResult<HttpClient?>(null) : null, stub.CreateMessageHandler);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         using CleanupTraceListener listener = new();
         Trace.Listeners.Add(listener);
@@ -949,7 +1021,9 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
 
             // Assert
-            Assert.Contains("Failed to dispose MCP transport", listener.Output);
+            Assert.Contains(
+                hasProvider ? "Failed to dispose MCP transport" : "Failed to dispose MCP HTTP client", listener.Output);
+            Assert.Contains("transport cleanup failed", listener.Output);
             Assert.Single(stub.Handlers).Protected().Verify(
                 "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
         }
