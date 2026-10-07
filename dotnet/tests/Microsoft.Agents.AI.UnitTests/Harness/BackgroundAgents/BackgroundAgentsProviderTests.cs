@@ -489,8 +489,9 @@ public class BackgroundAgentsProviderTests
             Assert.False(wait.IsCompleted);
 
             // Act — hold the lock until the continuation is registered so the old waiter observes the new run.
+            // Use a dedicated thread so this blocking lock does not starve the background runs' thread pool.
             ValueTask<object?> continuation = default;
-            await Task.Run(() =>
+            await Task.Factory.StartNew(() =>
             {
                 lock (runtimeState.SyncRoot)
                 {
@@ -506,15 +507,16 @@ public class BackgroundAgentsProviderTests
                     continuationRun = runtimeState.InFlightTasks[1];
                     continuationCancellation = runtimeState.TaskCancellations[1];
                     Assert.NotSame(firstRun, continuationRun);
-                    Assert.True(SpinWait.SpinUntil(() => continuationStarted.Task.IsCompleted, TimeSpan.FromSeconds(5)));
                     Assert.False(wait.IsCompleted);
                 }
-            });
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
             // Assert — the stale waiter preserves the continuation's metadata and runtime resources.
             Assert.Equal("Task 1 continued with new input.", GetStringResult(await continuation));
-            Task completedWait = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(5)));
-            Assert.Same(wait, completedWait);
+            Task resumedTasks = Task.WhenAll(wait, continuationStarted.Task);
+            Task completedWait = await Task.WhenAny(resumedTasks, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(resumedTasks, completedWait);
+            await resumedTasks;
             Assert.Equal("Task 1 finished with status: Running.", GetStringResult(await wait));
             BackgroundTaskInfo taskInfo = Assert.Single(provider.GetIncompleteTasks(session));
             Assert.Equal(BackgroundTaskStatus.Running, taskInfo.Status);
