@@ -507,7 +507,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
                 "never serve requests from different users or conversations. "
                 "Use workflow=a_request_aware_factory with an explicit parse_request. "
-                "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
+                "A factory that builds a new WorkflowAgent for every request only suits stateless, "
+                "single-turn workflows, because the Invocations host does not restore workflow checkpoints. "
                 "Wrapper history, context providers, and event semantics are not automatically unwrapped."
             )
             warnings.warn(message, DeprecationWarning, stacklevel=3)

@@ -701,6 +701,7 @@ class TestLegacyWorkflowAgentHosting:
         assert "should be avoided" in message
         assert "stateful" in message
         assert "parse_request" in message
+        assert "stateless, single-turn" in message
         assert Path(deprecations[0].filename).name == Path(__file__).name
         assert len(_workflow_agent_logs(caplog)) == 1
         assert texts == ["one", "two"]

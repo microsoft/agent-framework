@@ -32,9 +32,9 @@ and a request-aware factory instead; see
 server = ResponsesHostServer(workflow=build_workflow, parse_response=parse_response)
 ```
 
-Until you migrate, pass a callable that builds a new workflow, executors, and wrapped agents for every request, and
-never return a shared instance. Keep the workflow name and executor IDs stable so later requests can find and restore
-its checkpoints:
+Until you migrate `ResponsesHostServer`, pass a callable that builds a new workflow, executors, and wrapped agents for
+every request, and never return a shared instance. Keep the workflow name and executor IDs stable so later requests can
+find and restore its checkpoints:
 
 ```python
 def create_agent():
@@ -43,6 +43,9 @@ def create_agent():
 
 server = ResponsesHostServer(agent=create_agent)
 ```
+
+`InvocationsHostServer` does not restore workflow checkpoints for agents, so a per-request factory only suits stateless,
+single-turn workflows there. Use `workflow=` for any workflow that pauses or spans turns.
 
 ## Native Responses workflows
 
