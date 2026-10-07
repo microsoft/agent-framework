@@ -750,6 +750,7 @@ class TestAGUIChatClient:
         assert first_content.text == "Hello"
         assert second_content.text == " world"
 
+    @pytest.mark.timeout(10)
     @pytest.mark.parametrize(
         ("caller", "function_invocation_enabled", "close_mode"),
         [
@@ -814,7 +815,8 @@ class TestAGUIChatClient:
 
             try:
                 if close_mode == "explicit_close":
-                    first = await asyncio.wait_for(anext(stream), timeout=5.0)
+                    # Keep pull and close in one task; wait_for creates a child task on Python 3.10/3.11.
+                    first = await anext(stream)
                     assert isinstance(first, (ChatResponseUpdate, AgentResponseUpdate))
                     assert first.text == "first"
                     assert_first_chunk_only()
