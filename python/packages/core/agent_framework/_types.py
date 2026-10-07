@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, cast, overload
 
 from typing_extensions import Required, TypedDict
 
@@ -80,6 +80,44 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
 # region Internal Helper functions for unified Content
 
 
+class _ParsedDataUri(NamedTuple):
+    """The parts of an RFC 2397 data URI."""
+
+    media_type: str
+    is_base64: bool
+    payload: str
+
+
+def _parse_data_uri(uri: str) -> _ParsedDataUri:
+    """Parse a ``data:`` URI once, so every caller reads it the same way.
+
+    RFC 2397: ``data:[<media-type>][;parameter[=value]]...[;base64],<data>``. The media type is
+    everything between ``data:`` and the first ``;`` and defaults to ``text/plain`` when empty.
+    ``base64`` is the only encoding marker and is only valid once, as the last parameter; other
+    parameters such as ``charset=utf-8`` are metadata. Only the metadata before the first comma
+    is inspected, so a ``;base64,`` sequence inside the payload is never treated as a marker.
+
+    Raises:
+        ContentError: If the URI has no comma or carries an unsupported encoding marker.
+    """
+    if "," not in uri:
+        raise ContentError("Data URI must contain a comma separating metadata and data")
+    prefix, payload = uri.split(",", 1)
+    parts = prefix.split(";")
+    parameters = parts[1:]
+    for index, parameter in enumerate(parameters):
+        if parameter == "base64":
+            if index != len(parameters) - 1:
+                raise ContentError("Data URI 'base64' marker must be the last parameter")
+        elif parameter and "=" not in parameter:
+            raise ContentError(f"Unsupported data URI encoding: {parameter}")
+    return _ParsedDataUri(
+        media_type=parts[0][5:] or "text/plain",  # Remove 'data:'
+        is_base64=bool(parameters) and parameters[-1] == "base64",
+        payload=payload,
+    )
+
+
 def detect_media_type_from_base64(
     *,
     data_bytes: bytes | None = None,
@@ -132,14 +170,18 @@ def detect_media_type_from_base64(
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
             raise ValueError("Invalid data URI format.")
-        prefix, data_str = data_uri.split(",", 1)
-        if not prefix.endswith(";base64"):
+        try:
+            parsed = _parse_data_uri(data_uri)
+        except ContentError as exc:
+            raise ValueError(str(exc)) from exc
+        if not parsed.is_base64:
             raise ValueError("Data URI must use base64 encoding.")
+        data_str = parsed.payload
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         try:
-            data = base64.b64decode(data_str)
+            data = base64.b64decode(data_str, validate=True)
         except Exception as exc:
             raise ValueError("Invalid base64 data provided.") from exc
     if data is None:
@@ -155,9 +197,16 @@ def detect_media_type_from_base64(
         return "image/gif"
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WEBP":
         return "image/webp"
-    if data.startswith(b"BM"):
+    if (
+        data.startswith(b"BM")
+        and len(data) >= 18
+        and int.from_bytes(data[14:18], "little") in (12, 40, 52, 56, 64, 108, 124)
+    ):
         return "image/bmp"
-    if data.startswith(b"<svg") or data.startswith(b"<?xml"):
+    head = data[:512].lstrip()
+    if head.startswith(b"\xef\xbb\xbf"):
+        head = head[3:].lstrip()
+    if re.match(rb"<svg(?=[\s/>])", head) or (head.startswith(b"<?xml") and re.search(rb"<svg(?=[\s/>])", head)):
         return "image/svg+xml"
 
     # Documents
@@ -167,7 +216,13 @@ def detect_media_type_from_base64(
     # Audio
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WAVE":
         return "audio/wav"
-    if data.startswith(b"ID3") or data.startswith(b"\xff\xfb") or data.startswith(b"\xff\xf3"):
+    if data.startswith(b"ID3") or (
+        len(data) >= 2
+        and data[0] == 0xFF
+        and (data[1] & 0xE0) == 0xE0
+        and (data[1] & 0x18) != 0x08  # MPEG version 01 is reserved.
+        and (data[1] & 0x06) != 0  # Layer 00 is reserved.
+    ):
         return "audio/mpeg"
     if data.startswith(b"OggS"):
         return "audio/ogg"
@@ -199,11 +254,10 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     if not uri.startswith("data:"):
         return None
 
-    if ";base64," not in uri:
+    parsed = _parse_data_uri(uri)
+    if not parsed.is_base64:
         raise ContentError("Data URI must use base64 encoding")
-
-    _, data = uri.split(";base64,", 1)
-    return data
+    return parsed.payload
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -246,20 +300,9 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
 
     # Check for data URI
     if uri.startswith("data:"):
-        if "," not in uri:
-            raise ContentError("Data URI must contain a comma separating metadata and data")
-        prefix, _ = uri.split(",", 1)
-        if ";" in prefix:
-            parts = prefix.split(";")
-            if len(parts) < 2:
-                raise ContentError("Invalid data URI format")
-            # Check encoding
-            encoding = parts[-1]
-            if encoding not in ("base64", ""):
-                raise ContentError(f"Unsupported data URI encoding: {encoding}")
-            if media_type is None:
-                # attempt to extract:
-                media_type = parts[0][5:]  # Remove 'data:'
+        parsed = _parse_data_uri(uri)
+        if media_type is None:
+            media_type = parsed.media_type
         return {"type": "data", "uri": uri, "media_type": media_type}
 
     # Check for common URI schemes
@@ -2239,6 +2282,26 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     response.continuation_token = update.continuation_token
 
 
+def _apply_response_tail_to_update(
+    response: ChatResponse[Any] | AgentResponse[Any],
+    update: ChatResponseUpdate | AgentResponseUpdate,
+) -> None:
+    """Carry the response-level fields that belong on the final update of a stream.
+
+    ``finish_reason``, ``continuation_token``, ``additional_properties`` and usage are properties
+    of the response as a whole rather than of any single message, so they ride on the last update.
+    This mirrors how :func:`_process_update` reads them back.
+    """
+    update.finish_reason = response.finish_reason
+    update.continuation_token = response.continuation_token
+    if response.additional_properties:
+        merged = dict(update.additional_properties) if update.additional_properties else {}
+        merged.update(response.additional_properties)
+        update.additional_properties = merged
+    if response.usage_details is not None:
+        update.contents.append(Content.from_usage(response.usage_details))
+
+
 def _merge_function_call_content(message: Message, content: Content) -> None:
     """Merge a streamed function_call chunk into the in-progress call it belongs to.
 
@@ -2764,6 +2827,54 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         _finalize_response(msg)
         return msg
 
+    def to_updates(self) -> list[ChatResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import ChatResponse
+
+                response = ChatResponse.from_updates(updates)
+                assert response.text == ChatResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            ChatResponseUpdate(
+                contents=list(message.contents),
+                role=cast(Any, message.role),
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                conversation_id=self.conversation_id,
+                model=self.model,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                ChatResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    conversation_id=self.conversation_id,
+                    model=self.model,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
+
     @property
     def text(self) -> str:
         """Returns the concatenated text of all messages in the response."""
@@ -3175,6 +3286,52 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             _process_update(msg, update)
         _finalize_response(msg)
         return msg
+
+    def to_updates(self) -> list[AgentResponseUpdate]:
+        """Split this response into the stream updates it would have been assembled from.
+
+        This is the inverse of :meth:`from_updates`: each message becomes one update, and the
+        response-level fields are carried on those updates so that re-assembling them reproduces
+        this response. Usage is carried as usage content on the final update, because
+        :meth:`from_updates` reads usage from an update's contents rather than from a field.
+
+        This is useful where a complete response has to be emitted as a stream, for example when
+        middleware buffers a stream, decides on the complete content, and then releases it.
+
+        Returns:
+            The updates representing this response; always at least one.
+
+        Example:
+            .. code-block:: python
+
+                from agent_framework import AgentResponse
+
+                response = AgentResponse.from_updates(updates)
+                assert response.text == AgentResponse.from_updates(response.to_updates()).text
+        """
+        updates = [
+            AgentResponseUpdate(
+                contents=list(message.contents),
+                role=message.role,
+                author_name=message.author_name,
+                message_id=message.message_id,
+                response_id=self.response_id,
+                agent_id=self.agent_id,
+                created_at=self.created_at,
+            )
+            for message in self.messages
+        ]
+        if not updates:
+            updates = [
+                AgentResponseUpdate(
+                    role="assistant",
+                    response_id=self.response_id,
+                    agent_id=self.agent_id,
+                    created_at=self.created_at,
+                )
+            ]
+        _apply_response_tail_to_update(self, updates[-1])
+        return updates
 
     def __str__(self) -> str:
         return self.text
@@ -3722,6 +3879,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
+    async def __aenter__(self) -> ResponseStream[UpdateT, FinalT]:
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        """Close the stream on block exit, including an early consumer break."""
+        await self.close()
+
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
             return
@@ -3768,17 +3932,20 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return value, transformed
 
     async def _record_update(self, update: UpdateT, *, run_after_gates: bool) -> UpdateT:
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._update_gates_before),
-            update,
-            target="update",
-        )
+        if self._update_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._update_gates_before),
+                update,
+                target="update",
+            )
         self._updates.append(update)
-        update, _ = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._transform_hooks),
-            update,
-        )
-        if run_after_gates:
+        for transform in self._transform_hooks:
+            transformed_update = transform(update)
+            if isawaitable(transformed_update):
+                transformed_update = await transformed_update
+            if transformed_update is not None:
+                update = cast(UpdateT, transformed_update)
+        if run_after_gates and self._update_gates_after:
             await self._run_gates(
                 cast(Sequence[Callable[[Any], object]], self._update_gates_after),
                 update,
@@ -3794,17 +3961,42 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     run_after_gates=run_after_gates,
                 )
 
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
+            context_factories = self._pull_context_manager_factories
+            update: UpdateT
+            if not context_factories:
                 if self._iterator is None:
                     stream = await self._get_stream()
                     self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
+                update = await self._iterator.__anext__()
+            elif len(context_factories) == 1:
+                with context_factories[0]():
+                    if len(context_factories) == 1:
+                        if self._iterator is None:
+                            stream = await self._get_stream()
+                            self._iterator = stream.__aiter__()
+                        update = await self._iterator.__anext__()
+                    else:
+                        with contextlib.ExitStack() as stack:
+                            context_index = 1
+                            while context_index < len(context_factories):
+                                stack.enter_context(context_factories[context_index]())
+                                context_index += 1
+                            if self._iterator is None:
+                                stream = await self._get_stream()
+                                self._iterator = stream.__aiter__()
+                            update = await self._iterator.__anext__()
+            else:
+                with contextlib.ExitStack() as stack:
+                    for factory in context_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update = await self._iterator.__anext__()
             if self._flat_map_update is not None:
                 mapped_updates = self._flat_map_update(update)
                 if isawaitable(mapped_updates):
@@ -3874,15 +4066,19 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         else:
             result = list(self._updates)
 
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_before),
-            result,
-            target="result",
-        )
-        result, self._result_was_transformed = await self._apply_transforms(
-            cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
-            result,
-        )
+        if self._result_gates_before:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_before),
+                result,
+                target="result",
+            )
+        if self._result_hooks:
+            result, self._result_was_transformed = await self._apply_transforms(
+                cast(Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]], self._result_hooks),
+                result,
+            )
+        else:
+            self._result_was_transformed = False
         self._final_result = result
         self._result_prepared = True
 
@@ -3890,25 +4086,28 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         if self._finalized:
             return
         await self._prepare_final_result()
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._result_gates_after),
-            self._final_result,
-            target="result",
-        )
-        terminal_result, transformed = await self._apply_transforms(
-            cast(
-                Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
-                self._terminal_result_transforms,
-            ),
-            self._final_result,
-        )
-        self._final_result = terminal_result
-        self._result_was_transformed = self._result_was_transformed or transformed
-        await self._run_gates(
-            cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
-            self._final_result,
-            target="result",
-        )
+        if self._result_gates_after:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._result_gates_after),
+                self._final_result,
+                target="result",
+            )
+        if self._terminal_result_transforms:
+            terminal_result, transformed = await self._apply_transforms(
+                cast(
+                    Sequence[Callable[[Any], Any | Awaitable[Any | None] | None]],
+                    self._terminal_result_transforms,
+                ),
+                self._final_result,
+            )
+            self._final_result = terminal_result
+            self._result_was_transformed = self._result_was_transformed or transformed
+        if self._terminal_result_gates:
+            await self._run_gates(
+                cast(Sequence[Callable[[Any], object]], self._terminal_result_gates),
+                self._final_result,
+                target="result",
+            )
         self._finalized = True
 
     async def _finish_consumption(self) -> None:
@@ -4004,8 +4203,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             await self._finish_consumption()
             raise
-        except Exception as exc:
-            await self._handle_stream_error(exc)
+        except BaseException as exc:
+            # CancelledError must reach close() too: a cancel landing in an
+            # async map/flat_map transform, hook, or gate otherwise leaves the
+            # provider stream suspended until GC. Hooks run first because they
+            # read self._stream_error, and close() would consume the one-shot
+            # cleanup run without it. close() stays in finally so the provider
+            # stream is released even when a hook raises; the original
+            # exception always re-raises.
+            try:
+                await self._handle_stream_error(exc)
+            finally:
+                await self.close()
             raise
 
     async def close(self) -> None:
@@ -4113,7 +4322,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         *,
         phase: Literal["before_transform", "after_transform"] = "after_transform",
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a blocking gate for the finalized result."""
+        """Register a blocking gate for the finalized result.
+
+        The gate runs at finalization. On a stream that is not buffered the consumer has
+        already received the updates by then, so a gate that raises cannot hold them back;
+        call ``buffer_updates()`` to hold updates until the gates pass.
+        """
         self._ensure_content_configuration_mutable()
         self._validate_gate_phase(phase)
         gates = self._result_gates_before if phase == "before_transform" else self._result_gates_after
