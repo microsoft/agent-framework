@@ -384,7 +384,9 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                 "8080",
             ]
 
-        logger.info(f"Running: {' '.join(cmd)}")
+        # Redact sensitive values from command before logging
+        safe_cmd = [arg if not arg.startswith("DEVUI_AUTH_TOKEN=") else "DEVUI_AUTH_TOKEN=***" for arg in cmd]
+        logger.info(f"Running: {' '.join(safe_cmd)}")
 
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
