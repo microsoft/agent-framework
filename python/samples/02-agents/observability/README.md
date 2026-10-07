@@ -237,7 +237,8 @@ tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 trace.set_tracer_provider(tracer_provider)
 
 # Capture prompts, responses, and tool arguments; without this, spans have no
-# messages or inputs and outputs. Only send sensitive data to a backend you trust.
+# messages or inputs and outputs. Only enable in development or test environments,
+# as it may expose user or system secrets in production.
 enable_sensitive_telemetry()
 ```
 
