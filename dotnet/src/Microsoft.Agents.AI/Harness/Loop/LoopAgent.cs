@@ -244,6 +244,14 @@ public sealed class LoopAgent : DelegatingAIAgent
                 return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
+            // Re-check the duration budget so a slow evaluator cannot exhaust it and still start another iteration.
+            if (budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
+            {
+                AgentResponse budgetResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (budgetResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.TimeBudgetExceeded;
+                return budgetResult;
+            }
+
             currentMessages = step.Messages;
             currentSurfaced = step.SurfacedMessages;
         }
@@ -366,6 +374,12 @@ public sealed class LoopAgent : DelegatingAIAgent
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
+            {
+                yield break;
+            }
+
+            // Re-check the duration budget so a slow evaluator cannot exhaust it and still start another iteration.
+            if (budgetStopwatch is not null && budgetStopwatch.Elapsed >= this._maxDuration)
             {
                 yield break;
             }
