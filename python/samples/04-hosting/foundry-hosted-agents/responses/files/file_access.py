@@ -38,7 +38,7 @@ def _posix_flag(name: str) -> int:
     """
     flag = getattr(os, name, None)
     if flag is None:
-        raise RuntimeError("Secure file access requires POSIX no-follow, descriptor-relative directory opens.")
+        raise RuntimeError("Secure file access requires POSIX no-follow, non-blocking, descriptor-relative opens.")
     return flag
 
 
