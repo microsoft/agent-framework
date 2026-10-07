@@ -208,7 +208,9 @@ configure_otel_providers(exporters=[exporter])
 enable_sensitive_telemetry()
 ```
 
-Or with [Arize AX](https://arize.com/docs/ax/integrations/python-agent-frameworks/microsoft/microsoft-agent-framework) or [Phoenix](https://arize.com/docs/phoenix), which use the [OpenInference](https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-agent-framework) format. Install `openinference-instrumentation-agent-framework>=0.1.12` and `opentelemetry-exporter-otlp-proto-http`. The OpenInference span processor converts Agent Framework's GenAI spans and must run before the exporter, so set up the tracer provider yourself rather than calling `configure_otel_providers()`. The example sends to Arize AX; for Phoenix, use the commented-out exporter instead and point it at your Phoenix endpoint:
+Or with [Arize AX](https://arize.com/docs/ax/integrations/python-agent-frameworks/microsoft/microsoft-agent-framework) or [Phoenix](https://arize.com/docs/phoenix), using the [`openinference-instrumentation-agent-framework`](https://github.com/Arize-ai/openinference/tree/main/python/instrumentation/openinference-instrumentation-agent-framework) span processor to convert Agent Framework's GenAI spans to OpenInference. Install `openinference-instrumentation-agent-framework>=0.1.13` and `opentelemetry-exporter-otlp-proto-http`.
+
+The processor must run before the exporter, so set up the tracer provider yourself rather than calling `configure_otel_providers()`. The example sends to Arize AX; for Phoenix, use the commented-out exporter:
 
 ```python
 from opentelemetry import trace
@@ -234,7 +236,8 @@ tracer_provider.add_span_processor(AgentFrameworkToOpenInferenceProcessor())
 tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 trace.set_tracer_provider(tracer_provider)
 
-# Optional: opt in to capturing sensitive data
+# Capture prompts, responses, and tool arguments; without this, spans have no
+# messages or inputs and outputs. Only send sensitive data to a backend you trust.
 enable_sensitive_telemetry()
 ```
 
@@ -270,7 +273,7 @@ Exporters are **not** installed by default — install only what you need:
 - **Application Insights**: `azure-monitor-opentelemetry`
 - **Aspire Dashboard or other OTLP/gRPC backends**: `opentelemetry-exporter-otlp-proto-grpc`
 - **OTLP over HTTP**: `opentelemetry-exporter-otlp-proto-http`
-- **Arize AX or Phoenix**: `openinference-instrumentation-agent-framework` and `opentelemetry-exporter-otlp-proto-http`
+- **Arize AX or Phoenix**: `openinference-instrumentation-agent-framework>=0.1.13` and `opentelemetry-exporter-otlp-proto-http`
 
 For other backends, refer to the documentation of the specific exporter.
 
