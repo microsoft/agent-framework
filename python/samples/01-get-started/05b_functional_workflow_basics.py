@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Run two async functions as a functional workflow.
+"""Compose two async functions into a functional workflow.
 
 The workflow uppercases text, then reverses it using normal Python control flow.
 """

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Connect two function executors with a workflow edge.
+"""Build a graph workflow from two function executors.
 
 The first executor transforms the input and sends it to the terminal executor.
 """

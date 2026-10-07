@@ -10,12 +10,16 @@ pip install agent-framework-foundry azure-identity
 az login
 ```
 
-Each sample hardcodes example values for `project_endpoint` and `model`. Replace them with your Microsoft Foundry
-project endpoint and model deployment name before running the sample.
+Samples 1 through 6 hardcode example values for `project_endpoint` and `model`. Replace them with your Microsoft
+Foundry project endpoint and model deployment name before running the sample.
 
 Alternatively, set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, then remove the `project_endpoint` and `model`
 arguments from the `FoundryChatClient` constructor. To read those values from a `.env` file, call `load_dotenv()`
 before creating the client; Agent Framework doesn't load `.env` files automatically.
+
+The hosting sample reads `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` from the environment because hosted
+deployments provide configuration that way. It also accepts the deployment-provided
+`AZURE_AI_MODEL_DEPLOYMENT_NAME`.
 
 ## Samples
 
@@ -25,11 +29,14 @@ before creating the client; Agent Framework doesn't load `.env` files automatica
 | 2 | [02_add_tools.py](02_add_tools.py) | Define a function tool with `@tool` and attach it to an agent. |
 | 3 | [03_multi_turn.py](03_multi_turn.py) | Reuse an agent session to keep conversation history across turns. |
 | 4 | [04_memory.py](04_memory.py) | Store and inject session state with a custom `ContextProvider`. |
-| 5 | [05_functional_workflow_with_agents.py](05_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
-| 6 | [06_functional_workflow_basics.py](06_functional_workflow_basics.py) | Write a workflow as a plain async function. |
-| 7 | [07_first_graph_workflow.py](07_first_graph_workflow.py) | Connect function executors with a graph edge. |
+| 5a | [05a_functional_workflow_with_agents.py](05a_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
+| 5b | [05b_functional_workflow_basics.py](05b_functional_workflow_basics.py) | Write a workflow as a plain async function. |
+| 5c | [05c_first_graph_workflow.py](05c_first_graph_workflow.py) | Connect function executors with a graph edge. |
+| 6 | [06_agent_harness.py](06_agent_harness.py) | Add planning, todo tracking, and compaction with an agent harness. |
+| 7 | [07_hosting.py](07_hosting.py) | Serve an agent with `ResponsesHostServer`. |
 
-To host agents and workflows with Durable Task or Azure Functions, continue with the [Durable Agent Framework extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
+For more hosting patterns, continue with [`04-hosting/`](../04-hosting/). Durable Task and Azure Functions samples
+are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
 ## Security in Production
 
@@ -42,10 +49,17 @@ For the official security guidance, see [Agent Safety](https://learn.microsoft.c
 3. [`github_mcp_example.py`](../02-agents/security/github_mcp_example.py): Demonstrates `SecureMCPToolProxy` wrapping remote MCP endpoints with local policy enforcement.
 4. [FIDES Developer Guide](../02-agents/security/FIDES_DEVELOPER_GUIDE.md): Architecture reference and security middleware documentation.
 
-Run any sample with:
+Run samples 1 through 6 with:
 
 ```bash
 python 01_hello_agent.py
 ```
 
-These samples use Azure Foundry models with the Responses API. To switch providers, just replace the client, see [all providers](../02-agents/providers/README.md)
+Run the PEP 723 hosting sample from the repository root with:
+
+```bash
+uv run python/samples/01-get-started/07_hosting.py
+```
+
+These samples use Microsoft Foundry models with the Responses API. To switch providers, replace the client. See
+[all providers](../02-agents/providers/README.md).

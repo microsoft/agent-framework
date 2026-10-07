@@ -2,7 +2,7 @@
 
 """Call two agents from a functional workflow.
 
-The workflow asks one agent to write a poem and another to review it.
+One agent writes a poem, and the other reviews it.
 """
 
 import asyncio
