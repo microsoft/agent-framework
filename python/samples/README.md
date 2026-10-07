@@ -22,8 +22,8 @@ Start with `01-get-started/` and work through the numbered files:
 | 2 | [02_add_tools.py](./01-get-started/02_add_tools.py) | Add function tools with `@tool` |
 | 3 | [03_multi_turn.py](./01-get-started/03_multi_turn.py) | Multi-turn conversations with `AgentSession` |
 | 4 | [04_memory.py](./01-get-started/04_memory.py) | Agent memory with `ContextProvider` |
-| 5a | [05a_functional_workflow_with_agents.py](./01-get-started/05a_functional_workflow_with_agents.py) | Call agents inside a functional workflow |
-| 5b | [05b_functional_workflow_basics.py](./01-get-started/05b_functional_workflow_basics.py) | Write a workflow as a plain async function |
+| 5a | [05a_functional_workflow_basics.py](./01-get-started/05a_functional_workflow_basics.py) | Write a workflow as a plain async function |
+| 5b | [05b_functional_workflow_with_agents.py](./01-get-started/05b_functional_workflow_with_agents.py) | Call agents inside a functional workflow |
 | 5c | [05c_first_graph_workflow.py](./01-get-started/05c_first_graph_workflow.py) | Build a workflow with function executors and edges |
 | 6 | [06_agent_harness.py](./01-get-started/06_agent_harness.py) | Add planning, todo tracking, and compaction |
 | 7 | [07_hosting.py](./01-get-started/07_hosting.py) | Serve an agent with `ResponsesHostServer` |

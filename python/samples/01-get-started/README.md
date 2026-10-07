@@ -29,8 +29,8 @@ deployments provide configuration that way. It also accepts the deployment-provi
 | 2 | [02_add_tools.py](02_add_tools.py) | Define a function tool with `@tool` and attach it to an agent. |
 | 3 | [03_multi_turn.py](03_multi_turn.py) | Reuse an agent session to keep conversation history across turns. |
 | 4 | [04_memory.py](04_memory.py) | Store and inject session state with a custom `ContextProvider`. |
-| 5a | [05a_functional_workflow_with_agents.py](05a_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
-| 5b | [05b_functional_workflow_basics.py](05b_functional_workflow_basics.py) | Write a workflow as a plain async function. |
+| 5a | [05a_functional_workflow_basics.py](05a_functional_workflow_basics.py) | Write a workflow as a plain async function. |
+| 5b | [05b_functional_workflow_with_agents.py](05b_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
 | 5c | [05c_first_graph_workflow.py](05c_first_graph_workflow.py) | Connect function executors with a graph edge. |
 | 6 | [06_agent_harness.py](06_agent_harness.py) | Add planning, todo tracking, and compaction with an agent harness. |
 | 7 | [07_hosting.py](07_hosting.py) | Serve an agent with `ResponsesHostServer`. |
