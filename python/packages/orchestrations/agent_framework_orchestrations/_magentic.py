@@ -728,7 +728,15 @@ class StandardMagenticManager(MagenticManagerBase):
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _coerce_model(MagenticProgressLedger, ledger_dict)
+                ledger = _coerce_model(MagenticProgressLedger, ledger_dict)
+                next_speaker = ledger.next_speaker.answer
+                if (
+                    not ledger.is_request_satisfied.answer
+                    and isinstance(next_speaker, str)
+                    and next_speaker not in agent_names
+                ):
+                    raise ValueError(f"Unknown next speaker '{next_speaker}'. Valid names: {names_csv}.")
+                return ledger
             except Exception as ex:
                 last_error = ex
                 attempts += 1

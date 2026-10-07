@@ -581,6 +581,28 @@ async def test_standard_manager_progress_ledger_success_and_error():
         await mgr.create_progress_ledger(ctx.clone())
 
 
+async def test_standard_manager_progress_ledger_retries_unknown_next_speaker():
+    mgr = StandardMagenticManager(agent=StubManagerAgent(), progress_ledger_retry_count=2)
+    ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
+    speakers = ["Alice", "alice"]
+
+    async def fake_complete(messages: list[Message], **kwargs: Any) -> Message:
+        json_text = (
+            '{"is_request_satisfied": {"reason": "r", "answer": false}, '
+            '"is_in_loop": {"reason": "r", "answer": false}, '
+            '"is_progress_being_made": {"reason": "r", "answer": true}, '
+            f'"next_speaker": {{"reason": "r", "answer": "{speakers.pop(0)}"}}, '
+            '"instruction_or_question": {"reason": "r", "answer": "do"}}'
+        )
+        return Message("assistant", [json_text])
+
+    mgr._complete = fake_complete  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    ledger = await mgr.create_progress_ledger(ctx.clone())
+
+    assert ledger.next_speaker.answer == "alice"
+    assert not speakers
+
+
 class InvokeOnceManager(MagenticManagerBase):
     def __init__(self) -> None:
         super().__init__(max_round_count=5, max_stall_count=3, max_reset_count=2)
