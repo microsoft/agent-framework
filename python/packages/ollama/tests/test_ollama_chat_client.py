@@ -926,9 +926,9 @@ def test_prepare_options_tool_choice_none_omits_tools(ollama_unit_test_env: dict
     assert "tool_choice" not in request
 
 
-@pytest.mark.parametrize("tool_choice", [None, "auto", "required"])
-def test_prepare_options_other_tool_choices_keep_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
-    """Tool choices other than "none" still send the tools to Ollama."""
+@pytest.mark.parametrize("tool_choice", [None, "auto", {"mode": "auto"}])
+def test_prepare_options_auto_tool_choice_keeps_tools(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """No tool_choice or "auto" sends the tools to Ollama."""
     client = OllamaChatClient()
     messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
 
@@ -967,3 +967,22 @@ def test_prepare_options_invalid_tool_choice_raises(ollama_unit_test_env: dict[s
 
     with pytest.raises(ContentError):
         client._prepare_options(messages, {"tools": [hello_world], "tool_choice": "bogus"})
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        "required",
+        {"mode": "required"},
+        {"mode": "required", "required_function_name": "hello_world"},
+        {"mode": "auto", "allowed_tools": ["hello_world"]},
+        {"mode": "required", "allowed_tools": ["hello_world"]},
+    ],
+)
+def test_prepare_options_unsupported_tool_choice_raises(ollama_unit_test_env: dict[str, str], tool_choice: Any) -> None:
+    """Ollama can't enforce "required" or "allowed_tools", so they raise instead of acting like "auto"."""
+    client = OllamaChatClient()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    with pytest.raises(ChatClientInvalidRequestException):
+        client._prepare_options(messages, {"tools": [hello_world], "tool_choice": tool_choice})

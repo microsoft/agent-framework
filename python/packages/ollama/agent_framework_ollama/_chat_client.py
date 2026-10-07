@@ -98,7 +98,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
-        tool_choice: Ollama only supports auto tool choice, but ``none`` is honored by omitting the tools.
+        tool_choice: Only ``auto`` and ``none`` are supported (``none`` omits the tools).
+            ``required`` and ``allowed_tools`` raise ``ChatClientInvalidRequestException``.
         allow_multiple_tool_calls: Not configurable.
         user: Not supported.
         store: Not supported.
@@ -451,9 +452,19 @@ class OllamaChatClient(
             run_options["model"] = self.model
 
         # tools
-        # Ollama has no tool_choice parameter, so "none" is honored by not sending the tools at all.
-        tools = options.get("tools")
+        # Ollama has no tool_choice parameter. Only "auto" (send the tools) and "none" (don't send them)
+        # can be honored, so anything else is rejected instead of silently behaving like "auto".
         tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is not None:
+            if tool_mode.get("mode") == "required":
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice mode 'required'. Use 'auto' or 'none'."
+                )
+            if "allowed_tools" in tool_mode:
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice 'allowed_tools'. Pass only the tools you want to allow."
+                )
+        tools = options.get("tools")
         tools_disabled = tool_mode is not None and tool_mode.get("mode") == "none"
         if tools is not None and not tools_disabled and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
