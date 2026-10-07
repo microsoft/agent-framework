@@ -2,65 +2,26 @@
 
 import asyncio
 
-from agent_framework import (
-    Executor,
-    WorkflowBuilder,
-    WorkflowContext,
-    executor,
-    handler,
-)
+from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from typing_extensions import Never
 
-"""
-First Graph Workflow — Chain executors with edges
-
-The graph API gives you full control over execution topology: edges,
-fan-out/fan-in, switch/case, and superstep-based checkpointing.
-
-This sample builds a minimal graph workflow with two steps:
-1. Convert text to uppercase (class-based executor)
-2. Reverse the text (function-based executor)
-
-No external services are required.
-"""
+"""Connect two function executors with a workflow edge."""
 
 
-# Step 1: A class-based executor that converts text to uppercase
-class UpperCase(Executor):
-    def __init__(self, id: str):
-        super().__init__(id=id)
-
-    @handler
-    async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
-        """Convert input to uppercase and forward to the next node."""
-        await ctx.send_message(text.upper())
+@executor(id="upper_case")
+async def upper_case(text: str, ctx: WorkflowContext[str]) -> None:
+    await ctx.send_message(text.upper())
 
 
-# Step 2: A function-based executor that reverses the string and yields output
 @executor(id="reverse_text")
 async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
-    """Reverse the string and yield the final workflow output."""
     await ctx.yield_output(text[::-1])
 
 
-def create_workflow():
-    """Build the workflow: UpperCase → reverse_text."""
-    upper = UpperCase(id="upper_case")
-    return WorkflowBuilder(start_executor=upper).add_edge(upper, reverse_text).build()
-
-
 async def main() -> None:
-    workflow = create_workflow()
-
-    events = await workflow.run("hello world")
-    print(f"Output: {events.get_outputs()}")
-    print(f"Final state: {events.get_final_state()}")
-
-    """
-    Expected output:
-      Output: ['DLROW OLLEH']
-      Final state: WorkflowRunState.IDLE
-    """
+    workflow = WorkflowBuilder(start_executor=upper_case).add_edge(upper_case, reverse_text).build()
+    result = await workflow.run("hello world")
+    print(result.get_outputs()[0])
 
 
 if __name__ == "__main__":

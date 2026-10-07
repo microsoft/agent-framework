@@ -1,40 +1,33 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Functional Workflow with Agents — Call agents inside @workflow
-
-This sample shows how to call agents inside a functional workflow.
-Agent calls are just regular async function calls — no special wrappers needed.
-"""
-
 import asyncio
 
 from agent_framework import Agent, workflow
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 
-# Load environment variables from .env file (e.g., FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL)
-load_dotenv()
+"""Call two agents from a functional workflow."""
 
-client = FoundryChatClient(credential=AzureCliCredential())
+
+client = FoundryChatClient(
+    project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
+    model="gpt-4o",
+    credential=AzureCliCredential(),
+)
 
 writer = Agent(
-    name="WriterAgent",
-    instructions="Write a short poem (4 lines max) about the given topic.",
     client=client,
+    instructions="Write a four-line poem about the given topic.",
 )
 
 reviewer = Agent(
-    name="ReviewerAgent",
-    instructions="Review the given poem in one sentence. Is it good?",
     client=client,
+    instructions="Review the poem in one sentence.",
 )
 
 
 @workflow
 async def poem_workflow(topic: str) -> str:
-    """Write a poem, then review it."""
     poem = (await writer.run(f"Write a poem about: {topic}")).text
     review = (await reviewer.run(f"Review this poem: {poem}")).text
     return f"Poem:\n{poem}\n\nReview: {review}"
