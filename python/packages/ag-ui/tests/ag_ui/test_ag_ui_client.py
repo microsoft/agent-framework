@@ -839,21 +839,20 @@ class TestAGUIChatClient:
                     ]
                 )
             else:
-                events.extend(
-                    [
-                        {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
-                        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
-                        {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
-                        {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
-                        {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
-                        {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
-                        {
-                            "type": "CUSTOM",
-                            "name": "annotations",
-                            "value": {"messageId": "m1", "annotations": annotations},
-                        },
-                    ]
-                )
+                annotated_events: list[dict[str, Any]] = [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                    {
+                        "type": "CUSTOM",
+                        "name": "annotations",
+                        "value": {"messageId": "m1", "annotations": annotations},
+                    },
+                ]
+                events.extend(annotated_events)
             events.append({"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]})
             return httpx.Response(
                 200,
