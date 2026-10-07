@@ -28,6 +28,7 @@ import httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -46,6 +47,8 @@ from agent_framework import (
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowExecutor,
+    executor,
     handler,
     tool,
 )
@@ -304,7 +307,7 @@ class _TranscriptExecutor(Executor):
         self.seen: list[str] = []
 
     @handler
-    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:  # type: ignore[valid-type]
         self.seen.append(" ".join(message.text or "" for message in messages))
         await ctx.yield_output(Message(role="assistant", contents=[Content.from_text("seen=" + "|".join(self.seen))]))
 
@@ -727,6 +730,43 @@ class TestWorkflowAgentReuseGuard:
 
         with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
             guard.claim(_fake_workflow_agent([shared_executor]))
+
+    def test_shared_subworkflow_reuse_is_rejected(self) -> None:
+        """A fresh outer agent must not smuggle a previously served child workflow through a WorkflowExecutor."""
+        shared_child = WorkflowBuilder(name="child-workflow", start_executor=_TranscriptExecutor()).build()
+
+        def create_agent() -> WorkflowAgent:
+            @executor
+            async def start(messages: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+                await ctx.send_message(messages)
+
+            child = WorkflowExecutor(shared_child, id="child")
+            workflow = WorkflowBuilder(name="outer-workflow", start_executor=start).add_edge(start, child).build()
+            return WorkflowAgent(workflow=workflow, name="Outer Workflow Agent")
+
+        guard = WorkflowAgentReuseGuard()
+        guard.claim(create_agent())
+        with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
+            guard.claim(create_agent())
+
+    def test_shared_wrapped_agent_reuse_is_rejected(self) -> None:
+        """A fresh workflow that wraps a previously served inner agent is rejected, matching native hosting."""
+        shared_inner = _make_agent()
+
+        def create_agent() -> WorkflowAgent:
+            @executor
+            async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+                await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+            workflow = (
+                WorkflowBuilder(name="wrapped-workflow", start_executor=start).add_edge(start, shared_inner).build()
+            )
+            return WorkflowAgent(workflow=workflow, name="Wrapped Workflow Agent")
+
+        guard = WorkflowAgentReuseGuard()
+        guard.claim(create_agent())
+        with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
+            guard.claim(create_agent())
 
     def test_identity_is_released_after_weakrefable_resources_are_collected(self) -> None:
         """Weakly referenceable resources are forgotten once collected so recycled ``id()`` values are not rejected."""

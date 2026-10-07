@@ -15,7 +15,8 @@ server = ResponsesHostServer(agent=create_agent)
 Passing an instance reuses that object for the lifetime of the host. Pass a callable when the agent keeps mutable state
 outside `AgentSession`. A `WorkflowAgent` wraps a stateful workflow, so a `WorkflowAgent` instance is rejected at host
 construction: pass a callable that builds a new workflow, executors, and wrapped agents on every call. The host also
-rejects a callable that returns the same `WorkflowAgent`, workflow, or executor object for a later request. Keep the
+rejects a callable that returns the same `WorkflowAgent`, workflow, executor, child workflow, or wrapped agent object
+for a later request. Keep the
 workflow name and executor IDs stable so later requests can find and restore its checkpoints:
 
 ```python
@@ -96,10 +97,12 @@ provider continuation is rejected before output is paired or committed.
 
 For legacy message-input workflows, `response_input_messages(request)` converts
 only the current Responses turn to `list[Message]`. It does not load outer
-history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
-remains for this beta with a once-per-host deprecation warning because wrapper
-context providers, history, event projection, and request-info translation are
-real semantics and are not silently unwrapped.
+history or decode pending replies. Legacy `agent=` hosting of a `WorkflowAgent`
+remains for this beta only through a factory such as
+`agent=lambda: build_workflow().as_agent()`, with a once-per-host deprecation
+warning; passing a `WorkflowAgent` instance is rejected. Wrapper context
+providers, history, event projection, and request-info translation are real
+semantics and are not silently unwrapped.
 
 With `resilient_background=True`, the application must also enable the
 AgentServer resilient task subsystem. Host-owned checkpoint/output pairs

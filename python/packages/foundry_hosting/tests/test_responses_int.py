@@ -38,6 +38,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     SlidingWindowStrategy,
+    WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -990,10 +991,15 @@ class _ToolCallExecutor(Executor):
         await ctx.send_message("Countdown complete.", target_id="complete")
 
 
-@executor(id="complete")
-async def _countdown_complete(message: str, ctx: WorkflowContext[Never, str]) -> None:  # zuban: ignore
-    """Yield the workflow's completion output."""
-    await ctx.yield_output(message)
+def _countdown_complete_executor() -> Executor:
+    """Build a fresh completion executor; the host rejects executors shared across request-scoped builds."""
+
+    @executor(id="complete")
+    async def _countdown_complete(message: str, ctx: WorkflowContext[Never, str]) -> None:  # zuban: ignore
+        """Yield the workflow's completion output."""
+        await ctx.yield_output(message)
+
+    return _countdown_complete
 
 
 def _build_countdown_workflow(sleep_seconds: float):
@@ -1001,11 +1007,12 @@ def _build_countdown_workflow(sleep_seconds: float):
     start = _CountdownStartExecutor()
     countdown = _CountdownExecutor(sleep_seconds)
 
+    # Stable workflow names let the restarted host find the checkpoints written before a crash.
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="resilient-countdown", start_executor=start, output_from="all")
         .add_edge(start, countdown)
         .add_edge(countdown, countdown)
-        .add_edge(countdown, _countdown_complete)
+        .add_edge(countdown, _countdown_complete_executor())
         .build()
     )
 
@@ -1016,10 +1023,10 @@ def _build_paired_yield_workflow(sleep_seconds: float):
     paired = _PairedYieldExecutor(sleep_seconds)
 
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="resilient-paired-yield", start_executor=start, output_from="all")
         .add_edge(start, paired)
         .add_edge(paired, paired)
-        .add_edge(paired, _countdown_complete)
+        .add_edge(paired, _countdown_complete_executor())
         .build()
     )
 
@@ -1030,9 +1037,9 @@ def _build_tool_call_workflow(sleep_seconds: float):
     tool_call = _ToolCallExecutor(sleep_seconds)
 
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="resilient-tool-call", start_executor=start, output_from="all")
         .add_edge(start, tool_call)
-        .add_edge(tool_call, _countdown_complete)
+        .add_edge(tool_call, _countdown_complete_executor())
         .build()
     )
 
@@ -1051,8 +1058,11 @@ def _run_resilient_server(
     os.dup2(log_file.fileno(), 2)
     os.environ["AGENTSERVER_STATE_ROOT"] = state_root
 
-    workflow_agent = build_workflow(sleep_seconds).as_agent(name="resilient-workflow")
-    server = ResponsesHostServer(workflow_agent, options=ResponsesServerOptions(resilient_background=True))
+    # WorkflowAgent instances are rejected by the host; build a fresh agent for every request.
+    def create_agent() -> WorkflowAgent:
+        return build_workflow(sleep_seconds).as_agent(name="resilient-workflow")
+
+    server = ResponsesHostServer(create_agent, options=ResponsesServerOptions(resilient_background=True))
     server.run(host="127.0.0.1", port=port)
 
 

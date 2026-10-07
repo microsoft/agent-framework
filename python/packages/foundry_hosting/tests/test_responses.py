@@ -8371,6 +8371,20 @@ class TestResponseFailedSurfacing:
 # region Workflow agent hosting (end-to-end)
 
 
+class _InnerAgentProbe:
+    """Observation state shared by every fresh inner-agent mock a request-scoped factory creates.
+
+    The reuse guard rejects a factory that wraps the same inner agent twice, so helpers build a new mock per
+    call and let tests assert on this probe instead of on one mock instance.
+    """
+
+    def __init__(self) -> None:
+        self.run_count = 0
+        self.last_run_messages: list[Message] = []
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+
 class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     """Inner agent for a hosted ``WorkflowAgent`` whose first run emits a
     ``FunctionApprovalRequestContent`` and whose follow-up run (after
@@ -8391,6 +8405,7 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         tool_arguments: dict[str, Any] | None = None,
         approval_request_ids: Sequence[str] | None = None,
         final_text: str = "done",
+        probe: _InnerAgentProbe | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())
         self.name = name
@@ -8399,8 +8414,15 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         self._tool_arguments = tool_arguments or {"path": "/tmp/example"}
         self._approval_request_ids: list[str] = list(approval_request_ids) if approval_request_ids else []
         self._final_text = final_text
-        self.run_count = 0
-        self.last_run_messages: list[Message] = []
+        self._probe = probe or _InnerAgentProbe()
+
+    @property
+    def run_count(self) -> int:
+        return self._probe.run_count
+
+    @property
+    def last_run_messages(self) -> list[Message]:
+        return self._probe.last_run_messages
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -8495,8 +8517,8 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         del kwargs
         normalized = self._normalize(messages)
-        self.last_run_messages = normalized
-        self.run_count += 1
+        self._probe.last_run_messages = normalized
+        self._probe.run_count += 1
         approvals = self._approval_responses_in(normalized)
 
         async def _iter() -> AsyncIterator[AgentResponseUpdate]:
@@ -8599,7 +8621,7 @@ class _TranscriptExecutor(Executor):
         self.seen: list[str] = []
 
     @handler
-    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+    async def on_messages(self, messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:  # type: ignore[valid-type]
         self.seen.append(" ".join(message.text or "" for message in messages))
         await ctx.yield_output(Message(role="assistant", contents=[Content.from_text("seen=" + "|".join(self.seen))]))
 
@@ -8628,15 +8650,32 @@ def _workflow_output_text(response: httpx.Response, *, stream: bool) -> str:
 class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
     """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
 
-    def __init__(self, name: str, texts: Sequence[str], *, gate: asyncio.Event | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        texts: Sequence[str],
+        *,
+        gate: asyncio.Event | None = None,
+        probe: _InnerAgentProbe | None = None,
+    ) -> None:
         self.id = str(uuid.uuid4())
         self.name = name
         self.description: str | None = None
         self._texts = list(texts)
         self._gate = gate
-        self.run_count = 0
-        self.started = asyncio.Event()
-        self.cancelled = asyncio.Event()
+        self._probe = probe or _InnerAgentProbe()
+
+    @property
+    def run_count(self) -> int:
+        return self._probe.run_count
+
+    @property
+    def started(self) -> asyncio.Event:
+        return self._probe.started
+
+    @property
+    def cancelled(self) -> asyncio.Event:
+        return self._probe.cancelled
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -8676,18 +8715,19 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         del messages, session, kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
-        self.run_count += 1
+        self._probe.run_count += 1
         texts = self._texts
         name = self.name
         gate = self._gate
+        probe = self._probe
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
-            self.started.set()
+            probe.started.set()
             if gate is not None:
                 try:
                     await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
                 except asyncio.CancelledError:
-                    self.cancelled.set()
+                    probe.cancelled.set()
                     raise
             for text in texts:
                 yield AgentResponseUpdate(
@@ -8701,19 +8741,23 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
 
 def _build_multi_update_workflow_agent(
     texts: Sequence[str], *, gate: asyncio.Event | None = None
-) -> tuple[Callable[[], WorkflowAgent], _MultiUpdateWorkflowAgentMock]:
-    """Build a factory of fresh ``WorkflowAgent`` objects sharing one inner agent that streams one update per text."""
-    inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts, gate=gate)
+) -> tuple[Callable[[], WorkflowAgent], _InnerAgentProbe]:
+    """Build a factory of fresh ``WorkflowAgent`` objects whose fresh inner agents stream one update per text.
+
+    Every call creates a new inner agent (the reuse guard rejects a shared one); all of them report to one probe.
+    """
+    probe = _InnerAgentProbe()
 
     def create_agent() -> WorkflowAgent:
         @executor
         async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
+        inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts, gate=gate, probe=probe)
         workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
         return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent")
 
-    return create_agent, inner
+    return create_agent, probe
 
 
 @asynccontextmanager
@@ -8741,27 +8785,32 @@ def _build_approval_workflow_agent(
     tool_name: str = "delete_file",
     tool_arguments: dict[str, Any] | None = None,
     final_text: str = "done",
-) -> tuple[Callable[[], WorkflowAgent], _ToolApprovalWorkflowAgentMock]:
-    """Build a factory of fresh ``WorkflowAgent`` objects sharing one inner agent that emits a tool approval request."""
-    mock_agent = _ToolApprovalWorkflowAgentMock(
-        name="approval-agent",
-        tool_name=tool_name,
-        tool_arguments=tool_arguments or {"path": "/tmp/secret.txt"},
-        approval_request_ids=[approval_request_id],
-        final_text=final_text,
-    )
+) -> tuple[Callable[[], WorkflowAgent], _InnerAgentProbe]:
+    """Build a factory of fresh ``WorkflowAgent`` objects whose fresh inner agents emit a tool approval request.
+
+    Every call creates a new inner agent (the reuse guard rejects a shared one); all of them report to one probe.
+    """
+    probe = _InnerAgentProbe()
 
     def create_agent() -> WorkflowAgent:
         @executor
         async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
             await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
+        mock_agent = _ToolApprovalWorkflowAgentMock(
+            name="approval-agent",
+            tool_name=tool_name,
+            tool_arguments=tool_arguments or {"path": "/tmp/secret.txt"},
+            approval_request_ids=[approval_request_id],
+            final_text=final_text,
+            probe=probe,
+        )
         # A stable workflow name is required so the checkpoint written by one request can be
         # restored by the next; WorkflowBuilder otherwise generates a unique name per build.
         workflow = WorkflowBuilder(name="approval-workflow", start_executor=start).add_edge(start, mock_agent).build()
         return WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
 
-    return create_agent, mock_agent
+    return create_agent, probe
 
 
 class TestWorkflowAgentHosting:
@@ -8774,7 +8823,7 @@ class TestWorkflowAgentHosting:
     """
 
     async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
-        created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
+        created: list[tuple[WorkflowAgent, _InnerAgentProbe]] = []
 
         async def create_agent() -> WorkflowAgent:
             factory, inner = _build_multi_update_workflow_agent(["hello"])

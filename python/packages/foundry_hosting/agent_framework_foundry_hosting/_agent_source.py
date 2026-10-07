@@ -7,7 +7,9 @@ import weakref
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeAlias, TypeGuard, cast
 
-from agent_framework import SupportsAgentRun, WorkflowAgent
+from agent_framework import SupportsAgentRun, Workflow, WorkflowAgent, WorkflowExecutor
+
+from ._workflow_source import workflow_agents
 
 AgentSource: TypeAlias = SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]]
 
@@ -42,17 +44,19 @@ def validate_agent_source(source: object) -> None:
 
 
 class WorkflowAgentReuseGuard:
-    """Reject a factory that hands the same ``WorkflowAgent``, workflow, or executor to more than one request.
+    """Reject a factory that reuses a served ``WorkflowAgent``, workflow, executor, or wrapped agent.
 
     Mirrors ``WorkflowResolver`` for native workflows: this is an identity check on objects already served, not
-    a proof that the factory allocates every resource freshly.
+    a proof that the factory allocates every resource freshly. The walk covers the outer workflow, every executor,
+    each child workflow reached through a ``WorkflowExecutor`` (recursively), and every agent wrapped by an
+    executor, because all of them carry per-run mutable state.
 
     Identity is tracked by ``id()`` and is only meaningful while the object is alive, so every served object is
     tracked through a weak reference whose callback forgets the identity on collection. ``WorkflowAgent``,
     ``Workflow``, and ``Executor`` all support weak references (including slotted subclasses, since no base in
-    their hierarchy defines ``__slots__``). A duck-typed executor that cannot be weakly referenced is retained
+    their hierarchy defines ``__slots__``). A duck-typed object that cannot be weakly referenced is retained
     strongly for the lifetime of the guard instead: that keeps the check exact at the cost of host memory
-    proportional to how many such executors the factory creates, which is preferred over an eviction window
+    proportional to how many such objects the factory creates, which is preferred over an eviction window
     that would silently accept reuse in a long-lived host.
     """
 
@@ -61,7 +65,17 @@ class WorkflowAgentReuseGuard:
         self._retained: dict[int, object] = {}
 
     def claim(self, agent: WorkflowAgent) -> None:
-        resources: list[object] = [agent, agent.workflow, *agent.workflow.get_executors_list()]
+        resources: list[object] = [agent]
+
+        def collect(graph: Workflow) -> None:
+            resources.append(graph)
+            for executor in graph.get_executors_list():
+                resources.append(executor)
+                if isinstance(executor, WorkflowExecutor):
+                    collect(executor.workflow)
+
+        collect(agent.workflow)
+        resources.extend(workflow_agents(agent.workflow))
         unique_resources = {id(resource): resource for resource in resources}
         # Check every identity before recording any, so a rejected claim leaves no partial state behind.
         for identifier, resource in unique_resources.items():
