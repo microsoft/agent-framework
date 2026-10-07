@@ -868,6 +868,9 @@ class Workflow(DictConvertible):
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )
 
+        if message is not None:
+            self._set_agent_session_id(None)
+
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
         # its async-generator finalizer ran. Clear it so this run starts clean and does

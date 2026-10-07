@@ -453,6 +453,7 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             throw new InvalidOperationException("Missing MCP client creation lifetime.");
         ClientConnection? connection = null;
         bool creationSemaphoreEntered = false;
+        Exception? clientCreationCleanupException = null;
         try
         {
             await this._clientCreationSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -468,7 +469,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             }
 
             connection = await this.CreateClientAsync(
-                trimmedUrl, serverLabel, headers, cancellationToken).ConfigureAwait(false);
+                trimmedUrl, serverLabel, headers, cancellationToken,
+                cleanupException => clientCreationCleanupException = cleanupException).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -489,14 +491,14 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
                     creationSemaphoreEntered = false;
                 }
 
-                await this.CompleteClientCreationLifetimeAsync(ownedClientCreationLifetime).ConfigureAwait(false);
+                await this.CompleteClientCreationLifetimeAsync(
+                    ownedClientCreationLifetime, clientCreationCleanupException).ConfigureAwait(false);
             }
 
             throw;
         }
 
         ObjectDisposedException? disposedException = null;
-        Exception? clientCreationCleanupException = null;
         CachedClient? result = null;
         await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
@@ -732,7 +734,8 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<Exception>? reportCleanupFailure = null)
     {
         HttpClient? httpClient = null;
         bool ownsHttpClient = false;
@@ -780,17 +783,25 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         {
             try
             {
-                if (transport is not null)
+                try
                 {
-                    await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                    if (transport is not null)
+                    {
+                        await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    if (ownedHttpClientLease is not null)
+                    {
+                        await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
+                    }
                 }
             }
-            finally
+            catch (Exception cleanupException)
             {
-                if (ownedHttpClientLease is not null)
-                {
-                    await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
-                }
+                reportCleanupFailure?.Invoke(cleanupException);
+                throw;
             }
 
             throw;

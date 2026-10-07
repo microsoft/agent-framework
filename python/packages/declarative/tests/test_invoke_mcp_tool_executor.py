@@ -229,6 +229,21 @@ class TestFieldForwarding:
         assert session_a_id != session_b_id
         assert handler.invocations[2].workflow_session_id == session_a_id
 
+    async def test_direct_fresh_runs_after_agent_turn_receive_separate_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+
+        await agent.run("agent turn", session=AgentSession())
+        await workflow.run({})
+        await workflow.run({})
+
+        session_ids = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert len(session_ids) == 3
+        assert all(session_ids)
+        assert len(set(session_ids)) == 3
+
     @pytest.mark.asyncio
     async def test_continuation_reuses_workflow_session_id(self) -> None:
         from agent_framework_declarative._workflows import ToolApprovalResponse

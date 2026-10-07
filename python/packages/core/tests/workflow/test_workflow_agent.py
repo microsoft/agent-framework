@@ -19,6 +19,7 @@ from agent_framework import (
     Executor,
     FinishReason,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
@@ -195,6 +196,46 @@ class ConversationHistoryCapturingExecutor(Executor):
 
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_direct_fresh_runs_clear_agent_session_id(self, streaming: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=SimpleExecutor(id="start", response_text="Accepted")).build()
+        agent = workflow.as_agent()
+        session = AgentSession()
+        await agent.run("Agent turn", session=session)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+
+        for text in ("First direct run", "Second direct run"):
+            messages = [Message(role="user", contents=[Content.from_text(text)])]
+            if streaming:
+                await workflow.run(messages, stream=True).get_final_response()
+            else:
+                await workflow.run(messages)
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) is None
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_direct_continuations_preserve_agent_session_id(self, streaming: bool) -> None:
+        workflow = WorkflowBuilder(start_executor=RequestingExecutor(id="request")).build()
+        storage = InMemoryCheckpointStorage()
+        session = AgentSession()
+        await workflow.as_agent().run("Agent turn", session=session, checkpoint_storage=storage)
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        pending_requests = await workflow._runner_context.get_pending_request_info_events()
+        assert len(pending_requests) == 1
+        responses = {request_id: "Answer" for request_id in pending_requests}
+
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            await workflow.run(
+                checkpoint_id=checkpoint_id, checkpoint_storage=storage, stream=True
+            ).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+            assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        assert workflow._runner.state.get(WORKFLOW_AGENT_SESSION_ID_KEY) == session.session_id
 
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("rejected_streaming", [False, True])

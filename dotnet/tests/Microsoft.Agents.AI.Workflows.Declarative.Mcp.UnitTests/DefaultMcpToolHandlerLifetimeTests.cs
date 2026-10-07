@@ -336,6 +336,36 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
+    public async Task NoProvider_DisposalDuringFailedCreation_ReportsCleanupCancellationAsync()
+    {
+        // Arrange
+        OperationCanceledException cleanupException = new("transport cleanup cancelled");
+        ProtocolStub stub = new() { FailInitialization = true, TransportDisposalException = cleanupException };
+        using SemaphoreSlim initializationStarted = new(0);
+        using SemaphoreSlim releaseInitialization = new(0);
+        stub.BeforeInitializationAsync = async token =>
+        {
+            initializationStarted.Release();
+            await releaseInitialization.WaitAsync(token);
+        };
+        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Task<McpServerToolResultContent> invocation =
+            InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        await initializationStarted.WaitAsync(timeout.Token);
+        Task disposal = handler.DisposeAsync().AsTask();
+        releaseInitialization.Release();
+
+        // Assert
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => invocation));
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal));
+        Assert.Single(stub.Handlers).Protected().Verify(
+            "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
     public async Task NoProvider_DisposalDuringSuccessfulCreation_CleansUpOrphanAndCompletesDisposalAsync()
     {
         // Arrange
@@ -993,6 +1023,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
         public bool FailTransportDisposal { get; set; }
+        public Exception? TransportDisposalException { get; set; }
 
         public HttpMessageHandler CreateMessageHandler()
         {
@@ -1000,10 +1031,10 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             handler.Protected()
                 .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
                 .Returns<HttpRequestMessage, CancellationToken>(this.SendAsync);
-            if (this.FailTransportDisposal)
+            if (this.FailTransportDisposal || this.TransportDisposalException is not null)
             {
                 handler.Protected().Setup("Dispose", ItExpr.Is<bool>(disposing => disposing))
-                    .Throws(new InvalidOperationException("transport cleanup failed"));
+                    .Throws(this.TransportDisposalException ?? new InvalidOperationException("transport cleanup failed"));
             }
 
             this.Handlers.Add(handler);
