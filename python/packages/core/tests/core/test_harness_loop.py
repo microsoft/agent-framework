@@ -83,7 +83,7 @@ class RecordingChatClient(BaseChatClient[ChatOptions[None]]):
 
     def _usage(self) -> UsageDetails | None:
         if self._usage_details is not None:
-            return UsageDetails(**self._usage_details)
+            return self._usage_details.copy()
         if self._usage_per_call is not None:
             return UsageDetails(total_token_count=self._usage_per_call)
         return None
