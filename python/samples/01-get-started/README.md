@@ -13,6 +13,10 @@ az login
 Each sample hardcodes example values for `project_endpoint` and `model`. Replace them with your Microsoft Foundry
 project endpoint and model deployment name before running the sample.
 
+Alternatively, set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, then remove the `project_endpoint` and `model`
+arguments from the `FoundryChatClient` constructor. To read those values from a `.env` file, call `load_dotenv()`
+before creating the client; Agent Framework doesn't load `.env` files automatically.
+
 ## Samples
 
 | # | File | What you'll learn |
