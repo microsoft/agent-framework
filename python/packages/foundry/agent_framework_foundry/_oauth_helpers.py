@@ -78,12 +78,16 @@ def _oauth_consent_contents(raw_item: Any, consent_link: str) -> list[Content]:
         consent_link = _validate_consent_link(consent_link, item_id)
 
     if consent_link:
-        return [
-            Content.from_oauth_consent_request(
-                consent_link=consent_link,
-                raw_representation=raw_item,
-            )
-        ]
+        content = Content.from_oauth_consent_request(
+            consent_link=consent_link,
+            raw_representation=raw_item,
+        )
+        # The consent request is a user-input request: workflows (``AgentExecutor``) register it
+        # under its id, so keep the provider item id instead of leaving it empty.
+        raw_id = getattr(raw_item, "id", None)
+        if isinstance(raw_id, str) and raw_id:
+            content.id = raw_id
+        return [content]
     logger.warning(
         "Received oauth_consent_request output without valid consent_link (item id=%s)",
         item_id,
