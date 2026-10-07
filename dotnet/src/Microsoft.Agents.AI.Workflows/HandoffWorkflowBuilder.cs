@@ -135,6 +135,11 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
     /// Sets the behavior for filtering <see cref="FunctionCallContent"/> and <see cref="ChatRole.Tool"/> contents from
     /// <see cref="ChatMessage"/>s flowing through the handoff workflow. Defaults to <see cref="HandoffToolCallFilteringBehavior.HandoffOnly"/>.
     /// </summary>
+    /// <remarks>
+    /// When control returns to a participant, its pending handoff result is preserved. If no new user request has
+    /// arrived, the latest user request is reissued to that participant with a fresh message identifier so it can
+    /// continue assisting. This participant-local request is not added to the shared workflow conversation.
+    /// </remarks>
     /// <param name="behavior">The filtering behavior to apply.</param>
     public TBuilder WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior behavior)
     {
