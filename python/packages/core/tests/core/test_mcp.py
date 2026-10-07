@@ -722,6 +722,31 @@ async def test_load_prompts_refresh_replaces_prompt_catalog() -> None:
     assert tool._progressive_loaded_tool_names == {"keep"}
 
 
+async def test_load_prompts_refresh_forgets_progressive_state_on_normalized_name_collision() -> None:
+    """A different remote prompt that normalizes to the same local name must not inherit load state."""
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="a/b", description="Same")])
+    )
+    await tool.load_prompts()
+    old_prompt = tool._functions[0]
+    assert old_prompt.name == "a-b"
+    tool._progressive_loaded_tool_names.add("a-b")
+
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="a-b", description="Same")])
+    )
+    await tool.load_prompts()
+
+    assert len(tool._functions) == 1
+    new_prompt = tool._functions[0]
+    assert new_prompt is not old_prompt
+    assert new_prompt.name == "a-b"
+    assert (new_prompt.additional_properties or {})["_mcp_remote_name"] == "a-b"
+    assert tool._progressive_loaded_tool_names == set()
+
+
 async def test_load_prompts_empty_snapshot_clears_prompts() -> None:
     """A successful empty prompts/list snapshot clears previously loaded prompts."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]

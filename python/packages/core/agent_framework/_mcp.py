@@ -2457,6 +2457,7 @@ class MCPTool:
             else:
                 existing_names.add(func.name)
         prompt_functions: list[FunctionTool] = []
+        reused_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
 
         params: types.PaginatedRequestParams | None = None
@@ -2531,6 +2532,7 @@ class MCPTool:
                 ):
                     # Keep the unchanged prompt function so local customizations survive a refresh.
                     prompt_functions.append(existing_prompt)
+                    reused_prompt_names.add(local_name)
                     continue
                 prompt_functions.append(func)
                 new_functions.append(func)
@@ -2547,9 +2549,9 @@ class MCPTool:
             for function in new_functions:
                 self._function_load_callback(function, None)
         self._functions[:] = current_functions
-        self._progressive_loaded_tool_names.difference_update(
-            existing_prompts.keys() - {func.name for func in prompt_functions}
-        )
+        # Only prompts reused with the same remote identity keep their progressive-load state; a
+        # different remote prompt that normalizes to the same local name must start unloaded.
+        self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - reused_prompt_names)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
