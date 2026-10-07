@@ -3,6 +3,7 @@
 """Give an agent a function tool.
 
 The weather function is registered with @tool and passed to the agent.
+Safety guidance: https://learn.microsoft.com/agent-framework/concepts/agents/safety
 """
 
 import asyncio

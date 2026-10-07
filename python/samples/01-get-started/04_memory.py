@@ -60,6 +60,7 @@ async def main() -> None:
     )
     session = agent.create_session()
 
+    print(await agent.run("Hello! What's the square root of 9?", session=session))
     print(await agent.run("My name is Alice", session=session))
     print(await agent.run("What is 2 + 2?", session=session))
 

@@ -2,7 +2,8 @@
 
 """Create a harness agent for multi-step tasks.
 
-The harness adds planning, todo tracking, and compaction around a chat client.
+A harness adds planning, todos, and compaction to a regular agent.
+More samples: https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/harness
 """
 
 import asyncio

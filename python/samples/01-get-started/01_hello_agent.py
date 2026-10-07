@@ -3,6 +3,8 @@
 """Create and run a minimal Agent Framework agent.
 
 The agent uses a Microsoft Foundry chat client and prints one response.
+For streaming, see `foundry_chat_client_basic.py` in:
+https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/providers/foundry
 """
 
 import asyncio
