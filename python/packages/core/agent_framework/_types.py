@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, cast, overload
 
 from typing_extensions import Required, TypedDict
 
@@ -80,6 +80,44 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
 # region Internal Helper functions for unified Content
 
 
+class _ParsedDataUri(NamedTuple):
+    """The parts of an RFC 2397 data URI."""
+
+    media_type: str
+    is_base64: bool
+    payload: str
+
+
+def _parse_data_uri(uri: str) -> _ParsedDataUri:
+    """Parse a ``data:`` URI once, so every caller reads it the same way.
+
+    RFC 2397: ``data:[<media-type>][;parameter[=value]]...[;base64],<data>``. The media type is
+    everything between ``data:`` and the first ``;`` and defaults to ``text/plain`` when empty.
+    ``base64`` is the only encoding marker and is only valid once, as the last parameter; other
+    parameters such as ``charset=utf-8`` are metadata. Only the metadata before the first comma
+    is inspected, so a ``;base64,`` sequence inside the payload is never treated as a marker.
+
+    Raises:
+        ContentError: If the URI has no comma or carries an unsupported encoding marker.
+    """
+    if "," not in uri:
+        raise ContentError("Data URI must contain a comma separating metadata and data")
+    prefix, payload = uri.split(",", 1)
+    parts = prefix.split(";")
+    parameters = parts[1:]
+    for index, parameter in enumerate(parameters):
+        if parameter == "base64":
+            if index != len(parameters) - 1:
+                raise ContentError("Data URI 'base64' marker must be the last parameter")
+        elif parameter and "=" not in parameter:
+            raise ContentError(f"Unsupported data URI encoding: {parameter}")
+    return _ParsedDataUri(
+        media_type=parts[0][5:] or "text/plain",  # Remove 'data:'
+        is_base64=bool(parameters) and parameters[-1] == "base64",
+        payload=payload,
+    )
+
+
 def detect_media_type_from_base64(
     *,
     data_bytes: bytes | None = None,
@@ -132,14 +170,18 @@ def detect_media_type_from_base64(
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
             raise ValueError("Invalid data URI format.")
-        prefix, data_str = data_uri.split(",", 1)
-        if not prefix.endswith(";base64"):
+        try:
+            parsed = _parse_data_uri(data_uri)
+        except ContentError as exc:
+            raise ValueError(str(exc)) from exc
+        if not parsed.is_base64:
             raise ValueError("Data URI must use base64 encoding.")
+        data_str = parsed.payload
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         try:
-            data = base64.b64decode(data_str)
+            data = base64.b64decode(data_str, validate=True)
         except Exception as exc:
             raise ValueError("Invalid base64 data provided.") from exc
     if data is None:
@@ -155,9 +197,16 @@ def detect_media_type_from_base64(
         return "image/gif"
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WEBP":
         return "image/webp"
-    if data.startswith(b"BM"):
+    if (
+        data.startswith(b"BM")
+        and len(data) >= 18
+        and int.from_bytes(data[14:18], "little") in (12, 40, 52, 56, 64, 108, 124)
+    ):
         return "image/bmp"
-    if data.startswith(b"<svg") or data.startswith(b"<?xml"):
+    head = data[:512].lstrip()
+    if head.startswith(b"\xef\xbb\xbf"):
+        head = head[3:].lstrip()
+    if re.match(rb"<svg(?=[\s/>])", head) or (head.startswith(b"<?xml") and re.search(rb"<svg(?=[\s/>])", head)):
         return "image/svg+xml"
 
     # Documents
@@ -167,7 +216,13 @@ def detect_media_type_from_base64(
     # Audio
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WAVE":
         return "audio/wav"
-    if data.startswith(b"ID3") or data.startswith(b"\xff\xfb") or data.startswith(b"\xff\xf3"):
+    if data.startswith(b"ID3") or (
+        len(data) >= 2
+        and data[0] == 0xFF
+        and (data[1] & 0xE0) == 0xE0
+        and (data[1] & 0x18) != 0x08  # MPEG version 01 is reserved.
+        and (data[1] & 0x06) != 0  # Layer 00 is reserved.
+    ):
         return "audio/mpeg"
     if data.startswith(b"OggS"):
         return "audio/ogg"
@@ -199,11 +254,10 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     if not uri.startswith("data:"):
         return None
 
-    if ";base64," not in uri:
+    parsed = _parse_data_uri(uri)
+    if not parsed.is_base64:
         raise ContentError("Data URI must use base64 encoding")
-
-    _, data = uri.split(";base64,", 1)
-    return data
+    return parsed.payload
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -246,20 +300,9 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
 
     # Check for data URI
     if uri.startswith("data:"):
-        if "," not in uri:
-            raise ContentError("Data URI must contain a comma separating metadata and data")
-        prefix, _ = uri.split(",", 1)
-        if ";" in prefix:
-            parts = prefix.split(";")
-            if len(parts) < 2:
-                raise ContentError("Invalid data URI format")
-            # Check encoding
-            encoding = parts[-1]
-            if encoding not in ("base64", ""):
-                raise ContentError(f"Unsupported data URI encoding: {encoding}")
-            if media_type is None:
-                # attempt to extract:
-                media_type = parts[0][5:]  # Remove 'data:'
+        parsed = _parse_data_uri(uri)
+        if media_type is None:
+            media_type = parsed.media_type
         return {"type": "data", "uri": uri, "media_type": media_type}
 
     # Check for common URI schemes
@@ -4279,7 +4322,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         *,
         phase: Literal["before_transform", "after_transform"] = "after_transform",
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a blocking gate for the finalized result."""
+        """Register a blocking gate for the finalized result.
+
+        The gate runs at finalization. On a stream that is not buffered the consumer has
+        already received the updates by then, so a gate that raises cannot hold them back;
+        call ``buffer_updates()`` to hold updates until the gates pass.
+        """
         self._ensure_content_configuration_mutable()
         self._validate_gate_phase(phase)
         gates = self._result_gates_before if phase == "before_transform" else self._result_gates_after

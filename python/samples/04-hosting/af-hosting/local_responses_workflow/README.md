@@ -37,7 +37,7 @@ by tenant/user as appropriate for your application.
 ## Run
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 export FOUNDRY_MODEL=gpt-5-nano
 az login
 

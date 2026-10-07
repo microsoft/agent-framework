@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "anthropic>=0.80.0,<0.117.0",
+    "anthropic>=1.11.0,<2",
 ]
 
 [tool.uv]

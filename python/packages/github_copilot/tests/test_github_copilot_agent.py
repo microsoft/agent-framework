@@ -24,12 +24,14 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    BaseAgent,
     Content,
     ContextProvider,
     FunctionInvocationContext,
     HistoryProvider,
     MCPStdioTool,
     Message,
+    ResponseStream,
     tool,
 )
 from agent_framework.exceptions import AgentException
@@ -2453,6 +2455,89 @@ class TestGitHubCopilotAgentToolConversion:
         assert captured["session"] is session
         # The tool's JSON schema must not expose the context parameter to the model.
         assert "ctx" not in copilot_tool.parameters["properties"]
+
+    @pytest.mark.parametrize("parent_declares_provider_key", [False, True])
+    async def test_nested_agent_tool_receives_parent_service_state_ownership(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+        parent_declares_provider_key: bool,
+    ) -> None:
+        """Test non-empty parent state propagation through the Copilot tool adapter."""
+        observed_child_states: list[dict[str, Any]] = []
+
+        class StateProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="provider-state")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                state["ordinary"] = "parent-value"
+                session.state["counter"] = 0
+                if parent_declares_provider_key:
+                    session.state["parent_provider_session"] = "parent-handle"
+
+        class ChildAgent(BaseAgent):
+            def run(  # type: ignore[override]
+                self,
+                messages: Any = None,
+                *,
+                stream: bool = False,
+                session: AgentSession | None = None,
+                **kwargs: Any,
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+                assert stream is True
+                assert session is not None
+                observed_child_states.append(dict(session.state))
+                session.state["counter"] += 1
+                if parent_declares_provider_key:
+                    session.state["parent_provider_session"] = "child-handle"
+
+                async def updates() -> Any:
+                    yield AgentResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])
+
+                return ResponseStream(
+                    updates(),
+                    finalizer=lambda _: AgentResponse(
+                        messages=[Message(role="assistant", contents=[Content.from_text("Child completed.")])]
+                    ),
+                )
+
+        mock_session.send_and_wait.return_value = assistant_message_event
+        child = ChildAgent(name="ChildAgent")
+
+        class ParentAgent(GitHubCopilotAgent):
+            service_session_state_keys = (
+                frozenset({"parent_provider_session"}) if parent_declares_provider_key else frozenset()
+            )
+
+        parent = ParentAgent(
+            client=mock_client,
+            tools=[child.as_tool(name="delegate", propagate_session=True)],
+            context_providers=[StateProvider()],
+        )
+        session = parent.create_session()
+
+        await parent.run("Hello", session=session)
+        copilot_tool = mock_client.create_session.call_args.kwargs["tools"][0]
+        result = await copilot_tool.handler(ToolInvocation(arguments={"task": "Run child"}))
+
+        assert result.result_type == "success"
+        assert len(observed_child_states) == 1
+        assert observed_child_states[0]["provider-state"] == {"ordinary": "parent-value"}
+        assert "parent_provider_session" not in observed_child_states[0]
+        assert session.state["counter"] == 1
+        if parent_declares_provider_key:
+            assert session.state["parent_provider_session"] == "parent-handle"
+        else:
+            assert "parent_provider_session" not in session.state
 
     async def test_run_streaming_forwards_function_invocation_kwargs_to_tools(
         self,
