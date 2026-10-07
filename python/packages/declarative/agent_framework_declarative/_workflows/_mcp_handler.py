@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_CACHE_MAX_SIZE = 32
 _WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
 _AGENT_WORKFLOW_SESSION_NAMESPACE_KEY = "_declarative_mcp_agent_workflow_session_namespace"
+_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_sessionless_agent_workflow_session_id"
 _WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
 
 
@@ -88,9 +89,17 @@ def get_or_create_workflow_session_id(state: State) -> str:
     return workflow_session_id
 
 
-def activate_workflow_session_id(state: State, *, reset_unscoped: bool) -> None:
+def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent_run: bool = False) -> None:
     if state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
         get_or_create_workflow_session_id(state)
+    elif is_agent_run:
+        workflow_session_id = state.get(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY)
+        if workflow_session_id is None:
+            workflow_session_id = uuid.uuid4().hex
+            state.set(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+        if not isinstance(workflow_session_id, str) or not workflow_session_id:
+            raise ValueError("Invalid MCP sessionless agent workflow session state.")
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
     elif reset_unscoped:
         state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
 

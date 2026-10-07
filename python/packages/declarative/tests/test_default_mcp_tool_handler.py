@@ -29,6 +29,7 @@ from agent_framework.exceptions import ToolExecutionException
 from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
+    activate_workflow_session_id,
     get_or_create_workflow_session_id,
     restore_workflow_session_id,
 )
@@ -831,6 +832,47 @@ class TestConstruction:
 
 
 class TestWorkflowSessionId:
+    def test_sessionless_activation_does_not_adopt_direct_scope(self) -> None:
+        state = State()
+        direct_scope = get_or_create_workflow_session_id(state)
+
+        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        sessionless_scope = get_or_create_workflow_session_id(state)
+        assert sessionless_scope != direct_scope
+
+        activate_workflow_session_id(state, reset_unscoped=True)
+        assert get_or_create_workflow_session_id(state) not in (direct_scope, sessionless_scope)
+        state.commit()
+
+        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        assert get_or_create_workflow_session_id(state) == sessionless_scope
+
+    def test_approval_restoration_preserves_sessionless_scope(self) -> None:
+        state = State()
+        activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+        sessionless_scope = get_or_create_workflow_session_id(state)
+        state.set("_workflow_agent_session_id", "session-a")
+        explicit_scope = get_or_create_workflow_session_id(state)
+
+        restore_workflow_session_id(state, explicit_scope)
+        state.commit()
+        assert get_or_create_workflow_session_id(state) == explicit_scope
+        assert explicit_scope != sessionless_scope
+
+        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        assert get_or_create_workflow_session_id(state) == sessionless_scope
+
+    @pytest.mark.parametrize("scope", ["", 42, False])
+    def test_invalid_sessionless_scope_preserves_current_scope(self, scope: Any) -> None:
+        state = State()
+        current_scope = get_or_create_workflow_session_id(state)
+        state.set("_declarative_mcp_sessionless_agent_workflow_session_id", scope)
+
+        with pytest.raises(ValueError, match="Invalid MCP sessionless agent workflow session state"):
+            activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+
+        assert get_or_create_workflow_session_id(state) == current_scope
+
     def test_restored_approval_scope_overrides_current_agent_session(self) -> None:
         state = State()
         state.set("_workflow_agent_session_id", "session-b")
@@ -915,6 +957,33 @@ class TestToolKwargs:
 
 
 class TestCache:
+    @pytest.mark.parametrize("explicit_session", [False, True])
+    async def test_sessionless_scope_reuses_its_own_cached_client(self, explicit_session: bool) -> None:
+        state = State()
+        with _patch_tool():
+            async with DefaultMCPToolHandler() as handler:
+                activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+                await handler.invoke_tool(_invocation(workflow_session_id=get_or_create_workflow_session_id(state)))
+                FakeTool.instances[0].call_handler = lambda **_: [Content.from_text("sessionless client")]
+
+                if explicit_session:
+                    state.set("_workflow_agent_session_id", "session-a")
+                activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=explicit_session)
+                await handler.invoke_tool(_invocation(workflow_session_id=get_or_create_workflow_session_id(state)))
+
+                state.set("_workflow_agent_session_id", None)
+                activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+                result = await handler.invoke_tool(
+                    _invocation(workflow_session_id=get_or_create_workflow_session_id(state))
+                )
+
+                assert not result.is_error
+                assert len(result.outputs) == 1
+                assert result.outputs[0].text == "sessionless client"
+                assert len(FakeTool.instances) == 2
+                assert all(tool.connect_count == 1 for tool in FakeTool.instances)
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
     @pytest.mark.asyncio
     async def test_same_url_and_headers_hit_cache(self) -> None:
         handler = DefaultMCPToolHandler()

@@ -410,14 +410,13 @@ class JoinExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Simply pass through to continue the workflow."""
-        is_agent_continuation = ctx.state.get(WORKFLOW_AGENT_RUN_KEY) is True and self._is_agent_continuation(
-            self._get_state(ctx.state), trigger
-        )
+        is_agent_run = ctx.state.get(WORKFLOW_AGENT_RUN_KEY) is True
+        is_agent_continuation = is_agent_run and self._is_agent_continuation(self._get_state(ctx.state), trigger)
         await self._ensure_state_initialized(ctx, trigger)
         if self._action_def.get("kind") == "Entry":
             from ._mcp_handler import activate_workflow_session_id
 
-            activate_workflow_session_id(ctx.state, reset_unscoped=not is_agent_continuation)
+            activate_workflow_session_id(ctx.state, reset_unscoped=not is_agent_continuation, is_agent_run=is_agent_run)
         await ctx.send_message(ActionComplete())
 
 
