@@ -182,14 +182,18 @@ public class HandoffOrchestrationTests
         Assert.Contains("nextAgent", result[3].AuthorName);
     }
 
-    [Fact]
-    public async Task Handoffs_OneTransfer_HandoffTargetDoesNotReceiveHandoffFunctionMessagesAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Handoffs_OneTransfer_HandoffTargetDoesNotReceiveHandoffFunctionMessagesAsync(bool includeReasoning)
     {
         // Regression test for https://github.com/microsoft/agent-framework/issues/3161
         // When a handoff occurs, the target agent should receive the original user message
         // but should NOT receive the handoff function call or tool result messages from the
         // source agent, as these confuse the target LLM into ignoring the user's question.
+        // Issue #7384 also covers reasoning summaries accompanying the handoff call.
 
+        // Arrange
         List<ChatMessage>? capturedNextAgentMessages = null;
 
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
@@ -197,7 +201,13 @@ public class HandoffOrchestrationTests
             string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
             Assert.NotNull(transferFuncName);
 
-            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+            ChatMessage handoffMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]);
+            if (includeReasoning)
+            {
+                handoffMessage.Contents.Insert(0, new TextReasoningContent("The next agent can answer this question."));
+            }
+
+            return new(handoffMessage);
         }), name: "initialAgent");
 
         var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
@@ -213,12 +223,17 @@ public class HandoffOrchestrationTests
             .WithHandoff(initialAgent, nextAgent)
             .Build();
 
-        _ = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "What is the derivative of x^2?")]);
+        // Act
+        (string updateText, _, _, _) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "What is the derivative of x^2?")]);
 
+        // Assert
+        Assert.Equal("The derivative of x^2 is 2x.", updateText);
         Assert.NotNull(capturedNextAgentMessages);
 
-        // The target agent should see the original user message
-        Assert.Contains(capturedNextAgentMessages, m => m.Role == ChatRole.User && m.Text == "What is the derivative of x^2?");
+        // The target agent should see only the original user message.
+        ChatMessage targetMessage = Assert.Single(capturedNextAgentMessages);
+        Assert.Equal(ChatRole.User, targetMessage.Role);
+        Assert.Equal("What is the derivative of x^2?", Assert.IsType<TextContent>(Assert.Single(targetMessage.Contents)).Text);
 
         // The target agent should NOT see the handoff function call or tool result from the source agent
         Assert.DoesNotContain(capturedNextAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
