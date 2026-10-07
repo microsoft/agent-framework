@@ -191,7 +191,9 @@ class TestFieldForwarding:
         workflow = factory.create_workflow_from_definition(_yaml(_action()))
 
         for text in ("first run", "second run"):
-            inputs = [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            inputs: list[Message] | dict[str, Any] = (
+                [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            )
             if streaming:
                 await workflow.run(inputs, stream=True).get_final_response()
             else:
@@ -252,7 +254,9 @@ class TestFieldForwarding:
 
         await agent.run("agent turn", session=AgentSession() if explicit_session else None)
         for text in ("first direct run", "second direct run"):
-            inputs = [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            inputs: list[Message] | dict[str, Any] = (
+                [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            )
             if streaming:
                 await workflow.run(inputs, stream=True).get_final_response()
             else:
