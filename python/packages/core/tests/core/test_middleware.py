@@ -30,7 +30,7 @@ from agent_framework._middleware import (
     MiddlewareTermination,
     categorize_middleware,
 )
-from agent_framework._tools import FunctionTool
+from agent_framework._tools import FunctionTool, ToolTypes
 
 
 class TestAgentContext:
@@ -118,7 +118,7 @@ def test_remove_flat_function_mapping_by_name() -> None:
         "name": "lookup",
         "parameters": {"type": "object"},
     }
-    tools = [lookup]
+    tools: list[ToolTypes] = [lookup]
 
     context = FunctionInvocationContext(
         function=FunctionTool(
@@ -150,7 +150,7 @@ def test_add_rejects_duplicate_flat_function_mapping() -> None:
             "properties": {"query": {"type": "string"}},
         },
     }
-    tools = [lookup]
+    tools: list[ToolTypes] = [lookup]
 
     context = FunctionInvocationContext(
         function=FunctionTool(
@@ -172,7 +172,7 @@ def test_remove_name_preserves_non_function_builtin_mapping() -> None:
         "type": "web_search_preview",
         "name": "lookup",
     }
-    tools = [builtin_tool]
+    tools: list[ToolTypes] = [builtin_tool]
 
     context = FunctionInvocationContext(
         function=FunctionTool(
