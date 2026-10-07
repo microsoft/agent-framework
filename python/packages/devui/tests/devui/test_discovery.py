@@ -61,11 +61,15 @@ async def test_discover_file_entity_with_annotated_export():
     with tempfile.TemporaryDirectory() as temp_dir:
         (Path(temp_dir) / "typed_agent.py").write_text("agent: object = object()\n")
         (Path(temp_dir) / "declared_only.py").write_text("agent: object\n")
+        (Path(temp_dir) / "conditional_agent.py").write_text("if True:\n    agent: object = object()\n")
+        (Path(temp_dir) / "local_only.py").write_text(
+            "def build():\n    agent: object = object()\n    return agent\n\n\nclass Holder:\n    workflow = object()\n"
+        )
 
         discovery = EntityDiscovery(temp_dir)
         entities = await discovery.discover_entities()
 
-        assert [entity.id for entity in entities] == ["typed_agent"]
+        assert sorted(entity.id for entity in entities) == ["conditional_agent", "typed_agent"]
 
 
 async def test_discovery_accepts_agents_with_only_run():

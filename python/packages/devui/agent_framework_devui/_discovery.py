@@ -555,8 +555,14 @@ class EntityDiscovery:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))
 
-            # Look for module-level assignments of 'agent' or 'workflow'
-            for node in ast.walk(tree):
+            # Look for module-level assignments of 'agent' or 'workflow'. Function and class
+            # bodies are skipped since their assignments do not create module attributes.
+            pending: list[ast.AST] = list(tree.body)
+            while pending:
+                node = pending.pop()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                pending.extend(ast.iter_child_nodes(node))
                 if isinstance(node, ast.Assign):
                     targets = node.targets
                 elif isinstance(node, ast.AnnAssign) and node.value is not None:
