@@ -107,10 +107,6 @@ from ._harness._memory import (
 )
 from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent_mode, set_agent_mode
 from ._harness._signals import (
-    LOOP_EXIT_REASON_KEY,
-    LOOP_NEED_INPUT_KEY,
-    NEED_INPUT_TOKEN,
-    TASK_COMPLETE_TOKEN,
     LoopExitReason,
     SignalParser,
     get_loop_exit_reason,
@@ -389,15 +385,11 @@ __all__ = [
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
     "INTERNAL_SOURCE_ID",
-    "LOOP_EXIT_REASON_KEY",
-    "LOOP_NEED_INPUT_KEY",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
-    "NEED_INPUT_TOKEN",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
-    "TASK_COMPLETE_TOKEN",
     "USER_AGENT_KEY",
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",

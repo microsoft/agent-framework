@@ -15,14 +15,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .._feature_stage import ExperimentalFeature, experimental
+
 if TYPE_CHECKING:
     from .._types import AgentResponse
 
 __all__ = [
-    "LOOP_EXIT_REASON_KEY",
-    "LOOP_NEED_INPUT_KEY",
-    "NEED_INPUT_TOKEN",
-    "TASK_COMPLETE_TOKEN",
     "LoopExitReason",
     "SignalParser",
     "get_loop_exit_reason",
@@ -34,11 +32,11 @@ __all__ = [
 TASK_COMPLETE_TOKEN: str = "TASK_COMPLETE:"  # ruff: ignore[hardcoded-password-string]
 NEED_INPUT_TOKEN: str = "NEED_INPUT:"  # ruff: ignore[hardcoded-password-string]
 
-# Keys used in AgentResponse.additional_properties to surface loop metadata.
+# Key used in AgentResponse.additional_properties to surface the loop exit reason.
 LOOP_EXIT_REASON_KEY: str = "loop_exit_reason"
-LOOP_NEED_INPUT_KEY: str = "loop_need_input"
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 class LoopExitReason:
     """Typed exit reason strings for AgentLoopMiddleware runs.
 
@@ -75,11 +73,12 @@ class LoopExitReason:
     """Wall-clock time budget (``max_duration``) exhausted before the loop completed."""
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 class SignalParser:
     """A ``should_continue`` predicate that scans for signal tokens.
 
-    Scans the agent's latest response text for :data:`TASK_COMPLETE_TOKEN`
-    and :data:`NEED_INPUT_TOKEN` and returns the appropriate continuation
+    Scans the agent's latest response text for :attr:`TASK_COMPLETE_TOKEN`
+    and :attr:`NEED_INPUT_TOKEN` and returns the appropriate continuation
     decision for :class:`~agent_framework.AgentLoopMiddleware`.
 
     ``TASK_COMPLETE:`` is checked before ``NEED_INPUT:``; if an agent emits
@@ -99,6 +98,12 @@ class SignalParser:
         )
     """
 
+    TASK_COMPLETE_TOKEN: str = TASK_COMPLETE_TOKEN
+    """Token the agent emits to signal that the task is complete."""
+
+    NEED_INPUT_TOKEN: str = NEED_INPUT_TOKEN
+    """Token the agent emits to signal that it needs human input."""
+
     def __call__(self, *, last_result: AgentResponse, **kwargs: Any) -> tuple[bool, str | None]:
         """Return ``(False, extracted_text)`` on a terminal signal, ``(True, None)`` otherwise."""
         text = "\n".join(m.text or "" for m in last_result.messages if m.role == "assistant")
@@ -116,6 +121,7 @@ class SignalParser:
         return (True, None)
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 def signal_should_continue() -> SignalParser:
     """Return a :class:`SignalParser` instance ready for :class:`~agent_framework.AgentLoopMiddleware`.
 
@@ -126,11 +132,12 @@ def signal_should_continue() -> SignalParser:
     return SignalParser()
 
 
+@experimental(feature_id=ExperimentalFeature.HARNESS)
 def get_loop_exit_reason(response: AgentResponse) -> str | None:
     """Return the typed exit reason for a completed loop run, or ``None`` if unknown.
 
     Scans the agent's own (assistant-role) response messages for signal tokens first,
-    then falls back to ``response.additional_properties[LOOP_EXIT_REASON_KEY]``
+    then falls back to ``response.additional_properties["loop_exit_reason"]``
     (set by :class:`~agent_framework.AgentLoopMiddleware` when the iteration cap fires).
 
     Signal tokens take priority: an agent that emitted ``TASK_COMPLETE:`` on the final
@@ -156,7 +163,6 @@ def get_loop_exit_reason(response: AgentResponse) -> str | None:
                     print("Done:", response.text)
                 case LoopExitReason.need_input:
                     # Question is in response.text after NEED_INPUT:
-                    # LOOP_NEED_INPUT_KEY is a convention key reserved for future use.
                     print("Agent needs input; see response.text for the question.")
                 case LoopExitReason.iteration_cap_reached:
                     print("Hit cap - partial result")
@@ -171,4 +177,6 @@ def get_loop_exit_reason(response: AgentResponse) -> str | None:
     if NEED_INPUT_TOKEN in assistant_text:
         return LoopExitReason.need_input
     # Fall back to additional_properties for framework-set reasons (e.g. iteration cap).
-    return response.additional_properties.get(LOOP_EXIT_REASON_KEY) or None
+    # additional_properties accepts arbitrary values, so only return non-empty strings.
+    reason = response.additional_properties.get(LOOP_EXIT_REASON_KEY)
+    return reason if isinstance(reason, str) and reason else None

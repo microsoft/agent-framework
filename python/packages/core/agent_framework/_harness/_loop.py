@@ -630,7 +630,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         if cap_fired:
-            final_result.additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
+            final_result.additional_properties["loop_exit_reason"] = "iteration_cap_reached"
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
@@ -740,7 +740,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
                 if cap_fired and holder["final"] is not None:
-                    holder["final"].additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
+                    holder["final"].additional_properties["loop_exit_reason"] = "iteration_cap_reached"
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
