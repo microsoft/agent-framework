@@ -1088,7 +1088,7 @@ class RawGeminiChatClient(
 
         return ChatResponseUpdate(
             contents=contents,
-            model=chunk.model_version,
+            model=chunk.model_version or self.model,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )

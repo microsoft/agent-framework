@@ -547,6 +547,37 @@ async def test_get_response_model_from_response() -> None:
     assert response.model == "gemini-2.5-pro-002"
 
 
+async def test_get_response_streaming_model_from_chunk() -> None:
+    """Populates the update model from the model_version field on each chunk."""
+    client, mock = _make_gemini_client()
+    chunks = [_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_streaming_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when a chunk carries no model_version."""
+    client, mock = _make_gemini_client()
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-flash"
+
+
 async def test_get_response_uses_model_from_options() -> None:
     """Uses the model specified in options, overriding the client's default."""
     client, mock = _make_gemini_client(model="gemini-2.5-flash")
