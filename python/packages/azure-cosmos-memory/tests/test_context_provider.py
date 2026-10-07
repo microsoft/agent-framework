@@ -177,21 +177,42 @@ class TestInit:
 
     def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Cosmos endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="cosmos_endpoint"):
             CosmosMemoryContextProvider()
 
     def test_init_raises_without_foundry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Foundry endpoint is not provided."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         with pytest.raises(SettingNotFoundError, match="foundry_endpoint"):
             CosmosMemoryContextProvider(cosmos_endpoint="https://test.documents.azure.com:443/")
 
     def test_init_raises_without_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises when the chat/embedding models are not provided (no silent default)."""
-        for var in ("COSMOS_ENDPOINT", "COSMOS_DATABASE", "FOUNDRY_ENDPOINT", "EMBEDDING_MODEL", "CHAT_MODEL"):
+        for var in (
+            "COSMOS_ENDPOINT",
+            "COSMOS_DATABASE",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
             monkeypatch.delenv(var, raising=False)
         # Endpoints resolve, but the models do not: rather than defaulting to a model that may not
         # be deployed, construction must raise so the caller knows to set one.
@@ -200,6 +221,44 @@ class TestInit:
                 cosmos_endpoint="https://test.documents.azure.com:443/",
                 foundry_endpoint="https://test.ai.azure.com",
             )
+
+    def test_init_prefers_foundry_project_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_PROJECT_ENDPOINT takes precedence over the legacy environment variable."""
+        monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://preferred.ai.azure.com/api/projects/test")
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://preferred.ai.azure.com/api/projects/test"
+
+    def test_init_accepts_legacy_foundry_endpoint_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FOUNDRY_ENDPOINT remains supported for existing configurations."""
+        monkeypatch.delenv("FOUNDRY_PROJECT_ENDPOINT", raising=False)
+        monkeypatch.setenv("FOUNDRY_ENDPOINT", "https://legacy.ai.azure.com/api/projects/test")
+
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
+        ) as mock_client_class:
+            mock_client_class.return_value = AsyncMock()
+
+            CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+            )
+
+            _, kwargs = mock_client_class.call_args
+            assert kwargs["ai_foundry_endpoint"] == "https://legacy.ai.azure.com/api/projects/test"
 
     def test_init_processor_config_forwarded_to_built_client(self) -> None:
         """processor_config is forwarded to the built client via cadence_thresholds."""

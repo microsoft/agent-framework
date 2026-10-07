@@ -187,7 +187,7 @@ def _build_skills_provider(credential: TokenCredential) -> tuple[SkillsProvider,
     platform's per-request ``x-agent-foundry-call-id``.
 
     Note that reading a skill's body requires the caller identity to hold the ``Foundry User`` role
-    on the Foundry account. Discovery does not, so a missing grant shows up as skills that load and
+    on the Foundry project. Discovery does not, so a missing grant shows up as skills that load and
     advertise fine but fail on first use — see the README.
     """
     sources: list[SkillsSource] = [FileSkillsSource(str(_SKILLS_DIR), script_runner=subprocess_script_runner)]
@@ -211,10 +211,9 @@ def _build_skills_provider(credential: TokenCredential) -> tuple[SkillsProvider,
         # (for example a literal ``{{TOOLBOX_MCP_SERVER_URL}}``). Silently skipping it makes a
         # deployment error look identical to a deliberate opt-out, so warn instead.
         logger.warning(
-            "Foundry skills disabled: TOOLBOX_MCP_SERVER_URL is set but is not an http(s) URL (got %r). "
+            "Foundry skills disabled: TOOLBOX_MCP_SERVER_URL is set but is not an http(s) URL. "
             "If this looks like an unsubstituted placeholder, check the environment variable wiring "
             "in azure.yaml / agent.manifest.yaml.",
-            toolbox_url,
         )
     else:
         logger.info("Foundry skills disabled. Set TOOLBOX_MCP_SERVER_URL to enable them.")
@@ -293,6 +292,7 @@ def _build_purview_middleware(credential: TokenCredential | None = None) -> list
 async def build_claw_agent(
     *,
     credential: TokenCredential | None = None,
+    client: FoundryChatClient | None = None,
     project_endpoint: str | None = None,
     model: str | None = None,
     default_options: Mapping[str, Any] | None = None,
@@ -308,6 +308,7 @@ async def build_claw_agent(
 
     Args:
         credential: Azure credential for the Foundry chat client. Defaults to AzureCliCredential.
+        client: Optional preconfigured client. The caller owns its resources and middleware.
         project_endpoint: Optional Foundry project endpoint override.
         model: Optional model deployment override.
         default_options: Optional per-agent default chat options, such as ``{"store": False}`` for hosting.
@@ -341,12 +342,13 @@ async def build_claw_agent(
 
     # <create_client>
     resolved_credential = credential or AzureCliCredential()
-    client = FoundryChatClient(
-        project_endpoint=project_endpoint,
-        model=model,
-        credential=resolved_credential,
-        middleware=_build_purview_middleware(purview_credential),
-    )
+    if client is None:
+        client = FoundryChatClient(
+            project_endpoint=project_endpoint,
+            model=model,
+            credential=resolved_credential,
+            middleware=_build_purview_middleware(purview_credential),
+        )
     # </create_client>
 
     skills_provider, skills_tools = _build_skills_provider(resolved_credential)

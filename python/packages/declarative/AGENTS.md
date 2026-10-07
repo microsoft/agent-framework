@@ -6,11 +6,13 @@ YAML/JSON-based declarative agent and workflow definitions.
 
 - **`AgentFactory`** - Creates agents from declarative definitions
 - **`WorkflowFactory`** - Creates workflows from declarative definitions
-- **`WorkflowState`** - State management for declarative workflows
+- **`WorkflowState`** - Standalone state management and expression evaluation; factory-created workflows use the internal, checkpoint-backed `DeclarativeWorkflowState` instead
 - **`ProviderTypeMapping`** - Maps provider types to implementations
 - **`HttpRequestHandler`** / **`DefaultHttpRequestHandler`** - Pluggable HTTP transport for the `HttpRequestAction` declarative action (configured via `WorkflowFactory(http_request_handler=...)`)
 - **`MCPToolHandler`** / **`DefaultMCPToolHandler`** - Pluggable MCP transport for the `InvokeMcpTool` declarative action (configured via `WorkflowFactory(mcp_tool_handler=...)`)
 - **`DeclarativeLoaderError`** / **`ProviderLookupError`** / **`DeclarativeWorkflowError`** / **`DeclarativeActionError`** - Error types
+
+Both state classes validate object attribute names but leave dictionary keys unchanged.
 
 ## MCP Handler Lifetimes
 

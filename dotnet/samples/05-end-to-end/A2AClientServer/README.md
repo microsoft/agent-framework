@@ -48,6 +48,8 @@ client READMEs for detailed instructions.
 
 ## Optional configuration
 
+For authenticated deployments, see [Authentication and tool authorization](./AUTHENTICATION.md).
+
 `FOUNDRY_MODEL` is optional and defaults to `gpt-5.4-mini`. The server creates the
 policy agent with the Microsoft Foundry Responses API.
 
