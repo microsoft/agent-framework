@@ -2360,22 +2360,34 @@ def _is_content_item_snapshot(items: Any) -> bool:
     )
 
 
+def _strip_snapshot_marker(items: Any) -> None:
+    """Remove the merge-only snapshot marker from a nested content list, in place.
+
+    The marker is only an instruction for the merge step that reads it; stripping it
+    keeps it from persisting into finalized content that gets serialized into history
+    or passed to middleware.
+    """
+    if isinstance(items, list):
+        for item in cast("list[object]", items):
+            if isinstance(item, Content):
+                item.additional_properties.pop(_CONTENT_ITEM_SNAPSHOT_KEY, None)
+
+
+def _copy_without_snapshot_marker(items: Any) -> Any:
+    """Deep-copy a nested content list, stripping the merge-only snapshot marker."""
+    copied = deepcopy(items)
+    _strip_snapshot_marker(copied)
+    return copied
+
+
 def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     """Merge streamed nested content lists, replacing deltas with a later full value when present."""
     if incoming is None:
         return existing
-    if existing is None:
-        return deepcopy(incoming)
-
-    if _is_content_item_snapshot(incoming):
-        snapshot = deepcopy(incoming)
-        # The marker is only an instruction for this merge step; strip it so it doesn't
-        # persist into the finalized content that gets serialized into history or passed
-        # to middleware.
-        for item in cast("list[object]", snapshot):
-            if isinstance(item, Content):
-                item.additional_properties.pop(_CONTENT_ITEM_SNAPSHOT_KEY, None)
-        return snapshot
+    # A snapshot can be the very first (or only) chunk seen for this call - not just one
+    # that arrives after prior deltas - so strip the marker here too, not only below.
+    if existing is None or _is_content_item_snapshot(incoming):
+        return _copy_without_snapshot_marker(incoming)
 
     # An empty list has no item to fold a delta into (and nothing to add from one),
     # so hand back whichever side actually has content before indexing into it below.
@@ -2433,7 +2445,13 @@ def _coalesce_code_interpreter_content(contents: list[Content]) -> None:
 
         existing = seen.get(key)
         if existing is None:
+            # The call_id's first chunk can itself be a tagged snapshot (a call that
+            # never streams incremental deltas, just one done-style chunk), so this
+            # copy needs the same stripping `_merge_code_interpreter_content` does for
+            # later chunks.
             copied = deepcopy(content)
+            _strip_snapshot_marker(copied.inputs)
+            _strip_snapshot_marker(copied.outputs)
             seen[key] = copied
             coalesced_contents.append(copied)
             continue

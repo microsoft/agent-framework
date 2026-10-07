@@ -2250,6 +2250,38 @@ def test_code_interpreter_snapshot_chunk_replaces_accumulated_deltas():
     assert _CONTENT_ITEM_SNAPSHOT_KEY not in calls[0].inputs[0].additional_properties
 
 
+def test_code_interpreter_snapshot_marker_stripped_as_the_first_chunk():
+    """The marker must not leak even when the snapshot is the only chunk for a call.
+
+    The first delta for a call takes a different code path (`existing` is still `None`,
+    so there's nothing to fold onto yet) than a later one, and that path has to strip the
+    marker too - a call that never streams incremental deltas at all, just one tagged
+    chunk, is exactly this case.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_1",
+                    inputs=[
+                        Content.from_text(
+                            text="print('hi')",
+                            additional_properties={_CONTENT_ITEM_SNAPSHOT_KEY: True},
+                        )
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].inputs is not None
+    assert "".join(item.text or "" for item in calls[0].inputs) == "print('hi')"
+    assert _CONTENT_ITEM_SNAPSHOT_KEY not in calls[0].inputs[0].additional_properties
+
+
 def test_code_interpreter_done_event_recognized_without_explicit_marker():
     """A done-shaped chunk still replaces accumulated deltas even without the marker.
 
