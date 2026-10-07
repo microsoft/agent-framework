@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import inspect
 import weakref
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeAlias, TypeGuard, cast
 
 from agent_framework import SupportsAgentRun, WorkflowAgent
 
 AgentSource: TypeAlias = SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]]
-
-# Bounded fallback for served objects that do not support weak references.
-_MAX_STRONG_RESOURCE_IDENTITIES = 1024
 
 _WORKFLOW_AGENT_INSTANCE_MESSAGE = (
     "WorkflowAgent instances cannot be hosted directly: a WorkflowAgent wraps mutable workflow and executor "
@@ -50,29 +46,33 @@ class WorkflowAgentReuseGuard:
 
     Mirrors ``WorkflowResolver`` for native workflows: this is an identity check on objects already served, not
     a proof that the factory allocates every resource freshly.
+
+    Identity is tracked by ``id()`` and is only meaningful while the object is alive, so every served object is
+    tracked through a weak reference whose callback forgets the identity on collection. ``WorkflowAgent``,
+    ``Workflow``, and ``Executor`` all support weak references (including slotted subclasses, since no base in
+    their hierarchy defines ``__slots__``). A duck-typed executor that cannot be weakly referenced is retained
+    strongly for the lifetime of the guard instead: that keeps the check exact at the cost of host memory
+    proportional to how many such executors the factory creates, which is preferred over an eviction window
+    that would silently accept reuse in a long-lived host.
     """
 
     def __init__(self) -> None:
         self._owned: dict[int, weakref.ReferenceType[Any]] = {}
-        self._strong_owned: OrderedDict[int, object] = OrderedDict()
+        self._retained: dict[int, object] = {}
 
     def claim(self, agent: WorkflowAgent) -> None:
         resources: list[object] = [agent, agent.workflow, *agent.workflow.get_executors_list()]
         unique_resources = {id(resource): resource for resource in resources}
+        # Check every identity before recording any, so a rejected claim leaves no partial state behind.
         for identifier, resource in unique_resources.items():
             previous = self._owned.get(identifier)
-            if (previous is not None and previous() is resource) or self._strong_owned.get(identifier) is resource:
+            if (previous is not None and previous() is resource) or self._retained.get(identifier) is resource:
                 raise RuntimeError(_WORKFLOW_AGENT_REUSE_MESSAGE)
         for identifier, resource in unique_resources.items():
             try:
                 self._owned[identifier] = weakref.ref(resource, lambda ref, key=identifier: self._forget(key, ref))
             except TypeError:
-                # Slotted executors may omit __weakref__; keep a bounded exact-identity fallback instead of
-                # rejecting them or retaining request objects for the host lifetime.
-                self._strong_owned[identifier] = resource
-                self._strong_owned.move_to_end(identifier)
-                while len(self._strong_owned) > _MAX_STRONG_RESOURCE_IDENTITIES:
-                    self._strong_owned.popitem(last=False)
+                self._retained[identifier] = resource
 
     def _forget(self, key: int, reference: weakref.ReferenceType[Any]) -> None:
         if self._owned.get(key) is reference:

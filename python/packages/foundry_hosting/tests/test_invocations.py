@@ -12,6 +12,7 @@ patching, matching the style used in ``test_toolbox.py``.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 import uuid
@@ -62,7 +63,7 @@ from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, Never
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
-from agent_framework_foundry_hosting._agent_source import _MAX_STRONG_RESOURCE_IDENTITIES, WorkflowAgentReuseGuard
+from agent_framework_foundry_hosting._agent_source import WorkflowAgentReuseGuard, resolve_agent
 from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
@@ -690,32 +691,72 @@ class TestInit:
 # region Request-scoped workflow agents
 
 
+@dataclass(slots=True)
+class _NonWeakrefExecutor:
+    """Duck-typed executor without ``__weakref__`` support (real ``Executor`` subclasses always support it)."""
+
+    id: str
+
+
+def _fake_workflow_agent(executors: list[object]) -> WorkflowAgent:
+    workflow = MagicMock()
+    workflow.get_executors_list.return_value = executors
+    agent = MagicMock(spec=WorkflowAgent)
+    agent.workflow = workflow
+    return agent
+
+
 class TestWorkflowAgentReuseGuard:
-    def test_tracks_slotted_executors_without_weakref_support(self) -> None:
-        """Executors that cannot be weakly referenced fall back to bounded strong identity tracking."""
-
-        @dataclass(slots=True)
-        class _SlottedExecutor:
-            id: str
-
-        def _fake_agent(executors: list[object]) -> WorkflowAgent:
-            workflow = MagicMock()
-            workflow.get_executors_list.return_value = executors
-            agent = MagicMock(spec=WorkflowAgent)
-            agent.workflow = workflow
-            return agent
-
-        shared_executor = _SlottedExecutor("shared")
+    def test_non_weakrefable_executor_reuse_is_rejected(self) -> None:
+        shared_executor = _NonWeakrefExecutor("shared")
         guard = WorkflowAgentReuseGuard()
-        guard.claim(_fake_agent([shared_executor]))
+        guard.claim(_fake_workflow_agent([shared_executor]))
 
         with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
-            guard.claim(_fake_agent([shared_executor]))
+            guard.claim(_fake_workflow_agent([shared_executor]))
 
-        # Fresh slotted executors are accepted, and the strong fallback stays bounded.
-        for index in range(_MAX_STRONG_RESOURCE_IDENTITIES + 5):
-            guard.claim(_fake_agent([_SlottedExecutor(str(index))]))
-        assert len(guard._strong_owned) <= _MAX_STRONG_RESOURCE_IDENTITIES  # pyright: ignore[reportPrivateUsage]
+    def test_non_weakrefable_executor_reuse_is_rejected_after_many_requests(self) -> None:
+        """The guarantee must not decay in a long-lived host: an executor served long ago is still rejected."""
+        shared_executor = _NonWeakrefExecutor("shared")
+        guard = WorkflowAgentReuseGuard()
+        guard.claim(_fake_workflow_agent([shared_executor]))
+
+        fresh_executors = [_NonWeakrefExecutor(str(index)) for index in range(2_000)]
+        for fresh in fresh_executors:
+            guard.claim(_fake_workflow_agent([fresh]))
+
+        with pytest.raises(RuntimeError, match="fresh WorkflowAgent"):
+            guard.claim(_fake_workflow_agent([shared_executor]))
+
+    def test_identity_is_released_after_weakrefable_resources_are_collected(self) -> None:
+        """Weakly referenceable resources are forgotten once collected so recycled ``id()`` values are not rejected."""
+        guard = WorkflowAgentReuseGuard()
+        agent = _build_transcript_workflow_agent()
+        guard.claim(agent)
+        assert len(guard._owned) >= 3  # pyright: ignore[reportPrivateUsage]
+
+        del agent
+        gc.collect()
+        assert guard._owned == {}  # pyright: ignore[reportPrivateUsage]
+
+        # A fresh agent built afterwards is accepted even if the allocator recycles object ids.
+        guard.claim(_build_transcript_workflow_agent())
+
+    async def test_concurrent_resolutions_accept_fresh_agents(self) -> None:
+        guard = WorkflowAgentReuseGuard()
+        agents = await asyncio.gather(
+            *(resolve_agent(_build_transcript_workflow_agent, reuse_guard=guard) for _ in range(8))
+        )
+        assert len({id(agent) for agent in agents}) == 8
+
+    async def test_concurrent_resolutions_of_shared_agent_admit_exactly_one(self) -> None:
+        shared = _build_transcript_workflow_agent()
+        guard = WorkflowAgentReuseGuard()
+        results = await asyncio.gather(
+            *(resolve_agent(lambda: shared, reuse_guard=guard) for _ in range(8)), return_exceptions=True
+        )
+        assert sum(result is shared for result in results) == 1
+        assert sum(isinstance(result, RuntimeError) for result in results) == 7
 
 
 class TestRequestScopedWorkflowAgents:
