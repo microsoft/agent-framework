@@ -4941,6 +4941,52 @@ async def test_connect_no_sampling_capabilities_without_client():
             await tool.close()
 
 
+async def test_connect_retains_and_close_clears_sdk_client() -> None:
+    """Test a framework-owned Client and its session share one lifecycle."""
+    tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
+    sdk_client = _mock_sdk_client(protocol_version="2026-07-28")
+
+    with patch("mcp.Client", return_value=sdk_client):
+        await tool.connect()
+        try:
+            assert tool._mcp_client is sdk_client
+            assert tool.session is sdk_client.session
+        finally:
+            await tool.close()
+
+    assert tool._mcp_client is None
+    assert tool.session is None
+
+
+async def test_call_tool_uses_sdk_client_for_framework_owned_connection() -> None:
+    """Test a standard tool call uses the retained high-level Client."""
+    session = Mock(spec=ClientSession)
+    session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            result_type="complete",
+            tools=[types.Tool(name="greet", input_schema={"type": "object", "properties": {}})],
+        )
+    )
+    session.call_tool = AsyncMock()
+    sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+    sdk_client.call_tool = AsyncMock(
+        return_value=types.CallToolResult(
+            result_type="complete",
+            content=[types.TextContent(type="text", text="Hello!")],
+            is_error=False,
+        )
+    )
+    tool = MCPStdioTool(name="test", command="test-command", load_prompts=False)
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            result = await tool.call_tool("greet")
+
+    assert _mcp_result_to_text(result) == "Hello!"
+    sdk_client.call_tool.assert_awaited_once_with("greet", arguments={}, meta=None)
+    session.call_tool.assert_not_awaited()
+
+
 # Test error handling in connect() method
 
 
@@ -6837,10 +6883,12 @@ async def test_mcp_tool_reuses_supplied_session(mode: str, expected_version: str
             )
 
             async with wrapper:
+                assert wrapper._mcp_client is None
                 assert wrapper.session is session
                 assert [function.name for function in wrapper.functions] == ["greet"]
                 assert _mcp_result_to_text(await wrapper.call_tool("greet")) == "Hello!"
 
+            assert wrapper._mcp_client is None
             initialize.assert_not_awaited()
             discover.assert_not_awaited()
             if mode == "auto":

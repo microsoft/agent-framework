@@ -957,6 +957,7 @@ class MCPTool:
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
         self._owns_session = session is None
+        self._mcp_client: Client | None = None
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
@@ -1939,6 +1940,7 @@ class MCPTool:
                 await self._cancel_pending_reload_tasks()
             await self._safe_close_exit_stack()
             if self._owns_session:
+                self._mcp_client = None
                 self.session = None
             self.is_connected = False
             self._reset_session_state()
@@ -2016,6 +2018,7 @@ class MCPTool:
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
+            self._mcp_client = mcp_client
             self._owns_session = True
             try:
                 await self._listen_capability_list_changes(mcp_client)
@@ -2697,6 +2700,7 @@ class MCPTool:
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         if self._owns_session:
+            self._mcp_client = None
             self.session = None
         self.is_connected = False
         self._reset_session_state()
@@ -2712,6 +2716,14 @@ class MCPTool:
 
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("close")
+
+    def _operation_client(self) -> Client | ClientSession:
+        """Return the highest-level MCP client available for standard operations."""
+        if self._mcp_client is not None:
+            return self._mcp_client
+        if self.session is None:
+            raise RuntimeError("MCPTool is not connected.")
+        return self.session
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -2832,7 +2844,11 @@ class MCPTool:
 
         for attempt in range(2):
             try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
+                result = await self._operation_client().call_tool(
+                    tool_name,
+                    arguments=filtered_kwargs,
+                    meta=cast("types.RequestParamsMeta | None", meta),
+                )
                 _capture_mcp_tool_result(result)
                 if result.is_error:
                     parsed = parser(result)
