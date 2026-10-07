@@ -2988,7 +2988,7 @@ class MCPTool:
         with create_mcp_client_span("prompts/get", target=prompt_name, attributes=mcp_span_attrs) as span:
             for attempt in range(2):
                 try:
-                    prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)  # type: ignore
+                    prompt_result = await self._operation_client().get_prompt(prompt_name, arguments=kwargs)
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:

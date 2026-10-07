@@ -4987,6 +4987,38 @@ async def test_call_tool_uses_sdk_client_for_framework_owned_connection() -> Non
     session.call_tool.assert_not_awaited()
 
 
+async def test_get_prompt_uses_sdk_client_for_framework_owned_connection() -> None:
+    """Test a standard prompt get uses the retained high-level Client."""
+    session = Mock(spec=ClientSession)
+    session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(
+            result_type="complete",
+            prompts=[types.Prompt(name="summarize", arguments=[])],
+        )
+    )
+    session.get_prompt = AsyncMock()
+    sdk_client = _mock_sdk_client(session=session, protocol_version="2026-07-28")
+    sdk_client.get_prompt = AsyncMock(
+        return_value=types.GetPromptResult(
+            messages=[
+                types.PromptMessage(
+                    role="user",
+                    content=types.TextContent(type="text", text="Summarize this."),
+                )
+            ]
+        )
+    )
+    tool = MCPStdioTool(name="test", command="test-command", load_tools=False)
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            result = await tool.get_prompt("summarize")
+
+    assert "Summarize this." in result
+    sdk_client.get_prompt.assert_awaited_once_with("summarize", arguments={})
+    session.get_prompt.assert_not_awaited()
+
+
 # Test error handling in connect() method
 
 
