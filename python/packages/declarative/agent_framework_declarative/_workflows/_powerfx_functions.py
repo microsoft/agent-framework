@@ -20,6 +20,8 @@ def _content_items_text(items: Any) -> str:
 
     Covers the .NET record shape (``[{"type": "text", "value": ...}]``,
     capitalized keys included) and objects exposing a text attribute.
+    Records declaring a non-text type (image URLs, files) are skipped:
+    their ``value`` is a payload reference, not displayable text.
     """
     if not isinstance(items, list):
         return ""
@@ -29,6 +31,9 @@ def _content_items_text(items: Any) -> str:
             parts.append(item)
         elif isinstance(item, dict):
             item_dict = cast(dict[str, Any], item)
+            declared_type = item_dict.get("type", item_dict.get("Type"))
+            if isinstance(declared_type, str) and declared_type.lower() != "text":
+                continue
             for key in ("text", "value", "Text", "Value"):
                 if isinstance(item_dict.get(key), str):
                     parts.append(item_dict[key])

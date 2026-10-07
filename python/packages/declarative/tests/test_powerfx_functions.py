@@ -69,6 +69,23 @@ class TestMessageText:
         msg = {"role": "assistant", "contents": [{"type": "text", "text": "hi"}]}
         assert message_text([msg]) == "hi"
 
+    def test_message_text_skips_non_text_content_records(self):
+        """Image/file records declare a non-text type; their value is not text."""
+        msg = {
+            "role": "user",
+            "content": [
+                {"type": "text", "value": "describe this"},
+                {"type": "image_url", "value": "https://example.com/cat.png"},
+                {"Type": "File", "Value": "data:application/pdf;base64,AAAA"},
+            ],
+        }
+        assert message_text([msg]) == "describe this"
+
+    def test_message_text_skips_untyped_payload_records(self):
+        """A record with neither a text type nor text keys stays empty."""
+        msg = {"role": "user", "content": [{"type": "image", "value": "..."}]}
+        assert message_text([msg]) == ""
+
     def test_message_text_mixed_shapes_join(self):
         """A list mixing both flat shapes extracts every entry."""
         msgs = [
