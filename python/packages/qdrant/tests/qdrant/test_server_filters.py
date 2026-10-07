@@ -17,7 +17,7 @@ from agent_framework import (
 )
 from agent_framework._vector_filters import filter_values_equal
 from agent_framework.exceptions import IntegrationInvalidResponseException
-from qdrant_client import models
+from qdrant_client import AsyncQdrantClient, models
 
 from agent_framework_qdrant import QdrantCollection
 
@@ -156,6 +156,52 @@ async def test_server_presence_ignores_missing_keys_and_null_array_elements(
         limit=100,
     )
     assert [point.id for point in points] == expected
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (Filter("meta", "exists"), [1, 2, 3]),
+        (Filter("meta", "is_null"), [1]),
+        (Filter("meta", "is_not_null"), [2, 3]),
+    ],
+)
+async def test_server_dict_presence_ignores_missing_keys(expression, expected):
+    # Qdrant 1.19.0 counts a missing key as zero values, so values_count(gte=0) would also match point 0.
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("data", name="meta", type_="dict", storage_name="attributes"),
+    ])
+    async with QdrantCollection(
+        dict,
+        definition=definition,
+        collection_name=f"af_qdrant_test_{uuid4().hex}",
+        async_client=AsyncQdrantClient(url=os.environ["QDRANT_TEST_URL"], check_compatibility=False),
+        managed_client=True,
+    ) as collection:
+        await collection.ensure_collection_exists()
+        try:
+            await collection.async_client.upsert(
+                collection.collection_name,
+                points=[
+                    models.PointStruct(id=index, vector={}, payload=payload)
+                    for index, payload in enumerate([
+                        {},
+                        {"attributes": None},
+                        {"attributes": {}},
+                        {"attributes": {"a": 1}},
+                    ])
+                ],
+                wait=True,
+            )
+            points, _ = await collection.async_client.scroll(
+                collection.collection_name,
+                scroll_filter=collection._prepare_filter(expression),
+                limit=100,
+            )
+            assert [point.id for point in points] == expected
+        finally:
+            await collection.ensure_collection_deleted()
 
 
 async def test_filtered_get_search_and_tool_params(server_collection, record):
