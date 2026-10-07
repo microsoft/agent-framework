@@ -421,6 +421,65 @@ def test_code_interpreter_tool_call_content_parses_inputs():
     assert call.inputs[0].text == "print('hi')"
 
 
+def test_code_interpreter_tool_call_stream_concatenates_prefix_deltas() -> None:
+    """Genuine deltas must concatenate even when one text is a prefix of the other (#8955)."""
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="(")])]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="()")])]
+        ),
+    ]
+    resp = ChatResponse.from_updates(updates)
+    joined = "".join(i.text or "" for i in resp.messages[0].contents[0].inputs or [])
+    assert joined == "(()"
+
+
+def test_code_interpreter_tool_call_stream_concatenates_indent_prefix_deltas() -> None:
+    deltas = ["    ", "    print(i)\n"]
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text=d)])]
+        )
+        for d in deltas
+    ]
+    resp = ChatResponse.from_updates(updates)
+    joined = "".join(i.text or "" for i in resp.messages[0].contents[0].inputs or [])
+    assert joined == "        print(i)\n"
+
+
+def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() -> None:
+    """A provider *.done payload is authoritative and replaces prior delta text."""
+
+    class _DoneEvent:
+        type = "response.code_interpreter_call_code.done"
+
+    updates = [
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="import os\n")])
+            ]
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_1",
+                    inputs=[
+                        Content.from_text(
+                            text="import os\nimport sys",
+                            raw_representation=_DoneEvent(),
+                        )
+                    ],
+                )
+            ]
+        ),
+    ]
+    resp = ChatResponse.from_updates(updates)
+    joined = "".join(i.text or "" for i in resp.messages[0].contents[0].inputs or [])
+    assert joined == "import os\nimport sys"
+
+
 def test_code_interpreter_tool_result_content_outputs():
     result = Content.from_code_interpreter_tool_result(
         call_id="call-2",

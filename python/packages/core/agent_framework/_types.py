@@ -2350,21 +2350,46 @@ def _content_items_text(items: Any) -> str | None:
     return "".join(text_parts)
 
 
+def _content_items_are_complete_value(items: Any) -> bool:
+    """Return True when items carry an authoritative full value (e.g. a ``*.done`` stream event).
+
+    OpenAI Responses emits ``code_interpreter_call_code.done`` with the full code after
+    incremental ``.delta`` events. Only that kind of payload should replace prior text;
+    ordinary deltas must always concatenate even when one happens to be a string prefix
+    of the other (see #8955 / #8903).
+    """
+    if not isinstance(items, list):
+        return False
+    for item in cast(list[object], items):
+        if not isinstance(item, Content):
+            continue
+        props = item.additional_properties or {}
+        if props.get("stream_complete") or props.get("complete"):
+            return True
+        raw = item.raw_representation
+        raw_type = getattr(raw, "type", None) if raw is not None else None
+        if isinstance(raw_type, str) and raw_type.endswith(".done"):
+            return True
+    return False
+
+
 def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
-    """Merge streamed nested content lists, replacing deltas with a later full value when present."""
+    """Merge streamed nested content lists.
+
+    Incremental text deltas are always concatenated. A later complete/full value
+    (provider ``*.done`` event or ``stream_complete`` flag) replaces the accumulation.
+    """
     if incoming is None:
         return existing
     if existing is None:
         return deepcopy(incoming)
 
+    if _content_items_are_complete_value(incoming):
+        return deepcopy(incoming)
+
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:
-        if incoming_text.startswith(existing_text):
-            return deepcopy(incoming)
-        if existing_text.startswith(incoming_text):
-            return existing
-
         existing_items = cast(list[Content], existing)
         merged = deepcopy(existing_items[0])
         merged.text = existing_text + incoming_text
