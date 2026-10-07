@@ -35,6 +35,7 @@ from agent_framework import (
     InMemoryStore,
     Message,
     MessageInjectionMiddleware,
+    RawAgent,
     ResponseStream,
     ServiceSessionId,
     SessionContext,
@@ -52,6 +53,7 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
     ChatClientInvalidResponseException,
@@ -91,6 +93,46 @@ class _ConnectedMCPTool(MCPTool):
 
     def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         raise NotImplementedError
+
+
+class _LifecycleClient(MockBaseChatClient):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+        self.exit_exception_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "_LifecycleClient":
+        self.events.append("client.enter")
+        return self
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        self.exit_exception_type = exc_type
+        self.events.append("client.exit")
+
+
+class _LifecycleMCPTool(_ConnectedMCPTool):
+    def __init__(self, name: str, events: list[str], *, fail_on_enter: bool = False) -> None:
+        super().__init__(name=name, function_names=[])
+        self.events = events
+        self.fail_on_enter = fail_on_enter
+        self.exit_exception_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> "_LifecycleMCPTool":
+        self.events.append(f"{self.name}.enter")
+        if self.fail_on_enter:
+            raise RuntimeError("MCP entry failed")
+        self.is_connected = True
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self.exit_exception_type = exc_type
+        self.events.append(f"{self.name}.exit")
+        self.is_connected = False
 
 
 class _RecordingHistoryProvider(HistoryProvider):
@@ -160,6 +202,85 @@ def test_agent_session_type(agent_session: AgentSession) -> None:
 
 def test_agent_type(agent: SupportsAgentRun) -> None:
     assert isinstance(agent, SupportsAgentRun)
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_explicit_open_close(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    mcp_tool = _LifecycleMCPTool("mcp", events)
+    agent = agent_type(client=client, tools=[mcp_tool])
+
+    assert await agent.open() is agent
+    assert events == ["client.enter", "mcp.enter"]
+
+    await agent.close()
+    await agent.close()
+
+    assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_async_with_delegates_to_open_close(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    mcp_tool = _LifecycleMCPTool("mcp", events)
+    agent = agent_type(client=client, tools=[mcp_tool])
+
+    with (
+        patch.object(agent, "open", wraps=agent.open) as open_mock,
+        patch.object(agent, "close", wraps=agent.close) as close_mock,
+        pytest.raises(RuntimeError, match="body failed"),
+    ):
+        async with agent as entered_agent:
+            assert entered_agent is agent
+            assert events == ["client.enter", "mcp.enter"]
+            raise RuntimeError("body failed")
+
+    open_mock.assert_awaited_once_with()
+    close_mock.assert_awaited_once_with()
+    assert events == ["client.enter", "mcp.enter", "mcp.exit", "client.exit"]
+    assert client.exit_exception_type is None
+    assert mcp_tool.exit_exception_type is None
+
+
+@pytest.mark.parametrize("agent_type", [Agent, RawAgent])
+async def test_agent_failed_open_closes_entered_contexts(agent_type: type[RawAgent]) -> None:
+    events: list[str] = []
+    client = _LifecycleClient(events)
+    first_tool = _LifecycleMCPTool("first", events)
+    failing_tool = _LifecycleMCPTool("failing", events, fail_on_enter=True)
+    agent = agent_type(client=client, tools=[first_tool, failing_tool])
+
+    with pytest.raises(RuntimeError, match="MCP entry failed"):
+        await agent.open()
+
+    assert events == ["client.enter", "first.enter", "failing.enter", "first.exit", "client.exit"]
+    assert first_tool.exit_exception_type is None
+    assert client.exit_exception_type is None
+
+    events.clear()
+    failing_tool.fail_on_enter = False
+    assert await agent.open() is agent
+    await agent.close()
+    assert events == ["client.enter", "first.enter", "failing.enter", "failing.exit", "first.exit", "client.exit"]
+
+
+async def test_agent_close_cleans_up_mcp_tool_opened_during_run(chat_client_base: MockBaseChatClient) -> None:
+    events: list[str] = []
+    mcp_tool = _LifecycleMCPTool("lazy", events)
+    mcp_tool.is_connected = False
+    agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    await agent.run("hello")
+
+    assert events == ["lazy.enter"]
+    assert mcp_tool.is_connected
+
+    await agent.close()
+
+    assert events == ["lazy.enter", "lazy.exit"]
+    assert not mcp_tool.is_connected
 
 
 async def test_agent_run(agent: SupportsAgentRun) -> None:
@@ -2102,6 +2223,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
@@ -2386,6 +2508,7 @@ async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fres
                 function=delegated_tool,
                 arguments={"task": "First delegation"},
                 session=parent_session,
+                parent_service_session_state_keys=(),
             )
         )
 
@@ -2396,6 +2519,7 @@ async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fres
             function=delegated_tool,
             arguments={"task": "Fresh delegation"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
@@ -2459,9 +2583,232 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 
+    assert parent_session.state["counter"] == 1
+
+
+async def test_chat_agent_as_tool_direct_propagation_requires_parent_provider_ownership(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Fail closed when a direct invocation cannot identify parent-owned provider state."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+    parent_session = AgentSession()
+    parent_session.state["parent_provider_session"] = "parent-handle"
+    child_run_called = False
+    original_run = agent.run
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal child_run_called
+        child_run_called = True
+        return original_run(*args, **kwargs)
+
+    with (
+        patch.object(agent, "run", side_effect=capturing_run),
+        raises(ToolExecutionException, match="parent provider-owned session state"),
+    ):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Run child"},
+                session=parent_session,
+            )
+        )
+
+    assert child_run_called is False
+    assert parent_session.state == {"parent_provider_session": "parent-handle"}
+
+
+async def test_chat_agent_as_tool_direct_propagation_uses_explicit_parent_provider_ownership(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Allow a direct host to declare parent-owned provider keys explicitly."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+    parent_session = AgentSession()
+    parent_session.state.update({"parent_provider_session": "parent-handle", "counter": 0})
+    original_run = agent.run
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        child_session = cast(AgentSession, kwargs["session"])
+        assert "parent_provider_session" not in child_session.state
+        child_session.state["counter"] += 1
+        child_session.state["parent_provider_session"] = "child-handle"
+        return original_run(*args, **kwargs)
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"task": "Run child"},
+        session=parent_session,
+        parent_service_session_state_keys={"parent_provider_session"},
+    )
+
+    with patch.object(agent, "run", side_effect=capturing_run):
+        await tool.invoke(context=context)
+
+    assert parent_session.state["parent_provider_session"] == "parent-handle"
+    assert parent_session.state["counter"] == 1
+
+
+@pytest.mark.parametrize("parent_handle", [None, "parent-provider-session"])
+async def test_chat_agent_as_tool_propagate_session_isolates_provider_owned_state(
+    client: SupportsChatGetResponse, parent_handle: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that provider-owned state stays isolated across sequential delegated calls."""
+
+    class ProviderStateAgent(Agent):
+        service_session_state_keys = frozenset({"provider_session"})
+
+    monkeypatch.setattr(client, "service_session_state_keys", frozenset({"client_provider_session"}), raising=False)
+    parent_session = AgentSession(session_id="shared-session", service_session_id="parent-service-session")
+    parent_session.state.update({
+        "counter": 0,
+        "ordinary": "parent-value",
+    })
+    if parent_handle is not None:
+        parent_session.state["provider_session"] = parent_handle
+        parent_session.state["client_provider_session"] = parent_handle
+
+    observed_child_states: list[dict[str, Any]] = []
+    agents = [
+        ProviderStateAgent(client=client, name="FirstChild"),
+        ProviderStateAgent(client=client, name="SecondChild"),
+    ]
+
+    for agent in (agents[0], agents[1], agents[0]):
+        original_run = agent.run
+
+        def capturing_run(*args: Any, _run: Callable[..., Any] = original_run, **kwargs: Any) -> Any:
+            child_session = cast(AgentSession, kwargs["session"])
+            observed_child_states.append(dict(child_session.state))
+            assert child_session.service_session_id is None
+            child_session.state["counter"] += 1
+            child_session.state["ordinary"] = f"child-value-{len(observed_child_states)}"
+            child_session.state["provider_session"] = f"child-provider-session-{len(observed_child_states)}"
+            child_session.state["client_provider_session"] = f"client-provider-session-{len(observed_child_states)}"
+            child_session.service_session_id = f"child-service-session-{len(observed_child_states)}"
+            return _run(*args, **kwargs)
+
+        delegated_tool = agent.as_tool(propagate_session=True)
+        with patch.object(agent, "run", side_effect=capturing_run):
+            await delegated_tool.invoke(
+                context=FunctionInvocationContext(
+                    function=delegated_tool,
+                    arguments={"task": "Run child"},
+                    session=parent_session,
+                    parent_service_session_state_keys={
+                        *ProviderStateAgent.service_session_state_keys,
+                        "client_provider_session",
+                    },
+                )
+            )
+
+    assert [state.get("provider_session") for state in observed_child_states] == [None, None, None]
+    assert [state.get("client_provider_session") for state in observed_child_states] == [None, None, None]
+    assert [state["counter"] for state in observed_child_states] == [0, 1, 2]
+    assert [state["ordinary"] for state in observed_child_states] == ["parent-value", "child-value-1", "child-value-2"]
+    expected_state: dict[str, Any] = {"counter": 3, "ordinary": "child-value-3"}
+    if parent_handle is not None:
+        expected_state["provider_session"] = parent_handle
+        expected_state["client_provider_session"] = parent_handle
+    assert parent_session.state == expected_state
+    assert parent_session.service_session_id == "parent-service-session"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("with_middleware", [False, True])
+@pytest.mark.parametrize("child_declares_keys", [False, True])
+async def test_chat_agent_as_tool_isolates_distinct_parent_provider_state(
+    stream: bool, with_middleware: bool, child_declares_keys: bool
+) -> None:
+    """Keep parent agent and client state local even when the child uses different declarations."""
+
+    class ParentAgent(Agent):
+        service_session_state_keys = frozenset({"parent_provider", "parent_removed"})
+
+    class ParentClient(MockBaseChatClient):
+        service_session_state_keys = frozenset({"parent_client_provider", "parent_client_removed"})
+
+    class ChildAgent(Agent):
+        service_session_state_keys = frozenset({"child_provider"}) if child_declares_keys else frozenset()
+
+    parent_state: dict[str, Any] = {
+        "parent_provider": {"values": ["parent"]},
+        "parent_removed": "parent",
+        "parent_client_provider": "parent-client",
+        "parent_client_removed": "parent-client",
+        "counter": 0,
+    }
+    parent_session = AgentSession()
+    parent_session.state.update(parent_state)
+    observed_states: list[dict[str, Any]] = []
+
+    @tool(approval_mode="never_require")
+    def inspect_state(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        observed_states.append(dict(ctx.session.state))
+        assert _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY not in ctx.kwargs
+        ctx.session.state.setdefault("parent_provider", {"values": []})["values"].append("child")
+        ctx.session.state.pop("parent_removed", None)
+        ctx.session.state["parent_client_provider"] = "child"
+        ctx.session.state.pop("parent_client_removed", None)
+        ctx.session.state["counter"] += 1
+        if child_declares_keys:
+            ctx.session.state["child_provider"] = "child"
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="inspect", name="inspect_state", arguments={})],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child = ChildAgent(client=child_client, tools=[inspect_state])
+    parent_client = ParentClient()
+    parent_call = Content.from_function_call(
+        call_id="delegate", name="delegate", arguments={"task": "Inspect the delegated session"}
+    )
+    if stream:
+        parent_client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[parent_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Parent completed.")])],
+        ]
+    else:
+        parent_client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[parent_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+        ]
+    parent = ParentAgent(
+        client=parent_client,
+        tools=[child.as_tool(name="delegate", propagate_session=True)],
+        middleware=[ToolApprovalMiddleware(source_id="parent_approval")] if with_middleware else [],
+    )
+    invocation_kwargs: dict[str, frozenset[str]] = {_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY: frozenset()}
+    if stream:
+        result = await parent.run(
+            "Delegate.", session=parent_session, stream=True, function_invocation_kwargs=invocation_kwargs
+        ).get_final_response()
+    else:
+        result = await parent.run("Delegate.", session=parent_session, function_invocation_kwargs=invocation_kwargs)
+
+    assert result.text == "Parent completed."
+    assert len(observed_states) == 1
+    assert all(
+        key not in observed_states[0]
+        for key in ParentAgent.service_session_state_keys | ParentClient.service_session_state_keys
+    )
+    assert parent_session.state["parent_provider"] == {"values": ["parent"]}
+    assert parent_session.state["parent_removed"] == "parent"
+    assert parent_session.state["parent_client_provider"] == "parent-client"
+    assert parent_session.state["parent_client_removed"] == "parent-client"
+    assert "child_provider" not in parent_session.state
     assert parent_session.state["counter"] == 1
 
 
@@ -2496,6 +2843,7 @@ async def test_chat_agent_as_tool_propagate_session_clears_service_session_id(cl
             function=tool,
             arguments={"task": "Hello"},
             session=parent_session,
+            parent_service_session_state_keys=(),
         )
     )
 

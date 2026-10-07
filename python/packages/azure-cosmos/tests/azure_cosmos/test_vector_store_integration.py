@@ -269,6 +269,8 @@ async def test_disposable_vector_database_crud_filter_and_search() -> None:
         }
         assert await default_collection.get(filter=Filter("count", "eq", True)) == []
         assert await default_collection.get(filter=Filter("active", "eq", 1)) == []
+        not_value = FilterGroup("not", [Filter("optional", "eq", "value")])
+        assert {item["key"] for item in await default_collection.get(filter=not_value)} == {"one", "three"}
 
         missing_optional = {**multi_records[0], "id": "missing"}
         missing_optional.pop("optional")

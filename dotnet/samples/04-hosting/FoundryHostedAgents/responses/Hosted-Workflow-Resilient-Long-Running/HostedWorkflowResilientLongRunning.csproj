@@ -14,7 +14,7 @@
     <RootNamespace>HostedWorkflowResilientLongRunning</RootNamespace>
     <AssemblyName>HostedWorkflowResilientLongRunning</AssemblyName>
     <UserSecretsId>440f42c9-f64e-441e-9d92-ea814203075e</UserSecretsId>
-    <AgentFrameworkVersion>1.18.0-preview.260818.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
     <LocalAgentFrameworkRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\src</LocalAgentFrameworkRoot>
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
   </PropertyGroup>
@@ -30,7 +30,8 @@
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' != 'true'">
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="$(AgentFrameworkVersion)" />
+    <!-- Workflows ships as a stable package, so it has no -preview build matching AgentFrameworkVersion. -->
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.22.0" />
   </ItemGroup>
 
   <ItemGroup>

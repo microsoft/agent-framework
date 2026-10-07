@@ -46,7 +46,7 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionContext
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
-from ._types import Content, EmbeddingGenerationOptions, Message
+from ._types import Content, Message
 from ._vector_filters import (
     Filter,
     FilterExpression,
@@ -356,6 +356,55 @@ class VectorStoreField:
         object.__setattr__(self, "embedding_generator", resolved_embedding_generator)
         object.__setattr__(self, "is_auto_generated", is_auto_generated)
         object.__setattr__(self, "provider_annotations", _copy_provider_annotations(provider_annotations))
+
+
+def _prepare_embedding_options(
+    field: VectorStoreField,
+    embeddings_options: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    options = deepcopy(dict(embeddings_options)) if embeddings_options is not None else {}
+    if field.dimensions is not None:
+        requested = options.get("dimensions")
+        if "dimensions" in options and (
+            not isinstance(requested, int) or isinstance(requested, bool) or requested != field.dimensions
+        ):
+            raise ValueError(
+                f"embeddings_options['dimensions'] for vector field '{field.name}' "
+                f"must match its declared dimensions ({field.dimensions})."
+            )
+        options["dimensions"] = field.dimensions
+    return options
+
+
+def _prepare_upsert_embedding_options(
+    vector_fields: Sequence[VectorStoreField],
+    *,
+    record_count: int,
+    embeddings_options: Mapping[str, Any] | None,
+    embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    if embeddings_options is not None and embeddings_options_by_field is not None:
+        raise ValueError("Provide either embeddings_options or embeddings_options_by_field, not both.")
+    if not vector_fields or not record_count:
+        if embeddings_options is not None or embeddings_options_by_field is not None:
+            raise ValueError("Embedding options require records and generated vector fields.")
+        return {}
+    if embeddings_options_by_field is not None:
+        if not isinstance(embeddings_options_by_field, Mapping):
+            raise TypeError("embeddings_options_by_field must be a mapping.")
+        if any(not isinstance(name, str) for name in embeddings_options_by_field):
+            raise TypeError("embeddings_options_by_field keys must be vector field names.")
+        unknown = sorted(set(embeddings_options_by_field) - {field.name for field in vector_fields})
+        if unknown:
+            raise ValueError(f"Embedding options provided for non-generated vector field(s): {', '.join(unknown)}.")
+        for name, options in embeddings_options_by_field.items():
+            if not isinstance(options, Mapping):
+                raise TypeError(f"embeddings_options_by_field[{name!r}] must be a mapping.")
+        return {
+            field.name: _prepare_embedding_options(field, embeddings_options_by_field.get(field.name))
+            for field in vector_fields
+        }
+    return {field.name: _prepare_embedding_options(field, embeddings_options) for field in vector_fields}
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -916,6 +965,8 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         records: ModelT | Sequence[ModelT],
         *,
         generate_vectors: GenerateVectors = True,
+        embeddings_options: Mapping[str, Any] | None = None,
+        embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> Any:
         """Serialize one or more application records for the backing store.
@@ -930,6 +981,12 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
             records: One application record or a sequence of records.
             generate_vectors: Whether to generate all vector fields, preserve all supplied values, or generate only
                 the vector fields named in a sequence. Generated values overwrite supplied values.
+            embeddings_options: Provider embedding options applied to every generated vector field.
+                Dimensions come from the vector field and conflicting values raise an error.
+                Mutually exclusive with ``embeddings_options_by_field``.
+            embeddings_options_by_field: Provider options keyed by logical vector field name.
+                Only fields selected by ``generate_vectors`` may appear; omitted fields receive
+                their declared dimensions only.
             context: Connector-specific serialization context.
 
         Raises:
@@ -943,8 +1000,16 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         dict_records = [self._serialize_record_to_dict(record) for record in input_records]
 
         vector_fields = self._resolve_vector_fields_to_generate(generate_vectors)
+        field_options = _prepare_upsert_embedding_options(
+            vector_fields,
+            record_count=len(dict_records),
+            embeddings_options=embeddings_options,
+            embeddings_options_by_field=embeddings_options_by_field,
+        )
         if vector_fields:
-            await self._add_vectors_to_records(dict_records, vector_fields=vector_fields)
+            await self._add_vectors_to_records(
+                dict_records, vector_fields=vector_fields, embeddings_options_by_field=field_options
+            )
         dimension_fields = tuple((field.storage_name or field.name, field) for field in self.definition.vector_fields)
         for record_index, record in enumerate(dict_records):
             for storage_name, field in dimension_fields:
@@ -1025,6 +1090,7 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         records: Sequence[dict[str, Any]],
         *,
         vector_fields: Sequence[VectorStoreField],
+        embeddings_options_by_field: Mapping[str, Mapping[str, Any]],
     ) -> None:
         if not records:
             return
@@ -1045,10 +1111,9 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
                 raise ValueError(
                     f"Vector field '{field.name}' cannot be embedded because at least one value is missing."
                 )
-            options: EmbeddingGenerationOptions = {}
-            if field.dimensions is not None:
-                options["dimensions"] = field.dimensions
-            embeddings = await embedding_generator.get_embeddings(values, options=options)
+            embeddings = await embedding_generator.get_embeddings(
+                values, options=embeddings_options_by_field[field.name]
+            )
             if len(embeddings) != len(records):
                 raise IntegrationInvalidResponseException(
                     f"Embedding client returned {len(embeddings)} vectors for {len(records)} records."
@@ -1276,6 +1341,8 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         records: Sequence[ModelT],
         *,
         generate_vectors: GenerateVectors = True,
+        embeddings_options: Mapping[str, Any] | None = None,
+        embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None = None,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
         """Upsert a batch of records.
@@ -1295,6 +1362,12 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             records: A sequence of models.
             generate_vectors: Whether to generate all vector fields, preserve all supplied values, or generate only
                 the vector fields named in a sequence. Generated values overwrite supplied values.
+            embeddings_options: Provider options applied to every generated vector field.
+                The field's dimensions are added automatically; a different supplied
+                ``dimensions`` value raises an error. Mutually exclusive with
+                ``embeddings_options_by_field``.
+            embeddings_options_by_field: Provider options keyed by logical vector field
+                name, restricted to fields selected for generation.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1310,7 +1383,12 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         if not _is_non_string_sequence(records):
             raise TypeError("records must be a sequence.")
         try:
-            serialized = await self.serialize(records, generate_vectors=generate_vectors)
+            serialized = await self.serialize(
+                records,
+                generate_vectors=generate_vectors,
+                embeddings_options=embeddings_options,
+                embeddings_options_by_field=embeddings_options_by_field,
+            )
             store_records = list(serialized) if _is_non_string_sequence(serialized) else [serialized]
             keys = list(await self._inner_upsert(store_records, operation_options=operation_options))
         except (TypeError, ValueError, NotImplementedError):
@@ -1549,6 +1627,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
+        embeddings_options: Mapping[str, Any] | None = None,
         filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
@@ -1568,6 +1647,9 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: An optional precomputed query vector.
+            embeddings_options: Provider options used only for local query embedding.
+                Ignored when ``vector`` is provided. The selected vector field supplies
+                dimensions; conflicts raise an error.
             filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
@@ -1594,6 +1676,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: Literal["vector"] = "vector",
         vector: Vector,
+        embeddings_options: Mapping[str, Any] | None = None,
         filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
@@ -1612,6 +1695,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         Args:
             search_type: The vector search type.
             vector: The precomputed query vector.
+            embeddings_options: Ignored when supplying a precomputed vector.
             filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
@@ -1638,6 +1722,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
+        embeddings_options: Mapping[str, Any] | None = None,
         filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
@@ -1664,6 +1749,9 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: A precomputed query vector.
+            embeddings_options: Provider options used only for local query embedding.
+                Ignored when ``vector`` is provided. The selected vector field supplies
+                dimensions; conflicts raise an error.
             filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
@@ -1702,6 +1790,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 resolved_vector = await self._generate_vector_from_values(
                     values,
                     vector_property_name=vector_property_name,
+                    embeddings_options=embeddings_options,
                 )
             if resolved_vector is not None:
                 vector_field = self.definition.try_get_vector_field(vector_property_name)
@@ -1743,19 +1832,22 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         values: Any,
         *,
         vector_property_name: str | None,
+        embeddings_options: Mapping[str, Any] | None,
     ) -> Vector | None:
         vector_field = self.definition.try_get_vector_field(vector_property_name)
         if vector_field is None:
             if vector_property_name is not None:
                 raise ValueError(f"Vector field '{vector_property_name}' was not found in the collection definition.")
+            if embeddings_options is not None:
+                raise ValueError("embeddings_options requires a vector field for local query embedding.")
             return None
         embedding_generator = vector_field.embedding_generator or self.embedding_generator
         if embedding_generator is None:
+            if embeddings_options is not None:
+                raise ValueError("embeddings_options requires an embedding generator for local query embedding.")
             return None
-        embedding_options: EmbeddingGenerationOptions = {}
-        if vector_field.dimensions is not None:
-            embedding_options["dimensions"] = vector_field.dimensions
-        embeddings = await embedding_generator.get_embeddings([values], options=embedding_options)
+        options = _prepare_embedding_options(vector_field, embeddings_options)
+        embeddings = await embedding_generator.get_embeddings([values], options=options)
         if len(embeddings) != 1:
             raise IntegrationInvalidResponseException(
                 f"Embedding client returned {len(embeddings)} vectors for one search value."
@@ -1815,6 +1907,8 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
         records: Sequence[ModelT],
         *,
         generate_vectors: GenerateVectors = True,
+        embeddings_options: Mapping[str, Any] | None = None,
+        embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None = None,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
         """Upsert a batch, which may partially succeed, generating embeddings by default."""
@@ -1861,6 +1955,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
+        embeddings_options: Mapping[str, Any] | None = None,
         filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
@@ -1876,6 +1971,8 @@ class SupportsVectorSearch(Protocol[ModelT]):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: An optional precomputed query vector.
+            embeddings_options: Provider options for locally embedding the query;
+                ignored when a precomputed vector is provided.
             filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
@@ -1902,6 +1999,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         *,
         search_type: Literal["vector"] = "vector",
         vector: Vector,
+        embeddings_options: Mapping[str, Any] | None = None,
         filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
@@ -1916,6 +2014,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         Args:
             search_type: The vector search type.
             vector: The precomputed query vector.
+            embeddings_options: Ignored when supplying a precomputed vector.
             filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
@@ -2200,6 +2299,8 @@ def create_upsert_tool(
     description: str = _DEFAULT_UPSERT_TOOL_DESCRIPTION,
     approval_mode: Literal["always_require", "never_require"] = "always_require",
     generate_vectors: GenerateVectors = True,
+    embeddings_options: Mapping[str, Any] | None = None,
+    embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None = None,
     filter: FilterExpression | None = None,
     max_batch_size: int = _DEFAULT_VECTOR_TOOL_MAX_BATCH_SIZE,
 ) -> FunctionTool:
@@ -2217,6 +2318,10 @@ def create_upsert_tool(
         description: The tool description shown to the model.
         approval_mode: Whether the tool requires approval before invocation.
         generate_vectors: Which vector fields the collection generates during upsert.
+        embeddings_options: Provider options applied to every generated vector field.
+            Conflicting dimensions raise an error. Mutually exclusive with
+            ``embeddings_options_by_field``.
+        embeddings_options_by_field: Provider options keyed by logical vector field name.
         filter: Optional fixed scope filter that every candidate record must satisfy.
             Unsupported filter operators fail closed before embedding or writing.
         max_batch_size: Maximum records accepted in one invocation.
@@ -2225,6 +2330,14 @@ def create_upsert_tool(
         A function tool accepting a non-empty ``records`` array.
     """
     _validate_vector_tool_max_batch_size(max_batch_size)
+    if embeddings_options is not None and embeddings_options_by_field is not None:
+        raise ValueError("Provide either embeddings_options or embeddings_options_by_field, not both.")
+    configured_embeddings_options = deepcopy(dict(embeddings_options)) if embeddings_options is not None else None
+    configured_by_field: dict[str, dict[str, Any]] | None = None
+    if embeddings_options_by_field is not None:
+        if not isinstance(embeddings_options_by_field, Mapping):
+            raise TypeError("embeddings_options_by_field must be a mapping.")
+        configured_by_field = {name: deepcopy(dict(options)) for name, options in embeddings_options_by_field.items()}
     configured_filter = _prepare_vector_tool_filter(collection, filter)
 
     async def upsert_tool(records: Any) -> dict[str, Any]:
@@ -2248,7 +2361,15 @@ def create_upsert_tool(
             if invalid_indexes:
                 indexes = ", ".join(str(index) for index in invalid_indexes)
                 raise ValueError(f"records at indexes {indexes} do not satisfy the configured scope filter.")
-        keys = await collection.upsert(decoded, generate_vectors=generate_vectors)
+        if configured_embeddings_options is None and configured_by_field is None:
+            keys = await collection.upsert(decoded, generate_vectors=generate_vectors)
+        else:
+            keys = await collection.upsert(
+                decoded,
+                generate_vectors=generate_vectors,
+                embeddings_options=deepcopy(configured_embeddings_options),
+                embeddings_options_by_field=deepcopy(configured_by_field),
+            )
         return {"keys": [collection.key_to_json(key) for key in keys]}
 
     return FunctionTool(
@@ -2438,6 +2559,7 @@ def create_vector_search_tool(
     skip: int | Param = 0,
     filter: FilterExpression | None = None,
     result_mapper: Callable[[SearchResponse[ModelT]], str | Content | Sequence[Content]] | None = None,
+    embeddings_options: Mapping[str, Any] | None = None,
 ) -> FunctionTool:
     """Create an agent-usable tool backed by vector search.
 
@@ -2454,6 +2576,9 @@ def create_vector_search_tool(
             its leaf for an absent or null argument. Remaining group children still apply;
             empty groups are removed recursively. See ``FilterGroup`` for details.
         result_mapper: Maps each search response to text or one or more multimodal content items.
+        embeddings_options: Provider options for local query embedding. The vector field
+            supplies dimensions; a conflicting ``dimensions`` value raises an error.
+            Requires the search implementation to have an embedding generator.
 
     Returns:
         A function tool with ``query`` and any parameters discovered in ``filter``, ``top``, or ``skip``.
@@ -2472,6 +2597,7 @@ def create_vector_search_tool(
     if isinstance(skip, int):
         _validate_paging(top=1, skip=skip)
 
+    configured_embeddings_options = deepcopy(dict(embeddings_options)) if embeddings_options is not None else None
     map_result = result_mapper or _default_search_result_mapper
     configured_filter = snapshot_filter(filter) if filter is not None else None
     input_schema, param_definitions = _create_search_tool_input_schema(
@@ -2519,13 +2645,23 @@ def create_vector_search_tool(
                 resolved_filter,
                 field_names=definition.names if isinstance(definition, VectorStoreCollectionDefinition) else None,
             )
-        results = await search.search(
-            query,
-            search_type=search_type,
-            filter=resolved_filter,
-            top=invocation_top,
-            skip=invocation_skip,
-        )
+        if configured_embeddings_options is None:
+            results = await search.search(
+                query,
+                search_type=search_type,
+                filter=resolved_filter,
+                top=invocation_top,
+                skip=invocation_skip,
+            )
+        else:
+            results = await search.search(
+                query,
+                embeddings_options=deepcopy(configured_embeddings_options),
+                search_type=search_type,
+                filter=resolved_filter,
+                top=invocation_top,
+                skip=invocation_skip,
+            )
         mapped_results: list[Content] = []
         consumed_results = 0
         async for result in results:
@@ -3144,6 +3280,9 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
         include_get_tool: bool = True,
         include_delete_tool: bool = True,
         include_search_tool: bool = True,
+        upsert_embeddings_options: Mapping[str, Any] | None = None,
+        upsert_embeddings_options_by_field: Mapping[str, Mapping[str, Any]] | None = None,
+        search_embeddings_options: Mapping[str, Any] | None = None,
         approval_mode: (
             Literal["always_require", "never_require"]
             | Mapping[
@@ -3171,6 +3310,12 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
             include_get_tool: Whether to add the default get-by-key tool.
             include_delete_tool: Whether to add the default delete-by-key tool.
             include_search_tool: Whether to add the default vector search tool.
+            upsert_embeddings_options: Provider options for every vector field generated
+                by the default upsert tool.
+            upsert_embeddings_options_by_field: Options keyed by logical vector field
+                name for the default upsert tool. Mutually exclusive with flat options.
+            search_embeddings_options: Provider options for the default search tool's
+                local query embedding.
             approval_mode: One mode for every generated tool, or per-tool overrides
                 merged over the safe defaults.
             additional_search_tools: Additional caller-configured search tools.
@@ -3193,6 +3338,13 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
             if not isinstance(value, bool):
                 raise TypeError(f"{name} must be a boolean.")
 
+        if not include_upsert_tool and (
+            upsert_embeddings_options is not None or upsert_embeddings_options_by_field is not None
+        ):
+            raise ValueError("Upsert embedding options require include_upsert_tool=True.")
+        if not include_search_tool and search_embeddings_options is not None:
+            raise ValueError("Search embedding options require include_search_tool=True.")
+
         _validate_vector_tool_max_batch_size(max_tool_batch_size)
         configured_scope_filter = _prepare_vector_tool_filter(collection, scope_filter)
         approval_modes = self._resolve_approval_modes(approval_mode)
@@ -3202,6 +3354,8 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
                 create_upsert_tool(
                     collection,
                     approval_mode=approval_modes["upsert"],
+                    embeddings_options=upsert_embeddings_options,
+                    embeddings_options_by_field=upsert_embeddings_options_by_field,
                     filter=configured_scope_filter,
                     max_batch_size=max_tool_batch_size,
                 )
@@ -3231,6 +3385,7 @@ class VectorCollectionContextProvider(ContextProvider, Generic[KeyT, ModelT]):
                 create_vector_search_tool(
                     cast(SupportsVectorSearch[ModelT], collection),
                     approval_mode=approval_modes["search"],
+                    embeddings_options=search_embeddings_options,
                     filter=configured_scope_filter,
                 )
             )

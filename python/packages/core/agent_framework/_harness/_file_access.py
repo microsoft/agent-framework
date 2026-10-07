@@ -26,7 +26,10 @@ import errno
 import fnmatch
 import logging
 import os
+import threading
 import time
+import unicodedata
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
@@ -1218,6 +1221,9 @@ class FileSystemAgentFileStore(AgentFileStore):
     hostile process that shares the root directory.
     """
 
+    # Case aliases can identify the same file while having different Path hashes.
+    _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
+
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
 
@@ -1319,6 +1325,8 @@ class FileSystemAgentFileStore(AgentFileStore):
                 is_link = _is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
+            except NotADirectoryError as exc:
+                raise NotADirectoryError(f"Parent path is not a directory: {current}") from exc
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
@@ -1345,7 +1353,23 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as exc:
+            # ``mkdir(parents=True)`` reports FileExistsError when an existing
+            # file blocks any parent segment. Surface the path type so callers
+            # can distinguish this from an existing target file.
+            parent_file = next(
+                (
+                    candidate
+                    for candidate in (full_path.parent, *full_path.parent.parents)
+                    if candidate.exists() and not candidate.is_dir()
+                ),
+                None,
+            )
+            if parent_file is not None:
+                raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1360,6 +1384,10 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            # Windows reports PermissionError when opening a directory for
+            # writing; POSIX exclusive creation can report FileExistsError.
+            if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():
+                raise IsADirectoryError(f"Path is a directory: {full_path}") from exc
             if not overwrite and isinstance(exc, FileExistsError):
                 raise
             # ``ELOOP`` (POSIX): the open refused because the leaf is a
@@ -1405,11 +1433,15 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
 
-    @staticmethod
-    def _delete_file_sync(full_path: Path) -> bool:
-        if not full_path.is_file():
-            return False
-        full_path.unlink()
+    @classmethod
+    def _delete_file_sync(cls, full_path: Path) -> bool:
+        with cls._DELETE_LOCK:
+            if not full_path.is_file():
+                return False
+            try:
+                full_path.unlink()
+            except FileNotFoundError:
+                return False
         return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
@@ -1688,6 +1720,52 @@ class _SearchFilesInput(BaseModel):
     ] = None
 
 
+# Locks handed out by ``_store_write_lock``. Values are held weakly, so an entry lasts only while an
+# edit holds or awaits its lock, and the map never grows with the number of paths ever edited.
+_STORE_WRITE_LOCKS: weakref.WeakValueDictionary[tuple[int, asyncio.AbstractEventLoop, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _store_write_lock(store: AgentFileStore, folder: str) -> asyncio.Lock:
+    """Return the lock that serializes edits of the files directly inside ``folder`` in ``store``.
+
+    Mutating tools hold it across their read-modify-write. It belongs to the store
+    instance rather than to one provider, so two providers sharing a store cannot both
+    read a file before either writes it back and silently drop one of the edits.
+    File-access tools lock the folder of the file they edit (see ``_parent_folder``) and
+    file-memory tools lock their working folder, so the two kinds of provider also wait
+    for each other when they edit the same file. Edits of different files in one folder
+    therefore run one at a time.
+
+    The folder name is folded to NFC and lowercased because a store can treat such
+    spellings as one folder: :class:`InMemoryAgentFileStore` ignores case, and macOS
+    file systems resolve the NFC and NFD forms of a name to one entry. Elsewhere two
+    spellings merely share a lock.
+
+    Locks are per event loop, because an :class:`asyncio.Lock` that has had a waiter on
+    one loop raises when a caller has to wait for it on another. The key holds
+    ``id(store)`` rather than the store, so a store need not be hashable (a default
+    ``@dataclass`` is not) and is never kept alive by this map; the id cannot be reused
+    while its lock is in use, because whoever holds or awaits the lock still references
+    the store.
+
+    The lock is process-local: other processes, and other store instances over the same
+    backing storage, are not coordinated.
+    """
+    key = (id(store), asyncio.get_running_loop(), unicodedata.normalize("NFC", folder).lower())
+    lock = _STORE_WRITE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _STORE_WRITE_LOCKS[key] = lock
+    return lock
+
+
+def _parent_folder(path: str) -> str:
+    """Return the folder of a normalized store path (``""`` for a file at the root)."""
+    return path.rpartition("/")[0]
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileAccessProvider(ContextProvider):
     """Context provider that gives an agent CRUD/search access to a shared file store.
@@ -1848,12 +1926,6 @@ class FileAccessProvider(ContextProvider):
         self.disable_write_tool_approval = disable_write_tool_approval
         self.session_scoped = session_scoped
         self.scope = scope
-        # Serializes mutating tool operations (write/delete/replace/replace_lines).
-        # The provider is shared across sessions/agents, so read-modify-write tools
-        # (replace/replace_lines) could otherwise interleave and lose updates. Note
-        # this only serializes within a single event loop/process, not across
-        # processes sharing a FileSystemAgentFileStore on disk.
-        self._write_lock = asyncio.Lock()
 
     def _resolve_session_key(self, context: SessionContext) -> str:
         """Resolve the working folder key for session-scoped mode.
@@ -2006,8 +2078,17 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with self._write_lock:
+                # Every mutating tool takes the lock of the file's folder, which all providers
+                # on the store share, so a write cannot land between another edit's read and write.
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     await self.store.write(store_path, content, overwrite=overwrite)
+            except NotADirectoryError:
+                return f"Could not write file '{file_name}': a parent path is already a file. Choose a different path."
+            except IsADirectoryError:
+                return (
+                    f"Could not write file '{file_name}': this path is already a directory. "
+                    "Choose a different file name."
+                )
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
@@ -2054,7 +2135,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with self._write_lock:
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     deleted = await self.store.delete(store_path)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
@@ -2095,7 +2176,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with self._write_lock:
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
@@ -2117,7 +2198,7 @@ class FileAccessProvider(ContextProvider):
             try:
                 normalized = _normalize_relative_path(file_name)
                 store_path = _session_path(normalized)
-                async with self._write_lock:
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
                     content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."

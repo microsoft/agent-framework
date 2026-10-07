@@ -281,6 +281,47 @@ public sealed class TextSearchProviderTests
             Times.AtLeastOnce);
     }
 
+    [Fact]
+    public async Task InvokingAsync_ShouldPropagateCancellation_WhenSearchIsCanceledAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var provider = new TextSearchProvider((_, ct) => Task.FromCanceled<IEnumerable<TextSearchProvider.TextSearchResult>>(ct));
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await provider.InvokingAsync(invokingContext, cts.Token));
+    }
+
+    [Fact]
+    public async Task InvokingAsync_ShouldNotThrow_WhenProviderSearchIsCanceledAsync()
+    {
+        // Arrange
+        using var providerCts = new CancellationTokenSource();
+        providerCts.Cancel();
+        var provider = new TextSearchProvider(
+            (_, _) => Task.FromCanceled<IEnumerable<TextSearchProvider.TextSearchResult>>(providerCts.Token));
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        var messages = aiContext.Messages!.ToList();
+        Assert.Single(messages);
+        Assert.Equal("Q?", messages[0].Text);
+        Assert.Null(aiContext.Tools);
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData("Custom context prompt", "Custom citations prompt")]
@@ -560,6 +601,79 @@ public sealed class TextSearchProviderTests
     #endregion
 
     #region Recent Message Memory Tests
+
+    [Theory]
+    [InlineData(false, false, false, 0)]
+    [InlineData(false, false, false, 2)]
+    [InlineData(false, false, true, 0)]
+    [InlineData(false, false, true, 2)]
+    [InlineData(false, true, false, 0)]
+    [InlineData(false, true, false, 2)]
+    [InlineData(false, true, true, 0)]
+    [InlineData(false, true, true, 2)]
+    [InlineData(true, false, false, 0)]
+    [InlineData(true, false, false, 2)]
+    [InlineData(true, false, true, 0)]
+    [InlineData(true, false, true, 2)]
+    [InlineData(true, true, false, 0)]
+    [InlineData(true, true, false, 2)]
+    [InlineData(true, true, true, 0)]
+    [InlineData(true, true, true, 2)]
+    public async Task InvokingAsync_WithConfiguredMemoryLimit_HonorsSavedStateAsync(bool restore, bool messageOnly, bool populated, int limit)
+    {
+        // Arrange
+        var session = new TestAgentSession();
+        string? capturedInput = null;
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchAsync(string input, CancellationToken ct)
+        {
+            capturedInput = input;
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]);
+        }
+
+        if (populated)
+        {
+            var originalProvider = new TextSearchProvider(SearchAsync, new TextSearchProviderOptions { RecentMessageMemoryLimit = 2 });
+            await originalProvider.InvokedAsync(new(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Previous")], []));
+        }
+
+        if (restore)
+        {
+            session = new TestAgentSession(AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+        }
+
+        string originalState = session.StateBag.Serialize().GetRawText();
+        var provider = new TextSearchProvider(SearchAsync, new TextSearchProviderOptions { RecentMessageMemoryLimit = limit });
+
+        // Act
+        await InvokeSearchAsync(provider, "Current");
+
+        // Assert
+        Assert.Equal(populated && limit > 0 ? "Previous\nCurrent" : "Current", capturedInput);
+
+        if (limit == 0)
+        {
+            await provider.InvokedAsync(new(s_mockAgent, session, [new ChatMessage(ChatRole.User, "Disabled turn")], []));
+            Assert.Equal(originalState, session.StateBag.Serialize().GetRawText());
+
+            var enabledProvider = new TextSearchProvider(SearchAsync, new TextSearchProviderOptions { RecentMessageMemoryLimit = 2 });
+            await InvokeSearchAsync(enabledProvider, "Reenabled");
+            Assert.Equal(populated ? "Previous\nReenabled" : "Reenabled", capturedInput);
+        }
+
+        async Task InvokeSearchAsync(TextSearchProvider instance, string text)
+        {
+            ChatMessage[] messages = [new(ChatRole.User, text)];
+            if (messageOnly)
+            {
+                await instance.InvokingAsync(new MessageAIContextProvider.InvokingContext(s_mockAgent, session, messages));
+            }
+            else
+            {
+                await instance.InvokingAsync(new AIContextProvider.InvokingContext(s_mockAgent, session, new AIContext { Messages = messages }));
+            }
+        }
+    }
+
 
     [Fact]
     public async Task InvokingAsync_WithPreviousFailedRequest_ShouldNotIncludeFailedRequestInputInSearchInputAsync()

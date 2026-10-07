@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
 import stat
+import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import regex
@@ -46,6 +50,7 @@ from agent_framework._harness._file_access import (
     _run_search_with_timeout,
     _slice_lines,
     _split_lines_keepends,
+    _store_write_lock,
 )
 
 from .conftest import create_junction_or_skip
@@ -324,6 +329,186 @@ async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
 
     assert await store.delete("nested/a.txt") is True
     assert await store.delete("nested/a.txt") is False
+    assert await store.delete("nested") is False
+    assert (tmp_path / "nested").is_dir()
+
+
+async def _run_deterministic_concurrent_deletes(
+    store: FileSystemAgentFileStore,
+    other_store: FileSystemAgentFileStore,
+    first_path: str,
+    second_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[bool, bool]:
+    target_paths = {store._resolve_safe_path(first_path), other_store._resolve_safe_path(second_path)}
+    original_to_thread = asyncio.to_thread
+    original_unlink = Path.unlink
+    worker_barrier = threading.Barrier(2)
+    unlink_barrier = threading.Barrier(2)
+    unlink_guard = threading.Lock()
+    overlapping_delete_completed = False
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal overlapping_delete_completed
+        if path not in target_paths:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        try:
+            unlink_barrier.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        # Model concurrent macOS unlinks, where both calls may report success even though only one removes the file.
+        with unlink_guard:
+            if not overlapping_delete_completed:
+                original_unlink(path, missing_ok=missing_ok)
+                overlapping_delete_completed = True
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+    monkeypatch.setattr(Path, "unlink", macos_style_unlink)
+    return await asyncio.gather(store.delete(first_path), other_store.delete(second_path))
+
+
+async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion should report one deletion and one missing file."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    await store.write("shared.txt", "content")
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, "shared.txt", "shared.txt", monkeypatch)
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_concurrent_delete_aliases_with_distinct_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Different hashes for aliases must not allow both deletes to report success."""
+    exists = True
+    state_lock = threading.Lock()
+    worker_barrier = threading.Barrier(2)
+    probe_barrier = threading.Barrier(2)
+
+    class AliasedPath:
+        def __init__(self, hash_value: int) -> None:
+            self.hash_value = hash_value
+
+        def __hash__(self) -> int:
+            return self.hash_value
+
+        def is_file(self) -> bool:
+            with state_lock:
+                present = exists
+            with suppress(threading.BrokenBarrierError):
+                probe_barrier.wait(timeout=1)
+            return present
+
+        def unlink(self) -> None:
+            nonlocal exists
+            with state_lock:
+                exists = False
+
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    monkeypatch.setattr(store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(0)))
+    monkeypatch.setattr(other_store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(1)))
+
+    original_to_thread = asyncio.to_thread
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+
+    results = await asyncio.gather(
+        store.delete("first.txt"),
+        other_store.delete("second.txt"),
+    )
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_delete_handles_only_missing_file_from_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vanished file returns False, while an unrelated unlink failure propagates."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write("gone.txt", "content")
+    gone_path = tmp_path / "gone.txt"
+    original_unlink = Path.unlink
+
+    def disappear(path: Path, missing_ok: bool = False) -> None:
+        original_unlink(path, missing_ok=missing_ok)
+        raise FileNotFoundError(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", disappear)
+        assert await store.delete("gone.txt") is False
+    assert not gone_path.exists()
+
+    await store.write("denied.txt", "content")
+    denied_path = tmp_path / "denied.txt"
+
+    def deny_unlink(path: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(f"Cannot unlink {path}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", deny_unlink)
+        with pytest.raises(PermissionError, match="Cannot unlink"):
+            await store.delete("denied.txt")
+    assert denied_path.is_file()
+
+
+async def test_filesystem_store_concurrent_delete_case_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion through case aliases should report one deletion."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    original_name = "Shared.txt"
+    await store.write(original_name, "content")
+
+    original_path = store._resolve_safe_path(original_name)
+    lower_path = tmp_path / original_name.lower()
+    if not await asyncio.to_thread(lower_path.exists) or not await asyncio.to_thread(
+        os.path.samefile, original_path, lower_path
+    ):
+        pytest.skip("filesystem does not treat ASCII case variants as aliases")
+
+    # Choose a case alias with opposite hash parity so the regression
+    # deterministically exercises the former path-hash-keyed synchronization bug
+    # without depending on this interpreter's randomized hash values.
+    alias_name = next(
+        (
+            candidate_name
+            for characters in itertools.product(*[
+                (character.lower(), character.upper()) for character in original_name
+            ])
+            if (candidate_name := "".join(characters)) != original_name
+            and hash(store._resolve_safe_path(candidate_name)) % 2 != hash(original_path) % 2
+        ),
+        None,
+    )
+    if alias_name is None:
+        pytest.skip("no case alias has opposite Path hash parity on this platform")
+    assert alias_name is not None
+    alias_path = other_store._resolve_safe_path(alias_name)
+    assert await asyncio.to_thread(os.path.samefile, original_path, alias_path)
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, original_name, alias_name, monkeypatch)
+
+    assert sorted(results) == [False, True]
 
 
 async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Path) -> None:
@@ -1335,6 +1520,130 @@ async def _prepare_access_tools(
     return tools
 
 
+async def test_file_access_write_reports_actionable_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Directory/file collisions should guide the model to a valid path."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    original_write = store.write
+
+    async def collision_aware_write(path: str, content: str, *, overwrite: bool = True) -> None:
+        if path.lower() == "reports/q1.txt":
+            raise NotADirectoryError("Reports is a file")
+        if path.lower() == "archive":
+            raise IsADirectoryError("Archive is a directory")
+        await original_write(path, content, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "write", collision_aware_write)
+
+    parent_collision = await save.invoke(arguments={"file_name": "reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("reports") == "keep"
+    assert await store.read("reports/q1.txt") is None
+
+    directory_collision = await save.invoke(arguments={"file_name": "ARCHIVE", "content": "replace"})
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("archive/q1.txt") == "keep"
+    assert await store.read("archive") is None
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+async def test_file_access_write_reports_filesystem_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    tmp_path: Path,
+    overwrite: bool,
+) -> None:
+    """The real filesystem store should distinguish path collisions from existing files."""
+    store = FileSystemAgentFileStore(tmp_path)
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    await store.write("notes.md", "keep")
+
+    parent_collision = await save.invoke(arguments={"file_name": "Reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("Reports") == "keep"
+
+    directory_collision = await save.invoke(
+        arguments={"file_name": "Archive", "content": "replace", "overwrite": overwrite}
+    )
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("Archive/q1.txt") == "keep"
+
+    existing_file = await save.invoke(arguments={"file_name": "notes.md", "content": "replace"})
+    existing_file_message = _text(existing_file[0])
+    assert "already exists" in existing_file_message
+    assert "overwrite set to true" in existing_file_message
+    assert await store.read("notes.md") == "keep"
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("is_directory", [False, True])
+async def test_filesystem_store_write_classifies_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overwrite: bool, is_directory: bool
+) -> None:
+    """Windows directory-open errors are normalized without masking file permission failures."""
+    store = FileSystemAgentFileStore(tmp_path)
+    target = tmp_path / "target"
+    if is_directory:
+        target.mkdir()
+    else:
+        target.write_text("keep", encoding="utf-8")
+    denied = PermissionError("access denied")
+
+    def deny_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        raise denied
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_file_access_module.os, "open", deny_open)
+        if is_directory:
+            with pytest.raises(IsADirectoryError) as caught:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught.value.__cause__ is denied
+        else:
+            with pytest.raises(PermissionError) as caught_permission:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught_permission.value is denied
+
+    if is_directory:
+        assert target.is_dir()
+    else:
+        assert target.read_text(encoding="utf-8") == "keep"
+
+
+async def test_file_access_write_preserves_exclusive_create_guidance(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An existing file with overwrite disabled should retain its overwrite guidance."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "keep"})
+    collision = await save.invoke(arguments={"file_name": "NOTES.md", "content": "replace"})
+    message = _text(collision[0])
+
+    assert "already exists" in message
+    assert "overwrite set to true" in message
+    assert await store.read("notes.md") == "keep"
+
+
 async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) -> None:
     """``file_access_replace`` should substitute text and enforce match-count rules."""
     tools = await _prepare_access_tools(chat_client_base)
@@ -1440,6 +1749,74 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
         }
     )
     assert "Duplicate" in _text(dup[0])
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "first_edit", "second_edit"),
+    [
+        (
+            FileAccessProvider.REPLACE_TOOL_NAME,
+            {"old_string": "A=0", "new_string": "A=1"},
+            {"old_string": "B=0", "new_string": "B=1"},
+        ),
+        (
+            FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            {"edits": [{"line_number": 1, "new_line": "A=1\n"}]},
+            {"edits": [{"line_number": 2, "new_line": "B=1\n"}]},
+        ),
+    ],
+    ids=["replace", "replace_lines"],
+)
+@pytest.mark.parametrize("second_file_name", ["notes.txt", "NOTES.txt"])
+async def test_file_access_providers_sharing_a_store_keep_concurrent_edits(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    first_edit: dict[str, Any],
+    second_edit: dict[str, Any],
+    second_file_name: str,
+) -> None:
+    """Two providers on one store must not interleave edits of the same file.
+
+    Each provider used to hold only its own lock, so both could read the file before
+    either wrote it back, and the later write dropped the other edit while both tools
+    reported success. The upper-case name is the same file in this case-insensitive store.
+    """
+    store = InMemoryAgentFileStore()
+    await store.write("notes.txt", "A=0\nB=0\n")
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    first = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+    second = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+
+    results = await asyncio.gather(
+        first.invoke(arguments={"file_name": "notes.txt", **first_edit}),
+        second.invoke(arguments={"file_name": second_file_name, **second_edit}),
+    )
+
+    messages = [_text(result[0]) for result in results]
+    assert all(message.startswith("Replaced 1 ") for message in messages), messages
+    assert await store.read("notes.txt") == "A=1\nB=1\n"
+
+
+async def test_store_write_lock_folds_unicode_and_case_variants_of_a_folder() -> None:
+    """Spellings of a folder name that a store can treat as one folder share one lock.
+
+    macOS file systems resolve the NFC and NFD forms of a name to the same entry, and
+    case-insensitive stores ignore case, so the lock key folds both.
+    """
+    store = InMemoryAgentFileStore()
+    lock = _store_write_lock(store, "caf\u00e9")
+
+    assert _store_write_lock(store, "cafe\u0301") is lock
+    assert _store_write_lock(store, "CAF\u00c9") is lock
+    assert _store_write_lock(store, "cafe") is not lock
 
 
 def test_slice_lines_returns_inclusive_range() -> None:

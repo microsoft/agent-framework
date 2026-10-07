@@ -25,6 +25,20 @@ also use an in-memory collection with OpenAI for embeddings and agent responses.
 | [`azure_ai_search.py`](azure_ai_search.py) | Native Azure vector/hybrid search with deterministic vectors and a disposable index. |
 | [`redis_store.py`](redis_store.py) | Native HASH and JSON storage, vector search, filtering, and lifecycle with a disposable Redis server. |
 
+For locally generated vectors, `upsert(..., embeddings_options={...})` applies
+provider options to every generated vector field. Use
+`embeddings_options_by_field={"field_name": {...}}` for different options on
+different logical vector fields; the two arguments are mutually exclusive.
+`search(..., embeddings_options={...})` and
+`create_vector_search_tool(..., embeddings_options={...})` supply per-query
+options. Core adds each selected vector field's declared `dimensions`, and
+rejects a conflicting value before embedding or writing records. Upsert
+options require generated vectors and cannot be used with `generate_vectors=False`.
+Search options require a local embedding generator unless a precomputed
+query vector is supplied, in which case they are ignored. See the
+[Gemini search sample](../providers/gemini/gemini_search_agent.py) for
+document and query task types on the same field.
+
 The Azure sample requires an authorized Azure AI Search service and `az login`.
 Set `AZURE_SEARCH_ENDPOINT` to your search service. Running the sample creates a
 uniquely named index, uploads example documents, and deletes that index during
