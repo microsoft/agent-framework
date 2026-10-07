@@ -26,11 +26,29 @@ Please help reviewers and future users, providing the following information:
 
 <!-- Which issue does this PR fix? Link it using a GitHub closing keyword so it is
      closed automatically when this PR is merged, e.g. "Fixes #123" or "Closes #123".
-     PRs that are not linked to an issue may be closed, no matter how valid the change is.
+     For non-trivial changes, the issue should have the `ready-for-implementation`
+     label or an explicit maintainer comment agreeing with the direction.
+     PRs that are not linked to an agreed issue may be closed without detailed review.
      Also check whether an open PR already exists for this issue; if so,
-     explain how this PR is different. -->
+     explain how this PR is different.
+     For a trivial change that does not need an issue, replace "Fixes #" below with
+     "N/A - trivial change" and briefly explain why. -->
 
 Fixes #
+
+### AI Assistance
+
+<!-- Check exactly one option. See the AI-Assisted Contributions Policy:
+     https://github.com/microsoft/agent-framework/blob/main/AI_CONTRIBUTIONS.md -->
+
+- [ ] No material AI assistance was used.
+- [ ] This is an AI-assisted contribution. I reviewed, understood, and verified all submitted content and accept responsibility for it.
+
+<!-- If this is an AI-assisted contribution, briefly identify the assisted areas,
+     such as implementation, tests, documentation, design, or this PR description.
+     Do not include prompts or sensitive information. -->
+
+AI assistance details:
 
 ### Contribution Checklist
 
@@ -39,5 +57,5 @@ Fixes #
 - [ ] The code builds clean without any errors or warnings
 - [ ] All unit tests pass, and I have added new tests where possible
 - [ ] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
-- [ ] This PR is linked to an issue and there is no other open PR for this issue (see Related Issue above).
+- [ ] This PR links to an agreed issue with no competing open PR, or the Related Issue section explains why this is a trivial exception.
 - [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.

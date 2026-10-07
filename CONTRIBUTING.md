@@ -53,9 +53,37 @@ We welcome contributions, but maintainers must prioritize their limited review t
 across issues and pull requests, so we may not be able to get to reviewing every
 contribution immediately.
 
-AI tooling has also made it easier for more people to
-submit contributions, which has increased the overall volume we receive; as a
-result, contributors should expect longer wait times for reviews.
+AI tooling has also made it easier for more people to submit contributions,
+which has increased the overall volume we receive. AI-assisted contributions
+are permitted, but contributors remain responsible for understanding, verifying,
+and supporting everything they submit. Review the
+[AI-Assisted Contributions Policy](./AI_CONTRIBUTIONS.md) before submitting
+materially AI-assisted work. Contributors should expect longer wait times for
+reviews.
+
+### Before Opening a Pull Request
+
+Except for trivial changes, create or reuse an issue before starting
+implementation. A trivial change is an obvious correction whose desired result
+is not reasonably in dispute, such as fixing a typo or broken documentation
+link. A small code diff is not automatically trivial.
+
+For non-trivial changes:
+
+1. Search for an existing issue before creating a new one.
+2. Describe the problem, supporting evidence or reproduction, desired outcome,
+   and relevant scope or alternatives.
+3. Wait for a maintainer to add the `ready-for-implementation` label or
+   explicitly comment that the proposed direction is ready for implementation.
+
+Automated triage, issue assignment, reactions, and silence do not indicate
+approval. Maintainer agreement means that a contribution is welcome for review;
+it does not promise that a future pull request will be merged.
+
+Pull requests for non-trivial changes may be closed without detailed review when
+they are not linked to an agreed issue or duplicate existing work. For a trivial
+change without an issue, explain why it qualifies as trivial in the pull
+request's **Related Issue** section.
 
 Note that your pull request may receive automated review comments from a bot; addressing or
 at least replying to those comments will help fast track the eventual human review.
@@ -77,14 +105,17 @@ DO's:
 - **DO** keep the discussions focused. When a new or related topic comes up
   it's often better to create new issue than to side track the discussion.
 - **DO** clearly state on an issue that you are going to take on implementing it.
+- **DO** wait for explicit maintainer agreement before implementing a non-trivial
+  change.
 - **DO** blog and tweet (or whatever) about your contributions, frequently!
 
 DON'Ts:
 
-- **DON'T** surprise us with big pull requests. Instead, file an issue and start
-  a discussion so we can agree on a direction before you invest a large amount of time.
-- **DON'T** commit code that you didn't write. If you find code that you think is a good
-  fit to add to Agent Framework, file an issue and start a discussion before proceeding.
+- **DON'T** surprise us with non-trivial pull requests. File an issue and agree
+  on the problem and direction before investing in implementation.
+- **DON'T** submit code or content whose origin, behavior, or licensing you cannot
+  verify. If you find third-party code that may fit Agent Framework, file an
+  issue and start a discussion before proceeding.
 - **DON'T** submit PRs that alter licensing related files or headers. If you believe
   there's a problem with them, file an issue and we'll be happy to discuss it.
 - **DON'T** make new APIs without filing an issue and discussing with us first.
@@ -181,11 +212,9 @@ After a release, the `Promote Shipped APIs` workflow moves entries from `PublicA
 
 We use and recommend the following workflow:
 
-1. Create an issue for your work.
-   - You can skip this step for trivial changes.
-   - Reuse an existing issue on the topic, if there is one.
-   - Get agreement from the team and the community that your proposed change is
-     a good one.
+1. Complete the [issue-first process](#before-opening-a-pull-request).
+   - Skip the issue only for a trivial change as defined above.
+   - Reuse an existing issue on the topic when possible.
    - Clearly state that you are going to take on implementing it, if that's the case.
      You can request that the issue be assigned to you. Note: The issue filer and
      the implementer don't have to be the same person.
@@ -197,7 +226,9 @@ We use and recommend the following workflow:
 5. Add new tests corresponding to your change, if applicable.
 6. Run the relevant scripts in [the section below](#development-setup) to ensure that your build is clean and all tests are passing.
 7. Create a PR against the repository's **main** branch.
-   - State in the description what issue or improvement your change is addressing.
+   - Link the agreed issue with a closing keyword, or explain why the change is a
+     trivial exception.
+   - Complete the AI assistance disclosure in the pull request template.
    - Verify that all the Continuous Integration checks are passing.
 8. Address feedback from the code maintainers. Reply to every review comment with
    the outcome and resolve each completed review conversation yourself before

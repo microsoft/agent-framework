@@ -34,12 +34,30 @@ prompts:
 
 ### `### Related Issue`
 Link the issue the PR fixes using a GitHub closing keyword (`Fixes #123` /
-`Closes #123`) so it closes automatically on merge. A PR with no linked issue may
-be closed regardless of how valid the change is. Before opening, confirm there is
-no other open PR for the same issue; if there is, explain how this PR differs.
+`Closes #123`) so it closes automatically on merge. For a non-trivial change,
+confirm that a maintainer added the `ready-for-implementation` label or explicitly
+agreed with the direction in an issue comment. A PR with no agreed issue may be
+closed without detailed review. Before opening, confirm there is no other open PR
+for the same issue; if there is, explain how this PR differs.
+
+For a trivial change that does not require an issue, replace the `Fixes #`
+placeholder with `N/A - trivial change` and briefly explain why the change is an
+obvious correction whose desired result is not reasonably in dispute.
+
+### `### AI Assistance`
+Check exactly one option:
+- Select **"No material AI assistance was used."** only when generative AI did
+  not create or substantially transform submitted content.
+- Otherwise select **"This is an AI-assisted contribution."** and briefly
+  identify the assisted areas.
+
+Generating or substantially editing the PR description with Copilot counts as
+material AI assistance even if the implementation itself was not AI-assisted.
+Never include prompts or sensitive information in the disclosure.
 
 ### `### Contribution Checklist`
-Check every item that applies. For the breaking-change item:
+Check every item that applies. Confirm that the PR links to an agreed issue or
+documents why it qualifies as a trivial exception. For the breaking-change item:
 - Leave **"This is not a breaking change."** checked for the common case.
 - If the change **is** breaking, add the `breaking change` label **or** put
   `[BREAKING]` in the title prefix, before or after a language prefix such as

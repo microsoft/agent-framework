@@ -1,44 +1,63 @@
 name: .NET Bug Report
-description: Report a bug in the Agent Framework .NET SDK
+description: Report a reproducible bug in the Agent Framework .NET SDK
 title: ".NET: [Bug]: "
 labels: [".NET"]
 type: bug
 body:
-  - type: textarea
-    id: description
+  - type: markdown
     attributes:
-      label: Description
-      description: Please provide a clear and detailed description of the bug.
-      placeholder: |
-        - What happened?
-        - What did you expect to happen?
-        - Steps to reproduce the issue
+      value: |
+        Use this form for reproducible defects. Ask usage questions in
+        [Discussions](https://github.com/microsoft/agent-framework/discussions).
+
+  - type: textarea
+    id: observed-behavior
+    attributes:
+      label: Observed Behavior
+      description: What happened?
+      placeholder: Describe the incorrect behavior and its impact.
     validations:
       required: true
 
   - type: textarea
-    id: code-sample
+    id: expected-behavior
     attributes:
-      label: Code Sample
-      description: If applicable, provide a minimal code sample that demonstrates the issue.
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe the expected result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal-reproduction
+    attributes:
+      label: Minimal Reproduction
+      description: Provide minimal code or a repository link. If unavailable, explain why.
       placeholder: |
         ```csharp
-        // Your code here
+        // Minimal code that reproduces the problem
         ```
-      render: markdown
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: error-messages
     attributes:
-      label: Error Messages / Stack Traces
-      description: Include any error messages or stack traces you received.
-      placeholder: |
-        ```
-        Paste error messages or stack traces here
-        ```
-      render: markdown
+      label: Error Messages and Stack Traces
+      description: Include the complete relevant error output.
+      render: text
     validations:
       required: false
 
@@ -46,8 +65,8 @@ body:
     id: dotnet-packages
     attributes:
       label: Package Versions
-      description: List the Microsoft.Agents.* packages and versions you are using
-      placeholder: "e.g., Microsoft.Agents.AI.Abstractions: 1.0.0, Microsoft.Agents.AI.OpenAI: 1.0.0"
+      description: List the Microsoft.Agents.* packages and exact versions you are using.
+      placeholder: "Microsoft.Agents.AI: 1.0.0"
     validations:
       required: true
 
@@ -56,15 +75,50 @@ body:
     attributes:
       label: .NET Version
       description: What version of .NET are you using?
-      placeholder: "e.g., .NET 8.0"
+      placeholder: ".NET 10.0"
     validations:
-      required: false
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression
+      description: Did this work in an earlier Agent Framework version?
+      options:
+        - "Yes"
+        - "No"
+        - Unknown
+    validations:
+      required: true
 
   - type: textarea
     id: additional-context
     attributes:
       label: Additional Context
-      description: Add any other context or screenshots that might be helpful.
-      placeholder: "Any additional information..."
+      description: Add any other relevant context, logs, or screenshots.
     validations:
       required: false
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I personally verified this behavior and the reproduction details are authentic.
+          required: true
+        - label: I will wait for explicit maintainer agreement before opening a non-trivial pull request.
+          required: true
