@@ -46,6 +46,7 @@ from agent_framework import (
 from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
+from ._powerfx_functions import whole_call_args
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
 from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
 
@@ -721,14 +722,13 @@ class DeclarativeWorkflowState:
 
         Returns None if the formula is not a custom function call.
         """
-        import re
+        formula = formula.strip()
 
         # Concat/Concatenate - string concatenation
         # In standard PowerFx, Concatenate is for strings, Concat is for tables.
         # Copilot Studio uses Concat for strings, so we support both.
-        match = re.match(r"(?:Concat|Concatenate)\((.+)\)$", formula.strip())
-        if match:
-            args_str = match.group(1)
+        args_str = whole_call_args(formula, "Concat", "Concatenate")
+        if args_str is not None:
             # Parse comma-separated arguments (handling nested parentheses)
             args = self._parse_function_args(args_str)
             evaluated_args: list[str] = []
@@ -747,24 +747,24 @@ class DeclarativeWorkflowState:
             return "".join(evaluated_args)
 
         # UserMessage(expr) - creates a user message dict
-        match = re.match(r"UserMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "UserMessage")
+        if inner_args is not None:
+            inner_expr = inner_args.strip()
             # Evaluate the inner expression
             text = self.eval(f"={inner_expr}")
             return {"role": "user", "text": str(text) if text else ""}
 
         # AgentMessage(expr) - creates an assistant message dict
-        match = re.match(r"AgentMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "AgentMessage")
+        if inner_args is not None:
+            inner_expr = inner_args.strip()
             text = self.eval(f"={inner_expr}")
             return {"role": "assistant", "text": str(text) if text else ""}
 
         # MessageText(expr) - extracts text from the last message
-        match = re.match(r"MessageText\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "MessageText")
+        if inner_args is not None:
+            inner_expr = inner_args.strip()
             # Reuse the helper method for consistent text extraction
             return self._eval_and_replace_message_text(inner_expr)
 
