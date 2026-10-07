@@ -17,7 +17,6 @@ and wire it into an agent so the model can call it.
 """
 
 
-# <define_tool>
 # NOTE: approval_mode="never_require" is for sample brevity.
 # Use "always_require" in production for user confirmation before tool execution.
 # For tools processing untrusted external data or performing privileged operations,
@@ -34,9 +33,6 @@ def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
-# </define_tool>
-
-
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
@@ -44,19 +40,15 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # <create_agent_with_tools>
     agent = Agent(
         client=client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
         tools=[get_weather],
     )
-    # </create_agent_with_tools>
 
-    # <run_agent>
     result = await agent.run("What's the weather like in Seattle?")
     print(f"Agent: {result}")
-    # </run_agent>
 
 
 if __name__ == "__main__":

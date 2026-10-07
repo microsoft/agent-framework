@@ -15,7 +15,6 @@ by reusing the same session object.
 
 
 async def main() -> None:
-    # <create_agent>
     client = FoundryChatClient(
         project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
         model="gpt-4o",
@@ -27,9 +26,7 @@ async def main() -> None:
         name="ConversationAgent",
         instructions="You are a friendly assistant. Keep your answers brief.",
     )
-    # </create_agent>
 
-    # <multi_turn>
     # Create a session to maintain conversation history
     session = agent.create_session()
 
@@ -40,7 +37,6 @@ async def main() -> None:
     # Second turn — the agent should remember the user's name and hobby
     result = await agent.run("What do you remember about me?", session=session)
     print(f"Agent: {result}")
-    # </multi_turn>
 
 
 if __name__ == "__main__":

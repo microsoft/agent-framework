@@ -16,7 +16,6 @@ responses — the name persists across turns via the session.
 """
 
 
-# <context_provider>
 class UserMemoryProvider(ContextProvider):
     """A context provider that remembers user info in session state."""
 
@@ -61,11 +60,7 @@ class UserMemoryProvider(ContextProvider):
                 state["user_name"] = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
 
 
-# </context_provider>
-
-
 async def main() -> None:
-    # <create_agent>
     client = FoundryChatClient(
         project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
         model="gpt-4o",
@@ -78,9 +73,7 @@ async def main() -> None:
         instructions="You are a friendly assistant.",
         context_providers=[UserMemoryProvider()],
     )
-    # </create_agent>
 
-    # <run_with_memory>
     session = agent.create_session()
 
     # The provider doesn't know the user yet — it will ask for a name
@@ -98,7 +91,6 @@ async def main() -> None:
     # Inspect session state to see what the provider stored
     provider_state = session.state.get("user_memory", {})
     print(f"[Session State] Stored user name: {provider_state.get('user_name')}")
-    # </run_with_memory>
 
 
 if __name__ == "__main__":

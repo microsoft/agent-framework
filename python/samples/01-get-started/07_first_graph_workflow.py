@@ -25,7 +25,6 @@ No external services are required.
 """
 
 
-# <create_workflow>
 # Step 1: A class-based executor that converts text to uppercase
 class UpperCase(Executor):
     def __init__(self, id: str):
@@ -50,17 +49,12 @@ def create_workflow():
     return WorkflowBuilder(start_executor=upper).add_edge(upper, reverse_text).build()
 
 
-# </create_workflow>
-
-
 async def main() -> None:
-    # <run_workflow>
     workflow = create_workflow()
 
     events = await workflow.run("hello world")
     print(f"Output: {events.get_outputs()}")
     print(f"Final state: {events.get_final_state()}")
-    # </run_workflow>
 
     """
     Expected output:

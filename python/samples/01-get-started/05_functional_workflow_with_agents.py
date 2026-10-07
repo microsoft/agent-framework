@@ -17,7 +17,6 @@ from dotenv import load_dotenv
 # Load environment variables from .env file (e.g., FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL)
 load_dotenv()
 
-# <create_agents>
 client = FoundryChatClient(credential=AzureCliCredential())
 
 writer = Agent(
@@ -31,19 +30,14 @@ reviewer = Agent(
     instructions="Review the given poem in one sentence. Is it good?",
     client=client,
 )
-# </create_agents>
 
 
-# <create_workflow>
 @workflow
 async def poem_workflow(topic: str) -> str:
     """Write a poem, then review it."""
     poem = (await writer.run(f"Write a poem about: {topic}")).text
     review = (await reviewer.run(f"Review this poem: {poem}")).text
     return f"Poem:\n{poem}\n\nReview: {review}"
-
-
-# </create_workflow>
 
 
 async def main() -> None:

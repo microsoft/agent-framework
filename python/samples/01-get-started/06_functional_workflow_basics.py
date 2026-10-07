@@ -30,7 +30,6 @@ async def reverse_text(text: str) -> str:
     return text[::-1]
 
 
-# <create_workflow>
 @workflow
 async def text_workflow(text: str) -> str:
     """Uppercase the text, then reverse it."""
@@ -38,16 +37,11 @@ async def text_workflow(text: str) -> str:
     return await reverse_text(upper)
 
 
-# </create_workflow>
-
-
 async def main() -> None:
-    # <run_workflow>
     workflow_instance = text_workflow.build()
     result = await workflow_instance.run("hello world")
     print(f"Output: {result.get_outputs()}")
     print(f"Final state: {result.get_final_state()}")
-    # </run_workflow>
 
     """
     Expected output:
