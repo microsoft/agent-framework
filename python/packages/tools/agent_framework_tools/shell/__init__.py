@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from ._audit import ShellAuditLog, ShellCommandRecord
 from ._docker import (
     DEFAULT_IMAGE as DOCKER_DEFAULT_IMAGE,
 )
@@ -35,7 +36,9 @@ __all__ = [
     "DockerNotAvailableError",
     "DockerShellTool",
     "LocalShellTool",
+    "ShellAuditLog",
     "ShellCommandError",
+    "ShellCommandRecord",
     "ShellDecision",
     "ShellEnvironmentProvider",
     "ShellEnvironmentProviderOptions",

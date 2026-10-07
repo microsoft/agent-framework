@@ -106,6 +106,7 @@ from ._harness._memory import (
     MemoryTopicRecord,
 )
 from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent_mode, set_agent_mode
+from ._harness._request_broker import AsyncRequestBroker
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
@@ -406,6 +407,7 @@ __all__ = [
     "AgentSession",
     "AggregatingSkillsSource",
     "Annotation",
+    "AsyncRequestBroker",
     "BackgroundAgentsProvider",
     "BackgroundTaskInfo",
     "BackgroundTaskStatus",
