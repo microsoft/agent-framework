@@ -107,11 +107,13 @@ state. This is not an exactly-once guarantee for external tools: make
 side-effecting operations idempotent. Legacy unscoped workflow state is not
 read; migration starts a fresh Responses chain.
 
-For Responses integrations, use a factory when an MCP connection, provider, tool
-cache or client carries request identity. A Toolbox's streamable-HTTP writer
-inherits the context of the request that **connects** it; sharing that connection
-across callers can retain the first call ID. Create the Toolbox and its skills
-provider inside the factory, not at process startup.
+For Responses integrations, use a factory when a provider, tool cache, client or
+credential carries request identity or needs request-owned cleanup.
+`FoundryToolbox` resolves platform headers at each operation boundary and
+rebinds its MCP session when that identity changes, so a long-lived Toolbox does
+not retain the first request's call ID. The integration samples still construct
+it inside the factory because they also own request-scoped clients, credentials
+and providers.
 
 Factory agents are entered/exited for each request, including failed entry and
 cancellation. `Agent` manages context-managed clients and MCP tools, but it does

@@ -9,11 +9,11 @@ import math
 import warnings
 from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_serializer, field_validator
 
 from agent_framework import (
     Agent,
@@ -28,6 +28,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _auto_invoke_function,
     _resolve_approval_responses,
@@ -36,6 +37,8 @@ from agent_framework._tools import (
 )
 from agent_framework._types import Content
 from agent_framework.security import (
+    _REWRITTEN_ARGUMENT_INDICES_KEY,
+    _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
     ConfidentialityLabel,
     ContentLabel,
     ContentVariableStore,
@@ -48,6 +51,7 @@ from agent_framework.security import (
     VariableReferenceContent,
     combine_labels,
     get_current_middleware,
+    rewritten_arguments,
     store_untrusted_content,
 )
 
@@ -474,6 +478,267 @@ class TestLabelTrackingMiddleware:
         label = context.metadata["result_label"]
         # Should default to UNTRUSTED (safe default)
         assert label.integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_as_trusted_content(self, middleware):
+        """A tool's declared standing_guidance is appended as its own trusted Content item."""
+
+        class ValidateArgs(BaseModel):
+            files: list[str]
+
+        async def validate(files: list[str]) -> str:
+            return "compiler output the model must not act on"
+
+        guidance_text = "A result you cannot read is not a clean validation."
+        validate_function = FunctionTool(
+            fn=validate,
+            name="validate",
+            description="Validate files",
+            args_schema=ValidateArgs,
+            additional_properties={
+                "source_integrity": "untrusted",
+                "standing_guidance": [guidance_text],
+            },
+        )
+
+        args = validate_function.args_schema(files=["main.bicep"])  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        context = FunctionInvocationContext(function=validate_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("compiler output the model must not act on")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        assert guidance_item.text == guidance_text
+
+        guidance_label = guidance_item.additional_properties["security_label"]
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+
+        original_item = context.result[0]
+        assert (original_item.additional_properties or {}).get("_variable_reference") is not None
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_absent_by_default(self, middleware, mock_function):
+        """A tool with no standing_guidance declared gets no extra Content item."""
+        args = mock_function.args_schema(arg="test")
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [Content.from_text("mock result")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_ignores_non_string_entries(self, middleware):
+        """Non-string or empty entries in standing_guidance are dropped, not raised."""
+
+        class NoiseArgs(BaseModel):
+            pass
+
+        async def noisy() -> str:
+            return "ok"
+
+        noisy_function = FunctionTool(
+            fn=noisy,
+            name="noisy",
+            description="Tool with malformed guidance",
+            args_schema=NoiseArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Valid sentence.", "", 42, None],
+            },
+        )
+        context = FunctionInvocationContext(function=noisy_function, arguments={})
+
+        async def next_fn():
+            context.result = [Content.from_text("ok")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        assert context.result[1].text == "Valid sentence."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_appended_when_result_is_none(self, middleware):
+        """standing_guidance still surfaces even if the tool body returns nothing."""
+
+        class EmptyArgs(BaseModel):
+            pass
+
+        async def empty() -> None:
+            return None
+
+        empty_function = FunctionTool(
+            fn=empty,
+            name="empty_fn",
+            description="Returns nothing",
+            args_schema=EmptyArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Nothing was returned, which is expected."],
+            },
+        )
+        context = FunctionInvocationContext(function=empty_function, arguments={})
+
+        async def next_fn():
+            context.result = None
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "Nothing was returned, which is expected."
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_preserves_user_identity_principal(self, middleware) -> None:
+        """standing_guidance on a USER_IDENTITY-confidentiality tool keeps its principal set."""
+
+        class IdentityArgs(BaseModel):
+            pass
+
+        async def identity_source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=identity_source,
+            name="identity_source_with_guidance",
+            description="Locally declared identity source with guidance",
+            args_schema=IdentityArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+                "standing_guidance": ["This result is scoped to a single user."],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        guidance_item = context.result[1]
+        guidance_label = guidance_item.additional_properties["security_label"]
+
+        assert guidance_label["integrity"] == IntegrityLabel.TRUSTED.value
+        assert guidance_label["confidentiality"] == "user_identity"
+        assert guidance_label["metadata"][_PRINCIPALS_KEY] == [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_immutable_across_invocations(self, middleware):
+        """A tool body that mutates standing_guidance cannot affect future invocations.
+
+        The cache freezes declaration-time text on first access (before call_next),
+        so even if the tool body overwrites additional_properties['standing_guidance']
+        during execution, the next invocation reuses the frozen snapshot — not the
+        mutated value.
+        """
+
+        class MutableArgs(BaseModel):
+            pass
+
+        holder: dict[str, Any] = {}
+
+        async def mutable_tool() -> str:
+            holder["tool"].additional_properties["standing_guidance"] = [
+                "INJECTED BY TOOL BODY — should never be stamped TRUSTED"
+            ]
+            return "result"
+
+        fn = FunctionTool(
+            fn=mutable_tool,
+            name="mutable_tool",
+            description="Tool that mutates its own guidance",
+            args_schema=MutableArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "standing_guidance": ["Original guidance."],
+            },
+        )
+        holder["tool"] = fn
+
+        ctx1 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next1():
+            ctx1.result = [Content.from_text("result")]
+
+        await middleware.process(ctx1, next1)
+        assert ctx1.result[1].text == "Original guidance."
+
+        ctx2 = FunctionInvocationContext(function=fn, arguments={})
+
+        async def next2():
+            ctx2.result = [Content.from_text("result")]
+
+        await middleware.process(ctx2, next2)
+        assert ctx2.result[1].text == "Original guidance."
+        assert "INJECTED" not in ctx2.result[1].text
+
+    @pytest.mark.asyncio
+    async def test_standing_guidance_cache_does_not_leak_across_tools(self, middleware):
+        """A short lived tool cached guidance must not be inherited by a later tool
+        whose id() happens to be reused. WeakKeyDictionary keys by object identity,
+        so collection removed the entry before any id reuse."""
+        import gc
+
+        class A(BaseModel):
+            pass
+
+        async def a_tool() -> str:
+            return "a"
+
+        tool_a = FunctionTool(
+            fn=a_tool,
+            name="tool_a",
+            description="A",
+            args_schema=A,
+            additional_properties={"source_integrity": "trusted", "standing_guidance": ["Guidance from A."]},
+        )
+
+        ctx = FunctionInvocationContext(function=tool_a, arguments={})
+
+        async def next_a():
+            ctx.result = [Content.from_text("a")]
+
+        await middleware.process(ctx, next_a)
+        assert ctx.result[1].text == "Guidance from A."
+
+        del tool_a
+        gc.collect()
+
+        class B(BaseModel):
+            pass
+
+        async def b_tool() -> str:
+            return "b"
+
+        tool_b = FunctionTool(
+            fn=b_tool,
+            name="tool_b",
+            description="B",
+            args_schema=B,
+            additional_properties={"source_integrity": "trusted"},
+        )
+
+        ctx_b = FunctionInvocationContext(function=tool_b, arguments={})
+
+        async def next_b():
+            ctx_b.result = [Content.from_text("b")]
+
+        await middleware.process(ctx_b, next_b)
+        assert isinstance(ctx_b.result, list)
+        assert len(ctx_b.result) == 1
+        assert ctx_b.result[0].text == "b"
 
     @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
@@ -8039,3 +8304,552 @@ class TestVariableArgumentPolicy:
 
         assert executed is True
         assert replay.metadata["user_approved_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_no_rewrites():
+    """Verify normal/non-expanded path returns empty dict."""
+    tracker = LabelTrackingFunctionMiddleware()
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(
+        name="my_tool",
+        func=my_tool,
+        additional_properties={"accepts_untrusted": True},
+    )
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["one.txt", "two.txt"]},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_explicit_context():
+    """Verify the explicit context API works inside a tool."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+    captured_context: FunctionInvocationContext | None = None
+
+    async def my_tool(files: list[str]):
+        captured["explicit"] = rewritten_arguments(captured_context)
+        captured["implicit"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+    captured_context = context
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["explicit"] == {"files": {0}}
+    assert captured["implicit"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_args():
+    """Verify tracking works across multiple top-level arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id1 = store.store("file_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("msg_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str], message: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", "safe.txt"], "message": f"[{var_id2}]"}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}, "message": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_duplicate_equal_values():
+    """Test that duplicate/equal final values are tracked per position."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id1 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    var_id2 = store.store("same_string", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id1}]", f"[{var_id2}]", "normal.txt"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["same_string", "same_string", "normal.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_multiple_list_positions():
+    """Test multiple list positions alongside untouched positions."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool, arguments={"files": [f"[{var_id}]", "untouched.txt", f"[{var_id}]"]}
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_scalar():
+    """Test scalar (non-list) arguments."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(text: str):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"text": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"text": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_nested_dict_semantics():
+    """Test that nested rewrites are reported against the top-level argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"config": {"path": f"[{var_id}]", "safe": "txt"}})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_whole_list_substitution():
+    """Test that whole-list substitution reports all resulting indices."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store(["hidden1.txt", "hidden2.txt"], ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": f"[{var_id}]"})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["received"] == ["hidden1.txt", "hidden2.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_integer_keyed_dict():
+    """Test that integer-keyed dictionaries are not treated as lists."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(config: dict):
+        captured["rewritten"] = rewritten_arguments()
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"config": {0: f"[{var_id}]", 1: "safe.txt"}},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["rewritten"] == {"config": {-1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_asyncio_to_thread():
+    """Verify async/thread/context behavior with asyncio.to_thread."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("thread_content", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def threaded_tool(files: list[str]):
+        def worker():
+            return rewritten_arguments()
+
+        captured["rewritten"] = await asyncio.to_thread(worker)
+        return "ok"
+
+    tool = FunctionTool(name="threaded_tool", func=threaded_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(function=tool, arguments={"files": [f"[{var_id}]", "safe.txt"]})
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _reorder_files(v: list[str]) -> list[str]:
+    """A validator that reorders the list, invalidating original indices."""
+    return sorted(v, reverse=True)
+
+
+def _preserve_files(v: list[str]) -> list[str]:
+    """A validator that runs but does not mutate the list."""
+    return v
+
+
+ReorderedFiles = Annotated[list[str], AfterValidator(_reorder_files)]
+PreservedFiles = Annotated[list[str], AfterValidator(_preserve_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders():
+    """Verify indices degrade to -1 when a Pydantic validator mutates a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate():
+    """Verify indices are preserved when a validator runs but doesn't mutate the list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+def _filter_files(v: list[str]) -> list[str]:
+    """A validator that filters out items, invalidating original indices."""
+    return [f for f in v if f != "drop_me"]
+
+
+FilteredFiles = Annotated[list[str], AfterValidator(_filter_files)]
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters():
+    """Verify indices degrade to -1 when a Pydantic validator filters a list."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+        metadata={_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: True},
+    )
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_reorders_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator reorders a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY (public direct-middleware path)."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("a", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: ReorderedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "c", "b"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["c", "b", "a"]
+    assert captured["rewritten"] == {"files": {0, 1, 2}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_degrade_when_validator_filters_without_auto_prep():
+    """Indices degrade to -1 when a Pydantic validator filters a list,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("keep_me", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: FilteredFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "drop_me", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["keep_me", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0, 1}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_preserved_when_validator_does_not_mutate_without_auto_prep():
+    """Indices are preserved when a validator runs but doesn't mutate,
+    even without _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: PreservedFiles):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": [f"[{var_id}]", "safe.txt"]},
+    )
+
+    async def call_next():
+        context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+            context,
+            context.arguments,
+        )
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["payload", "safe.txt"]
+    assert captured["rewritten"] == {"files": {0}}
+
+
+@pytest.mark.asyncio
+async def test_rewritten_arguments_kwargs_collision_excluded():
+    """Rewrites in context.kwargs for a name also in context.arguments
+    must not be published — _top_level_argument_value prefers
+    context.arguments, so a kwargs rewrite for a shared name would
+    report indices against the untouched callable argument."""
+    tracker = LabelTrackingFunctionMiddleware()
+    store = tracker.get_variable_store()
+    var_id = store.store("payload", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+    captured: dict[str, Any] = {}
+
+    async def my_tool(files: list[str]):
+        captured["rewritten"] = rewritten_arguments()
+        captured["received"] = files
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["safe.txt", "also_safe.txt"]},
+    )
+    context.kwargs = {"files": [f"[{var_id}]", "safe.txt"]}
+
+    async def call_next():
+        await tool.invoke(arguments=context.arguments)
+
+    await tracker.process(context, call_next)
+    assert captured["received"] == ["safe.txt", "also_safe.txt"]
+    assert captured["rewritten"] == {}
+
+
+def test_degrade_rewritten_arguments_remaps_when_keys_differ():
+    """Auto-prep path: when validation changes top-level keys (e.g., a
+    Pydantic field alias ``fileNames`` normalizes to the callable parameter
+    ``files``), ``_degrade_rewritten_arguments`` must fail closed under the
+    final key set rather than leaving the rewritten entry stranded under the
+    pre-validation name where a tool's lookup would miss it."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={_REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}}},
+    )
+
+    LabelTrackingFunctionMiddleware._degrade_rewritten_arguments(context)
+    assert context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] == {"files": {0, 1}}
+
+
+def test_rewritten_arguments_fail_closed_when_keys_differ():
+    """Public ``rewritten_arguments()`` snapshot branch: when validation
+    changes top-level keys (e.g., a Pydantic field alias ``fileNames``
+    normalizes to the callable parameter ``files``), fail closed under the
+    final key set so a tool looking up the actual callable parameter does
+    not miss hidden content."""
+
+    async def my_tool(files: list[str]):
+        return "ok"
+
+    tool = FunctionTool(name="my_tool", func=my_tool, additional_properties={"accepts_untrusted": True})
+
+    context = FunctionInvocationContext(
+        function=tool,
+        arguments={"files": ["hidden.txt", "safe.txt"]},
+        metadata={
+            _REWRITTEN_ARGUMENT_INDICES_KEY: {"fileNames": {0}},
+            _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: "pre-validation-token",
+        },
+    )
+
+    assert rewritten_arguments(context) == {"files": {0, 1}}

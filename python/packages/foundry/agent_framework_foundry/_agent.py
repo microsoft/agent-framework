@@ -103,6 +103,11 @@ class FoundryAgentOptions(OpenAIChatOptions, total=False):
 
     Keyword Args:
         extra_body: Additional request body values sent to the Responses API.
+        tool_choice: Not supported for pre-provisioned Foundry agents. The remote agent
+            owns tool selection, so caller-supplied values are ignored with a warning.
+            Use ``FoundryChatClient`` when tool selection must vary per request.
+        allow_multiple_tool_calls: Not supported for pre-provisioned Foundry agents. The
+            remote agent owns this setting, so caller-supplied values are ignored with a warning.
         isolation_key: Deprecated. This option no longer has any effect.
     """
 
@@ -409,6 +414,24 @@ class RawFoundryAgentChatClient(
         stripped_tools = run_options.pop("tools", None)
         run_options.pop("tool_choice", None)
         run_options.pop("parallel_tool_calls", None)
+        ignored_tool_options: list[str] = []
+        tool_choice = options.get("tool_choice")
+        unrestricted_auto = tool_choice == "auto"
+        if isinstance(tool_choice, Mapping):
+            typed_tool_choice = cast(Mapping[str, Any], tool_choice)
+            unrestricted_auto = typed_tool_choice.get("mode") == "auto" and "allowed_tools" not in typed_tool_choice
+        if "tool_choice" in options and tool_choice is not None and not unrestricted_auto:
+            ignored_tool_options.append("tool_choice")
+        if "allow_multiple_tool_calls" in options:
+            ignored_tool_options.append("allow_multiple_tool_calls")
+        if ignored_tool_options:
+            logger.warning(
+                "Foundry agent '%s' owns tool selection server-side; caller-supplied options %s are ignored. "
+                "Configure tool behavior on the remote Foundry agent, or use FoundryChatClient for "
+                "per-request control.",
+                self.agent_name,
+                ignored_tool_options,
+            )
         if stripped_tools:
             logger.warning(
                 "Foundry agent '%s' was provided tools, but tool declarations cannot be sent when an "
@@ -926,6 +949,10 @@ class FoundryAgent(  # type: ignore[misc]
 
     Connects to an existing PromptAgent or HostedAgent in Foundry.
     This is the recommended class for production use.
+
+    The pre-provisioned Foundry agent owns its tool declarations and tool-selection
+    behavior. ``tools=`` supplies matching local Python implementations only;
+    per-run ``tool_choice`` restrictions and ``allow_multiple_tool_calls`` values are not propagated.
 
     Examples:
         .. code-block:: python

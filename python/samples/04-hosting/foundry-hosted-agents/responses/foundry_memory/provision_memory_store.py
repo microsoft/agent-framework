@@ -24,8 +24,8 @@ Usage (from this directory, with the venv activated and ``az login`` done):
 Required env vars (also read from a local ``.env`` file if present):
 
     FOUNDRY_PROJECT_ENDPOINT                      e.g. https://<account>.services.ai.azure.com/api/projects/<project>
-    AZURE_AI_MODEL_DEPLOYMENT_NAME                Chat model deployment used by the memory store
-    AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME      Embedding model deployment used by the memory store
+    FOUNDRY_MODEL                                 Chat model deployment used by the memory store
+    FOUNDRY_EMBEDDING_MODEL                       Embedding model deployment used by the memory store
     MEMORY_STORE_NAME                             Name of the memory store to create
 
 Your identity needs ``Foundry User`` (formerly ``Azure AI User``) on the project scope.
@@ -49,8 +49,10 @@ load_dotenv()
 async def main() -> None:
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     memory_store_name = os.environ["MEMORY_STORE_NAME"]
-    chat_model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
-    embedding_model = os.environ["AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME"]
+    chat_model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    embedding_model = (
+        os.environ.get("FOUNDRY_EMBEDDING_MODEL") or os.environ["AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME"]
+    )
 
     async with (
         AzureCliCredential() as credential,
