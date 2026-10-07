@@ -44,6 +44,9 @@ For a trivial change that does not require an issue, replace the `Fixes #`
 placeholder with `N/A - trivial change` and briefly explain why the change is an
 obvious correction whose desired result is not reasonably in dispute.
 
+For repository-maintained scheduled automation, replace the placeholder with
+`N/A - repository automation` and identify the generating workflow.
+
 ### `### AI Assistance`
 Check exactly one option:
 - Select **"No material AI assistance was used."** only when generative AI did
@@ -57,7 +60,8 @@ Never include prompts or sensitive information in the disclosure.
 
 ### `### Contribution Checklist`
 Check every item that applies. Confirm that the PR links to an agreed issue or
-documents why it qualifies as a trivial exception. For the breaking-change item:
+documents a trivial-change or repository-automation exception. For the
+breaking-change item:
 - Leave **"This is not a breaking change."** checked for the common case.
 - If the change **is** breaking, add the `breaking change` label **or** put
   `[BREAKING]` in the title prefix, before or after a language prefix such as

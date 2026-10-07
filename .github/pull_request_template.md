@@ -32,7 +32,9 @@ Please help reviewers and future users, providing the following information:
      Also check whether an open PR already exists for this issue; if so,
      explain how this PR is different.
      For a trivial change that does not need an issue, replace "Fixes #" below with
-     "N/A - trivial change" and briefly explain why. -->
+     "N/A - trivial change" and briefly explain why.
+     For repository-maintained scheduled automation, replace it with
+     "N/A - repository automation" and identify the generating workflow. -->
 
 Fixes #
 
@@ -57,5 +59,5 @@ AI assistance details:
 - [ ] The code builds clean without any errors or warnings
 - [ ] All unit tests pass, and I have added new tests where possible
 - [ ] The PR follows the [Contribution Guidelines](https://github.com/microsoft/agent-framework/blob/main/CONTRIBUTING.md)
-- [ ] This PR links to an agreed issue with no competing open PR, or the Related Issue section explains why this is a trivial exception.
+- [ ] This PR links to an agreed issue with no competing open PR, or the Related Issue section documents a trivial-change or repository-automation exception.
 - [x] **This is not a breaking change.** If it _is_ a breaking change, add the `breaking change` label (or add "[BREAKING]" to the title prefix, before or after any language prefix) — a workflow keeps the label and title prefix in sync automatically.

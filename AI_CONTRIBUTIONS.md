@@ -93,7 +93,7 @@ necessary.
 
 For non-trivial changes, start with an issue and wait for a maintainer to add
 the `ready-for-implementation` label or explicitly agree with the direction
-before opening a pull request, as described in the
+before starting implementation, as described in the
 [Contribution Guidelines](./CONTRIBUTING.md). Keep each contribution focused on
 one agreed problem.
 

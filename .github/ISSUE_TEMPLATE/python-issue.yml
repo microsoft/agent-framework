@@ -56,7 +56,7 @@ body:
     id: error-messages
     attributes:
       label: Error Messages and Stack Traces
-      description: Include the complete relevant error output.
+      description: Include the complete relevant error output after removing credentials, authorization headers, signed URLs, personal data, internal endpoints, and other sensitive values.
       render: text
     validations:
       required: false
@@ -120,5 +120,5 @@ body:
           required: true
         - label: I personally verified this behavior and the reproduction details are authentic.
           required: true
-        - label: I will wait for explicit maintainer agreement before opening a non-trivial pull request.
+        - label: I will wait for explicit maintainer agreement before starting implementation of a non-trivial change.
           required: true

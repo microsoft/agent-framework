@@ -73,5 +73,5 @@ body:
       options:
         - label: I searched existing issues and did not find a duplicate.
           required: true
-        - label: I will wait for explicit maintainer agreement before opening a non-trivial pull request.
+        - label: I will wait for explicit maintainer agreement before starting implementation of a non-trivial change.
           required: true
