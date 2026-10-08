@@ -101,7 +101,9 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
     # Try to get context providers
-    if (
+    if context_providers := getattr(entity_object, "context_providers", None):
+        metadata["context_provider"] = [provider.__class__.__name__ for provider in context_providers]  # type: ignore
+    elif (
         hasattr(entity_object, "context_provider")
         and entity_object.context_provider
         and hasattr(entity_object.context_provider, "__class__")
