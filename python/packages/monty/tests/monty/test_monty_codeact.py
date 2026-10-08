@@ -339,6 +339,53 @@ def test_run_snapshot_warns_for_fides_metadata_added_after_registration(caplog: 
     assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
 
 
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+def test_codeact_does_not_repeat_fides_warning_for_unrelated_registration(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    @tool
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=annotated_tool)
+        caplog.clear()
+        codeact.add_tools(plain_tool)
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools() == [annotated_tool, plain_tool]
+
+
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+def test_codeact_warns_once_for_annotated_tool_replacement(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(name="shared")
+    def original_tool(value: int) -> int:
+        return value
+
+    @tool(name="shared", additional_properties={"accepts_untrusted": False})
+    def replacement_tool(value: int) -> int:
+        return value
+
+    codeact = entry_point(tools=original_tool)
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.add_tools(replacement_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].args == ("shared",)
+    assert codeact.get_tools() == [replacement_tool]
+
+
 def test_add_remove_clear_tools_round_trip() -> None:
     monty_tool = MontyExecuteCodeTool()
 

@@ -1620,9 +1620,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
     ) -> None:
         """Add sandbox-managed tools to this execute_code surface."""
         with self._state_lock:
-            combined_tools = _collect_tools(self._managed_tools, tools)
+            new_tools = _collect_tools(tools)
+            combined_tools = _collect_tools(self._managed_tools, new_tools)
             self._managed_tools = combined_tools
-            for tool_obj in self._managed_tools:
+            for tool_obj in new_tools:
                 if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
                     tool_obj.additional_properties
                 ):

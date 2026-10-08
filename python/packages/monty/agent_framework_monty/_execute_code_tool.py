@@ -272,8 +272,9 @@ class MontyExecuteCodeTool(FunctionTool):
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
     ) -> None:
         """Add Monty-side tools to this execute_code surface."""
-        self._managed_tools = _collect_tools(self._managed_tools, tools)
-        for tool_obj in self._managed_tools:
+        new_tools = _collect_tools(tools)
+        self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        for tool_obj in new_tools:
             if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
                 tool_obj.additional_properties
             ):
