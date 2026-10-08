@@ -747,6 +747,38 @@ async def test_load_prompts_refresh_forgets_progressive_state_on_normalized_name
     assert tool._progressive_loaded_tool_names == set()
 
 
+async def test_load_prompts_refresh_keeps_progressive_state_when_metadata_changes() -> None:
+    """A prompt rebuilt for changed metadata keeps load state while its remote identity is unchanged."""
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary", description="Old")])
+    )
+    await tool.load_prompts()
+    old_prompt = tool._functions[0]
+    tool._progressive_loaded_tool_names.add("summary")
+
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(
+            prompts=[
+                types.Prompt(
+                    name="summary",
+                    description="New",
+                    arguments=[types.PromptArgument(name="topic", required=True)],
+                )
+            ]
+        )
+    )
+    await tool.load_prompts()
+
+    assert len(tool._functions) == 1
+    new_prompt = tool._functions[0]
+    assert new_prompt is not old_prompt
+    assert new_prompt.description == "New"
+    assert "topic" in new_prompt.parameters()["properties"]
+    assert tool._progressive_loaded_tool_names == {"summary"}
+
+
 async def test_load_prompts_empty_snapshot_clears_prompts() -> None:
     """A successful empty prompts/list snapshot clears previously loaded prompts."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]

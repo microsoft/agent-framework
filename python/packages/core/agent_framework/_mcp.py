@@ -2457,7 +2457,7 @@ class MCPTool:
             else:
                 existing_names.add(func.name)
         prompt_functions: list[FunctionTool] = []
-        reused_prompt_names: set[str] = set()
+        retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
 
         params: types.PaginatedRequestParams | None = None
@@ -2527,13 +2527,16 @@ class MCPTool:
                 if (
                     existing_prompt is not None
                     and (existing_prompt.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == prompt.name
-                    and existing_prompt.description == func.description
-                    and existing_prompt.parameters() == func.parameters()
                 ):
-                    # Keep the unchanged prompt function so local customizations survive a refresh.
-                    prompt_functions.append(existing_prompt)
-                    reused_prompt_names.add(local_name)
-                    continue
+                    # Same remote prompt identity: keep its progressive-load state even if its metadata changed.
+                    retained_prompt_names.add(local_name)
+                    if (
+                        existing_prompt.description == func.description
+                        and existing_prompt.parameters() == func.parameters()
+                    ):
+                        # Keep the unchanged prompt function so local customizations survive a refresh.
+                        prompt_functions.append(existing_prompt)
+                        continue
                 prompt_functions.append(func)
                 new_functions.append(func)
 
@@ -2549,9 +2552,9 @@ class MCPTool:
             for function in new_functions:
                 self._function_load_callback(function, None)
         self._functions[:] = current_functions
-        # Only prompts reused with the same remote identity keep their progressive-load state; a
+        # Only prompts that keep the same remote identity retain their progressive-load state; a
         # different remote prompt that normalizes to the same local name must start unloaded.
-        self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - reused_prompt_names)
+        self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - retained_prompt_names)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
