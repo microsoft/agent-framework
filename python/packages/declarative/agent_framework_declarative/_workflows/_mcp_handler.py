@@ -822,10 +822,11 @@ class DefaultMCPToolHandler:
             await self._close_claimed_entry(entry)
 
     async def _close_claimed_entry(self, entry: _CacheEntry) -> None:
+        cleanup_outcome: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         try:
-            await self._close_invocation_entry(entry)
+            await self._close_invocation_entry(entry, cleanup_outcome)
         except BaseException as exc:
-            entry.close_exception = exc
+            entry.close_exception = cleanup_outcome.exception() if cleanup_outcome.done() else exc
             raise
         finally:
             async with self._cache_lock:
