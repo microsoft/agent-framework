@@ -478,6 +478,31 @@ class TestWorkflowStateEvalSimpleCallExtent:
         assert state._eval_simple('Concat("a", "b")') == "ab"
         assert state._eval_simple('Upper("ab")') == "AB"
 
+    def test_argument_less_call_still_dispatches(self):
+        """A zero-argument call is a call, not an unmatched formula.
+
+        ``Or()`` is false in PowerFx. Echoing the formula instead would hand a
+        truthy string back to a condition and invert it.
+        """
+        state = WorkflowState()
+        assert state._eval_simple("Or()") is False
+        assert state._eval_simple("And()") is True
+        assert state._eval_simple("Not()") is True
+
+    def test_commented_paren_does_not_truncate_the_call(self):
+        """A ``)`` inside a comment is text, so the call is still claimed.
+
+        What the argument heuristic then makes of the comment text is issue
+        #9072's business; the point here is that the formula is dispatched
+        rather than echoed back unevaluated.
+        """
+        formula = 'Upper("ab" /* ) */)'
+        assert WorkflowState()._eval_simple(formula) != formula
+
+    def test_trailing_comment_does_not_disqualify_the_call(self):
+        """A comment after the call is trivia, not a larger expression."""
+        assert WorkflowState()._eval_simple('Upper("ab") // done') == "AB"
+
 
 class TestWorkflowStateParseFunctionArgs:
     """Tests for _parse_function_args helper."""

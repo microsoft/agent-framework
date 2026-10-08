@@ -15,50 +15,89 @@ from __future__ import annotations
 from typing import Any, cast
 
 
+def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
+    """Return the end of an ordinary quoted token or comment, or start if neither."""
+    quote = formula[start]
+    if quote in ('"', "'"):
+        pos = start + 1
+        while pos < len(formula):
+            if formula[pos] == quote:
+                if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                    pos += 2
+                    continue
+                return pos + 1
+            pos += 1
+        return pos
+    if formula.startswith("//", start):
+        pos = start + 2
+        while pos < len(formula) and formula[pos] not in "\r\n":
+            pos += 1
+        return pos
+    if formula.startswith("/*", start):
+        end = formula.find("*/", start + 2)
+        return len(formula) if end == -1 else end + 2
+    return start
+
+
+def _skip_trailing_trivia(formula: str, start: int) -> int:
+    """Return the index after any whitespace and comments beginning at ``start``."""
+    index = start
+    while index < len(formula):
+        if formula[index].isspace():
+            index += 1
+        elif formula.startswith(("//", "/*"), index):
+            index = _skip_powerfx_opaque_token(formula, index)
+        else:
+            break
+    return index
+
+
 def whole_call_args(formula: str, *names: str) -> str | None:
     """Return the argument text when ``formula`` is exactly one ``Name(...)`` call.
 
     A custom-function handler must not fire for a formula that merely *starts*
-    with its name: the closing parenthesis has to be the call's own and the
-    formula's last character. Otherwise a trailing operator is swallowed into the
+    with its name: the closing parenthesis has to be the call's own and nothing
+    but trivia may follow it. Otherwise a trailing operator is swallowed into the
     argument list and the formula is evaluated as something the author never
     wrote, instead of being left to PowerFx.
+
+    Parentheses inside string literals and comments are data, not delimiters, so
+    the scan skips those tokens whole.
 
     Args:
         formula: The stripped formula to inspect.
         *names: Candidate function names, matched case-sensitively.
 
     Returns:
-        The text between the call's parentheses, or None when ``formula`` is not
-        a single complete call to one of ``names``. Empty arguments yield None so
-        that an argument-less call falls through to PowerFx, which reports the
-        arity error.
+        The text between the call's parentheses - an empty string for an
+        argument-less call - or None when ``formula`` is not a single complete
+        call to one of ``names``. Callers that require an argument check the
+        result for emptiness so the call still falls through to PowerFx, which
+        reports the arity error.
     """
     for name in names:
         prefix = f"{name}("
         if not formula.startswith(prefix):
             continue
         depth = 0
-        in_string = False
-        string_char: str | None = None
-        for index in range(len(name), len(formula)):
+        index = len(name)
+        while index < len(formula):
+            token_end = _skip_powerfx_opaque_token(formula, index)
+            if token_end != index:
+                index = token_end
+                continue
             char = formula[index]
-            if char in ('"', "'") and not in_string:
-                in_string = True
-                string_char = char
-            elif char == string_char and in_string:
-                in_string = False
-                string_char = None
-            elif char == "(" and not in_string:
+            if char == "(":
                 depth += 1
-            elif char == ")" and not in_string:
+            elif char == ")":
                 depth -= 1
                 if depth == 0:
-                    if index != len(formula) - 1:
+                    if _skip_trailing_trivia(formula, index + 1) != len(formula):
                         # Something follows the call, so the formula is a larger
                         # expression that the caller must not claim.
                         return None
-                    return formula[len(prefix) : index] or None
+                    return formula[len(prefix) : index]
+            index += 1
         return None
     return None
 
