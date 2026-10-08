@@ -9,7 +9,6 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
-from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import pytest
@@ -2365,43 +2364,6 @@ def test_code_interpreter_snapshot_marker_stripped_as_the_first_chunk():
     assert calls[0].inputs is not None
     assert "".join(item.text or "" for item in calls[0].inputs) == "print('hi')"
     assert _CONTENT_ITEM_SNAPSHOT_KEY not in calls[0].inputs[0].additional_properties
-
-
-def test_code_interpreter_done_event_recognized_without_explicit_marker():
-    """A done-shaped chunk still replaces accumulated deltas even without the marker.
-
-    Older `agent-framework-openai` releases stream the done event without tagging it,
-    and their `agent-framework-core` floor allows installing this version of core, so
-    the merge also recognizes the done event by its raw event `type` as a fallback -
-    otherwise upgrading core alone would turn this into duplicated code.
-    """
-    done_event = SimpleNamespace(type="response.code_interpreter_call_code.done")
-    updates = [
-        ChatResponseUpdate(
-            contents=[
-                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text="import")])
-            ]
-        ),
-        ChatResponseUpdate(
-            contents=[
-                Content.from_code_interpreter_tool_call(call_id="ci_1", inputs=[Content.from_text(text=" pandas")])
-            ]
-        ),
-        ChatResponseUpdate(
-            contents=[
-                Content.from_code_interpreter_tool_call(
-                    call_id="ci_1",
-                    inputs=[Content.from_text(text="import pandas as pd", raw_representation=done_event)],
-                )
-            ]
-        ),
-    ]
-
-    resp = ChatResponse.from_updates(updates)
-    calls = [c for c in resp.messages[0].contents if c.type == "code_interpreter_tool_call"]
-    assert len(calls) == 1
-    assert calls[0].inputs is not None
-    assert "".join(item.text or "" for item in calls[0].inputs) == "import pandas as pd"
 
 
 def test_code_interpreter_delta_merges_onto_an_empty_placeholder():

@@ -433,13 +433,6 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 # delta of "(" followed by a delta of "()" is two chunks that combine into "(()", not a
 # resend of "()" - so providers must set this explicitly on a full resend.
 _CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
-# Recognize the OpenAI Responses API's code interpreter "done" event from its raw event
-# shape as a secondary snapshot signal, alongside the marker above. Older
-# agent-framework-openai releases stream this event without setting the marker, and
-# their agent-framework-core floor allows installing this version of core, so without
-# this fallback upgrading core alone would turn a streamed delta followed by that
-# provider's done event into duplicated code instead of a correct replace.
-_OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE = "response.code_interpreter_call_code.done"
 
 # endregion
 
@@ -2371,11 +2364,7 @@ def _is_content_item_snapshot(items: Any) -> bool:
     if not isinstance(items, list):
         return False
     return any(
-        isinstance(item, Content)
-        and (
-            item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
-            or getattr(item.raw_representation, "type", None) == _OPENAI_CODE_INTERPRETER_DONE_EVENT_TYPE
-        )
+        isinstance(item, Content) and item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
         for item in cast("list[object]", items)
     )
 
