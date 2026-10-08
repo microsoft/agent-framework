@@ -110,6 +110,9 @@ class ShellSession:
         async with self._lifecycle_lock:
             if self._proc is not None and self._proc.returncode is None:
                 return
+            # A dead shell can leave inherited pipes open in a child. Stop its
+            # readers before reusing the buffers/events for a new process.
+            await self._cancel_readers()
             popen_kwargs: dict[str, object] = {}
             if sys.platform == "win32":
                 import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - Win32 constants only
@@ -304,6 +307,11 @@ class ShellSession:
                     truncated=so_trunc or se_trunc,
                     timed_out=True,
                 )
+            if sys.platform == "win32":
+                # CTRL_BREAK can flush PowerShell's finally sentinel before
+                # the process finishes exiting. Do not dispatch the next
+                # command into that interrupted session, even with a sentinel.
+                await self._close_process()
         except _SentinelOverflow:
             # Runaway output; recover by interrupting and restarting.
             await self._interrupt_current_command()
