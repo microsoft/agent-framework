@@ -30,7 +30,7 @@ Required environment variables: ``FOUNDRY_PROJECT_ENDPOINT`` and
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -91,7 +91,7 @@ session_manager = StreamableHTTPSessionManager(
 
 
 @asynccontextmanager
-async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
     """Start and stop native MCP and model-client resources."""
     async with session_manager.run(), credential:
         yield

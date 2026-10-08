@@ -3,7 +3,7 @@
 
 import asyncio
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
@@ -148,7 +148,7 @@ class _StubRetrievalRequest:
 
 
 @contextmanager
-def force_preview_features() -> Iterator[None]:
+def force_preview_features() -> Generator[None, None, None]:
     """Force preview-only agentic features on (with lightweight stubs)."""
     with patch.multiple(
         _context_provider,
