@@ -1,4 +1,4 @@
-kind: Workflow
+﻿kind: Workflow
 trigger:
 
   kind: OnConversationStart
