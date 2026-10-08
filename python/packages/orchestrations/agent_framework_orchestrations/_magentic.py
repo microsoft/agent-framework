@@ -724,29 +724,36 @@ class StandardMagenticManager(MagenticManagerBase):
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
         last_error: Exception | None = None
+        unknown_speaker_ledger: MagenticProgressLedger | None = None
         while attempts < self.progress_ledger_retry_count:
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
                 ledger = _coerce_model(MagenticProgressLedger, ledger_dict)
-                next_speaker = ledger.next_speaker.answer
-                if (
-                    not ledger.is_request_satisfied.answer
-                    and isinstance(next_speaker, str)
-                    and next_speaker not in agent_names
-                ):
-                    raise ValueError(f"Unknown next speaker '{next_speaker}'. Valid names: {names_csv}.")
-                return ledger
             except Exception as ex:
                 last_error = ex
-                attempts += 1
-                logger.warning(
-                    f"Progress ledger JSON parse failed (attempt {attempts}/{self.progress_ledger_retry_count}): {ex}"
-                )
-                if attempts < self.progress_ledger_retry_count:
-                    # brief backoff before next try
-                    await asyncio.sleep(0.25 * attempts)
+            else:
+                next_speaker = ledger.next_speaker.answer
+                if (
+                    ledger.is_request_satisfied.answer
+                    or not isinstance(next_speaker, str)
+                    or next_speaker in agent_names
+                ):
+                    return ledger
+                # Retry an unknown name, but keep the ledger so running out of attempts ends the run
+                # through the orchestrator's invalid speaker handling instead of another reset.
+                unknown_speaker_ledger = ledger
+                last_error = ValueError(f"Unknown next speaker '{next_speaker}'. Valid names: {names_csv}.")
+            attempts += 1
+            logger.warning(
+                f"Progress ledger attempt failed ({attempts}/{self.progress_ledger_retry_count}): {last_error}"
+            )
+            if attempts < self.progress_ledger_retry_count:
+                # brief backoff before next try
+                await asyncio.sleep(0.25 * attempts)
 
+        if unknown_speaker_ledger is not None:
+            return unknown_speaker_ledger
         raise RuntimeError(
             f"Progress ledger parse failed after {self.progress_ledger_retry_count} attempt(s): {last_error}"
         )
