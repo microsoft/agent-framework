@@ -382,7 +382,7 @@ internal sealed class HandoffAgentExecutor :
             && state.PendingHandoffCallId is not null
             && !incomingMessages.Any(IsUserRequest)
             && messagesForAgent.Any(message => message.Contents.OfType<FunctionResultContent>()
-                .Any(result => result.CallId == state.PendingHandoffCallId)))
+                .Any(result => string.Equals(result.CallId, state.PendingHandoffCallId, StringComparison.Ordinal))))
         {
             await this._sharedStateRef.InvokeWithStateAsync(
                 (sharedState, ctx, ct) =>
