@@ -42,7 +42,21 @@ export function SettingsModal({
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
   // OpenAI proxy mode, Azure deployment, auth status, server capabilities, streaming, and version from store
-  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode, streamingEnabled, setStreamingEnabled } = useDevUIStore();
+  const {
+    oaiMode,
+    setOAIMode,
+    azureDeploymentEnabled,
+    setAzureDeploymentEnabled,
+    authRequired,
+    serverCapabilities,
+    serverVersion,
+    runtime,
+    uiMode,
+    streamingEnabled,
+    setStreamingEnabled,
+    audioInput,
+    setAudioInput,
+  } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -382,6 +396,147 @@ export function SettingsModal({
                       </ul>
                     </div>
                   </div>
+                )}
+              </div>
+
+              {/* Audio Input Settings */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Microphone Input
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Record WAV audio and send it directly to audio-capable agents
+                    </p>
+                  </div>
+                  <Switch
+                    checked={audioInput.enabled}
+                    onCheckedChange={(checked) => setAudioInput({ enabled: checked })}
+                  />
+                </div>
+
+                {audioInput.enabled && (
+                  <>
+                    <details className="group">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                        Audio options
+                      </summary>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 pl-4 border-l-2 border-muted">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Max duration (seconds)</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="600"
+                            value={audioInput.maxDurationSeconds}
+                            onChange={(e) =>
+                              setAudioInput({
+                                maxDurationSeconds: Math.max(1, parseInt(e.target.value || "60")),
+                              })
+                            }
+                            className="text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Max payload (MB)</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={Math.round(audioInput.maxPayloadBytes / 1024 / 1024)}
+                            onChange={(e) =>
+                              setAudioInput({
+                                maxPayloadBytes: Math.max(1, parseInt(e.target.value || "10")) * 1024 * 1024,
+                              })
+                            }
+                            className="text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Output sample rate (Hz)</Label>
+                          <Input
+                            type="number"
+                            min="8000"
+                            max="48000"
+                            step="1000"
+                            value={audioInput.sampleRate}
+                            onChange={(e) =>
+                              setAudioInput({
+                                sampleRate: Math.max(8000, parseInt(e.target.value || "16000")),
+                              })
+                            }
+                            className="text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            DevUI resamples microphone recordings to this WAV sample rate before sending.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <Label className="text-xs">Preview before send</Label>
+                            <Switch
+                              checked={audioInput.previewBeforeSend}
+                              onCheckedChange={(checked) => setAudioInput({ previewBeforeSend: checked })}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <Label className="text-xs">Request browser echo cancellation</Label>
+                            <Switch
+                              checked={audioInput.echoCancellation}
+                              onCheckedChange={(checked) => setAudioInput({ echoCancellation: checked })}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <Label className="text-xs">Request browser noise suppression</Label>
+                            <Switch
+                              checked={audioInput.noiseSuppression}
+                              onCheckedChange={(checked) => setAudioInput({ noiseSuppression: checked })}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3">
+                            <Label className="text-xs">Request browser auto gain control</Label>
+                            <Switch
+                              checked={audioInput.autoGainControl}
+                              onCheckedChange={(checked) => setAudioInput({ autoGainControl: checked })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </details>
+
+                    <details className="group">
+                      <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+                        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                        Learn more about audio input
+                      </summary>
+                      <div className="mt-3 space-y-3 pl-4">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          DevUI sends audio directly to the selected agent without transcription. The selected agent
+                          and model must support audio input. Text-only agents may reject or ignore microphone input.
+                        </p>
+
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Supported input paths:</p>
+                          <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                            <li>Microphone recordings are normalized to mono WAV audio in the browser</li>
+                            <li>Uploaded WAV and MP3 files are sent as audio input</li>
+                            <li>Other uploaded audio formats are not accepted as agent audio input</li>
+                          </ul>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Browser capture controls:</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            Echo cancellation, noise suppression, and auto gain control are browser media
+                            constraints. Browsers and devices may ignore or approximate them, so they are
+                            best-effort hints rather than guaranteed audio processing.
+                          </p>
+                        </div>
+                      </div>
+                    </details>
+                  </>
                 )}
               </div>
             </div>

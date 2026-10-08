@@ -530,6 +530,14 @@ export interface MessageInputFile {
   filename?: string;
 }
 
+export interface MessageInputAudio {
+  type: "input_audio";
+  input_audio: {
+    data: string;
+    format: "wav" | "mp3";
+  };
+}
+
 // DevUI Extension: Function approval request content (shown in chat)
 export interface MessageFunctionApprovalRequestContent {
   type: "function_approval_request";
@@ -590,6 +598,7 @@ export type MessageContent =
   | MessageRefusalContent
   | MessageInputImage
   | MessageInputFile
+  | MessageInputAudio
   | MessageOutputImage
   | MessageOutputFile
   | MessageOutputData

@@ -81,6 +81,16 @@ interface DevUIState {
   isResizing: boolean;
   showToolCalls: boolean; // UI setting to show/hide tool calls in chat
   streamingEnabled: boolean; // Whether to use streaming mode for responses
+  audioInput: {
+    enabled: boolean;
+    maxDurationSeconds: number;
+    maxPayloadBytes: number;
+    sampleRate: number;
+    echoCancellation: boolean;
+    noiseSuppression: boolean;
+    autoGainControl: boolean;
+    previewBeforeSend: boolean;
+  };
 
   // Debug Panel Preferences (persisted)
   debugPanelTab: "events" | "traces" | "tools"; // Main debug panel tab
@@ -175,6 +185,7 @@ interface DevUIActions {
   setIsResizing: (resizing: boolean) => void;
   setShowToolCalls: (show: boolean) => void;
   setStreamingEnabled: (enabled: boolean) => void;
+  setAudioInput: (settings: Partial<DevUIState["audioInput"]>) => void;
 
   // Debug Panel Preference Actions
   setDebugPanelTab: (tab: "events" | "traces" | "tools") => void;
@@ -275,6 +286,16 @@ export const useDevUIStore = create<DevUIStore>()(
         isResizing: false,
         showToolCalls: true, // Default to showing tool calls
         streamingEnabled: true, // Default to streaming mode (recommended)
+        audioInput: {
+          enabled: true,
+          maxDurationSeconds: 60,
+          maxPayloadBytes: 10 * 1024 * 1024,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          previewBeforeSend: true,
+        },
 
         // Debug Panel Preferences (persisted)
         debugPanelTab: "events", // Default to events tab
@@ -426,6 +447,13 @@ export const useDevUIStore = create<DevUIStore>()(
         setDebugPanelWidth: (width) => set({ debugPanelWidth: width }),
         setShowToolCalls: (show) => set({ showToolCalls: show }),
         setStreamingEnabled: (enabled) => set({ streamingEnabled: enabled }),
+        setAudioInput: (settings) =>
+          set((state) => ({
+            audioInput: {
+              ...state.audioInput,
+              ...settings,
+            },
+          })),
         addDebugEvent: (event) =>
           set((state) => {
             const eventForStorage = prepareDebugEvent(event);
@@ -672,6 +700,7 @@ export const useDevUIStore = create<DevUIStore>()(
           debugPanelWidth: state.debugPanelWidth,
           showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
           streamingEnabled: state.streamingEnabled, // Persist streaming mode preference
+          audioInput: state.audioInput, // Persist microphone/audio input preferences
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
           // Debug panel tab preferences

@@ -12,7 +12,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, Content, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
@@ -29,6 +29,7 @@ from openai.types.responses import (
     ResponseOutputRefusal,
 )
 
+from ._audio import input_audio_data_uri, input_audio_format_for_media_type, media_type_for_input_audio_format
 from ._utils import infer_media_type
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
@@ -36,6 +37,44 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
+
+
+class _DevUIInputAudioPayload(TypedDict):
+    """DevUI extension payload for Responses input_audio conversation storage."""
+
+    data: str
+    format: Literal["wav", "mp3"]
+
+
+class _DevUIInputAudioContent(TypedDict):
+    """DevUI extension content for audio inputs unsupported by OpenAI Conversations SDK models."""
+
+    type: Literal["input_audio"]
+    input_audio: _DevUIInputAudioPayload
+
+
+_ConversationMessageContent = (
+    OpenAIContent
+    | TextContent
+    | ResponseOutputRefusal
+    | ResponseInputImage
+    | ResponseInputFile
+    | _DevUIInputAudioContent
+)
+
+
+def _is_devui_input_audio_content(content: object) -> bool:
+    """Return True when content is the narrow DevUI input_audio extension shape."""
+    if not isinstance(content, dict):
+        return False
+    input_audio = content.get("input_audio")
+    return (
+        content.get("type") == "input_audio"
+        and isinstance(input_audio, dict)
+        and isinstance(input_audio.get("data"), str)
+        and input_audio.get("format") in ("wav", "mp3")
+    )
+
 
 # Checkpoint item type constants
 CONVERSATION_ITEM_TYPE_CHECKPOINT = "checkpoint"
@@ -338,20 +377,14 @@ class InMemoryConversationStore(ConversationStore):
             item_id = f"item_{uuid.uuid4().hex}"
 
             # Convert Message contents to OpenAI TextContent format
-            message_content: MutableSequence[OpenAIContent] = []
+            message_content: MutableSequence[_ConversationMessageContent] = []
             for content_item in msg.contents:
                 openai_content = self._to_openai_content(content_item)
                 if openai_content is not None:
                     message_content.append(openai_content)
 
             # Create Message object (concrete type from ConversationItem union)
-            message = OpenAIMessage(
-                id=item_id,
-                type="message",  # Required discriminator for union
-                role=cast(MessageRole, msg.role),  # Safe: Agent Framework roles match OpenAI roles,
-                content=message_content,
-                status="completed",  # Required field
-            )
+            message = self._make_message_item(item_id, cast(MessageRole, msg.role), message_content)
             conv_items.append(message)
 
         # Cache items
@@ -362,8 +395,9 @@ class InMemoryConversationStore(ConversationStore):
             self._item_index[conversation_id] = {}
 
         for conv_item in conv_items:
-            if conv_item.id:  # Guard against None
-                self._item_index[conversation_id][conv_item.id] = conv_item
+            item_id = cast(dict[str, Any], conv_item).get("id") if isinstance(conv_item, dict) else conv_item.id
+            if item_id:  # Guard against None
+                self._item_index[conversation_id][item_id] = conv_item
 
         return conv_items
 
@@ -396,7 +430,9 @@ class InMemoryConversationStore(ConversationStore):
             # Process each content item in the message
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
-            message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
+            message_contents: list[
+                TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent
+            ] = []
             function_calls: list[ResponseFunctionToolCallItem] = []
             function_results: list[ResponseFunctionToolCallOutputItem] = []
 
@@ -456,13 +492,7 @@ class InMemoryConversationStore(ConversationStore):
             # Create ConversationItems based on what we found
             # If message has text/images/files, create a Message item
             if message_contents:
-                message = OpenAIMessage(
-                    id=item_id,
-                    type="message",
-                    role=role,
-                    content=message_contents,  # type: ignore
-                    status="completed",
-                )
+                message = self._make_message_item(item_id, role, message_contents)
                 items.append(message)
 
             # Add function call items
@@ -528,6 +558,34 @@ class InMemoryConversationStore(ConversationStore):
         return paginated_items, has_more
 
     @staticmethod
+    def _make_message_item(
+        item_id: str,
+        role: MessageRole,
+        content: MutableSequence[_ConversationMessageContent]
+        | list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent],
+    ) -> ConversationItem:
+        """Build an OpenAI conversation message, preserving DevUI audio extensions."""
+        if any(_is_devui_input_audio_content(content_item) for content_item in content):
+            return cast(
+                ConversationItem,
+                {
+                    "id": item_id,
+                    "type": "message",
+                    "role": role,
+                    "content": list(content),
+                    "status": "completed",
+                },
+            )
+
+        return OpenAIMessage(
+            id=item_id,
+            type="message",
+            role=role,
+            content=cast(MutableSequence[OpenAIContent], content),
+            status="completed",
+        )
+
+    @staticmethod
     def _to_agent_content(content: dict[str, Any]) -> Content | None:
         """Convert one supported OpenAI conversation message part."""
         content_type = content.get("type")
@@ -564,6 +622,20 @@ class InMemoryConversationStore(ConversationStore):
                     additional_properties=image_properties,
                 )
             return None
+
+        if content_type == "input_audio":
+            input_audio = content.get("input_audio")
+            if not isinstance(input_audio, dict):
+                return None
+            audio_data = input_audio.get("data")
+            audio_format = input_audio.get("format")
+            if not isinstance(audio_data, str) or not audio_data:
+                return None
+            media_type = media_type_for_input_audio_format(audio_format)
+            if media_type is None:
+                return None
+            uri = input_audio_data_uri(audio_data, media_type)
+            return Content.from_uri(uri=uri, media_type=media_type)
 
         if content_type == "input_file":
             filename = content.get("filename")
@@ -615,7 +687,7 @@ class InMemoryConversationStore(ConversationStore):
     @staticmethod
     def _to_openai_content(
         content: Content,
-    ) -> TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | None:
+    ) -> TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent | None:
         """Convert one supported Agent Framework message part."""
         content_type = content.type
         if content_type == "text":
@@ -630,6 +702,22 @@ class InMemoryConversationStore(ConversationStore):
         )
 
         if content_type in ("data", "uri"):
+            if content.media_type and content.media_type.startswith("audio/"):
+                audio_format = input_audio_format_for_media_type(content.media_type)
+
+                if audio_format is not None:
+                    audio_data = content.uri or ""
+                    if audio_data.startswith("data:"):
+                        audio_data = audio_data.split(",", 1)[-1]
+                    audio_content: _DevUIInputAudioContent = {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data,
+                            "format": audio_format,
+                        },
+                    }
+                    return audio_content
+
             if is_image:
                 detail = additional_properties.get("detail", "auto")
                 if detail not in ("low", "high", "auto", "original"):

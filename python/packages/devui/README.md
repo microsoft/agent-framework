@@ -196,6 +196,18 @@ response2 = client.responses.create(
 
 **How it works:** DevUI automatically retrieves the conversation's message history from the stored thread and passes it to the agent. You don't need to manually manage message history - just provide the same `conversation` ID for follow-up requests.
 
+### Voice Input
+
+DevUI chat supports microphone input in browsers that allow `getUserMedia` on `localhost` or HTTPS origins. Voice
+recordings are normalized to mono WAV audio and sent as OpenAI Responses `input_audio` content. Uploaded WAV and MP3
+files are also sent as `input_audio`.
+
+DevUI does not transcribe audio. The selected agent/model must support audio input directly. Other uploaded audio
+formats are not accepted as agent audio input.
+
+Audio settings are available from Settings → General. Browser capture options such as echo cancellation, noise
+suppression, and auto gain control are best-effort `getUserMedia` constraints, so browser and device support may vary.
+
 ### OpenAI Proxy Mode
 
 DevUI provides an **OpenAI Proxy** feature for testing OpenAI models directly through the interface without creating custom agents. Enable via Settings → OpenAI Proxy tab.

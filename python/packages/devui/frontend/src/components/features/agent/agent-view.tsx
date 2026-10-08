@@ -1205,6 +1205,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 file_data: fileItem.file_data,
                 filename: fileItem.filename,
               });
+            } else if (contentItem.type === "input_audio") {
+              messageContent.push({
+                type: "input_audio",
+                input_audio: contentItem.input_audio,
+              });
             }
           }
         }
@@ -1670,6 +1675,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 type: "input_file",
                 file_data: fileItem.file_data,
                 filename: fileItem.filename,
+              });
+            } else if (contentItem.type === "input_audio") {
+              messageContent.push({
+                type: "input_audio",
+                input_audio: contentItem.input_audio,
               });
             }
           }

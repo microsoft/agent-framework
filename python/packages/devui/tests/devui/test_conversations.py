@@ -330,6 +330,46 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
 
 
 @pytest.mark.asyncio
+async def test_add_and_list_items_preserves_input_audio_parts():
+    """Conversation storage keeps microphone audio as input_audio across round trips."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+    request_items = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": "UklGRg==",
+                        "format": "wav",
+                    },
+                }
+            ],
+        },
+    ]
+
+    created_items = await store.add_items(conversation.id, items=request_items)
+    listed_items, has_more = await store.list_items(conversation.id)
+
+    assert has_more is False
+    assert isinstance(created_items[0], dict)
+    assert isinstance(listed_items[0], dict)
+    assert created_items[0]["content"][0] == {
+        "type": "input_audio",
+        "input_audio": {
+            "data": "UklGRg==",
+            "format": "wav",
+        },
+    }
+    assert listed_items[0]["content"][0] == created_items[0]["content"][0]
+    stored_message = store._conversations[conversation.id]["messages"][0]
+    assert stored_message.contents[0].type == "data"
+    assert stored_message.contents[0].media_type == "audio/wav"
+    assert stored_message.contents[0].uri == "data:audio/wav;base64,UklGRg=="
+
+
+@pytest.mark.asyncio
 async def test_list_items():
     """Test listing conversation items."""
     store = InMemoryConversationStore()
