@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import sys
 import uuid
 import warnings
@@ -492,8 +493,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             session: The conversation session associated with the message(s).
             function_invocation_kwargs: Present for compatibility with the shared agent interface.
                 A2AAgent does not use these values directly.
-            client_kwargs: Present for compatibility with the shared agent interface.
-                A2AAgent does not use these values directly.
+            client_kwargs: Client-specific keyword arguments. The only key A2AAgent reads is
+                ``a2a_metadata``, a JSON-compatible mapping sent to the server as
+                ``SendMessageRequest.metadata`` (available server-side as
+                ``RequestContext.metadata``). Nothing else is transmitted. This is the
+                entry point for passing request-scoped data, such as a user id, to a
+                remote A2A server from a workflow.
             kwargs: Additional compatibility keyword arguments.
                 A2AAgent does not use these values directly.
             continuation_token: Optional token to resume a long-running task
@@ -535,6 +540,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], session=session)
             input_request_occurrence_id = a2a_message.message_id
             request = SendMessageRequest(message=a2a_message)
+            request_metadata = self._get_request_metadata(client_kwargs)
+            if request_metadata:
+                request.metadata.update(request_metadata)
             if background and not stream:
                 # return_immediately only applies to non-streaming (message/send)
                 request.configuration.return_immediately = True
@@ -1088,6 +1096,28 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if updates:
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
+
+    @staticmethod
+    def _get_request_metadata(client_kwargs: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Extract the explicit ``a2a_metadata`` mapping from client kwargs.
+
+        Raises:
+            AgentInvalidRequestException: If ``a2a_metadata`` is not a mapping or is not JSON-compatible.
+        """
+        if not client_kwargs:
+            return {}
+        metadata = client_kwargs.get("a2a_metadata")
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, Mapping):
+            raise AgentInvalidRequestException("client_kwargs['a2a_metadata'] must be a mapping.")
+        try:
+            # Round trip through JSON so only JSON-compatible values reach the protobuf Struct.
+            return cast("dict[str, Any]", json.loads(json.dumps(dict(cast("Mapping[str, Any]", metadata)))))
+        except (TypeError, ValueError) as ex:
+            raise AgentInvalidRequestException(
+                "client_kwargs['a2a_metadata'] must contain only JSON-compatible values."
+            ) from ex
 
     def _prepare_message_for_a2a(self, message: Message, *, session: AgentSession | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.

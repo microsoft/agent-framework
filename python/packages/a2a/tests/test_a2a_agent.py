@@ -2874,3 +2874,38 @@ async def test_context_manager_closes_self_created_http_client() -> None:
             pass
 
         mock_http_client.aclose.assert_called_once()
+
+
+async def test_run_sends_a2a_metadata_as_request_metadata(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """client_kwargs['a2a_metadata'] is sent as SendMessageRequest.metadata, not as message metadata."""
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await a2a_agent.run(
+        "Hello",
+        client_kwargs={"a2a_metadata": {"user_id": "42", "user_name": "Dinesh"}},
+    )
+
+    assert MessageToDict(mock_a2a_client.last_request.metadata) == {"user_id": "42", "user_name": "Dinesh"}
+    assert not mock_a2a_client.last_message.metadata
+
+
+async def test_run_does_not_send_other_kwargs(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Only the explicit a2a_metadata key is transmitted."""
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await a2a_agent.run(
+        "Hello",
+        client_kwargs={"user_id": "42"},
+        function_invocation_kwargs={"user_id": "42"},
+    )
+
+    assert not mock_a2a_client.last_request.metadata
+
+
+@mark.parametrize("bad_metadata", ["text", {"value": object()}], ids=["not-a-mapping", "not-json"])
+async def test_run_rejects_invalid_a2a_metadata(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, bad_metadata: Any
+) -> None:
+    with raises(AgentInvalidRequestException):
+        await a2a_agent.run("Hello", client_kwargs={"a2a_metadata": bad_metadata})
+    assert mock_a2a_client.call_count == 0
