@@ -188,6 +188,12 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
     assert isinstance(ollama_chat_client, BaseChatClient)
 
 
+def test_service_url(ollama_unit_test_env: dict[str, str]) -> None:
+    ollama_chat_client = OllamaChatClient(host="http://ollama.example:9999")
+
+    assert ollama_chat_client.service_url().rstrip("/") == "http://ollama.example:9999"
+
+
 @pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL"]], indirect=True)
 def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError, match="Required setting 'model'"):
