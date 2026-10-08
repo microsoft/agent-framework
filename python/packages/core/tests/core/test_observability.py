@@ -2808,6 +2808,43 @@ def test_make_json_safe_callable_method_type_error_falls_through():
     assert result == {"value": "fallback"}
 
 
+def test_make_json_safe_plain_enum_uses_its_value():
+    """Test make_json_safe serializes plain Enum members as their values instead of walking the enum class."""
+    import json
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Color(Enum):
+        RED = 1
+        LABEL = "label"
+
+    result = make_json_safe({"color": Color.RED, "label": Color.LABEL, "nested": [Color.RED]})
+
+    assert result == {"color": 1, "label": "label", "nested": [1]}
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_make_json_safe_mixin_enums_are_unchanged():
+    """Test make_json_safe keeps str and int mixin enums as the scalars they already are."""
+    import json
+    from enum import Enum, IntEnum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Level(str, Enum):
+        HIGH = "high"
+
+    class Priority(IntEnum):
+        LOW = 1
+
+    result = make_json_safe({"level": Level.HIGH, "priority": Priority.LOW})
+
+    assert result["level"] is Level.HIGH
+    assert result["priority"] is Priority.LOW
+    assert json.dumps(result) == '{"level": "high", "priority": 1}'
+
+
 def test_make_json_safe_dict_with_non_string_keys():
     """Test make_json_safe converts non-primitive dict keys to strings."""
     import json
