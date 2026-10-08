@@ -33,6 +33,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// Listed skills provide a name, description, and list of resources. Instructions and supporting resources
 /// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
+/// Discovery through <c>skills/list</c> leaves existing archive directories untouched.
 /// </para>
 /// <para>
 /// <c>skill://index.json</c> is used only when the server does not declare the Skills extension.
@@ -51,8 +52,8 @@ namespace Microsoft.Agents.AI;
 /// does not apply to lazily fetched <c>skill-md</c> entries or their supporting resources.
 /// </para>
 /// <para>
-/// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
-/// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
+/// <b>Thread safety and archive reconciliation.</b> During <c>skill://index.json</c> discovery, every call to
+/// <see cref="GetSkillsAsync"/> reconciles the archive skills directory: it extracts newly advertised
 /// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that
 /// work mutates files (and internal state) that concurrent calls would also touch, running it from
 /// multiple threads at once could corrupt the directory or surface partially-extracted skills. To
