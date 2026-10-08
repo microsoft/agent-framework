@@ -99,15 +99,16 @@ class TestInit:
 
     def test_init_with_all_params(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with all parameters provided."""
-        provider = CosmosMemoryContextProvider(
-            source_id="test_memory",
-            memory_client=mock_memory_client,
-            top_k=10,
-            min_confidence=0.8,
-            memory_types=["fact", "episodic"],
-            context_prompt="Custom prompt:",
-            auto_extract=True,
-        )
+        with patch("agent_framework_azure_cosmos_memory._context_provider.get_user_agent") as mock_get_user_agent:
+            provider = CosmosMemoryContextProvider(
+                source_id="test_memory",
+                memory_client=mock_memory_client,
+                top_k=10,
+                min_confidence=0.8,
+                memory_types=["fact", "episodic"],
+                context_prompt="Custom prompt:",
+                auto_extract=True,
+            )
 
         assert provider.source_id == "test_memory"
         assert provider.top_k == 10
@@ -117,6 +118,7 @@ class TestInit:
         assert provider.auto_extract is True
         assert provider.memory_client is mock_memory_client
         assert provider._should_close_client is False
+        mock_get_user_agent.assert_not_called()
 
     def test_init_default_values(self, mock_memory_client: AsyncMock) -> None:
         """Initialize with default values."""
@@ -131,9 +133,13 @@ class TestInit:
 
     def test_init_creates_client_when_none(self) -> None:
         """When no client provided, creates AsyncCosmosMemoryClient with default credential."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
 
             provider = CosmosMemoryContextProvider(
@@ -149,6 +155,8 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["use_default_credential"] is True
             assert "cosmos_credential" not in kwargs
+            assert kwargs["user_agent"] == "agent-framework-python/test"
+            mock_get_user_agent.assert_called_once_with()
             # The explicitly provided models are forwarded to the toolkit client.
             assert kwargs["embedding_deployment_name"] == "text-embedding-3-large"
             assert kwargs["chat_deployment_name"] == "gpt-4o-mini"
@@ -156,9 +164,13 @@ class TestInit:
 
     def test_init_wires_explicit_credential(self) -> None:
         """An explicit credential is passed to both Cosmos and AI Foundry, disabling default."""
-        with patch(
-            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient"
-        ) as mock_client_class:
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+            patch(
+                "agent_framework_azure_cosmos_memory._context_provider.get_user_agent",
+                return_value="agent-framework-python/test",
+            ) as mock_get_user_agent,
+        ):
             mock_client_class.return_value = AsyncMock()
             sentinel = MagicMock()
 
@@ -174,6 +186,8 @@ class TestInit:
             assert kwargs["cosmos_credential"] is sentinel
             assert kwargs["ai_foundry_credential"] is sentinel
             assert kwargs["use_default_credential"] is False
+            assert kwargs["user_agent"] == "agent-framework-python/test"
+            mock_get_user_agent.assert_called_once_with()
 
     def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Raises SettingNotFoundError when the Cosmos endpoint is not provided."""

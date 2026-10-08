@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
-from agent_framework._telemetry import mark_feature_used
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 from ._feature_usage import FeatureIndex
 
@@ -226,6 +226,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     cosmos_credential=credential,
                     ai_foundry_credential=credential,
                     use_default_credential=False,
+                    user_agent=get_user_agent(),
                     cadence_thresholds=cadence_thresholds or None,
                 )
             else:
@@ -236,6 +237,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     embedding_deployment_name=embedding_model,
                     chat_deployment_name=chat_model,
                     use_default_credential=True,
+                    user_agent=get_user_agent(),
                     cadence_thresholds=cadence_thresholds or None,
                 )
             self._should_close_client = True
