@@ -55,11 +55,11 @@ Agent Framework `AgentSession`, but they are not interchangeable.
 During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
 
 ```python
-session.service_session_id
 # Response or conversation continuation handle
+session.service_session_id
 
-session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 # Foundry hosted-agent session ID
+session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 ```
 
 Keep the same `AgentSession` across turns so Agent Framework can forward both values correctly. When cleaning up,
