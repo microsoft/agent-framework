@@ -51,7 +51,7 @@ from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
 
 from ._feature_usage import FeatureIndex
-from ._utils import get_uri_data
+from ._utils import AGENT_FRAMEWORK_METADATA_KEY, get_uri_data
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
@@ -243,6 +243,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         auth_interceptor: AuthInterceptor | None = None,
         timeout: float | httpx.Timeout | None = None,
         supported_protocol_bindings: list[Literal["JSONRPC", "GRPC", "HTTP+JSON"] | str] | None = None,
+        forwarded_kwargs: Sequence[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -265,6 +266,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             supported_protocol_bindings: List of protocol bindings to use for transport negotiation.
                 Known values: "JSONRPC", "GRPC", "HTTP+JSON". Defaults to ["JSONRPC"].
                 The A2A spec treats this as an open-form string, so custom bindings are also accepted.
+            forwarded_kwargs: Names of keys to forward to the remote A2A server. Keys are looked up in
+                the ``function_invocation_kwargs`` and ``client_kwargs`` passed to :meth:`run` and sent
+                in ``SendMessageRequest.metadata`` under ``"agent_framework"``. The default (``None``)
+                sends nothing. Values must be JSON-compatible. The receiving ``A2AExecutor`` decides
+                which keys it accepts.
             kwargs: any additional properties, passed to BaseAgent.
         """
         # Default name/description from agent_card when not explicitly provided
@@ -275,6 +281,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 description = agent_card.description
 
         super().__init__(id=id, name=name, description=description, **kwargs)
+        self._forwarded_kwargs: frozenset[str] = frozenset(forwarded_kwargs or ())
         self._http_client: httpx.AsyncClient | None = http_client
         # Only HTTP clients created by this agent are closed on exit.
         self._close_http_client = False
@@ -491,14 +498,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
-            function_invocation_kwargs: Present for compatibility with the shared agent interface.
-                A2AAgent does not use these values directly.
-            client_kwargs: Client-specific keyword arguments. The only key A2AAgent reads is
-                ``a2a_metadata``, a JSON-compatible mapping sent to the server as
-                ``SendMessageRequest.metadata`` (available server-side as
-                ``RequestContext.metadata``). Nothing else is transmitted. This is the
-                entry point for passing request-scoped data, such as a user id, to a
-                remote A2A server from a workflow.
+            function_invocation_kwargs: Keyword arguments for tool invocation. Only the keys named in
+                ``forwarded_kwargs`` are sent to the server, nothing otherwise.
+            client_kwargs: Keyword arguments for the chat client. Only the keys named in
+                ``forwarded_kwargs`` are sent to the server, nothing otherwise.
             kwargs: Additional compatibility keyword arguments.
                 A2AAgent does not use these values directly.
             continuation_token: Optional token to resume a long-running task
@@ -540,9 +543,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], session=session)
             input_request_occurrence_id = a2a_message.message_id
             request = SendMessageRequest(message=a2a_message)
-            request_metadata = self._get_request_metadata(client_kwargs)
-            if request_metadata:
-                request.metadata.update(request_metadata)
+            forwarded = self._get_forwarded_kwargs(function_invocation_kwargs, client_kwargs)
+            if forwarded:
+                request.metadata.update({AGENT_FRAMEWORK_METADATA_KEY: forwarded})
             if background and not stream:
                 # return_immediately only applies to non-streaming (message/send)
                 request.configuration.return_immediately = True
@@ -1097,27 +1100,34 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    @staticmethod
-    def _get_request_metadata(client_kwargs: Mapping[str, Any] | None) -> dict[str, Any]:
-        """Extract the explicit ``a2a_metadata`` mapping from client kwargs.
+    def _get_forwarded_kwargs(
+        self,
+        function_invocation_kwargs: Mapping[str, Any] | None,
+        client_kwargs: Mapping[str, Any] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """Select the opted-in run kwargs to send in the request metadata.
 
         Raises:
-            AgentInvalidRequestException: If ``a2a_metadata`` is not a mapping or is not JSON-compatible.
+            AgentInvalidRequestException: If a selected value is not JSON-compatible.
         """
-        if not client_kwargs:
+        if not self._forwarded_kwargs:
             return {}
-        metadata = client_kwargs.get("a2a_metadata")
-        if metadata is None:
-            return {}
-        if not isinstance(metadata, Mapping):
-            raise AgentInvalidRequestException("client_kwargs['a2a_metadata'] must be a mapping.")
-        try:
-            # Round trip through JSON so only JSON-compatible values reach the protobuf Struct.
-            return cast("dict[str, Any]", json.loads(json.dumps(dict(cast("Mapping[str, Any]", metadata)))))
-        except (TypeError, ValueError) as ex:
-            raise AgentInvalidRequestException(
-                "client_kwargs['a2a_metadata'] must contain only JSON-compatible values."
-            ) from ex
+        forwarded: dict[str, dict[str, Any]] = {}
+        for name, source in (
+            ("function_invocation_kwargs", function_invocation_kwargs),
+            ("client_kwargs", client_kwargs),
+        ):
+            selected = {key: value for key, value in (source or {}).items() if key in self._forwarded_kwargs}
+            if not selected:
+                continue
+            try:
+                # Round trip through JSON so only JSON-compatible values reach the protobuf Struct.
+                forwarded[name] = cast("dict[str, Any]", json.loads(json.dumps(selected)))
+            except (TypeError, ValueError) as ex:
+                raise AgentInvalidRequestException(
+                    f"Forwarded {name} must contain only JSON-compatible values."
+                ) from ex
+        return forwarded
 
     def _prepare_message_for_a2a(self, message: Message, *, session: AgentSession | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.

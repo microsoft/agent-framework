@@ -2876,36 +2876,57 @@ async def test_context_manager_closes_self_created_http_client() -> None:
         mock_http_client.aclose.assert_called_once()
 
 
-async def test_run_sends_a2a_metadata_as_request_metadata(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """client_kwargs['a2a_metadata'] is sent as SendMessageRequest.metadata, not as message metadata."""
-    mock_a2a_client.add_message_response("msg-1", "Done")
-
-    await a2a_agent.run(
-        "Hello",
-        client_kwargs={"a2a_metadata": {"user_id": "42", "user_name": "Dinesh"}},
+def _forwarding_agent(mock_a2a_client: MockA2AClient, forwarded_kwargs: list[str] | None) -> A2AAgent:
+    return A2AAgent(
+        name="Test Agent",
+        id="test-agent",
+        client=cast(Any, mock_a2a_client),
+        http_client=None,
+        forwarded_kwargs=forwarded_kwargs,
     )
 
-    assert MessageToDict(mock_a2a_client.last_request.metadata) == {"user_id": "42", "user_name": "Dinesh"}
+
+async def test_run_forwards_selected_kwargs_in_request_metadata(mock_a2a_client: MockA2AClient) -> None:
+    """Only keys named in forwarded_kwargs are sent, grouped by their source kwargs, in the request metadata."""
+    agent = _forwarding_agent(mock_a2a_client, ["tenant", "trace"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run(
+        "Hello",
+        function_invocation_kwargs={"tenant": "acme", "secret": "do-not-send"},
+        client_kwargs={"trace": {"id": "abc"}, "other": 1},
+    )
+
+    assert MessageToDict(mock_a2a_client.last_request.metadata) == {
+        "agent_framework": {
+            "function_invocation_kwargs": {"tenant": "acme"},
+            "client_kwargs": {"trace": {"id": "abc"}},
+        }
+    }
     assert not mock_a2a_client.last_message.metadata
 
 
-async def test_run_does_not_send_other_kwargs(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
-    """Only the explicit a2a_metadata key is transmitted."""
+async def test_run_forwards_nothing_by_default(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     mock_a2a_client.add_message_response("msg-1", "Done")
 
-    await a2a_agent.run(
-        "Hello",
-        client_kwargs={"user_id": "42"},
-        function_invocation_kwargs={"user_id": "42"},
-    )
+    await a2a_agent.run("Hello", function_invocation_kwargs={"tenant": "acme"}, client_kwargs={"trace": "abc"})
 
     assert not mock_a2a_client.last_request.metadata
 
 
-@mark.parametrize("bad_metadata", ["text", {"value": object()}], ids=["not-a-mapping", "not-json"])
-async def test_run_rejects_invalid_a2a_metadata(
-    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, bad_metadata: Any
-) -> None:
+async def test_run_forwards_nothing_when_selected_keys_absent(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run("Hello", client_kwargs={"trace": "abc"})
+
+    assert not mock_a2a_client.last_request.metadata
+
+
+async def test_run_rejects_non_json_forwarded_values(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+
     with raises(AgentInvalidRequestException):
-        await a2a_agent.run("Hello", client_kwargs={"a2a_metadata": bad_metadata})
+        await agent.run("Hello", function_invocation_kwargs={"tenant": object()})
+
     assert mock_a2a_client.call_count == 0
