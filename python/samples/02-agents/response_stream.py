@@ -98,31 +98,37 @@ when code outside middleware already owns a concrete stream.
 === Two Consumption Patterns ===
 
 **Pattern 1: Async Iteration**
+
 ```python
 async for update in response_stream:
     print(update.text)  # Process each update
 # Stream is now consumed; updates are stored internally
 ```
+
 - Transform hooks are called for each yielded item
 - Cleanup hooks are called after the last item
 - The stream collects all updates internally for later finalization
 - The stream finalizes automatically when iteration reaches the end
 
 **Pattern 2: Direct Finalization**
+
 ```python
 final = await response_stream.get_final_response()
 ```
+
 - If the stream hasn't been iterated, it auto-iterates (consuming all updates)
 - The finalizer converts collected updates to a final response
 - Update and result pipelines run normally
 - You get the complete response without ever seeing individual updates
 
 ** Pattern 3: Combined Usage **
+
 ```python
 async for update in response_stream:
     print(update.text)  # See each update
 final = await response_stream.get_final_response()  # Get the aggregated result
 ```
+
 When you first iterate the stream and then call `get_final_response()`, the following occurs:
 - Iteration yields updates with transform hooks applied
 - Cleanup hooks run after iteration completes
