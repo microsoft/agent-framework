@@ -258,7 +258,7 @@ def _request_context(
     call_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """Install a Foundry request context for the duration of the block."""
     token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
     try:

@@ -2586,7 +2586,7 @@ class TestNoneResponseHandling:
 
 
 @contextmanager
-def caplog_context(target_logger: logging.Logger) -> Generator[list[str], None, None]:
+def caplog_context(target_logger: logging.Logger) -> Generator[list[str]]:
     """Capture log messages from a specific logger."""
     messages: list[str] = []
 

@@ -272,9 +272,7 @@ def _request(payload: Any, *, session_id: str = "session") -> Request:
 
 
 @contextmanager
-def _context(
-    *, session_id: str = "session", call_id: str | None = None, user_id: str | None = None
-) -> Generator[None, None, None]:
+def _context(*, session_id: str = "session", call_id: str | None = None, user_id: str | None = None) -> Generator[None]:
     token = set_request_context(FoundryAgentRequestContext(session_id=session_id, call_id=call_id, user_id=user_id))
     try:
         yield

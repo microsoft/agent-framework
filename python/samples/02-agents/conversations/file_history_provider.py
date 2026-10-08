@@ -72,7 +72,7 @@ def lookup_weather(
 
 
 @contextmanager
-def _resolve_storage_directory() -> Generator[Path, None, None]:
+def _resolve_storage_directory() -> Generator[Path]:
     """Yield the configured storage directory for the sample run."""
     if USE_TEMP_DIRECTORY:
         with tempfile.TemporaryDirectory(prefix="af-file-history-") as temp_directory:

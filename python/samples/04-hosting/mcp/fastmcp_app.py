@@ -52,7 +52,7 @@ agent = Agent(
 
 
 @asynccontextmanager
-async def lifespan(_server: FastMCP[None]) -> AsyncGenerator[None, None]:
+async def lifespan(_server: FastMCP[None]) -> AsyncGenerator[None]:
     """Close the model credential when the FastMCP server stops."""
     async with credential:
         yield

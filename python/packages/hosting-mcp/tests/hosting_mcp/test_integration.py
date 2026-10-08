@@ -81,7 +81,7 @@ async def test_mcp_tool_calls_locally_hosted_agent() -> None:
     )
 
     @asynccontextmanager
-    async def lifespan(_app: Starlette) -> AsyncGenerator[None, None]:
+    async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
         async with session_manager.run():
             yield
 

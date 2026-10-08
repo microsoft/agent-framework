@@ -8671,7 +8671,7 @@ def _build_multi_update_workflow_agent(
 @asynccontextmanager
 async def _pending_workflow_event(
     handler: AsyncGenerator[Any], started: asyncio.Event
-) -> AsyncGenerator[asyncio.Future[Any], None]:
+) -> AsyncGenerator[asyncio.Future[Any]]:
     pending = asyncio.ensure_future(anext(handler))
     started_wait = asyncio.ensure_future(started.wait())
     try:

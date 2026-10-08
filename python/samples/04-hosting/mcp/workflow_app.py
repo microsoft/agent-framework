@@ -91,7 +91,7 @@ session_manager = StreamableHTTPSessionManager(
 
 
 @asynccontextmanager
-async def lifespan(_app: Starlette) -> AsyncGenerator[None, None]:
+async def lifespan(_app: Starlette) -> AsyncGenerator[None]:
     """Start and stop the native MCP transport."""
     async with session_manager.run():
         yield
