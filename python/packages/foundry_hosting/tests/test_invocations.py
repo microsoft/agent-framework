@@ -17,7 +17,7 @@ import logging
 import uuid
 import warnings
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import product
 from pathlib import Path
@@ -258,7 +258,7 @@ def _request_context(
     call_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Install a Foundry request context for the duration of the block."""
     token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
     try:

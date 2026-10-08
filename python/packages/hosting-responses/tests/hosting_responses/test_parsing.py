@@ -544,7 +544,7 @@ class TestResponsesRunHelpers:
         raw_usage = ResponseUsage.model_validate(_native_usage_payload())
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
-            usage_details=cast("UsageDetails", {"input_token_count": True}),
+            usage_details={"input_token_count": True},
             raw_representation=SimpleNamespace(object="response", usage=raw_usage),
         )
 

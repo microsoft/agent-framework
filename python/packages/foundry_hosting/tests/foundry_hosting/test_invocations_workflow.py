@@ -8,7 +8,7 @@ import asyncio
 import gc
 import json
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -272,7 +272,9 @@ def _request(payload: Any, *, session_id: str = "session") -> Request:
 
 
 @contextmanager
-def _context(*, session_id: str = "session", call_id: str | None = None, user_id: str | None = None) -> Iterator[None]:
+def _context(
+    *, session_id: str = "session", call_id: str | None = None, user_id: str | None = None
+) -> Generator[None, None, None]:
     token = set_request_context(FoundryAgentRequestContext(session_id=session_id, call_id=call_id, user_id=user_id))
     try:
         yield

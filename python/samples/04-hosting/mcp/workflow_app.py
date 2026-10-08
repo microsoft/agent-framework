@@ -20,7 +20,7 @@ arguments. The application still owns the MCP server and transport.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -91,7 +91,7 @@ session_manager = StreamableHTTPSessionManager(
 
 
 @asynccontextmanager
-async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+async def lifespan(_app: Starlette) -> AsyncGenerator[None, None]:
     """Start and stop the native MCP transport."""
     async with session_manager.run():
         yield

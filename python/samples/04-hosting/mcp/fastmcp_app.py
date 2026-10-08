@@ -27,7 +27,7 @@ Required environment variables: ``FOUNDRY_PROJECT_ENDPOINT`` and
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -52,7 +52,7 @@ agent = Agent(
 
 
 @asynccontextmanager
-async def lifespan(_server: FastMCP[None]) -> AsyncIterator[None]:
+async def lifespan(_server: FastMCP[None]) -> AsyncGenerator[None, None]:
     """Close the model credential when the FastMCP server stops."""
     async with credential:
         yield

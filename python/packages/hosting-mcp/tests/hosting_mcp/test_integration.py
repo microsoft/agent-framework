@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import time
-from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -81,7 +81,7 @@ async def test_mcp_tool_calls_locally_hosted_agent() -> None:
     )
 
     @asynccontextmanager
-    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+    async def lifespan(_app: Starlette) -> AsyncGenerator[None, None]:
         async with session_manager.run():
             yield
 

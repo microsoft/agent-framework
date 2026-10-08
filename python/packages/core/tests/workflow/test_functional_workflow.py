@@ -8,7 +8,7 @@ import asyncio
 import gc
 import json
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import FunctionType
@@ -2586,7 +2586,7 @@ class TestNoneResponseHandling:
 
 
 @contextmanager
-def caplog_context(target_logger: logging.Logger) -> Iterator[list[str]]:
+def caplog_context(target_logger: logging.Logger) -> Generator[list[str], None, None]:
     """Capture log messages from a specific logger."""
     messages: list[str] = []
 

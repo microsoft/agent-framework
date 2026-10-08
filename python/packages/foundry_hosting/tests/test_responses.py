@@ -5245,14 +5245,13 @@ class TestOutputItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
             OutputItemFunctionShellCallOutput,
         )
 
         output: FunctionShellCallOutputContent = {
             "stdout": "file.txt",
             "stderr": "warning",
-            "outcome": cast(FunctionShellCallOutputExitOutcome, {"type": "exit", "exit_code": 3}),
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -5275,14 +5274,13 @@ class TestOutputItemToMessage:
     async def test_shell_call_output_preserves_timeout(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContent,
-            FunctionShellCallOutputTimeoutOutcome,
             OutputItemFunctionShellCallOutput,
         )
 
         output: FunctionShellCallOutputContent = {
             "stdout": "partial",
             "stderr": "timeout details",
-            "outcome": cast(FunctionShellCallOutputTimeoutOutcome, {"type": "timeout"}),
+            "outcome": {"type": "timeout"},
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -5877,14 +5875,13 @@ class TestItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContentParam,
-            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "file.txt",
             "stderr": "warning",
-            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"type": "exit", "exit_code": 3}),
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -5907,13 +5904,12 @@ class TestItemToMessage:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContentParam,
             FunctionShellCallOutputItemParam,
-            FunctionShellCallOutputTimeoutOutcomeParam,
         )
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "partial",
             "stderr": "timeout details",
-            "outcome": cast(FunctionShellCallOutputTimeoutOutcomeParam, {"type": "timeout"}),
+            "outcome": {"type": "timeout"},
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -8675,7 +8671,7 @@ def _build_multi_update_workflow_agent(
 @asynccontextmanager
 async def _pending_workflow_event(
     handler: AsyncGenerator[Any], started: asyncio.Event
-) -> AsyncIterator[asyncio.Future[Any]]:
+) -> AsyncGenerator[asyncio.Future[Any], None]:
     pending = asyncio.ensure_future(anext(handler))
     started_wait = asyncio.ensure_future(started.wait())
     try:
