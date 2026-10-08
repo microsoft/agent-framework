@@ -120,7 +120,7 @@ internal sealed class Mem0Client
         string[] paramNames = ["app_id", "agent_id", "run_id", "user_id"];
 
         var querystringParams = new string?[4] { applicationId, agentId, threadId, userId }
-            .Select((param, index) => string.IsNullOrWhiteSpace(param) ? null : $"{paramNames[index]}={param}")
+            .Select((param, index) => string.IsNullOrWhiteSpace(param) ? null : $"{paramNames[index]}={Uri.EscapeDataString(param!)}")
             .Where(x => x is not null);
         var queryString = string.Join("&", querystringParams);
         var clearMemoryUrl = new Uri($"/v1/memories/?{queryString}", UriKind.Relative);

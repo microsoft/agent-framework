@@ -15,10 +15,10 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Foundry;
 
 /// <summary>
-/// Delegating agent that applies Foundry hosted-agent request context per run:
+/// Delegating agent that applies Foundry hosted-agent request context:
 /// resolves the sticky hosted-agent session id, injects <c>agent_session_id</c> into the
-/// Responses body, stamps <c>x-ms-user-identity</c>, and writes the platform-returned session
-/// id back onto the <see cref="AgentSession"/>.
+/// Responses body, stamps the session's <c>x-ms-user-identity</c>, and writes the
+/// platform-returned session id back onto the <see cref="AgentSession"/>.
 /// </summary>
 internal sealed class FoundryHostedRequestAgent : DelegatingAIAgent
 {
@@ -95,9 +95,9 @@ internal sealed class FoundryHostedRequestAgent : DelegatingAIAgent
         var effectiveOptions = EnsureChatOptions(options, out chatOptions);
         AttachHostedSessionIdFactory(chatOptions, sessionIdBox);
 
-        // Always assign (including null) so a nested Foundry run that omits the per-call Foundry
-        // user identity does not inherit a parent AsyncLocal value and stamp the wrong header.
-        UserIdentityScope.Current = chatOptions.GetFoundryHostedAgentUserIdentity();
+        // Always assign (including null) so a nested Foundry run without a session identity does
+        // not inherit a parent AsyncLocal value and stamp the wrong header.
+        UserIdentityScope.Current = session?.FoundryHostedAgentUserIdentity;
 
         return new PreparedRun(effectiveOptions, sessionIdBox);
     }

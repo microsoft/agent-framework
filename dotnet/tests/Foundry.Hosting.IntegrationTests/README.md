@@ -43,8 +43,8 @@ supported hosting paths.
 
 - `CreateFoundryHostedAgentSessionAsync` sticky hosted `agent_session_id` (service-managed and
   admin `CreateSession` / `DeleteSession` pin)
-- per-call `ChatOptions.WithFoundryHostedAgentUserIdentity` (`x-ms-user-identity`) producing distinct
-  platform user keys inside the container
+- session-sticky delegated identity (`x-ms-user-identity`) producing distinct platform user keys
+  inside the container, including after session serialization and restoration
 
 The container scenario injects `USER-ID:<platform-user-key>` via
 `EchoPlatformUserIdContextProvider`, reading `HostedSessionContext.UserId` (from

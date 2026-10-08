@@ -15,14 +15,13 @@ using Azure.AI.Projects.Agents;
 using Foundry.Hosting.IntegrationTests.Fixtures;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
-using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
 namespace Foundry.Hosting.IntegrationTests;
 
 /// <summary>
-/// Live tests for client-side Foundry hosted session sticky behavior and per-call
-/// <c>x-ms-user-identity</c> pass-through against a real hosted agent.
+/// Live tests for client-side Foundry hosted session and delegated user identity sticky
+/// behavior against a real hosted agent.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -122,18 +121,21 @@ public sealed class HostedSessionAndUserIdentityTests(UserIdentityHostedAgentFix
         try
         {
             // Act: alice creates the sandbox via service-managed sticky capture.
-            ChatClientAgentSession aliceSession = await agent.CreateFoundryHostedAgentSessionAsync();
-            string aliceUserId = await this.RunAndReadUserIdAsync(agent, aliceSession, "alice-it");
+            ChatClientAgentSession aliceSession = await agent.CreateFoundryHostedAgentSessionAsync(
+                userIdentity: "alice-it");
+            string aliceUserId = await this.RunAndReadUserIdAsync(agent, aliceSession);
             hostedSessionId = aliceSession.FoundryHostedAgentSessionId;
             Assert.False(string.IsNullOrWhiteSpace(hostedSessionId));
             string? aliceConversationId = aliceSession.ConversationId;
 
             // Act: bob gets a fresh AgentSession pinned to the same hosted sandbox.
-            ChatClientAgentSession bobSession = await agent.CreateFoundryHostedAgentSessionAsync(hostedSessionId: hostedSessionId);
+            ChatClientAgentSession bobSession = await agent.CreateFoundryHostedAgentSessionAsync(
+                hostedSessionId: hostedSessionId,
+                userIdentity: "bob-it");
             Assert.NotSame(aliceSession, bobSession);
             Assert.Equal(hostedSessionId, bobSession.FoundryHostedAgentSessionId);
 
-            string bobUserId = await this.RunAndReadUserIdAsync(agent, bobSession, "bob-it");
+            string bobUserId = await this.RunAndReadUserIdAsync(agent, bobSession);
 
             // Assert: hosted sandbox stays the same on both sessions after bob's response.
             Assert.Equal(hostedSessionId, aliceSession.FoundryHostedAgentSessionId);
@@ -154,7 +156,9 @@ public sealed class HostedSessionAndUserIdentityTests(UserIdentityHostedAgentFix
             // Assert: platform user keys differ for alice vs bob.
             Assert.NotEqual("missing", aliceUserId);
             Assert.NotEqual("missing", bobUserId);
-            Assert.NotEqual(aliceUserId, bobUserId);
+            Assert.False(
+                string.Equals(aliceUserId, bobUserId, StringComparison.Ordinal),
+                "Expected different platform user keys for separate delegated identities.");
         }
         finally
         {
@@ -163,25 +167,34 @@ public sealed class HostedSessionAndUserIdentityTests(UserIdentityHostedAgentFix
     }
 
     [Fact(Skip = "Requires live Foundry hosted agent image, bootstrap it-user-identity, and delegation permission for x-ms-user-identity.")]
-    public async Task SameSession_SameUserIdentity_YieldsStablePlatformUserIdAsync()
+    public async Task SerializedSession_SameUserIdentity_YieldsStablePlatformUserIdAsync()
     {
         // Arrange
         FoundryAgent agent = this.CreateFoundryAgent();
-        ChatClientAgentSession session = await agent.CreateFoundryHostedAgentSessionAsync();
+        ChatClientAgentSession session = await agent.CreateFoundryHostedAgentSessionAsync(
+            userIdentity: "stable-user-it");
         string? hostedSessionId = null;
 
         try
         {
             // Act
-            string first = await this.RunAndReadUserIdAsync(agent, session, "stable-user-it");
+            string first = await this.RunAndReadUserIdAsync(agent, session);
             hostedSessionId = session.FoundryHostedAgentSessionId;
-            string second = await this.RunAndReadUserIdAsync(agent, session, "stable-user-it");
+
+            var serializedSession = await agent.SerializeSessionAsync(session);
+            session = Assert.IsType<ChatClientAgentSession>(
+                await agent.DeserializeSessionAsync(serializedSession));
+
+            string second = await this.RunAndReadUserIdAsync(agent, session);
 
             // Assert
             Assert.False(string.IsNullOrWhiteSpace(hostedSessionId));
             Assert.Equal(hostedSessionId, session.FoundryHostedAgentSessionId);
+            Assert.Equal("stable-user-it", session.FoundryHostedAgentUserIdentity);
             Assert.NotEqual("missing", first);
-            Assert.Equal(first, second);
+            Assert.True(
+                string.Equals(first, second, StringComparison.Ordinal),
+                "Expected the restored session to keep the same platform user key.");
         }
         finally
         {
@@ -189,19 +202,15 @@ public sealed class HostedSessionAndUserIdentityTests(UserIdentityHostedAgentFix
         }
     }
 
-    private async Task<string> RunAndReadUserIdAsync(FoundryAgent agent, AgentSession session, string userIdentity)
+    private async Task<string> RunAndReadUserIdAsync(FoundryAgent agent, AgentSession session)
     {
-        var options = new ChatClientAgentRunOptions(
-            new ChatOptions().WithFoundryHostedAgentUserIdentity(userIdentity));
-
         var response = await agent.RunAsync(
             "Acknowledge the request briefly.",
-            session,
-            options);
+            session);
 
         Assert.False(string.IsNullOrWhiteSpace(response.Text));
         Match match = s_userIdToken.Match(response.Text);
-        Assert.True(match.Success, $"Expected USER-ID:<value> token in response text. Actual: {response.Text}");
+        Assert.True(match.Success, "Expected a USER-ID:<value> token in the response text.");
         return match.Groups[1].Value;
     }
 

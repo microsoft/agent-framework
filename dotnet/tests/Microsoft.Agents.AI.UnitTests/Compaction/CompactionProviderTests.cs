@@ -131,6 +131,46 @@ public sealed class CompactionProviderTests
         Assert.True(resultList.Count < messages.Count);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData(" ", true)]
+    [InlineData(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, true)]
+    [InlineData("remote-conversation-id", false)]
+    public async Task InvokingAsyncCompactsOnlyLocallyManagedHistoryAsync(string? conversationId, bool shouldCompact)
+    {
+        // Arrange
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
+        CompactionProvider provider = new(strategy);
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        ChatClientAgentSession session = new(conversationId);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+        AIContextProvider.InvokingContext context = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = messages });
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        if (shouldCompact)
+        {
+            Assert.Same(messages[2], Assert.Single(result.Messages));
+        }
+        else
+        {
+            Assert.Same(context.AIContext, result);
+            Assert.Same(messages, result.Messages);
+        }
+    }
+
     [Fact]
     public async Task InvokingAsyncNoCompactionNeededReturnsOriginalMessagesAsync()
     {

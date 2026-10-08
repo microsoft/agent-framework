@@ -8,7 +8,7 @@ from typing import Any
 
 from agent_framework import AgentSession, ContextProvider, FunctionTool, SessionContext
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._tools import ApprovalMode
+from agent_framework._tools import ApprovalMode, _ToolDescriptionFormat  # pyright: ignore[reportPrivateUsage]
 
 from ._execute_code_tool import (
     DEFAULT_MAX_OUTPUT_FILE_BYTES,
@@ -22,7 +22,14 @@ from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountInput
 
 
 class HyperlightCodeActProvider(ContextProvider):
-    """Inject a Hyperlight-backed CodeAct surface using provider-owned tools."""
+    """Inject a Hyperlight-backed CodeAct surface using provider-owned tools.
+
+    Keyword Args:
+        tool_description_format: Parameter documentation in the injected tool's ``.description``:
+            ``"compact"`` (default) or ``"json"``, globally or mapped by exact, case-sensitive tool name.
+            Missing names use compact format; rich schemas fall back to full JSON Schema.
+            Mappings are copied, including entries for tools registered later.
+    """
 
     DEFAULT_SOURCE_ID = "hyperlight_codeact"
 
@@ -31,6 +38,7 @@ class HyperlightCodeActProvider(ContextProvider):
         source_id: str = DEFAULT_SOURCE_ID,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        tool_description_format: _ToolDescriptionFormat = "compact",
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -46,6 +54,7 @@ class HyperlightCodeActProvider(ContextProvider):
         super().__init__(source_id)
         self._execute_code_tool = HyperlightExecuteCodeTool(
             tools=tools,
+            tool_description_format=tool_description_format,
             approval_mode=approval_mode,
             workspace_root=workspace_root,
             file_mounts=file_mounts,

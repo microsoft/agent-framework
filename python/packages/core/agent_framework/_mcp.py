@@ -165,6 +165,9 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+_mcp_tool_runtime_context: contextvars.ContextVar[tuple[object, Mapping[str, Any]] | None] = contextvars.ContextVar(
+    "_mcp_tool_runtime_context", default=None
+)
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
@@ -496,6 +499,7 @@ _MCP_SAMPLING_DEPRECATION_MESSAGE = (
 # and returns (or awaits to) a truthy value to approve the request or a falsy
 # value to deny it. Both synchronous and asynchronous callables are supported.
 SamplingApprovalCallback = Callable[["types.CreateMessageRequestParams"], "bool | Coroutine[Any, Any, bool]"]
+_MCPFunctionLoadCallback = Callable[[FunctionTool, Any], None]
 
 # region: Helpers
 
@@ -526,10 +530,11 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
 
     for prompt_argument in prompt.arguments:
         # For prompts, all arguments are typically string type unless specified otherwise
-        properties[prompt_argument.name] = {
-            "type": "string",
-            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
-        }
+        # `description` is optional on PromptArgument and None when absent, which is not
+        # a valid JSON Schema description, so leave the key out instead.
+        properties[prompt_argument.name] = {"type": "string"}
+        if prompt_argument.description is not None:
+            properties[prompt_argument.name]["description"] = prompt_argument.description
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
@@ -624,10 +629,12 @@ def _make_mcp_tool_caller(
             apply_server_meta_to_model_items=mcp_tool.parse_tool_results is None,
         )
         token = _mcp_host_payload_capture.set(capture)
+        runtime_token = _mcp_tool_runtime_context.set((mcp_tool, dict(ctx.kwargs)))
         try:
             parsed = await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
             return capture.prepare_model_result(parsed)
         finally:
+            _mcp_tool_runtime_context.reset(runtime_token)
             _mcp_host_payload_capture.reset(token)
             ctx.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = capture.to_carrier()
 
@@ -1042,6 +1049,7 @@ class MCPTool:
             self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
+        self._function_load_callback: _MCPFunctionLoadCallback | None = None
         self.use_progressive_disclosure = use_progressive_disclosure
         self.always_load = always_load
         self._always_load_names = set(always_load or ())
@@ -1753,6 +1761,13 @@ class MCPTool:
                         logger.warning(
                             "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
                         )
+                    # A connect that failed without leaving a session behind has nothing for this
+                    # owner to hold, so stop instead of blocking on the queue forever. Mirrors the
+                    # cancelled-connect branch above. The connected check matters because
+                    # is_connected is set before tools and prompts are loaded: when loading fails
+                    # the session is live and still needs this owner to close it later.
+                    if action == "connect" and not self.is_connected and queue.empty():
+                        return
                 else:
                     if not future.done():
                         future.set_result(None)
@@ -2501,6 +2516,9 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
         self._validate_config_names([*self._functions, *new_functions])
+        if self._function_load_callback is not None:
+            for function in new_functions:
+                self._function_load_callback(function, None)
         self._functions.extend(new_functions)
 
     async def load_tools(self) -> None:
@@ -2540,6 +2558,7 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_task_support_by_name: dict[str, str] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
+        tool_annotations_by_name: dict[str, Any] = {}
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -2575,6 +2594,7 @@ class MCPTool:
                 raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
+                tool_annotations_by_name[tool.name] = tool.annotations
                 if tool.meta is not None:
                     tool_call_meta_by_name[tool.name] = _validate_mcp_meta(tool.meta) or {}
 
@@ -2658,6 +2678,17 @@ class MCPTool:
         ]
         current_functions.extend(new_functions)
         self._validate_config_names(current_functions)
+        for function in current_functions:
+            properties = function.additional_properties or {}
+            if not properties.get(_MCP_IS_TOOL_KEY):
+                continue
+            remote_name = properties.get(_MCP_REMOTE_NAME_KEY)
+            if (
+                isinstance(remote_name, str)
+                and remote_name in tool_annotations_by_name
+                and self._function_load_callback is not None
+            ):
+                self._function_load_callback(function, tool_annotations_by_name[remote_name])
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name
@@ -3841,6 +3872,10 @@ class MCPStreamableHTTPTool(MCPTool):
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
+                Generated tool calls supply only this host runtime context, never model
+                arguments, even when names collide. Direct ``call_tool`` calls use their
+                caller-supplied kwargs. Model-over-runtime precedence applies only to
+                outbound tool arguments, not to authentication.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
@@ -3860,7 +3895,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 during the handshake is raised instead, since a missing key there is a
                 misconfiguration rather than an unavoidable gap. For an already-connected tool,
                 run preparation defers identity reconciliation when the provider needs a
-                model-supplied argument that is unavailable until invocation; provider errors at
+                runtime value supplied by invocation middleware; provider errors at
                 invocation still propagate. A credential that must authenticate an eager
                 handshake must therefore come from somewhere the provider can read without a run,
                 such as a closure or ``ContextVar``. A lazy connection established by an agent
@@ -4133,9 +4168,8 @@ class MCPStreamableHTTPTool(MCPTool):
         try:
             headers = self._effective_headers(kwargs)
         except KeyError:
-            # Some providers intentionally read model-supplied tool arguments that
-            # do not exist until invocation. Keep preparation non-breaking and let
-            # the strict invocation-time resolution reconcile the session later.
+            # Invocation middleware may supply runtime values unavailable during
+            # preparation. Strict invocation-time resolution reconciles the session later.
             logger.debug(
                 "Deferring MCP header identity reconciliation for %r until invocation.",
                 self.name,
@@ -4263,14 +4297,16 @@ class MCPStreamableHTTPTool(MCPTool):
 
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
-        to the provider.  The returned headers are attached to every HTTP request
+        to the provider independently of model arguments in generated tool calls.
+        Direct callers supply both headers' inputs and tool arguments through *kwargs*.
+        The returned headers are attached to every HTTP request
         made during this tool call via a request hook on the underlying HTTP client. Fixed
         and dynamic headers form the effective identity. If they differ from a framework-created
         session's identity, the tool reconnects before sending the call; caller-supplied sessions
         reject the change.
 
-        The provider does not consume the kwargs: the same mapping continues to
-        :meth:`MCPTool.call_tool` and its outbound argument filter.
+        The provider does not consume runtime kwargs: their separately merged tool
+        argument mapping continues to :meth:`MCPTool.call_tool` and its outbound filter.
 
         Args:
             tool_name: The name of the tool to call.
@@ -4282,9 +4318,11 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         if self._header_provider is not None:
-            headers = self._effective_headers(kwargs)
+            runtime_context = _mcp_tool_runtime_context.get()
+            header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
+            headers = self._effective_headers(header_kwargs)
             async with self._call_headers_lock:
-                await self._ensure_session_identity(headers, kwargs)
+                await self._ensure_session_identity(headers, header_kwargs)
                 token = _mcp_call_headers.set(headers)
                 self._active_call_headers = headers
                 try:

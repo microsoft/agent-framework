@@ -413,6 +413,47 @@ async def test_object_id_keys_round_trip_through_crud_tools(mongo_mocks, cursor_
     native_collection.delete_many.assert_awaited_with({"_id": {"$in": [ObjectId(key)]}})
 
 
+@pytest.mark.parametrize("has_match", [True, False])
+async def test_filtered_delete_tool_preserves_object_id_keys(mongo_mocks, cursor_factory, has_match):
+    client, _, native_collection = mongo_mocks
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="ObjectId"),
+        VectorStoreField("data", name="tenant", type_="str", storage_name="tenant_id", is_indexed=True),
+    ])
+    collection = MongoDBCollection(
+        dict,
+        definition=definition,
+        collection_name="scoped_tool_objects",
+        async_client=client,
+        database_name="vectors",
+    )
+    key, other_key = ObjectId(), ObjectId()
+    native_collection.find.return_value = cursor_factory([{"_id": key, "tenant_id": "tenant-a"}] if has_match else [])
+    delete_tool = create_delete_tool(collection, filter=Filter("tenant", "eq", "tenant-a"))
+
+    result = await delete_tool.invoke(arguments={"keys": [str(key), str(other_key)]}, skip_parsing=True)
+
+    assert native_collection.find.call_args.args[0] == {
+        "$expr": {
+            "$and": [
+                {
+                    "$and": [
+                        {"$eq": [{"$type": "$tenant_id"}, "string"]},
+                        {"$eq": ["$tenant_id", {"$literal": "tenant-a"}]},
+                    ]
+                },
+                {"$and": [{"$eq": [{"$type": "$_id"}, "objectId"]}, {"$in": ["$_id", {"$literal": [key, other_key]}]}]},
+            ]
+        }
+    }
+    if has_match:
+        native_collection.delete_many.assert_awaited_once_with({"_id": {"$in": [key]}})
+        assert result == {"processed_keys": [str(key)]}
+    else:
+        native_collection.delete_many.assert_not_awaited()
+        assert result == {"processed_keys": []}
+
+
 async def test_typed_object_id_requires_and_supports_custom_codec(mongo_mocks, cursor_factory):
     client, _, native_collection = mongo_mocks
 

@@ -28,8 +28,11 @@ long-running service. Your app remains fully responsible for:
 - `telegram_session_id(update, bot_id=...)` -- a bot-scoped `AgentState`
   session id. Private chats use `telegram:<bot_id>:<user_id>`; other chats use
   `telegram:<bot_id>:<chat_id>`.
-- `telegram_command(update)` -- a leading slash command, with `/name@bot args`
-  normalized to `/name args`. Returns `None` if there is none.
+- `telegram_command(update, bot_username=None)` -- a leading slash command in
+  message text, callback data, or a media caption,
+  with `/name@bot args` normalized to `/name args`. Pass your bot's username to
+  return `None` for commands addressed to another bot. Without it, parsing
+  keeps the original behavior.
 - `telegram_callback_query_id(update)` -- a callback query's id, so you can
   call `answerCallbackQuery` yourself.
 - `telegram_media_file_id(update_or_message)` -- the `(file_id, mime_type)`

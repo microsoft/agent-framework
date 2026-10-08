@@ -17,7 +17,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +84,8 @@ class Runtime:
     secrets: SecretClient
     http: httpx.AsyncClient
     bot_token: str | None = None
+    bot_username: str | None = None
+    bot_username_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 _runtime: Runtime | None = None
@@ -110,7 +112,7 @@ async def get_runtime() -> Runtime:
         )
         client = FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=credential,
         )
         await client.configure_azure_monitor(
@@ -144,6 +146,21 @@ async def get_bot_token(runtime: Runtime) -> str:
         raise RuntimeError("The Telegram bot token secret is empty")
     runtime.bot_token = value
     return value
+
+
+async def get_bot_username(runtime: Runtime) -> str:
+    """Return this bot's Telegram username, fetching it once from getMe."""
+    if runtime.bot_username is not None:
+        return runtime.bot_username
+    async with runtime.bot_username_lock:
+        if runtime.bot_username is not None:
+            return runtime.bot_username
+        me = await execute_telegram_operation(runtime, TelegramOperation(method="getMe", payload={}))
+        username = me.get("username")
+        if not isinstance(username, str) or not username:
+            raise RuntimeError("Telegram getMe did not return a bot username")
+        runtime.bot_username = username
+        return username
 
 
 async def authenticate_ingress(request: Request, runtime: Runtime) -> bool:
@@ -348,8 +365,11 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
         )
 
     command = telegram_command(update)
-    if command is not None and await _send_command_response(update, command, session_id, runtime):
-        return
+    if command is not None:
+        if telegram_command(update, bot_username=await get_bot_username(runtime)) is None:
+            return
+        if await _send_command_response(update, command, session_id, runtime):
+            return
 
     media = telegram_media_file_id(update)
     model_media_type = MODEL_MEDIA_TYPES.get(media[1].lower()) if media is not None else None

@@ -9,7 +9,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agent_framework import AgentResponse, AgentSession, Message, SessionContext
 from agent_framework.exceptions import IntegrationInvalidRequestException
+from redisvl.redis.utils import buffer_to_array
 from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis._context_provider import RedisContextProvider
@@ -168,6 +170,43 @@ async def test_add_vectorizes_documents_and_applies_defaults(
     assert isinstance(loaded_docs[0]["embedding"], bytes)
     assert isinstance(loaded_docs[1]["embedding"], bytes)
     vectorizer.aembed_many.assert_awaited_once_with(["first", "second"], batch_size=2)
+
+
+@pytest.mark.parametrize("dtype, expected_size", [("float16", 4), ("float32", 8), ("float64", 16), ("bfloat16", 4)])
+async def test_after_run_stores_vectors_in_configured_dtype(
+    dtype: str,
+    expected_size: int,
+    mock_index: AsyncMock,
+) -> None:
+    vectorizer = MagicMock(spec=BaseVectorizer)
+    vectorizer.dims = 2
+    vectorizer.dtype = dtype
+    embeddings = [[1.5, -2.25], [3.125, 4.5]]
+    vectorizer.aembed_many = AsyncMock(return_value=embeddings)
+    provider = RedisContextProvider(
+        user_id="user-1",
+        redis_vectorizer=vectorizer,
+        vector_field_name="embedding",
+        redis_index=mock_index,
+    )
+    session = AgentSession(session_id="session-1")
+    context = SessionContext(
+        session_id=session.session_id,
+        input_messages=[Message(role="user", contents=["I prefer tea"])],
+    )
+    context._response = AgentResponse(messages=[Message(role="assistant", contents=["I'll remember that"])])
+
+    await provider.after_run(agent=MagicMock(), session=session, context=context, state={})
+
+    vector_field = next(field for field in provider.schema_dict["fields"] if field["name"] == "embedding")
+    assert vector_field["attrs"]["datatype"] == dtype
+    mock_index.load.assert_awaited_once()
+    loaded_docs = mock_index.load.await_args.args[0]
+    assert [doc["content"] for doc in loaded_docs] == ["I prefer tea", "I'll remember that"]
+    for doc, expected_embedding in zip(loaded_docs, embeddings, strict=True):
+        assert len(doc["embedding"]) == expected_size
+        assert buffer_to_array(doc["embedding"], dtype) == expected_embedding
+    vectorizer.aembed_many.assert_awaited_once_with(["I prefer tea", "I'll remember that"], batch_size=2)
 
 
 async def test_redis_search_requires_non_empty_text(

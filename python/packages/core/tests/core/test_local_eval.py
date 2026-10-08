@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import inspect
+import json
+from typing import Any
 
 import pytest
 
@@ -528,7 +530,7 @@ class TestAutoWrapEvalChecks:
 
 
 def _make_tool_call_item(
-    calls: list[tuple[str, dict | None]],
+    calls: list[tuple[str, Any]],
     expected: list[ExpectedToolCall] | None = None,
 ) -> EvalItem:
     """Build an EvalItem with tool calls in the conversation."""
@@ -607,6 +609,88 @@ class TestToolCallArgsMatch:
         item = _make_tool_call_item(
             calls=[("get_weather", {"location": "LA"})],
             expected=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    @pytest.mark.parametrize("as_json", [False, True], ids=["dict", "json"])
+    @pytest.mark.parametrize(
+        "arguments, expected_passed",
+        [
+            pytest.param({"location": "NYC"}, False, id="missing"),
+            pytest.param({"location": "NYC", "units": None}, True, id="explicit-null"),
+            pytest.param({"location": "NYC", "units": "fahrenheit"}, False, id="non-null"),
+            pytest.param({"location": "NYC", "units": None, "days": 1}, True, id="extra-argument"),
+        ],
+    )
+    def test_null_argument_requires_key(self, arguments, expected_passed, as_json):
+        item = EvalItem(
+            conversation=[
+                Message(
+                    "assistant",
+                    [
+                        Content.from_function_call(
+                            "call_weather",
+                            "get_weather",
+                            arguments=json.dumps(arguments) if as_json else arguments,
+                        )
+                    ],
+                )
+            ],
+            expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC", "units": None})],
+        )
+
+        result = tool_call_args_match(item)
+
+        assert result.passed is expected_passed
+
+    def test_empty_expected_args_matches_none_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", None)],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_matches_empty_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", {})],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_matches_empty_string_actual_args(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_empty_expected_args_does_not_match_invalid_json(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "not-json")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    def test_empty_expected_args_does_not_match_non_object_json(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", "[]")],
+            expected=[ExpectedToolCall("get_weather", {})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    def test_empty_expected_args_does_not_match_non_object_payload(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", [])],
+            expected=[ExpectedToolCall("get_weather", {})],
         )
         result = tool_call_args_match(item)
         assert result.passed is False

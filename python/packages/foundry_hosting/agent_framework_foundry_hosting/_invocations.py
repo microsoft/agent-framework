@@ -1,47 +1,444 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import asyncio
+import inspect
 import json
+import logging
+import math
+import sys
+import uuid
+import warnings
+import weakref
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextvars import Token
+from copy import deepcopy
+from dataclasses import asdict, is_dataclass
+from typing import cast
 
-from agent_framework import AgentSession, SupportsAgentRun
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentSession,
+    ChatResponse,
+    ChatResponseUpdate,
+    CheckpointStorage,
+    ResponseStream,
+    SessionStore,
+    SupportsAgentRun,
+    Workflow,
+    WorkflowAgent,
+    WorkflowCheckpointException,
+    WorkflowEvent,
+    WorkflowExecutor,
+)
 from agent_framework._telemetry import mark_feature_used
-from azure.ai.agentserver.core import get_request_context
+from anyio import CancelScope
+from azure.ai.agentserver.core import (
+    FoundryAgentRequestContext,
+    get_request_context,
+    reset_request_context,
+    set_request_context,
+)
+from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
+from pydantic import BaseModel
 from starlette.requests import Request
-from starlette.responses import Response, StreamingResponse
-from typing_extensions import Any, AsyncGenerator
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.types import Receive, Scope, Send
+from typing_extensions import Any
 
+from ._agent_source import AgentSource, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
+from ._request import (
+    InvocationRun,
+    UnsupportedOptions,
+    WorkflowTurn,
+    validate_request_options,
+    validate_unsupported_options,
+)
+from ._scope import FoundryRequestScope
+from ._state_store import AgentSessionStoreProvider, CheckpointStoreProvider, ContextScopedStoreProvider, StoreProvider
+from ._workflow_source import WorkflowResolver, WorkflowSource, workflow_agents
+from ._workflow_state import HostedWorkflowRun, WorkflowBlockedError, WorkflowConflictError
+
+logger = logging.getLogger(__name__)
+
+InvocationParser = Callable[[Request], InvocationRun | WorkflowTurn[Any] | Awaitable[InvocationRun | WorkflowTurn[Any]]]
+InvocationOptionsHook = Callable[[Request, dict[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
+
+_AGENT_CONTROLLED_FIELDS = frozenset({
+    "additional_function_arguments",
+    "client_kwargs",
+    "compaction_strategy",
+    "function_invocation_kwargs",
+    "instructions",
+    "middleware",
+    "session",
+    "tokenizer",
+    "tools",
+})
+_MAX_WORKFLOW_SNAPSHOT_EVENTS = 4096
+_MAX_WORKFLOW_SNAPSHOT_BYTES = 4 * 1024 * 1024
+
+
+class _UnsupportedAgentOptions(TypeError):
+    """The agent cannot accept the caller's run options under the selected policy."""
+
+
+class _WorkflowOutputError(TypeError):
+    """Workflow application data cannot be represented as JSON."""
+
+
+class _WorkflowRequestError(ValueError):
+    """A validated application request cannot be dispatched to the workflow."""
+
+
+def _validate_workflow_mapping_keys(value: Any, path: str, active: set[int]) -> None:
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, Any], value)
+        identifier = id(mapping)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular mapping.")
+        active.add(identifier)
+        try:
+            for index, (key, item) in enumerate(mapping.items()):
+                if not isinstance(key, str):
+                    raise _WorkflowOutputError(
+                        f"Workflow output at {path} is not JSON-serializable: "
+                        f"mapping keys must be strings, found {type(key).__name__}."
+                    )
+                _validate_workflow_mapping_keys(item, f"{path}.value[{index}]", active)
+        finally:
+            active.remove(identifier)
+    elif isinstance(value, (list, tuple)):
+        sequence = cast(Sequence[Any], value)
+        identifier = id(sequence)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular sequence.")
+        active.add(identifier)
+        try:
+            for index, item in enumerate(sequence):
+                _validate_workflow_mapping_keys(item, f"{path}[{index}]", active)
+        finally:
+            active.remove(identifier)
+
+
+def _workflow_serialized_value(value: Any, path: str) -> Any:
+    if isinstance(value, (AgentResponse, AgentResponseUpdate, ChatResponse, ChatResponseUpdate)):
+        return value.to_dict(exclude={"continuation_token"})
+    if isinstance(value, BaseModel):
+        _validate_workflow_mapping_keys(value.model_dump(mode="python"), f"{path}.model", set())
+        return value.model_dump(mode="json")
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return to_dict()
+    raise _WorkflowOutputError(
+        f"Workflow output at {path} is not JSON-serializable: unsupported type {type(value).__name__}."
+    )
+
+
+def _workflow_json_value(value: Any, path: str, active: set[int]) -> Any:
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: number must be finite.")
+        return value
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, Any], value)
+        identifier = id(mapping)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular mapping.")
+        active.add(identifier)
+        try:
+            result: dict[str, Any] = {}
+            for index, (key, item) in enumerate(mapping.items()):
+                if not isinstance(key, str):
+                    raise _WorkflowOutputError(
+                        f"Workflow output at {path} is not JSON-serializable: "
+                        f"mapping keys must be strings, found {type(key).__name__}."
+                    )
+                result[key] = _workflow_json_value(item, f"{path}.value[{index}]", active)
+            return result
+        finally:
+            active.remove(identifier)
+    if isinstance(value, (list, tuple)):
+        sequence = cast(Sequence[Any], value)
+        identifier = id(sequence)
+        if identifier in active:
+            raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular sequence.")
+        active.add(identifier)
+        try:
+            return [_workflow_json_value(item, f"{path}[{index}]", active) for index, item in enumerate(sequence)]
+        finally:
+            active.remove(identifier)
+    identifier = id(value)
+    if identifier in active:
+        raise _WorkflowOutputError(f"Workflow output at {path} is not JSON-serializable: circular serialized value.")
+    active.add(identifier)
+    try:
+        serialized = _workflow_serialized_value(value, path)
+        return _workflow_json_value(serialized, f"{path}.serialized", active)
+    finally:
+        active.remove(identifier)
+
+
+def _workflow_output(value: Any) -> Any:
+    """Normalize typed application data without text coercion or skipped values."""
+    try:
+        normalized = _workflow_json_value(value, "$", set())
+        return json.loads(json.dumps(normalized, allow_nan=False, ensure_ascii=False).encode("utf-8"))
+    except _WorkflowOutputError:
+        raise
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise _WorkflowOutputError(f"Workflow output type {type(value).__name__} is not JSON-serializable.") from exc
+
+
+def _workflow_frame(event: WorkflowEvent[Any]) -> dict[str, Any] | None:
+    if event.type not in ("output", "request_info"):
+        return None
+    frame: dict[str, Any] = {"type": event.type, "data": event.data}
+    if event.type == "request_info":
+        frame["request_id"] = event.request_id
+        frame["source_executor_id"] = event.source_executor_id
+    else:
+        frame["executor_id"] = event.executor_id
+    return cast(dict[str, Any], _workflow_output(frame))
+
+
+def _workflow_snapshot_frames(snapshot: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if snapshot is None or set(snapshot) != {"output"} or not isinstance(snapshot["output"], list):
+        raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+    frames: list[dict[str, Any]] = []
+    for item in cast(list[Any], snapshot["output"]):
+        if not isinstance(item, Mapping):
+            raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        frame = cast(dict[str, Any], _workflow_output(item))
+        if frame.get("type") == "output":
+            if set(frame) != {"type", "data", "executor_id"}:
+                raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        elif frame.get("type") == "request_info":
+            if set(frame) != {"type", "data", "request_id", "source_executor_id"}:
+                raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        else:
+            raise RuntimeError("The stored Invocations workflow output snapshot is invalid.")
+        frames.append(frame)
+    return frames
+
+
+def _workflow_frame_size(frame: Mapping[str, Any]) -> int:
+    return len(json.dumps(frame, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _workflow_can_pause(workflow: Workflow) -> bool:
+    for executor in workflow.get_executors_list():
+        if getattr(executor, "is_request_response_capable", False) is True:
+            return True
+        if isinstance(executor, WorkflowExecutor) and _workflow_can_pause(executor.workflow):
+            return True
+    return False
+
+
+def _sse(event: str, data: Mapping[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _invocation_failure(exc: Exception) -> tuple[str, int, str]:
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, (FoundryStorageConflictError, FoundryStoragePreconditionError)):
+            return "Another request advanced this agent session; reload before retrying.", 409, "session_conflict"
+        cause = cause.__cause__
+    return "Agent invocation failed.", 500, "invocation_failed"
+
+
+def _workflow_failure(exc: Exception) -> tuple[str, int, str]:
+    if isinstance(exc, _WorkflowOutputError):
+        return str(exc), 500, "invalid_workflow_output"
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, WorkflowBlockedError):
+            return (
+                "This workflow turn was interrupted or failed; start a new Foundry sandbox.",
+                409,
+                "workflow_blocked",
+            )
+        if isinstance(cause, WorkflowConflictError):
+            return str(cause), 409, "workflow_conflict"
+        cause = cause.__cause__
+    if _invocation_failure(exc)[1] == 409:
+        return "Another request advanced this workflow; reload before retrying.", 409, "workflow_conflict"
+    if isinstance(exc, _WorkflowRequestError):
+        return str(exc), 400, "invalid_workflow_turn"
+    if isinstance(exc, PermissionError):
+        return "Workflow state is not available in this trusted scope.", 403, "workflow_scope"
+    return "Workflow invocation failed.", 500, "workflow_invocation_failed"
+
+
+class _InvocationStreamingResponse(StreamingResponse):
+    def __init__(self, content: AsyncGenerator[str]) -> None:
+        super().__init__(
+            content,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+        self._content = content
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # The SDK may wrap the iterator in a keep-alive pump; join it before closing its source.
+            try:
+                close = getattr(self.body_iterator, "aclose", None)
+                if close is not None:
+                    await close()
+            finally:
+                if self.body_iterator is not self._content:
+                    await self._content.aclose()
+
+
+class _WorkflowStreamingResponse(_InvocationStreamingResponse):
+    def __init__(self, content: AsyncGenerator[str], *, keep_alive: bool) -> None:
+        super().__init__(content)
+        self._keep_alive = keep_alive
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            with CancelScope(shield=True):
+                if self._keep_alive and self.body_iterator is not self._content:
+                    close = getattr(self.body_iterator, "aclose", None)
+                    if close is None:
+                        raise TypeError("The Invocations SDK stream iterator must support aclose.")
+                    await close()
+                try:
+                    await self._content.aclose()
+                finally:
+                    # Without the SDK pump, finish its wrapper in the task that created its context tokens.
+                    async for _ in self.body_iterator:
+                        pass
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
-    """An invocations server host for an agent."""
+    """Host an agent or native workflow with durable, application-defined Invocations turns."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun,
+        agent: AgentSource | None = None,
         *,
+        workflow: WorkflowSource[Request] | None = None,
         openapi_spec: dict[str, Any] | None = None,
+        agent_session_store_provider: StoreProvider[SessionStore] | None = None,
+        checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
+        parse_request: InvocationParser | None = None,
+        prepare_options: InvocationOptionsHook | None = None,
+        unsupported_options: UnsupportedOptions = "warn",
+        legacy_wire_format: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize an InvocationsHostServer.
 
         Args:
-            agent: The agent to handle responses for.
+            agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
+                each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
+                must never serve requests from different users or conversations. Use `workflow=` instead.
+            workflow: A built native workflow or a sync/async request-aware factory returning a freshly built
+                workflow with stable graph/executor IDs. Hosted workflows require a factory. Supply exactly
+                one of agent or workflow; local workflow instances are single-use and remain application-owned.
             openapi_spec: The OpenAPI specification for the server.
+            agent_session_store_provider: Provider for conversation session storage. Defaults to Foundry storage
+                when hosted and the SDK's file-backed storage locally. New default stores expire sessions 30 days
+                after their last write. Custom providers control their own retention.
+            checkpoint_store_provider: Native workflow checkpoint storage. The default accepts the host's
+                verified sandbox/user scope. Custom providers must preserve scoped conditional-write semantics.
+            parse_request: Sync or async parser returning `InvocationRun` for agents or `WorkflowTurn` for
+                workflows. Native workflows require an explicit parser for typed input or complete pending
+                reply batches. Without an agent parser, accepts `message`, optional `options` and `stream`.
+            prepare_options: Optional sync or async hook to filter or replace a copy of caller generation options.
+                Tool context and agent execution controls must remain in developer-owned agent configuration.
+            unsupported_options: `"warn"` (default), `"ignore"`, or `"error"` for agents without runtime options.
+            legacy_wire_format: Opt into the deprecated plain-text response and raw streaming chunks instead of
+                the default agent JSON response and framed `delta`/`done`/`error` server-sent events.
+                This agent-only compatibility mode is incompatible with native workflows.
             **kwargs: Additional keyword arguments.
-
-        This host will expect the request to be a JSON body with a "message" field.
-        The response from the host will be a JSON object with a "response" field containing
-        the agent's response and a "session_id" field containing the session ID.
         """
+        if agent is not None and workflow is not None:
+            raise TypeError("Provide exactly one of agent or workflow.")
+        if agent is None and workflow is None:
+            raise TypeError(
+                "Provide exactly one of agent or workflow; "
+                "agent must be an agent instance or a zero-argument callable that creates one."
+            )
+        if workflow is None:
+            validate_agent_source(agent)
+        elif parse_request is None:
+            raise TypeError("parse_request is required when hosting a native Workflow.")
+        if parse_request is not None and not callable(parse_request):
+            raise TypeError("parse_request must be a callable.")
+        if prepare_options is not None and not callable(prepare_options):
+            raise TypeError("prepare_options must be a callable.")
+        if not isinstance(legacy_wire_format, bool):
+            raise TypeError("legacy_wire_format must be a boolean.")
+        if workflow is not None:
+            if legacy_wire_format:
+                raise ValueError("legacy_wire_format=True is incompatible with native workflows.")
+            if prepare_options is not None:
+                raise ValueError("prepare_options is agent-only; use the workflow parser's explicit client_kwargs.")
+            if agent_session_store_provider is not None:
+                raise ValueError(
+                    "agent_session_store_provider is agent-only; use checkpoint_store_provider for workflows."
+                )
+        self._workflow_resolver: WorkflowResolver[Request] | None = (
+            WorkflowResolver(workflow) if workflow is not None else None
+        )
         super().__init__(openapi_spec=openapi_spec, **kwargs)
+        if self._workflow_resolver is not None and self.config.is_hosted and not self._workflow_resolver.is_factory:
+            raise ValueError("Hosted native workflows require a request-aware factory that creates fresh executors.")
 
         self._agent = agent
-        self._sessions: dict[str | tuple[str, str], AgentSession] = {}
+        self._owns_request_agent = agent is not None and not is_agent(agent)
+        self._warned_workflow_agent = False
+        self._parse_request = parse_request
+        self._prepare_options = prepare_options
+        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._legacy_wire_format = legacy_wire_format
+        self._session_store_provider = (
+            AgentSessionStoreProvider(store_name="invocation_sessions")
+            if agent_session_store_provider is None
+            else agent_session_store_provider
+        )
+        self._checkpoint_storage_provider = (
+            CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
+        )
+        self._session_locks: weakref.WeakValueDictionary[str | tuple[str, str], asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        if legacy_wire_format:
+            message = (
+                "legacy_wire_format=True is deprecated; migrate Invocations clients to JSON responses "
+                "and framed SSE events before removing this compatibility mode."
+            )
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            logger.warning("DEPRECATION: %s", message)
+        if isinstance(agent, WorkflowAgent):
+            self._warn_legacy_workflow()
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
-    def _partition_key(self) -> str | tuple[str, str]:
+    def _partition_key(
+        self,
+        *,
+        context: FoundryAgentRequestContext | None = None,
+        scope: FoundryRequestScope | None = None,
+    ) -> str | tuple[str, str]:
         """Get the partition key for the current request.
 
         A hosted partition key is a tuple containing the session ID and user ID,
@@ -55,15 +452,17 @@ class InvocationsHostServer(InvocationAgentServerHost):
         Exceptions:
             RuntimeError: If the context doesn't contain the expected IDs.
         """
-        context = get_request_context()
+        if context is None:
+            context = get_request_context()
 
         if self.config.is_hosted:
-            if not context.session_id or not context.user_id:
+            if not context.user_id:
                 raise RuntimeError(
-                    "The hosted environment is missing session_id or user_id in the request context. "
+                    "The hosted environment is missing user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
-            return context.session_id, context.user_id
+            hosted_scope = scope or FoundryRequestScope.from_context(self.config, context)
+            return hosted_scope.session_id, context.user_id
 
         if not context.session_id:
             raise RuntimeError(
@@ -72,43 +471,448 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         return context.session_id
 
-    async def _handle_invoke(self, request: Request) -> Response:
-        """Invoke the agent with the given request."""
-        try:
-            partition_key = self._partition_key()
-        except Exception as e:
-            return Response(content=str(e), status_code=500)
+    def _hosted_scope(self, request: Request, context: FoundryAgentRequestContext) -> FoundryRequestScope:
+        """Accept an unconfigured session only when the routed Invocations query identifies it."""
+        if not context.user_id:
+            raise RuntimeError("The hosted environment is missing user_id in the request context.")
 
-        data = await request.json()
+        routed_session_ids = request.query_params.getlist("agent_session_id")
+        if len(routed_session_ids) > 1:
+            raise RuntimeError("Hosted Invocations requires exactly one agent_session_id query parameter.")
+        routed_session_id = routed_session_ids[0] if routed_session_ids else None
+        if self.config.session_id:
+            if routed_session_id is not None and routed_session_id != self.config.session_id:
+                raise RuntimeError("The request agent_session_id does not match the platform session ID.")
+            return FoundryRequestScope.from_context(self.config, context)
 
-        stream = data.get("stream", False)
-        user_message = data.get("message", None)
-        if user_message is None:
-            error = "Missing 'message' in request"
-            if stream:
-                return StreamingResponse(content=error, status_code=400)
-            return Response(content=error, status_code=400)
-
-        session = self._sessions.get(partition_key)
-        if session is None:
-            session_id = (
-                json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
+        if not routed_session_id or routed_session_id != context.session_id:
+            raise RuntimeError(
+                "Hosted Invocations without FOUNDRY_AGENT_SESSION_ID require an explicit routed "
+                "agent_session_id query parameter matching the request context."
             )
-            session = AgentSession(session_id=session_id)
-            self._sessions[partition_key] = session
+        if not context.call_id:
+            raise RuntimeError("Foundry hosted requests require a trusted user ID and call ID.")
+        return FoundryRequestScope(
+            session_id=routed_session_id,
+            user_id=context.user_id,
+            call_id=context.call_id,
+            is_hosted=True,
+        )
 
-        if stream:
+    def _warn_legacy_workflow(self) -> None:
+        if not self._warned_workflow_agent:
+            self._warned_workflow_agent = True
+            message = (
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
+                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
+                "never serve requests from different users or conversations. "
+                "Use workflow=a_request_aware_factory with an explicit parse_request. "
+                "A factory that builds a new WorkflowAgent for every request only suits stateless, "
+                "single-turn workflows, because the Invocations host does not restore workflow checkpoints. "
+                "Wrapper history, context providers, and event semantics are not automatically unwrapped."
+            )
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
+            # warning there; log it as well.
+            logger.warning("DEPRECATION: %s", message)
+
+    @asynccontextmanager
+    async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
+        if self._agent is None:
+            raise RuntimeError("No agent is configured for Invocations.")
+        agent = await resolve_agent(self._agent)
+        if isinstance(agent, WorkflowAgent):
+            self._warn_legacy_workflow()
+        async with AsyncExitStack() as resources:
+            if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
+                await resources.enter_async_context(agent)
+            yield agent
+
+    @asynccontextmanager
+    async def _request_session(
+        self,
+        partition_key: str | tuple[str, str],
+        context: FoundryAgentRequestContext,
+        *,
+        hosted_scope: FoundryRequestScope | None = None,
+    ) -> AsyncGenerator[AgentSession]:
+        session_id = (
+            json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
+        )
+        try:
+            provider = self._session_store_provider
+            if hosted_scope is not None and not self.config.session_id and type(provider) is AgentSessionStoreProvider:
+                store = provider._get_scoped_store(context, hosted_scope)  # pyright: ignore[reportPrivateUsage]
+            else:
+                store = provider.get_store(config=self.config, platform_context=context)
+            session = await store.get(session_id)
+            if session is None:
+                session = AgentSession(session_id=session_id)
+        except Exception:
+            logger.exception("Failed to load invocation session")
+            raise
+        try:
+            yield session
+        finally:
+            failure = sys.exc_info()[1]
+            try:
+                await store.set(session_id, session)
+            except Exception as exc:
+                logger.exception("Failed to persist invocation session")
+                if failure is None:
+                    raise
+                if isinstance(failure, Exception):
+                    raise RuntimeError(
+                        f"Invocation failed: {str(failure) or type(failure).__name__}; "
+                        f"session persistence also failed: {str(exc) or type(exc).__name__}"
+                    ) from exc
+
+    async def _parse(self, request: Request) -> InvocationRun | WorkflowTurn[Any]:
+        if self._parse_request is not None:
+            result = self._parse_request(request)
+            parsed = await result if inspect.isawaitable(result) else result
+            if self._workflow_resolver is not None:
+                if not isinstance(parsed, WorkflowTurn):
+                    raise TypeError("parse_request must return WorkflowTurn.")
+            elif not isinstance(parsed, InvocationRun):
+                raise TypeError("parse_request must return InvocationRun.")
+            return parsed
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("The invocation must be a JSON object.")
+        body = cast(Mapping[str, Any], payload)
+        message = body.get("message")
+        stream = body.get("stream", False)
+        options = body.get("options", {})
+        if not isinstance(message, str):
+            raise ValueError("message must be a string.")
+        if not isinstance(stream, bool):
+            raise ValueError("stream must be a boolean.")
+        if not isinstance(options, dict):
+            raise ValueError("options must be an object.")
+        return InvocationRun(
+            messages=message if stream else [message], options=cast(Mapping[str, Any], options), stream=stream
+        )
+
+    async def _options(self, request: Request, parsed: InvocationRun) -> dict[str, Any]:
+        options = deepcopy(dict(parsed.options))
+        if self._prepare_options is not None:
+            result = self._prepare_options(request, options)
+            if inspect.isawaitable(result):
+                result = await result
+            if not isinstance(result, Mapping) or any(not isinstance(key, str) for key in result):
+                raise TypeError("prepare_options must return a mapping of MAF run options with string keys.")
+            options = deepcopy(dict(result))
+        validate_request_options(options)
+        reserved = _AGENT_CONTROLLED_FIELDS.intersection(options)
+        if reserved:
+            raise ValueError(f"Invocations options cannot set agent-controlled fields: {', '.join(sorted(reserved))}.")
+        return options
+
+    def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
+        if not options:
+            return {}
+        try:
+            inspect.signature(agent.run).bind_partial(options=options)
+        except (TypeError, ValueError):
+            if self._unsupported_options == "error":
+                raise _UnsupportedAgentOptions("The hosted agent does not accept caller runtime options.") from None
+            if self._unsupported_options == "warn":
+                logger.warning("Agent doesn't support runtime options. They will be ignored.")
+            return {}
+        return {"options": options}
+
+    @staticmethod
+    async def _close_interrupted_stream(stream: object) -> None:
+        if isinstance(stream, ResponseStream):
+            close = getattr(cast(object, stream), "close", None)
+            if close is None:
+                logger.warning("The installed core cannot close an interrupted agent stream.")
+                return
+        else:
+            close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
+
+    async def _handle_invoke(self, request: Request) -> Response:
+        """Invoke the configured agent or native workflow with a trusted request."""
+        context = get_request_context()
+        try:
+            hosted_scope = self._hosted_scope(request, context) if self.config.is_hosted else None
+            partition_key = self._partition_key(context=context, scope=hosted_scope)
+        except RuntimeError as exc:
+            logger.error("Failed to resolve Invocations session: %s", exc)
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+        try:
+            parsed = await self._parse(request)
+            options = await self._options(request, parsed) if isinstance(parsed, InvocationRun) else {}
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception:
+            logger.exception("Failed to prepare Invocations request")
+            return JSONResponse({"error": "Failed to prepare invocation request."}, status_code=500)
+
+        if isinstance(parsed, WorkflowTurn):
+            scope = hosted_scope or FoundryRequestScope.from_context(self.config, context)
+            return await self._handle_workflow(request, parsed, scope, context, partition_key)
+
+        if parsed.stream:
+            if options and self._unsupported_options == "error" and is_agent(self._agent):
+                try:
+                    self._agent_kwargs(self._agent, options)
+                except _UnsupportedAgentOptions as exc:
+                    return JSONResponse({"error": str(exc)}, status_code=400)
 
             async def stream_response() -> AsyncGenerator[str]:
-                async for update in self._agent.run(user_message, session=session, stream=True):
-                    if update.text:
-                        yield update.text
+                token: Token[FoundryAgentRequestContext] | None = set_request_context(context)
+                try:
+                    lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
+                    async with lock, self._request_agent() as agent:
+                        run_kwargs = self._agent_kwargs(agent, options)
+                        async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
+                            stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
+                            completed = False
+                            try:
+                                async for update in stream:
+                                    if update.text:
+                                        frame = (
+                                            update.text
+                                            if self._legacy_wire_format
+                                            else _sse("delta", {"text": update.text})
+                                        )
+                                        # The SDK may close a suspended generator from another task.
+                                        reset_request_context(token)
+                                        token = None
+                                        yield frame
+                                        token = set_request_context(context)
+                                if isinstance(stream, ResponseStream):
+                                    await stream.get_final_response()
+                                completed = True
+                            finally:
+                                if not completed:
+                                    if token is None:
+                                        token = set_request_context(context)
+                                    try:
+                                        await self._close_interrupted_stream(stream)
+                                    except Exception:
+                                        logger.exception("Failed to close interrupted Invocations agent stream")
+                    if not self._legacy_wire_format:
+                        session_id = partition_key[0] if isinstance(partition_key, tuple) else partition_key
+                        if token is not None:
+                            reset_request_context(token)
+                            token = None
+                        yield _sse("done", {"session_id": session_id})
+                except _UnsupportedAgentOptions as exc:
+                    if self._legacy_wire_format:
+                        raise
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("error", {"message": str(exc), "code": "unsupported_options", "status": 400})
+                except Exception as exc:
+                    logger.exception("Invocations agent stream failed")
+                    if self._legacy_wire_format:
+                        raise
+                    message, status, code = _invocation_failure(exc)
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("error", {"message": message, "code": code, "status": status})
+                finally:
+                    if token is not None:
+                        reset_request_context(token)
 
-            return StreamingResponse(
-                stream_response(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+            return _InvocationStreamingResponse(stream_response())
+
+        try:
+            lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
+            async with lock, self._request_agent() as agent:
+                run_kwargs = self._agent_kwargs(agent, options)
+                async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
+                    response = await agent.run(parsed.messages, session=session, **run_kwargs)
+            if self._legacy_wire_format:
+                return Response(content=response.text)
+            return JSONResponse({"response": response.text})
+        except _UnsupportedAgentOptions as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("Invocations agent request failed")
+            message, status, _ = _invocation_failure(exc)
+            return JSONResponse({"error": message}, status_code=status)
+
+    async def _handle_workflow(
+        self,
+        request: Request,
+        turn: WorkflowTurn[Any],
+        scope: FoundryRequestScope,
+        context: FoundryAgentRequestContext,
+        partition_key: str | tuple[str, str],
+    ) -> Response:
+        if turn.stream:
+
+            async def stream_response() -> AsyncGenerator[str]:
+                token: Token[FoundryAgentRequestContext] | None = set_request_context(context)
+                events = self._workflow_events(request, turn, scope, context, partition_key)
+                try:
+                    async for frame in events:
+                        wire_frame = _sse(frame["type"], frame)
+                        reset_request_context(token)
+                        token = None
+                        yield wire_frame
+                        token = set_request_context(context)
+                    reset_request_context(token)
+                    token = None
+                    yield _sse("done", {"session_id": scope.session_id})
+                except Exception as exc:
+                    logger.exception("Invocations workflow stream failed")
+                    message, status, code = _workflow_failure(exc)
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("error", {"message": message, "code": code, "status": status})
+                finally:
+                    if token is None:
+                        token = set_request_context(context)
+                    try:
+                        with CancelScope(shield=True):
+                            await events.aclose()
+                    finally:
+                        reset_request_context(token)
+
+            return _WorkflowStreamingResponse(stream_response(), keep_alive=self.config.sse_keepalive_interval > 0)
+
+        try:
+            frames = [frame async for frame in self._workflow_events(request, turn, scope, context, partition_key)]
+            return JSONResponse({"output": frames})
+        except Exception as exc:
+            logger.exception("Invocations workflow request failed")
+            message, status, _ = _workflow_failure(exc)
+            return JSONResponse({"error": message}, status_code=status)
+
+    async def _workflow_events(
+        self,
+        request: Request,
+        turn: WorkflowTurn[Any],
+        scope: FoundryRequestScope,
+        context: FoundryAgentRequestContext,
+        partition_key: str | tuple[str, str],
+    ) -> AsyncGenerator[dict[str, Any]]:
+        resolver = self._workflow_resolver
+        if resolver is None:
+            raise RuntimeError("No native workflow is configured for Invocations.")
+        frames: list[dict[str, Any]] = []
+        snapshot_bytes = 0
+        deferred: list[dict[str, Any]] = []
+        defer = False
+        lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
+        async with lock:
+            workflow = await resolver.resolve(request)
+            if not resolver.is_factory and _workflow_can_pause(workflow):
+                raise _WorkflowRequestError("A pausing native workflow requires a fresh request-aware factory.")
+            run = await HostedWorkflowRun.prepare(
+                workflow,
+                scope=scope,
+                response_id=context.call_id or uuid.uuid4().hex,
+                config=self.config,
+                platform_context=context,
+                checkpoint_store_provider=self._checkpoint_storage_provider,
+                lineage_id="invocations",
+                stored=resolver.is_factory,
+                replay_completed=True,
+                fresh_factory=resolver.is_factory,
+                reclaim_superseded=True,
             )
-
-        response = await self._agent.run([user_message], session=session)
-        return Response(content=response.text)
+            if run.has_completed_output:
+                for frame in _workflow_snapshot_frames(run.snapshot):
+                    yield frame
+                return
+            try:
+                turn = run.validate_turn(turn)
+            except (TypeError, ValueError) as exc:
+                raise _WorkflowRequestError(str(exc)) from exc
+            if (
+                run.stored
+                and turn.input is not None
+                and isinstance(self._checkpoint_storage_provider, CheckpointStoreProvider)
+            ):
+                try:
+                    self._checkpoint_storage_provider.validate_checkpoint_value(turn.input)
+                except WorkflowCheckpointException as exc:
+                    raise _WorkflowRequestError(
+                        "Stored native workflow input uses an application type that is not checkpoint-allowlisted. "
+                        'Configure CheckpointStoreProvider(allowed_checkpoint_types=["module:qualname"]).'
+                    ) from exc
+            if (
+                run.stored
+                and turn.responses is not None
+                and isinstance(self._checkpoint_storage_provider, CheckpointStoreProvider)
+            ):
+                try:
+                    for reply in turn.responses.values():
+                        self._checkpoint_storage_provider.validate_checkpoint_value(reply)
+                except WorkflowCheckpointException as exc:
+                    raise _WorkflowRequestError(
+                        "Stored native workflow reply uses an application type that is not checkpoint-allowlisted. "
+                        'Configure CheckpointStoreProvider(allowed_checkpoint_types=["module:qualname"]).'
+                    ) from exc
+            committed = False
+            resources = AsyncExitStack()
+            try:
+                await run.claim()
+                try:
+                    if resolver.is_factory:
+                        entered: set[int] = set()
+                        for agent in workflow_agents(workflow):
+                            if id(agent) not in entered and isinstance(agent, AbstractAsyncContextManager):
+                                entered.add(id(agent))
+                                await resources.enter_async_context(agent)
+                    events = run.events(turn)
+                    resources.push_async_callback(events.aclose)
+                    async for event in events:
+                        if event.type == "request_info" and not resolver.is_factory:
+                            raise _WorkflowRequestError(
+                                "Native workflow pauses require a request-aware factory that rebuilds the workflow."
+                            )
+                        frame = _workflow_frame(event)
+                        if frame is None:
+                            continue
+                        frame_size = _workflow_frame_size(frame)
+                        if (
+                            len(frames) >= _MAX_WORKFLOW_SNAPSHOT_EVENTS
+                            or snapshot_bytes + frame_size > _MAX_WORKFLOW_SNAPSHOT_BYTES
+                        ):
+                            raise _WorkflowOutputError(
+                                "Workflow output exceeds the bounded Invocations snapshot limit."
+                            )
+                        snapshot_bytes += frame_size
+                        frames.append(frame)
+                        defer = defer or event.type == "request_info"
+                        if defer:
+                            deferred.append(frame)
+                        else:
+                            yield frame
+                finally:
+                    # Starlette cancellation must not interrupt core/resource cleanup.
+                    with CancelScope(shield=True):
+                        await resources.__aexit__(*sys.exc_info())
+                await run.commit({"output": frames})
+                committed = True
+            finally:
+                if not committed:
+                    failure = sys.exc_info()[1]
+                    try:
+                        with CancelScope(shield=True):
+                            await run.abort()
+                    except Exception as exc:
+                        logger.exception("Failed to persist interrupted Invocations workflow state")
+                        if failure is None:
+                            raise
+                        if isinstance(failure, Exception):
+                            raise RuntimeError(
+                                "Workflow invocation failed and its interrupted state could not be persisted."
+                            ) from exc
+        # Pending reply authority is durable, and a reply need not wait on this stream's lock.
+        for frame in deferred:
+            yield frame
