@@ -2,7 +2,7 @@
 
 """Tests for conversation store implementation."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from agent_framework import WorkflowCheckpoint
@@ -386,7 +386,9 @@ async def test_list_items_pagination_with_checkpoint_items(order: str):
 
     def item_id(item: object) -> str:
         # Checkpoint items are plain dicts at runtime; the rest are models.
-        return cast(str, item["id"] if isinstance(item, dict) else item.id)
+        if isinstance(item, dict):
+            return cast(str, item["id"])
+        return cast(Any, item).id
 
     all_items, _ = await store.list_items(conversation.id, order=order)
     all_ids = [item_id(item) for item in all_items]

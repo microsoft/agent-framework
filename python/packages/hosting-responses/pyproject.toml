@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "agent-framework-hosting==1.0.0a260730",
+    "agent-framework-hosting==1.0.0a261008",
     "openai>=1.99.0,<4",
 ]
 
