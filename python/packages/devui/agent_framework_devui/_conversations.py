@@ -516,7 +516,9 @@ class InMemoryConversationStore(ConversationStore):
         if after:
             # Find the index after the cursor
             for i, item in enumerate(items):
-                if item.id == after:
+                # Checkpoint items are plain dicts, not models.
+                item_id = cast(dict[str, Any], item).get("id") if isinstance(item, dict) else item.id
+                if item_id == after:
                     start_idx = i + 1
                     break
 

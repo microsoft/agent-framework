@@ -5,6 +5,7 @@
 from typing import cast
 
 import pytest
+from agent_framework import WorkflowCheckpoint
 from openai.types.conversations import InputTextContent
 from openai.types.conversations.message import Message as OpenAIMessage
 from openai.types.responses import ResponseInputFile, ResponseInputImage, ResponseOutputRefusal
@@ -367,6 +368,38 @@ async def test_list_items_pagination():
 
     assert len(retrieved_items) == 3
     assert has_more is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["asc", "desc"])
+async def test_list_items_pagination_with_checkpoint_items(order: str):
+    """Paging with `after` must not fail when checkpoint items (plain dicts) are listed."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation()
+    await store.add_items(
+        conversation.id,
+        items=[{"role": "user", "content": "first"}, {"role": "assistant", "content": "second"}],
+    )
+    storage = store._conversations[conversation.id]["checkpoint_storage"]
+    for _ in range(2):
+        await storage.save(WorkflowCheckpoint(workflow_name="workflow", graph_signature_hash="hash"))
+
+    def item_id(item: object) -> str:
+        # Checkpoint items are plain dicts at runtime; the rest are models.
+        return cast(str, item["id"] if isinstance(item, dict) else getattr(item, "id"))
+
+    all_items, _ = await store.list_items(conversation.id, order=order)
+    all_ids = [item_id(item) for item in all_items]
+
+    paged_ids: list[str] = []
+    after: str | None = None
+    has_more = True
+    while has_more:
+        page, has_more = await store.list_items(conversation.id, limit=1, after=after, order=order)
+        after = item_id(page[-1])
+        paged_ids.append(after)
+
+    assert paged_ids == all_ids
 
 
 @pytest.mark.asyncio
