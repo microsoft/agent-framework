@@ -197,7 +197,7 @@ class ReasoningOptions(TypedDict, total=False):
     See: https://platform.openai.com/docs/guides/reasoning
     """
 
-    effort: Literal["none", "low", "medium", "high", "xhigh"]
+    effort: Literal["none", "low", "medium", "high", "xhigh", "max"]
     """The effort level for reasoning. Higher effort means more reasoning tokens."""
 
     summary: Literal["auto", "concise", "detailed"]
