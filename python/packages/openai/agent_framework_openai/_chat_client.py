@@ -27,6 +27,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
+    Final,
     Generic,
     Literal,
     NoReturn,
@@ -155,6 +156,7 @@ logger = logging.getLogger("agent_framework.openai")
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -869,14 +871,21 @@ class RawOpenAIChatClient(
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
-                                if chunk.type in (
-                                    "error",
-                                    "response.completed",
-                                    "response.incomplete",
-                                    "response.failed",
-                                ) and isinstance(options, dict):
+                                if isinstance(options, dict) and (
+                                    chunk.type
+                                    in (
+                                        "error",
+                                        "response.completed",
+                                        "response.incomplete",
+                                        "response.failed",
+                                    )
+                                    or (
+                                        chunk.type == "response.created"
+                                        and chunk.response.status in _TERMINAL_RESPONSE_STATUSES
+                                    )
+                                ):
                                     # Clear the caller-owned resume token before parsing because
-                                    # ResponseErrorEvent parsing raises instead of yielding an update.
+                                    # error parsing raises and response.created may itself be terminal.
                                     options.pop("continuation_token", None)
                                 update = self._parse_chunk_from_openai(
                                     chunk,
@@ -3889,10 +3898,9 @@ class RawOpenAIChatClient(
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
-                if event.response.status and event.response.status in (
-                    "in_progress",
-                    "queued",
-                ):
+                if event.response.status in _TERMINAL_RESPONSE_STATUSES:
+                    operation_state = "terminal"
+                elif event.response.status in ("in_progress", "queued"):
                     continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id

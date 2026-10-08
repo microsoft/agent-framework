@@ -9702,6 +9702,54 @@ def test_streaming_response_created_with_in_progress_status_sets_continuation_to
     assert _response_id_from_token(update.continuation_token) == "resp_created_123"
 
 
+@pytest.mark.parametrize("status", ["completed", "failed", "incomplete", "cancelled"])
+def test_streaming_response_created_with_terminal_status_clears_continuation_token(status: str) -> None:
+    """A terminal status embedded in response.created should terminate the operation."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_created_terminal"
+    in_progress_event.response.conversation = None
+
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_terminal"
+    created_event.response.conversation = None
+    created_event.response.status = status
+
+    updates = [
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(created_event, options={}, function_call_ids={}),
+    ]
+
+    assert _get_operation_state(updates[-1]) == "terminal"
+    assert ChatResponse.from_updates(updates).continuation_token is None
+
+
+async def test_resumed_stream_terminal_created_event_clears_continuation_token() -> None:
+    """A terminal response.created event should clear the resumed stream token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_cancelled"
+    created_event.response.conversation = None
+    created_event.response.status = "cancelled"
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([created_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_created_cancelled"}}
+
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        response = await stream.get_final_response()
+
+    assert response.continuation_token is None
+    assert "continuation_token" not in options
+
+
 def test_streaming_response_completed_no_continuation_token() -> None:
     """Test that response.completed does NOT set continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
