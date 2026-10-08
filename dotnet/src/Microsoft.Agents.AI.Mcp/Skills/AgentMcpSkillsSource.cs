@@ -21,23 +21,26 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Discovery follows the SEP-2640 recommended approach: the source reads the well-known
-/// <c>skill://index.json</c> resource and constructs one <see cref="AgentSkill"/> per index entry.
+/// Uses <c>skills/list</c> when the server declares the <c>io.modelcontextprotocol/skills</c> extension.
+/// Otherwise, uses <c>skill://index.json</c> for backward compatibility.
 /// </para>
 /// <para>
-/// Index entries are dispatched to an <see cref="IMcpSkillEntryLoader"/> by their <c>type</c>:
-/// <list type="bullet">
-///   <item><description><c>skill-md</c> - handled by <see cref="SkillMdEntryLoader"/>; the skill's
-///   <c>SKILL.md</c> and sibling resources are fetched on demand from the MCP server.</description></item>
-///   <item><description><c>archive</c> - handled by <see cref="ArchiveEntryLoader"/>; the entry's
-///   <c>url</c> points to a single archive resource whose content unpacks into the skill's
-///   namespace.</description></item>
-/// </list>
-/// Entries whose type has no registered loader (e.g. <c>mcp-resource-template</c>) are skipped.
+/// Listed skill discovery is based on the Skills extension specification incorporating the
+/// working group's decision dated <c>2026-09-08</c>.
+/// Support currently covers a single <c>skills/list</c> result with resource lists and reading skill files,
+/// not the full extension.
 /// </para>
 /// <para>
-/// If <c>skill://index.json</c> is absent, unreadable, empty, or fails to parse, this source returns an
-/// empty list.
+/// Listed skills provide a name, description, and list of resources. Instructions and supporting resources
+/// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
+/// </para>
+/// <para>
+/// <c>skill://index.json</c> is used only when the server does not declare the Skills extension.
+/// It lists <c>skill-md</c> entries pointing to individual <c>SKILL.md</c> resources and <c>archive</c>
+/// entries pointing to archives containing skill files. Entries with unsupported types are skipped.
+/// An absent, unreadable, empty, or invalid index produces an empty skill list.
+/// Index-based discovery and archive-distributed skills are compatibility features and will be deprecated
+/// in a future release.
 /// </para>
 /// <para>
 /// Archive entries may supply a <c>digest</c> in the form <c>sha256:</c> followed by 64 lowercase
@@ -92,19 +95,22 @@ namespace Microsoft.Agents.AI;
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
     /// <summary>
-    /// SEP-2640 canonical discovery document URI.
+    /// Discovery document URI for the index compatibility path.
     /// </summary>
     private const string IndexUri = "skill://index.json";
+
+    private const string SkillsExtensionName = "io.modelcontextprotocol/skills";
 
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly Dictionary<string, IMcpSkillEntryLoader> _loaders;
+    private readonly McpListedSkillsLoader _listedSkillsLoader;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
-    /// <param name="client">An MCP client connected to a server that exposes Agent Skills resources. The caller retains ownership of the client and is responsible for disposing it.</param>
+    /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c> or <c>skill://index.json</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
     /// <param name="options">Optional options that control archive-distributed skill handling.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
@@ -112,6 +118,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
+        this._listedSkillsLoader = new McpListedSkillsLoader(this._client);
 
         IMcpSkillEntryLoader[] loaders =
         [
@@ -128,6 +135,16 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 #pragma warning disable MAAI001
         FeatureUsage.MarkUsed((int)Mcp.FeatureIndex.CoreMcpSkillsSource);
 #pragma warning restore MAAI001
+
+        // skills/list discovery must bypass index and archive loaders.
+        if (this._client.ServerCapabilities.Extensions?.ContainsKey(SkillsExtensionName) == true)
+        {
+            IList<AgentSkill> listedSkills = await this._listedSkillsLoader.DiscoverAsync(cancellationToken).ConfigureAwait(false);
+
+            LogSkillsLoadedTotal(this._logger, listedSkills.Count);
+
+            return listedSkills;
+        }
 
         McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
 
