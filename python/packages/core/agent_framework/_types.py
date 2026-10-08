@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
 
 from typing_extensions import Required, TypedDict
 
@@ -40,6 +40,7 @@ else:
 logger = logging.getLogger("agent_framework")
 
 _SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
+_OperationState: TypeAlias = Literal["in_progress", "terminal"]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -2279,10 +2280,38 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         and update.finish_reason is not None
     ):
         response.finish_reason = update.finish_reason
-    if update.is_operation_terminal:
+    operation_state = _get_operation_state(update)
+    _copy_operation_state(update, response)
+    if operation_state == "terminal":
         response.continuation_token = None
-    elif update.continuation_token is not None:
+    elif operation_state == "in_progress":
+        if update.continuation_token is not None:
+            response.continuation_token = update.continuation_token
+    else:
         response.continuation_token = update.continuation_token
+
+
+def _get_operation_state(
+    value: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+) -> _OperationState | None:
+    """Get framework-internal resumable-operation state."""
+    return value._operation_state  # pyright: ignore[reportPrivateUsage]
+
+
+def _set_operation_state(
+    value: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+    state: _OperationState | None,
+) -> None:
+    """Set framework-internal resumable-operation state."""
+    value._operation_state = state  # pyright: ignore[reportPrivateUsage]
+
+
+def _copy_operation_state(
+    source: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+    target: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+) -> None:
+    """Copy framework-internal resumable-operation state."""
+    _set_operation_state(target, _get_operation_state(source))
 
 
 def _apply_response_tail_to_update(
@@ -2297,6 +2326,7 @@ def _apply_response_tail_to_update(
     """
     update.finish_reason = response.finish_reason
     update.continuation_token = response.continuation_token
+    _copy_operation_state(response, update)
     if response.additional_properties:
         merged = dict(update.additional_properties) if update.additional_properties else {}
         merged.update(response.additional_properties)
@@ -2692,6 +2722,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     def mark_internal_conversation_id(self) -> None:
@@ -2930,7 +2961,6 @@ class ChatResponseUpdate(SerializationMixin):
         model: The model associated with this response update.
         created_at: A timestamp for the chat response update.
         finish_reason: The finish reason for the operation.
-        is_operation_terminal: Whether this update marks the resumable operation as complete.
         additional_properties: Any additional properties associated with the chat response update.
         raw_representation: The raw representation of the chat response update from an underlying implementation.
 
@@ -2977,7 +3007,6 @@ class ChatResponseUpdate(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
-        is_operation_terminal: bool = False,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -2995,7 +3024,6 @@ class ChatResponseUpdate(SerializationMixin):
             finish_reason: Optional finish reason for the operation.
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
-            is_operation_terminal: Whether this update marks the resumable operation as complete.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update
                 from an underlying implementation.
@@ -3024,19 +3052,12 @@ class ChatResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
-        self.is_operation_terminal = is_operation_terminal
+        self._operation_state: _OperationState | None = None
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
             allow_none=True,
         )
         self.raw_representation = raw_representation
-
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Convert the update to a dictionary."""
-        result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        if not self.is_operation_terminal:
-            result.pop("is_operation_terminal", None)
-        return result
 
     @property
     def text(self) -> str:
@@ -3157,6 +3178,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.raw_representation = raw_representation
 
     @property
@@ -3372,6 +3394,7 @@ def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFun
     if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
         agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
         agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    _copy_operation_state(response, agent_response)
     return agent_response
 
 
@@ -3392,7 +3415,6 @@ class AgentResponseUpdate(SerializationMixin):
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
         created_at: A timestamp for the response update.
-        is_operation_terminal: Whether this update marks the resumable operation as complete.
         additional_properties: Any additional properties associated with the update.
         raw_representation: The raw representation from an underlying implementation.
 
@@ -3440,7 +3462,6 @@ class AgentResponseUpdate(SerializationMixin):
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
-        is_operation_terminal: bool = False,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
     ) -> None:
@@ -3460,7 +3481,6 @@ class AgentResponseUpdate(SerializationMixin):
                 ``"tool_calls"`` (the model invoked a tool).
             continuation_token: Optional token for resuming a long-running background operation.
                 When present, indicates the operation is still in progress.
-            is_operation_terminal: Whether this update marks the resumable operation as complete.
             additional_properties: Optional additional properties associated with the chat response update.
             raw_representation: Optional raw representation of the chat response update.
 
@@ -3487,19 +3507,12 @@ class AgentResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
-        self.is_operation_terminal = is_operation_terminal
+        self._operation_state: _OperationState | None = None
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
             allow_none=True,
         )
         self.raw_representation: Any | list[Any] | None = raw_representation
-
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
-        """Convert the update to a dictionary."""
-        result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        if not self.is_operation_terminal:
-            result.pop("is_operation_terminal", None)
-        return result
 
     @property
     def text(self) -> str:
@@ -3519,7 +3532,7 @@ class AgentResponseUpdate(SerializationMixin):
 
 
 def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
-    return AgentResponseUpdate(
+    agent_update = AgentResponseUpdate(
         contents=update.contents,
         role=update.role,
         author_name=update.author_name or agent_name,
@@ -3528,10 +3541,11 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         created_at=update.created_at,
         finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,
-        is_operation_terminal=update.is_operation_terminal,
         additional_properties=update.additional_properties,
         raw_representation=update,
     )
+    _copy_operation_state(update, agent_update)
+    return agent_update
 
 
 # Type variables for ResponseStream

@@ -47,6 +47,7 @@ from agent_framework._types import (
     _parse_content_list,
     _parse_structured_response_value,
     _process_update,
+    _set_operation_state,
     _validate_uri,
     add_usage_details,
     map_chat_to_agent_update,
@@ -6206,88 +6207,194 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
     assert data["finish_reason"] == "tool_calls"
 
 
-async def test_chat_client_agent_streaming_continuation_token() -> None:
+def test_chat_response_preserves_continuation_token_for_explicitly_in_progress_updates() -> None:
     """Chat response aggregation should preserve an in-progress continuation token."""
-    events = [
-        ChatResponseUpdate(
-            contents=[Content.from_text(text="working")],
-            response_id="resp_1",
-            model="gpt-5",
-            continuation_token={"response_id": "resp_1"},
-        ),
-        ChatResponseUpdate(contents=[Content.from_text(text="...still working")]),
-    ]
+    token_update = ChatResponseUpdate(
+        contents=[Content.from_text(text="working")],
+        response_id="resp_1",
+        model="gpt-5",
+        continuation_token=cast(Any, {"response_id": "resp_1"}),
+    )
+    tokenless_update = ChatResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
 
-    aggregated = ChatResponse.from_updates(events)
+    aggregated = ChatResponse.from_updates([token_update, tokenless_update])
 
     assert aggregated.continuation_token == {"response_id": "resp_1"}
 
 
-def test_chat_response_finished_update_clears_continuation_token() -> None:
-    """A finished chat response should clear its continuation token."""
-    events = [
-        ChatResponseUpdate(continuation_token={"response_id": "resp_1"}),
-        ChatResponseUpdate(is_operation_terminal=True),
-    ]
+def test_chat_response_terminal_update_clears_continuation_token() -> None:
+    """An explicitly terminal chat response should clear its continuation token."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
 
-    aggregated = ChatResponse.from_updates(events)
+    aggregated = ChatResponse.from_updates([token_update, terminal_update])
 
     assert aggregated.continuation_token is None
 
 
-def test_chat_response_finish_reason_does_not_clear_continuation_token() -> None:
-    """A finish reason alone should not be treated as the terminal streaming signal."""
+def test_chat_response_legacy_tokenless_update_clears_continuation_token() -> None:
+    """Providers without explicit operation state should retain legacy token overwrite behavior."""
     events = [
-        ChatResponseUpdate(continuation_token={"response_id": "resp_1"}),
+        ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
         ChatResponseUpdate(finish_reason="stop"),
     ]
 
     aggregated = ChatResponse.from_updates(events)
 
-    assert aggregated.continuation_token == {"response_id": "resp_1"}
+    assert aggregated.continuation_token is None
+    assert aggregated.finish_reason == "stop"
+
+
+def test_agent_response_legacy_tokenless_update_clears_continuation_token() -> None:
+    """Legacy agent providers should retain token overwrite behavior."""
+    aggregated = AgentResponse.from_updates([
+        AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
+        AgentResponseUpdate(finish_reason="stop"),
+    ])
+
+    assert aggregated.continuation_token is None
     assert aggregated.finish_reason == "stop"
 
 
 def test_agent_response_update_preserves_continuation_token() -> None:
     """Agent response aggregation should preserve an in-progress continuation token."""
-    events = [
-        AgentResponseUpdate(continuation_token={"response_id": "resp_1"}),
-        AgentResponseUpdate(contents=[Content.from_text(text="...still working")]),
-    ]
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    tokenless_update = AgentResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
 
-    aggregated = AgentResponse.from_updates(events)
+    aggregated = AgentResponse.from_updates([token_update, tokenless_update])
 
     assert aggregated.continuation_token == {"response_id": "resp_1"}
 
 
-def test_agent_response_finished_update_clears_continuation_token() -> None:
-    """A finished agent response should clear its continuation token."""
-    events = [
-        AgentResponseUpdate(continuation_token={"response_id": "resp_1"}),
-        AgentResponseUpdate(is_operation_terminal=True),
-    ]
+def test_agent_response_terminal_update_clears_continuation_token() -> None:
+    """An explicitly terminal agent response should clear its continuation token."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
 
-    aggregated = AgentResponse.from_updates(events)
+    aggregated = AgentResponse.from_updates([token_update, terminal_update])
 
     assert aggregated.continuation_token is None
 
 
 def test_map_chat_to_agent_update_preserves_terminal_signal() -> None:
     """Chat-to-agent update conversion should preserve terminality."""
-    update = map_chat_to_agent_update(ChatResponseUpdate(is_operation_terminal=True), agent_name=None)
+    chat_update = ChatResponseUpdate()
+    _set_operation_state(chat_update, "terminal")
+    update = map_chat_to_agent_update(chat_update, agent_name=None)
 
-    assert update.is_operation_terminal is True
+    assert (
+        AgentResponse.from_updates([
+            AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
+            update,
+        ]).continuation_token
+        is None
+    )
 
 
-@pytest.mark.parametrize("update_type", [ChatResponseUpdate, AgentResponseUpdate])
-def test_response_update_serialization_omits_false_terminal_signal(
-    update_type: type[ChatResponseUpdate] | type[AgentResponseUpdate],
+@pytest.mark.parametrize(
+    "value",
+    [
+        ChatResponse(),
+        ChatResponseUpdate(),
+        AgentResponse(),
+        AgentResponseUpdate(),
+    ],
+)
+def test_response_serialization_omits_private_operation_state(
+    value: ChatResponse | ChatResponseUpdate | AgentResponse | AgentResponseUpdate,
 ) -> None:
-    """Nonterminal updates should retain their existing serialized shape."""
-    assert "is_operation_terminal" not in update_type().to_dict()
-    serialized = update_type(is_operation_terminal=True).to_dict()
-    assert serialized["is_operation_terminal"] is True
-    assert update_type.from_dict(serialized).is_operation_terminal is True
+    """Internal operation state should not change the public serialized shape."""
+    _set_operation_state(value, "terminal")
+
+    assert "_operation_state" not in value.to_dict()
+
+
+def test_chat_response_round_trip_preserves_terminal_operation_state() -> None:
+    """Chat response buffering should preserve terminality."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+    response = ChatResponse.from_updates([token_update, terminal_update])
+
+    round_tripped_updates = response.to_updates()
+    legacy_token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+    round_tripped = ChatResponse.from_updates([legacy_token_update, *round_tripped_updates])
+
+    assert round_tripped.continuation_token is None
+
+
+def test_agent_response_round_trip_preserves_terminal_operation_state() -> None:
+    """Agent response buffering should preserve terminality."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+    response = AgentResponse.from_updates([token_update, terminal_update])
+
+    round_tripped_updates = response.to_updates()
+    legacy_token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+    round_tripped = AgentResponse.from_updates([legacy_token_update, *round_tripped_updates])
+
+    assert round_tripped.continuation_token is None
+
+
+async def test_buffered_chat_response_replacement_preserves_terminal_operation_state() -> None:
+    """Buffered chat conversion should retain terminality on rebuilt updates."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    async def updates() -> AsyncIterable[ChatResponseUpdate]:
+        yield token_update
+        yield terminal_update
+
+    stream = ResponseStream(
+        updates(),
+        finalizer=ChatResponse.from_updates,
+        result_transforms=[lambda response: response],
+        stream_updates=False,
+        result_to_updates=ChatResponse.to_updates,
+    )
+
+    released = [update async for update in stream]
+    stale_token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+
+    assert ChatResponse.from_updates([stale_token_update, *released]).continuation_token is None
+
+
+async def test_buffered_agent_response_replacement_preserves_terminal_operation_state() -> None:
+    """Buffered agent conversion should retain terminality on rebuilt updates."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    async def updates() -> AsyncIterable[AgentResponseUpdate]:
+        yield token_update
+        yield terminal_update
+
+    stream = ResponseStream(
+        updates(),
+        finalizer=AgentResponse.from_updates,
+        result_transforms=[lambda response: response],
+        stream_updates=False,
+        result_to_updates=AgentResponse.to_updates,
+    )
+
+    released = [update async for update in stream]
+    stale_token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+
+    assert AgentResponse.from_updates([stale_token_update, *released]).continuation_token is None
 
 
 # endregion

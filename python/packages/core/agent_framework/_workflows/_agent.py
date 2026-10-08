@@ -29,6 +29,7 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     add_usage_details,
 )
 from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
@@ -656,26 +657,25 @@ class WorkflowAgent(BaseAgent):
             if isinstance(data, AgentResponseUpdate):
                 # Construct a fresh AgentResponseUpdate so we don't mutate a payload
                 # that AgentExecutor still holds a reference to in its `updates` list.
-                return [
-                    AgentResponseUpdate(
-                        contents=list(data.contents),
-                        role=data.role,
-                        author_name=data.author_name or executor_id,
-                        agent_id=data.agent_id,
-                        response_id=data.response_id,
-                        message_id=data.message_id,
-                        created_at=data.created_at,
-                        # The attribute is typed wider than the constructor accepts (custom
-                        # connectors may set any string); forward the value unchanged.
-                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
-                        continuation_token=data.continuation_token,
-                        is_operation_terminal=data.is_operation_terminal,
-                        additional_properties=dict(data.additional_properties)
-                        if data.additional_properties is not None
-                        else None,
-                        raw_representation=data.raw_representation,
-                    )
-                ]
+                update = AgentResponseUpdate(
+                    contents=list(data.contents),
+                    role=data.role,
+                    author_name=data.author_name or executor_id,
+                    agent_id=data.agent_id,
+                    response_id=data.response_id,
+                    message_id=data.message_id,
+                    created_at=data.created_at,
+                    # The attribute is typed wider than the constructor accepts (custom
+                    # connectors may set any string); forward the value unchanged.
+                    finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                    continuation_token=data.continuation_token,
+                    additional_properties=dict(data.additional_properties)
+                    if data.additional_properties is not None
+                    else None,
+                    raw_representation=data.raw_representation,
+                )
+                _copy_operation_state(data, update)
+                return [update]
             if isinstance(data, AgentResponse):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
@@ -696,7 +696,7 @@ class WorkflowAgent(BaseAgent):
                     updates[-1].agent_id = data.agent_id
                     updates[-1].finish_reason = data.finish_reason
                     updates[-1].continuation_token = data.continuation_token
-                    updates[-1].is_operation_terminal = data.continuation_token is None
+                    _copy_operation_state(cast(AgentResponse[Any], data), updates[-1])
                     updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):

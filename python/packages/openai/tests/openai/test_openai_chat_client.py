@@ -39,6 +39,7 @@ from agent_framework._sessions import (
     SessionContext,
     _filter_approval_control_messages,
 )
+from agent_framework._types import _get_operation_state
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
@@ -9605,6 +9606,28 @@ def test_streaming_response_in_progress_sets_continuation_token() -> None:
     assert _response_id_from_token(update.continuation_token) == "resp_stream_123"
 
 
+def test_streaming_tokenless_intermediate_update_preserves_continuation_token() -> None:
+    """Tokenless Responses API events should not erase an active background token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_123"
+    in_progress_event.response.conversation = None
+
+    text_delta_event = MagicMock()
+    text_delta_event.type = "response.output_text.delta"
+    text_delta_event.delta = "working"
+    text_delta_event.logprobs = None
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(text_delta_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is not None
+    assert _response_id_from_token(response.continuation_token) == "resp_stream_123"
+
+
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
     """Test that response.created with in_progress status sets continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -9751,7 +9774,7 @@ def test_streaming_terminal_response_sets_finish_reason(
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
 
     assert update.finish_reason == expected_finish_reason
-    assert update.is_operation_terminal is True
+    assert _get_operation_state(update) == "terminal"
 
 
 @pytest.mark.parametrize(

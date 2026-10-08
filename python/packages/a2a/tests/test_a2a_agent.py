@@ -29,6 +29,7 @@ from agent_framework import (
     Message,
     SessionContext,
 )
+from agent_framework._types import _get_operation_state
 from agent_framework.a2a import A2AAgent
 from agent_framework.exceptions import AgentInvalidRequestException
 from google.protobuf.json_format import MessageToDict
@@ -1193,7 +1194,7 @@ async def test_resume_streaming_terminal_task_clears_final_continuation_token(
     assert len(updates) == 2
     assert updates[0].continuation_token is not None
     assert updates[1].continuation_token is None
-    assert updates[1].is_operation_terminal is True
+    assert _get_operation_state(updates[1]) == "terminal"
     assert response.continuation_token is None
     assert response.finish_reason is None
 
@@ -1232,7 +1233,7 @@ async def test_streaming_terminal_status_without_message_clears_final_continuati
     assert len(updates) == 2
     assert updates[0].continuation_token is not None
     assert updates[1].contents == []
-    assert updates[1].is_operation_terminal is True
+    assert _get_operation_state(updates[1]) == "terminal"
     assert response.continuation_token is None
     assert response.finish_reason is None
 
@@ -2016,13 +2017,13 @@ async def test_streaming_background_artifacts_emit_terminal_marker_without_dupli
 
     assert updates[0].contents == []
     assert updates[0].continuation_token is not None
-    assert updates[0].is_operation_terminal is False
 
     assert [update.text for update in updates[1:3]] == ["Hello ", "world"]
+    assert AgentResponse.from_updates(updates[:3]).continuation_token is not None
 
     assert updates[3].contents == []
     assert updates[3].continuation_token is None
-    assert updates[3].is_operation_terminal is True
+    assert _get_operation_state(updates[3]) == "terminal"
 
     assert response.text == "Hello world"
     assert response.continuation_token is None

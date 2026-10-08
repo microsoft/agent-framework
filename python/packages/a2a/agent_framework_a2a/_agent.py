@@ -44,7 +44,7 @@ from agent_framework import (
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._types import AgentRunInputs
+from agent_framework._types import AgentRunInputs, _set_operation_state  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
@@ -64,6 +64,15 @@ class A2AServiceSessionId(TypedDict):
     context_id: str
     task_id: str | None
     task_state: TaskState | None
+
+
+def _with_operation_state(
+    update: AgentResponseUpdate,
+    state: Literal["in_progress", "terminal"],
+) -> AgentResponseUpdate:
+    """Attach framework-internal resumable-operation state."""
+    _set_operation_state(update, state)
+    return update
 
 
 class A2AAgentSession(AgentSession):
@@ -705,7 +714,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 last_task_id = artifact_event.task_id
                 if artifact_event.context_id:
                     last_context_id = artifact_event.context_id
-                updates = self._updates_from_task_update_event(artifact_event)
+                updates = self._updates_from_task_update_event(artifact_event, background=background)
                 # Always yield artifact updates — they carry actual response
                 # content (files, data).  Track IDs so that a subsequent
                 # terminal Task doesn't duplicate the same artifacts.
@@ -817,22 +826,21 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
             message = status.message if status.HasField("message") and status.message.parts else None
             occurrence_id = input_request_occurrence_id or task.id
-            return [
-                AgentResponseUpdate(
-                    contents=[
-                        self._input_required_request(
-                            task.id,
-                            message,
-                            fallback_occurrence_id=occurrence_id,
-                        )
-                    ],
-                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
-                    response_id=task.id,
-                    continuation_token=self._build_continuation_token(task) if background else None,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
-                )
-            ]
+            update = AgentResponseUpdate(
+                contents=[
+                    self._input_required_request(
+                        task.id,
+                        message,
+                        fallback_occurrence_id=occurrence_id,
+                    )
+                ],
+                role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                response_id=task.id,
+                continuation_token=self._build_continuation_token(task) if background else None,
+                additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                raw_representation=task,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
@@ -856,42 +864,49 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     )
                     for message in task_messages
                 ]
-                updates[-1].is_operation_terminal = True
+                _set_operation_state(updates[-1], "terminal")
                 return updates
             if task.artifacts:
                 if not background:
                     return []
                 return [
+                    _with_operation_state(
+                        AgentResponseUpdate(
+                            contents=[],
+                            role="assistant",
+                            response_id=task.id,
+                            additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                            raw_representation=task,
+                        ),
+                        "terminal",
+                    )
+                ]
+            return [
+                _with_operation_state(
                     AgentResponseUpdate(
                         contents=[],
                         role="assistant",
                         response_id=task.id,
-                        is_operation_terminal=True,
                         additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
                         raw_representation=task,
-                    )
-                ]
-            return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant",
-                    response_id=task.id,
-                    is_operation_terminal=True,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
+                    ),
+                    "terminal",
                 )
             ]
 
         if background and status.state in IN_PROGRESS_TASK_STATES:
             token = self._build_continuation_token(task)
             return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant",
-                    response_id=task.id,
-                    continuation_token=token,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=task.id,
+                        continuation_token=token,
+                        additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                        raw_representation=task,
+                    ),
+                    "in_progress",
                 )
             ]
 
@@ -905,7 +920,18 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             contents = self._parse_contents_from_a2a(status.message.parts)
             if contents:
                 return [
-                    AgentResponseUpdate(
+                    _with_operation_state(
+                        AgentResponseUpdate(
+                            contents=contents,
+                            role="assistant" if status.message.role == A2ARole.ROLE_AGENT else "user",
+                            response_id=task.id,
+                            additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                            raw_representation=task,
+                        ),
+                        "in_progress",
+                    )
+                    if background
+                    else AgentResponseUpdate(
                         contents=contents,
                         role="assistant" if status.message.role == A2ARole.ROLE_AGENT else "user",
                         response_id=task.id,
@@ -931,16 +957,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             artifact_meta = MessageToDict(update_event.artifact.metadata) if update_event.artifact.metadata else {}
             event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
             merged_metadata = {**artifact_meta, **event_meta} or None
-            return [
-                AgentResponseUpdate(
-                    contents=contents,
-                    role="assistant",
-                    response_id=update_event.task_id,
-                    message_id=update_event.artifact.artifact_id,
-                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                    raw_representation=update_event,
-                )
-            ]
+            update = AgentResponseUpdate(
+                contents=contents,
+                role="assistant",
+                response_id=update_event.task_id,
+                message_id=update_event.artifact.artifact_id,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                raw_representation=update_event,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if not isinstance(update_event, TaskStatusUpdateEvent):
             return []
@@ -961,23 +986,22 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
             merged_metadata = {**message_meta, **event_meta} or None
             occurrence_id = input_request_occurrence_id or update_event.task_id
-            return [
-                AgentResponseUpdate(
-                    contents=[
-                        self._input_required_request(
-                            update_event.task_id,
-                            message,
-                            fallback_occurrence_id=occurrence_id,
-                        )
-                    ],
-                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
-                    response_id=update_event.task_id,
-                    message_id=message.message_id if message is not None else None,
-                    continuation_token=continuation_token,
-                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                    raw_representation=update_event,
-                )
-            ]
+            update = AgentResponseUpdate(
+                contents=[
+                    self._input_required_request(
+                        update_event.task_id,
+                        message,
+                        fallback_occurrence_id=occurrence_id,
+                    )
+                ],
+                role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                response_id=update_event.task_id,
+                message_id=message.message_id if message is not None else None,
+                continuation_token=continuation_token,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                raw_representation=update_event,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if state not in TERMINAL_TASK_STATES:
             return []
@@ -987,14 +1011,16 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if not background:
                 return []
             return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant",
-                    response_id=update_event.task_id,
-                    is_operation_terminal=True,
-                    continuation_token=continuation_token,
-                    additional_properties={"a2a_metadata": event_meta} if event_meta else None,
-                    raw_representation=update_event,
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=update_event.task_id,
+                        continuation_token=continuation_token,
+                        additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                        raw_representation=update_event,
+                    ),
+                    "terminal",
                 )
             ]
 
@@ -1004,30 +1030,34 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if not background:
                 return []
             return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
-                    response_id=update_event.task_id,
-                    message_id=message.message_id,
-                    is_operation_terminal=True,
-                    continuation_token=continuation_token,
-                    additional_properties={"a2a_metadata": event_meta} if event_meta else None,
-                    raw_representation=update_event,
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
+                        response_id=update_event.task_id,
+                        message_id=message.message_id,
+                        continuation_token=continuation_token,
+                        additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                        raw_representation=update_event,
+                    ),
+                    "terminal",
                 )
             ]
         msg_meta = MessageToDict(message.metadata) if message.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
 
         return [
-            AgentResponseUpdate(
-                contents=contents,
-                role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
-                response_id=update_event.task_id,
-                message_id=message.message_id,
-                is_operation_terminal=True,
-                continuation_token=continuation_token,
-                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                raw_representation=update_event,
+            _with_operation_state(
+                AgentResponseUpdate(
+                    contents=contents,
+                    role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=update_event.task_id,
+                    message_id=message.message_id,
+                    continuation_token=continuation_token,
+                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                    raw_representation=update_event,
+                ),
+                "terminal",
             )
         ]
 

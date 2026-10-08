@@ -71,6 +71,7 @@ from agent_framework._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
     validate_tool_mode,
 )
@@ -3649,7 +3650,7 @@ class RawOpenAIChatClient(
         created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
-        is_operation_terminal = False
+        operation_state: Literal["in_progress", "terminal"] = "in_progress"
         model = self.model
 
         def output_text_properties(output: Any) -> dict[str, Any] | None:
@@ -3893,7 +3894,7 @@ class RawOpenAIChatClient(
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed" | "response.incomplete" | "response.failed":
-                is_operation_terminal = True
+                operation_state = "terminal"
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
@@ -4194,7 +4195,7 @@ class RawOpenAIChatClient(
                 if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
                     logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
-        return ChatResponseUpdate(
+        update = ChatResponseUpdate(
             contents=contents,
             conversation_id=conversation_id,
             response_id=response_id,
@@ -4203,10 +4204,11 @@ class RawOpenAIChatClient(
             created_at=created_at,
             continuation_token=continuation_token,
             finish_reason=finish_reason,
-            is_operation_terminal=is_operation_terminal,
             additional_properties=metadata,
             raw_representation=event,
         )
+        _set_operation_state(update, operation_state)
+        return update
 
     def _parse_usage_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
         details = UsageDetails(
