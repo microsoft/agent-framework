@@ -815,6 +815,15 @@ class RawOpenAIChatClient(
         ) from ex
 
     @override
+    def service_url(self) -> str:
+        """Get the URL of the service.
+
+        Returns:
+            The base URL of the underlying OpenAI client, or ``"Unknown"`` if there is no client.
+        """
+        return str(self.client.base_url) if self.client else "Unknown"
+
+    @override
     def _inner_get_response(
         self,
         *,

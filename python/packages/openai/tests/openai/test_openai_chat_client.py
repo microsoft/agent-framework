@@ -215,6 +215,12 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
+def test_service_url() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key", base_url="http://localhost:1234/v1")
+
+    assert client.service_url() == "http://localhost:1234/v1/"
+
+
 def test_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(OpenAIChatClient.__init__)
 
