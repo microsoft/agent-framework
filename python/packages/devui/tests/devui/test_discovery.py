@@ -27,9 +27,9 @@ from agent_framework_devui._utils import extract_agent_metadata
         ),
     ],
 )
-async def test_context_providers_in_agent_metadata(mock_chat_client, context_providers, expected):
+async def test_context_providers_in_agent_metadata(mock_base_chat_client, context_providers, expected):
     """Discovery includes all configured providers in their configured order."""
-    agent = Agent(client=mock_chat_client, name="Example", context_providers=context_providers)
+    agent = Agent(client=mock_base_chat_client, name="Example", context_providers=context_providers)
 
     entity_info = await EntityDiscovery().create_entity_info_from_object(agent)
 
