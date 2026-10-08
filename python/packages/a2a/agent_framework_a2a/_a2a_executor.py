@@ -164,6 +164,7 @@ class A2AExecutor(AgentExecutor):
             await updater.start_work()
 
             session = self._agent.create_session(session_id=task.context_id)
+            await self.prepare_session(context, session)
 
             if self._stream:
                 await self._run_stream(query, session, updater)
@@ -180,6 +181,21 @@ class A2AExecutor(AgentExecutor):
                 state=TaskState.TASK_STATE_FAILED,
                 message=updater.new_agent_message([Part(text=str(e))]),
             )
+
+    async def prepare_session(self, context: RequestContext, session: AgentSession) -> None:
+        """Initialize the agent session from the inbound A2A request.
+
+        Called after the session is created and before the agent runs. The default
+        implementation does nothing. Override it to copy trusted values from the request,
+        for example ``context.metadata`` (``SendMessageRequest.metadata``), into
+        ``session.state`` so middleware and tools on the hosted agent can read them.
+        Nothing from the request is applied automatically, so the application decides
+        which keys to trust.
+
+        Args:
+            context: The inbound A2A request context.
+            session: The session the agent will run with.
+        """
 
     async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""

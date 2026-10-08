@@ -7,6 +7,7 @@ from uuid import uuid4
 from a2a.types import Part, Task, TaskState
 from agent_framework import (
     AgentResponseUpdate,
+    AgentSession,
     Content,
     Message,
     SupportsAgentRun,
@@ -923,3 +924,111 @@ class TestA2AExecutorIntegration:
             mock_updater.start_work.assert_called_once()
             cast(Any, executor.handle_events).assert_called_once()
             mock_updater.complete.assert_called_once()
+
+
+class TestA2AExecutorPrepareSession:
+    """Tests for the prepare_session hook."""
+
+    async def _execute(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+        session: Any,
+        run: Any = None,
+    ) -> MagicMock:
+        mock_request_context.get_user_input = MagicMock(return_value="Hello")
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+        mock_request_context.metadata = {"user_id": "42", "user_name": "Dinesh"}
+
+        response = MagicMock(spec=AgentResponse)
+        response.messages = [Message(role="assistant", contents=[Content.from_text(text="Hi")])]
+        cast(Any, executor._agent).run = AsyncMock(side_effect=run) if run else AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock(return_value=session)
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater_class.return_value = mock_updater
+            await executor.execute(mock_request_context, mock_event_queue)
+        return mock_updater
+
+    async def test_default_prepare_session_does_not_touch_session(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+    ) -> None:
+        session = AgentSession()
+
+        await self._execute(executor, mock_request_context, mock_event_queue, mock_task, session)
+
+        assert session.state == {}
+        assert cast(Any, executor._agent.run).call_args.kwargs["session"] is session
+
+    async def test_overridden_prepare_session_runs_before_agent(
+        self,
+        mock_agent: MagicMock,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+    ) -> None:
+        seen_in_run: dict[str, Any] = {}
+
+        class _Executor(A2AExecutor):
+            async def prepare_session(self, context: Any, session: AgentSession) -> None:
+                session.state["user_id"] = context.metadata.get("user_id")
+                session.state["user_name"] = context.metadata.get("user_name")
+
+        async def _run(*args: Any, session: AgentSession, **kwargs: Any) -> Any:
+            seen_in_run.update(session.state)
+            response = MagicMock(spec=AgentResponse)
+            response.messages = [Message(role="assistant", contents=[Content.from_text(text="Hi")])]
+            return response
+
+        executor = _Executor(mock_agent)
+        session = AgentSession()
+        mock_updater = await self._execute(
+            executor, mock_request_context, mock_event_queue, mock_task, session, run=_run
+        )
+        assert session.state == {"user_id": "42", "user_name": "Dinesh"}
+        assert seen_in_run == {"user_id": "42", "user_name": "Dinesh"}
+        mock_updater.complete.assert_called_once()
+
+    async def test_prepare_session_error_fails_the_task(
+        self,
+        mock_agent: MagicMock,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+    ) -> None:
+        class _Executor(A2AExecutor):
+            async def prepare_session(self, context: Any, session: AgentSession) -> None:
+                raise ValueError("untrusted metadata")
+
+        executor = _Executor(mock_agent)
+        mock_updater = MagicMock()
+        mock_updater.submit = AsyncMock()
+        mock_updater.start_work = AsyncMock()
+        mock_updater.complete = AsyncMock()
+        mock_updater.update_status = AsyncMock()
+        mock_updater.new_agent_message = MagicMock(return_value="message_obj")
+        mock_request_context.get_user_input = MagicMock(return_value="Hello")
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+        cast(Any, mock_agent).create_session = MagicMock(return_value=AgentSession())
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater", return_value=mock_updater):
+            await executor.execute(mock_request_context, mock_event_queue)
+
+        mock_agent.run.assert_not_called()
+        mock_updater.complete.assert_not_called()
+        assert mock_updater.update_status.call_args.kwargs["state"] == TaskState.TASK_STATE_FAILED
