@@ -519,8 +519,15 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             # Parse and validate the structured output
             agent_orchestration_output = self._parse_agent_output(agent_response)
 
-            if not agent_orchestration_output.terminate and not agent_orchestration_output.next_speaker:
-                raise ValueError("next_speaker must be provided if not terminating the conversation.")
+            if not agent_orchestration_output.terminate:
+                next_speaker = agent_orchestration_output.next_speaker
+                if not next_speaker:
+                    raise ValueError("next_speaker must be provided if not terminating the conversation.")
+                if next_speaker not in self._participant_registry.participants:
+                    raise ValueError(
+                        f"Orchestrator agent selected unknown participant '{next_speaker}'. "
+                        f"Valid participants: {', '.join(self._participant_registry.participants)}."
+                    )
 
             return agent_orchestration_output
 

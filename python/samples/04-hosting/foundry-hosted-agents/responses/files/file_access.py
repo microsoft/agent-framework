@@ -27,10 +27,27 @@ def validate_filename(filename: str) -> None:
         raise ValueError("filename must be a single file name in sample_files, not a path.")
 
 
+def _posix_flag(name: str) -> int:
+    """Look up a required POSIX-only `os` flag (O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK) by name.
+
+    These flags are not defined in the Windows type stubs, so a literal `os.O_NOFOLLOW`-style
+    reference fails Pyright on Windows even though this sandbox only ever executes the code
+    path on POSIX. Looking the flag up via `getattr` keeps static analysis clean everywhere
+    while still failing closed at runtime: a missing flag raises here exactly like the
+    previous `hasattr` guard did, so no-follow/descriptor-relative behavior is unchanged.
+    """
+    flag = getattr(os, name, None)
+    if flag is None:
+        raise RuntimeError("Secure file access requires POSIX no-follow, non-blocking, descriptor-relative opens.")
+    return flag
+
+
 def _directory_flags() -> int:
-    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY") or os.open not in os.supports_dir_fd:
+    nofollow = _posix_flag("O_NOFOLLOW")
+    directory = _posix_flag("O_DIRECTORY")
+    if os.open not in os.supports_dir_fd:
         raise RuntimeError("Secure file access requires POSIX no-follow, descriptor-relative directory opens.")
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    return os.O_RDONLY | directory | nofollow
 
 
 def _open_directory(path: Path) -> int:
@@ -64,7 +81,9 @@ def _open_upload_directory(*, create: bool = False) -> int:
 def _read_file(directory: int, filename: str) -> bytes:
     validate_filename(filename)
     # O_NONBLOCK prevents a substituted FIFO/device from blocking before fstat rejects it.
-    descriptor = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    descriptor = os.open(
+        filename, os.O_RDONLY | _posix_flag("O_NOFOLLOW") | _posix_flag("O_NONBLOCK"), dir_fd=directory
+    )
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
@@ -141,7 +160,7 @@ def write_local_upload(filename: str, data: bytes) -> None:
     try:
         descriptor = os.open(
             filename,
-            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            os.O_WRONLY | os.O_CREAT | _posix_flag("O_NOFOLLOW") | _posix_flag("O_NONBLOCK"),
             mode=0o600,
             dir_fd=directory,
         )

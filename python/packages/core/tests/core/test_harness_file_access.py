@@ -50,6 +50,7 @@ from agent_framework._harness._file_access import (
     _run_search_with_timeout,
     _slice_lines,
     _split_lines_keepends,
+    _store_write_lock,
 )
 
 from .conftest import create_junction_or_skip
@@ -1748,6 +1749,74 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
         }
     )
     assert "Duplicate" in _text(dup[0])
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "first_edit", "second_edit"),
+    [
+        (
+            FileAccessProvider.REPLACE_TOOL_NAME,
+            {"old_string": "A=0", "new_string": "A=1"},
+            {"old_string": "B=0", "new_string": "B=1"},
+        ),
+        (
+            FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            {"edits": [{"line_number": 1, "new_line": "A=1\n"}]},
+            {"edits": [{"line_number": 2, "new_line": "B=1\n"}]},
+        ),
+    ],
+    ids=["replace", "replace_lines"],
+)
+@pytest.mark.parametrize("second_file_name", ["notes.txt", "NOTES.txt"])
+async def test_file_access_providers_sharing_a_store_keep_concurrent_edits(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    first_edit: dict[str, Any],
+    second_edit: dict[str, Any],
+    second_file_name: str,
+) -> None:
+    """Two providers on one store must not interleave edits of the same file.
+
+    Each provider used to hold only its own lock, so both could read the file before
+    either wrote it back, and the later write dropped the other edit while both tools
+    reported success. The upper-case name is the same file in this case-insensitive store.
+    """
+    store = InMemoryAgentFileStore()
+    await store.write("notes.txt", "A=0\nB=0\n")
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    first = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+    second = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+
+    results = await asyncio.gather(
+        first.invoke(arguments={"file_name": "notes.txt", **first_edit}),
+        second.invoke(arguments={"file_name": second_file_name, **second_edit}),
+    )
+
+    messages = [_text(result[0]) for result in results]
+    assert all(message.startswith("Replaced 1 ") for message in messages), messages
+    assert await store.read("notes.txt") == "A=1\nB=1\n"
+
+
+async def test_store_write_lock_folds_unicode_and_case_variants_of_a_folder() -> None:
+    """Spellings of a folder name that a store can treat as one folder share one lock.
+
+    macOS file systems resolve the NFC and NFD forms of a name to the same entry, and
+    case-insensitive stores ignore case, so the lock key folds both.
+    """
+    store = InMemoryAgentFileStore()
+    lock = _store_write_lock(store, "caf\u00e9")
+
+    assert _store_write_lock(store, "cafe\u0301") is lock
+    assert _store_write_lock(store, "CAF\u00c9") is lock
+    assert _store_write_lock(store, "cafe") is not lock
 
 
 def test_slice_lines_returns_inclusive_range() -> None:

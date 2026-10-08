@@ -371,8 +371,15 @@ class OllamaChatClient(
                 except Exception as ex:
                     raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-                async for part in response_object:
-                    yield self._parse_streaming_response_from_ollama(part)
+                # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                # instead of leaving the response open until the generator is garbage collected.
+                try:
+                    async for part in response_object:
+                        yield self._parse_streaming_response_from_ollama(part)
+                finally:
+                    aclose = getattr(response_object, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
