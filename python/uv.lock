@@ -707,7 +707,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b261002"
+version = "1.0.0b261008"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -784,7 +784,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-responses"
-version = "1.0.0a261002"
+version = "1.0.0a261008"
 source = { editable = "packages/hosting-responses" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -828,7 +828,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0b261002"
+version = "1.0.0b261008"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -892,7 +892,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-monty"
-version = "1.0.0b261002"
+version = "1.0.0b261008"
 source = { editable = "packages/monty" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -907,7 +907,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b261002"
+version = "1.0.0b261008"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -937,7 +937,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-oracle"
-version = "1.0.0a260923"
+version = "1.0.0a261008"
 source = { editable = "packages/oracle" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
