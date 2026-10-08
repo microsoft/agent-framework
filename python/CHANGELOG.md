@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-10-08
+
+### Added
+- **agent-framework**, **agent-framework-core**, **agent-framework-purview**: Add tool-result standing guidance, expose rewritten variable-expansion arguments, and support full-buffer Purview policy evaluation for streamed responses ([#8784](https://github.com/microsoft/agent-framework/pull/8784), [#8506](https://github.com/microsoft/agent-framework/pull/8506), [#8702](https://github.com/microsoft/agent-framework/pull/8702))
+- **agent-framework-openai**: Add the maximum reasoning-effort option ([#8857](https://github.com/microsoft/agent-framework/pull/8857))
+- **samples**: Demonstrate group-chat response filtering and expand the get-started sample progression ([#9005](https://github.com/microsoft/agent-framework/pull/9005), [#9133](https://github.com/microsoft/agent-framework/pull/9133))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**, **agent-framework-github-copilot**: Isolate provider-owned service session state when agents are invoked as tools ([#8853](https://github.com/microsoft/agent-framework/pull/8853))
+- **agent-framework-anthropic**: Update the Anthropic SDK to 1.11 and adapt Anthropic and Bedrock client behavior ([#9119](https://github.com/microsoft/agent-framework/pull/9119))
+- **agent-framework-github-copilot**: Update the GitHub Copilot SDK to 1.0.16 ([#9135](https://github.com/microsoft/agent-framework/pull/9135))
+- **agent-framework-devui**: Update `source-map-js`, Radix UI Scroll Area, `tailwind-merge`, and Tailwind CSS frontend dependencies ([#9104](https://github.com/microsoft/agent-framework/pull/9104), [#9154](https://github.com/microsoft/agent-framework/pull/9154), [#9155](https://github.com/microsoft/agent-framework/pull/9155), [#9156](https://github.com/microsoft/agent-framework/pull/9156))
+- **agent-framework-azure-contentunderstanding**, **agent-framework-azure-cosmos-memory**, **samples**: Normalize Foundry project endpoint configuration and examples ([#9070](https://github.com/microsoft/agent-framework/pull/9070))
+- **agent-framework-foundry**: Clarify Foundry agent-tool ownership and lifecycle behavior ([#8852](https://github.com/microsoft/agent-framework/pull/8852))
+- **agent-framework-foundry-hosting**: Warn against hosting a `WorkflowAgent` through the `agent=` shortcut ([#9146](https://github.com/microsoft/agent-framework/pull/9146))
+- **agent-framework-hosting**: Persist the session in the hosting quickstart ([#9030](https://github.com/microsoft/agent-framework/pull/9030))
+- **samples**: Update `multidict` and `source-map-js` lockfiles and make file-access samples type-check on Windows ([#9105](https://github.com/microsoft/agent-framework/pull/9105), [#9145](https://github.com/microsoft/agent-framework/pull/9145), [#9161](https://github.com/microsoft/agent-framework/pull/9161))
+- **tests**: Update Python GitHub Actions dependencies and isolate the mixed-middleware warning assertion ([#9038](https://github.com/microsoft/agent-framework/pull/9038), [#9039](https://github.com/microsoft/agent-framework/pull/9039), [#9158](https://github.com/microsoft/agent-framework/pull/9158), [#9001](https://github.com/microsoft/agent-framework/pull/9001))
+
+### Fixed
+- **agent-framework-core**: Run local sibling tools in declaration-only mixed batches, serialize shared file edits, correct data URI validation and media detection, and warn when streamed result gates lack buffering ([#9050](https://github.com/microsoft/agent-framework/pull/9050), [#9032](https://github.com/microsoft/agent-framework/pull/9032), [#8918](https://github.com/microsoft/agent-framework/pull/8918), [#9029](https://github.com/microsoft/agent-framework/pull/9029))
+- **agent-framework-declarative**: Preserve falsy values returned by Power Fx `Search()` ([#8974](https://github.com/microsoft/agent-framework/pull/8974))
+- **agent-framework-openai**: Preserve streamed log probabilities across empty chunks ([#8997](https://github.com/microsoft/agent-framework/pull/8997))
+- **agent-framework-orchestrations**: Reject unknown group-chat participants and sanitize generated handoff tool names ([#9026](https://github.com/microsoft/agent-framework/pull/9026), [#9035](https://github.com/microsoft/agent-framework/pull/9035))
+- **agent-framework-foundry-hosting**: Preserve Foundry Toolbox container-file citations and refresh stale Toolbox call IDs ([#9055](https://github.com/microsoft/agent-framework/pull/9055), [#9059](https://github.com/microsoft/agent-framework/pull/9059))
+- **agent-framework-typesafe**: Honor proxy environment variables in connector-owned clients ([#8984](https://github.com/microsoft/agent-framework/pull/8984))
+- **agent-framework-bedrock**: Preserve extended-thinking reasoning content across tool calls ([#8936](https://github.com/microsoft/agent-framework/pull/8936))
+- **agent-framework-tools**: Preserve table-formatted output in persistent PowerShell sessions ([#9043](https://github.com/microsoft/agent-framework/pull/9043))
+
 ## [1.20.0] - 2026-10-02
 
 ### Added
@@ -1769,7 +1798,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.20.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.21.0...HEAD
+[1.21.0]: https://github.com/microsoft/agent-framework/compare/python-1.20.0...python-1.21.0
 [1.20.0]: https://github.com/microsoft/agent-framework/compare/python-1.19.0...python-1.20.0
 [1.19.0]: https://github.com/microsoft/agent-framework/compare/python-1.18.0...python-1.19.0
 [1.18.0]: https://github.com/microsoft/agent-framework/compare/python-1.17.0...python-1.18.0

@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.20.0"
+version = "1.21.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -37,33 +37,33 @@ all = [
     "mcp>=1.24.0,<2",
     "agent-framework-a2a>=1.0.0b261002,<2",
     "agent-framework-ag-ui>=1.5.0,<2",
-    "agent-framework-anthropic>=1.0.0b261002,<2",
+    "agent-framework-anthropic>=1.0.0b261008,<2",
     "agent-framework-azure-ai-search>=1.0.0b261002,<2",
-    "agent-framework-azure-contentunderstanding>=1.0.0b261002,<2",
+    "agent-framework-azure-contentunderstanding>=1.0.0b261008,<2",
     "agent-framework-azure-cosmos>=1.0.0b261002,<2",
     "agent-framework-azurefunctions>=1.0.0b260922,<2",
-    "agent-framework-bedrock>=1.0.0b261002,<2",
+    "agent-framework-bedrock>=1.0.0b261008,<2",
     "agent-framework-chatkit>=1.0.0b261002,<2",
     "agent-framework-claude>=1.0.0b261002,<2",
     "agent-framework-copilotstudio>=1.0.0b261002,<2",
-    "agent-framework-declarative>=1.2.0,<2",
-    "agent-framework-devui>=1.0.0b261002,<2",
+    "agent-framework-declarative>=1.2.1,<2",
+    "agent-framework-devui>=1.0.0b261008,<2",
     "agent-framework-durabletask>=1.0.0b260922,<2",
-    "agent-framework-foundry>=1.14.0,<2",
-    "agent-framework-foundry-hosting>=1.0.0b261002,<2",
+    "agent-framework-foundry>=1.14.1,<2",
+    "agent-framework-foundry-hosting>=1.0.0b261008,<2",
     "agent-framework-foundry-local>=1.0.0b260730,<2",
     "agent-framework-gemini>=1.0.0b261002,<2",
-    "agent-framework-github-copilot>=2.0.1,<3; python_version >= '3.11'",
+    "agent-framework-github-copilot>=2.0.2,<3; python_version >= '3.11'",
     "agent-framework-hyperlight>=1.0.0b261002,<2; python_version < '3.15' and ((sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
     "agent-framework-mem0>=1.0.0b261002,<2",
     "agent-framework-mistral>=1.0.0b260918,<2",
     "agent-framework-monty>=1.0.0b261002,<2",
     "agent-framework-ollama>=1.0.0b261002,<2",
-    "agent-framework-openai>=1.15.0,<2",
-    "agent-framework-orchestrations>=1.3.0,<2",
-    "agent-framework-purview>=1.0.0b261002,<2",
+    "agent-framework-openai>=1.16.0,<2",
+    "agent-framework-orchestrations>=1.3.1,<2",
+    "agent-framework-purview>=1.0.0b261008,<2",
     "agent-framework-redis>=1.0.0b261002,<2; python_version < '3.15'",
-    "agent-framework-tools>=1.0.0b261002,<2",
+    "agent-framework-tools>=1.0.0b261008,<2",
 ]
 
 [dependency-groups]
