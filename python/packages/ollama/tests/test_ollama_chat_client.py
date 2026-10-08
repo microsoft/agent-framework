@@ -13,6 +13,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     chat_middleware,
     tool,
 )
@@ -907,3 +908,28 @@ def test_prepare_options_single_stop_string_becomes_list(ollama_unit_test_env: d
     request = client._prepare_options(messages, {"stop": "END"})
 
     assert request["options"]["stop"] == ["END"]
+
+
+async def test_cmc_streaming_closes_sdk_stream_when_consumer_stops_early(ollama_unit_test_env: dict[str, str]) -> None:
+    """Stopping early must close the Ollama SDK stream instead of leaving it to garbage collection."""
+    closed = False
+
+    async def sdk_stream() -> AsyncIterable[OllamaChatResponse]:
+        nonlocal closed
+        try:
+            yield OllamaChatResponse(message=OllamaMessage(content="first", role="assistant"), model="test")
+            yield OllamaChatResponse(message=OllamaMessage(content="second", role="assistant"), model="test")
+        finally:
+            closed = True
+
+    ollama_client = OllamaChatClient()
+    with patch.object(AsyncClient, "chat", new_callable=AsyncMock, return_value=sdk_stream()):
+        stream = ollama_client._inner_get_response(
+            messages=[Message(role="user", contents=["hello"])], options={}, stream=True
+        )
+        assert isinstance(stream, ResponseStream)
+        async with stream:
+            async for _ in stream:
+                break
+
+    assert closed
