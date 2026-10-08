@@ -681,6 +681,105 @@ public sealed class EntityExtractorTest(ITestOutputHelper output) : WorkflowTest
         Assert.Equal(value, (result.Value as StringValue)?.Value);
     }
 
+    [Theory]
+    [InlineData("red", "option-1")]
+    [InlineData("RED", "option-1")]
+    [InlineData("  red  ", "option-1")]
+    [InlineData("crimson", "option-1")]
+    [InlineData("Scarlet", "option-1")]
+    [InlineData("yello", "option-2")]
+    [InlineData("option-2", "option-2")]
+    [InlineData("OPTION-1", "option-1")]
+    public void Parse_EmbeddedClosedListEntity_ValidValue_ReturnsItemId(string value, string expectedId)
+    {
+        // Arrange
+        EntityReference entity = CreateClosedListEntity();
+
+        // Act
+        EntityExtractionResult result = EntityExtractor.Parse(entity, value);
+
+        // Assert
+        Assert.True(result.IsValid);
+        Assert.Equal(expectedId, (result.Value as StringValue)?.Value);
+    }
+
+    [Theory]
+    [InlineData("purple")]
+    [InlineData("re")]
+    [InlineData("red yello")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Parse_EmbeddedClosedListEntity_InvalidValue_ReturnsError(string value)
+    {
+        // Arrange
+        EntityReference entity = CreateClosedListEntity();
+
+        // Act
+        EntityExtractionResult result = EntityExtractor.Parse(entity, value);
+
+        // Assert
+        Assert.False(result.IsValid);
+        Assert.Null(result.Value);
+        Assert.Contains("Invalid choice", result.ErrorMessage);
+    }
+
+    [Fact]
+    public void Parse_EmbeddedClosedListEntity_DisplayNameTakesPrecedenceOverId()
+    {
+        // Arrange
+        EntityReference entity =
+            new EmbeddedEntity.Builder
+            {
+                Definition = new ClosedListEntity.Builder
+                {
+                    Items =
+                    {
+                        new ClosedListItem.Builder { Id = new ClosedListItemId("blue"), DisplayName = "Navy" },
+                        new ClosedListItem.Builder { Id = new ClosedListItemId("sky"), DisplayName = "Blue" },
+                    },
+                },
+            }.Build();
+
+        // Act
+        EntityExtractionResult result = EntityExtractor.Parse(entity, "blue");
+
+        // Assert
+        Assert.True(result.IsValid);
+        Assert.Equal("sky", (result.Value as StringValue)?.Value);
+    }
+
+    [Fact]
+    public void Parse_EmbeddedEntity_UnsupportedDefinition_ReturnsError()
+    {
+        // Arrange
+        EntityReference entity =
+            new EmbeddedEntity.Builder
+            {
+                Definition = new RegexEntity.Builder { Pattern = "[a-z]+" },
+            }.Build();
+
+        // Act
+        EntityExtractionResult result = EntityExtractor.Parse(entity, "abc");
+
+        // Assert
+        Assert.False(result.IsValid);
+        Assert.Equal($"Unsupported embedded entity: {nameof(RegexEntity)}", result.ErrorMessage);
+    }
+
+    private static EmbeddedEntity CreateClosedListEntity() =>
+        new EmbeddedEntity.Builder
+        {
+            DisplayName = "Multiple choice",
+            Definition = new ClosedListEntity.Builder
+            {
+                Items =
+                {
+                    new ClosedListItem.Builder { Id = new ClosedListItemId("option-1"), DisplayName = "red", Synonyms = { "crimson", "scarlet" } },
+                    new ClosedListItem.Builder { Id = new ClosedListItemId("option-2"), DisplayName = "yello" },
+                },
+            },
+        }.Build();
+
     private static BooleanPrebuiltEntity CreateBooleanEntity() =>
         new BooleanPrebuiltEntity.Builder().Build();
 
