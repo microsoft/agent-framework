@@ -191,11 +191,11 @@ Or in PowerShell:
 
 #### Running the Agent Host with Python
 
-Clone the repository containing the sample code:
+Clone the repository containing the sample code and change directory to the selected sample (here we use `/responses/basic`):
 
 ```bash
 git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
+cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses/basic
 ```
 
 #### Environment setup
@@ -225,7 +225,7 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
    uv pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.
+3. Create a `.env` file with your Foundry configuration following the `.env.example` file in the sample.
 
 4. Make sure you are logged in with the Azure CLI:
 
@@ -246,6 +246,10 @@ Right now, the agent host should be running on `http://localhost:8088`
 On another terminal, run the following command to invoke the agent:
 
 ```bash
+# Windows Command Prompt
+curl.exe -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d "{\"input\":\"Hello!\"}"
+
+# macOS/Linux
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
 ```
 
