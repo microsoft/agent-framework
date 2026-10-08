@@ -51,6 +51,7 @@ from openai.types.responses import (
     ResponseComputerToolCall,
     ResponseComputerToolCallOutputItem,
     ResponseContentPartDoneEvent,
+    ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseOutputItemDoneEvent,
@@ -9626,6 +9627,59 @@ def test_streaming_tokenless_intermediate_update_preserves_continuation_token() 
 
     assert response.continuation_token is not None
     assert _response_id_from_token(response.continuation_token) == "resp_stream_123"
+
+
+def test_streaming_error_event_raises_chat_client_exception() -> None:
+    """Responses API error events should surface their provider details."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param="input",
+        sequence_number=2,
+        type="error",
+    )
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
+
+    assert "OpenAI streaming error: server_error: The response stream failed. (parameter: input)" in str(exc_info.value)
+
+
+async def test_resumed_stream_error_clears_continuation_token() -> None:
+    """A failed resumed stream should clear its caller-owned continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_error"
+    in_progress_event.response.conversation = None
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param=None,
+        sequence_number=2,
+        type="error",
+    )
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([in_progress_event, error_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_stream_error"}}
+    updates: list[ChatResponseUpdate] = []
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(ChatClientException, match="OpenAI streaming error: server_error"),
+    ):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
+            updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].continuation_token == {"response_id": "resp_stream_error"}
+    assert "continuation_token" not in options
 
 
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:

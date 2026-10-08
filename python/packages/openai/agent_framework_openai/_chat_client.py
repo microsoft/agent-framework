@@ -802,6 +802,8 @@ class RawOpenAIChatClient(
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
         """Convert exceptions to appropriate service exceptions. Always raises."""
+        if isinstance(ex, ChatClientException):
+            raise ex
         if isinstance(ex, BadRequestError) and ex.code == "content_filter":
             raise OpenAIContentFilterException(
                 f"{type(self)} service encountered a content error: {ex}",
@@ -867,6 +869,15 @@ class RawOpenAIChatClient(
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
+                                if chunk.type in (
+                                    "error",
+                                    "response.completed",
+                                    "response.incomplete",
+                                    "response.failed",
+                                ) and isinstance(options, dict):
+                                    # Clear the caller-owned resume token before parsing because
+                                    # ResponseErrorEvent parsing raises instead of yielding an update.
+                                    options.pop("continuation_token", None)
                                 update = self._parse_chunk_from_openai(
                                     chunk,
                                     options=validated_options,
@@ -875,19 +886,6 @@ class RawOpenAIChatClient(
                                 )
                                 if served_model is not None:
                                     update.model = served_model
-                                if chunk.type in (
-                                    "response.completed",
-                                    "response.incomplete",
-                                    "response.failed",
-                                ) and isinstance(options, dict):
-                                    # Same as the non-streaming path (issue #5394): once the resumed
-                                    # background response has finished, drop the continuation_token
-                                    # from the caller's options dict. FunctionInvocationLayer reuses
-                                    # that dict, so a leftover token makes the next tool-loop iteration
-                                    # retrieve this response again instead of POSTing the tool results,
-                                    # and the tools run again each time. Do it before yielding, so a
-                                    # consumer that stops at the terminal update doesn't keep it.
-                                    options.pop("continuation_token", None)
                                 yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -3737,6 +3735,13 @@ class RawOpenAIChatClient(
             # ResponseQueuedEvent,
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
+            case "error":
+                error_details = event.message
+                if event.code:
+                    error_details = f"{event.code}: {error_details}"
+                if event.param:
+                    error_details = f"{error_details} (parameter: {event.param})"
+                self._handle_request_error(RuntimeError(f"OpenAI streaming error: {error_details}"))
             case "response.content_part.added":
                 event_part = event.part
                 match event_part.type:

@@ -41,6 +41,7 @@ logger = logging.getLogger("agent_framework")
 
 _SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 _OperationState: TypeAlias = Literal["in_progress", "terminal"]
+_OPERATION_STATE_SERIALIZATION_KEY: Final[str] = "_operation_state"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -2306,6 +2307,28 @@ def _set_operation_state(
     value._operation_state = state  # pyright: ignore[reportPrivateUsage]
 
 
+def _serialize_operation_state(
+    value: ChatResponseUpdate | AgentResponseUpdate,
+    data: dict[str, Any],
+    exclude: set[str] | None,
+) -> dict[str, Any]:
+    """Add explicitly set operation state to an update's serialized representation."""
+    if (not exclude or _OPERATION_STATE_SERIALIZATION_KEY not in exclude) and (
+        operation_state := _get_operation_state(value)
+    ):
+        data[_OPERATION_STATE_SERIALIZATION_KEY] = operation_state
+    return data
+
+
+def _deserialize_operation_state(value: MutableMapping[str, Any]) -> tuple[dict[str, Any], _OperationState | None]:
+    """Remove and validate operation state from an update's serialized representation."""
+    data = dict(value)
+    operation_state = data.pop(_OPERATION_STATE_SERIALIZATION_KEY, None)
+    if operation_state not in (None, "in_progress", "terminal"):
+        raise ValueError(f"Invalid operation state: {operation_state!r}")
+    return data, operation_state
+
+
 def _copy_operation_state(
     source: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
     target: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
@@ -3059,6 +3082,28 @@ class ChatResponseUpdate(SerializationMixin):
         )
         self.raw_representation = raw_representation
 
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize the update, including framework-internal operation state when set."""
+        return _serialize_operation_state(
+            self,
+            super().to_dict(exclude=exclude, exclude_none=exclude_none),
+            exclude,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: MutableMapping[str, Any],
+        /,
+        *,
+        dependencies: MutableMapping[str, Any] | None = None,
+    ) -> ChatResponseUpdate:
+        """Deserialize an update and restore framework-internal operation state."""
+        data, operation_state = _deserialize_operation_state(value)
+        update = super().from_dict(data, dependencies=dependencies)
+        _set_operation_state(update, operation_state)
+        return update
+
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
@@ -3513,6 +3558,28 @@ class AgentResponseUpdate(SerializationMixin):
             allow_none=True,
         )
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize the update, including framework-internal operation state when set."""
+        return _serialize_operation_state(
+            self,
+            super().to_dict(exclude=exclude, exclude_none=exclude_none),
+            exclude,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: MutableMapping[str, Any],
+        /,
+        *,
+        dependencies: MutableMapping[str, Any] | None = None,
+    ) -> AgentResponseUpdate:
+        """Deserialize an update and restore framework-internal operation state."""
+        data, operation_state = _deserialize_operation_state(value)
+        update = super().from_dict(data, dependencies=dependencies)
+        _set_operation_state(update, operation_state)
+        return update
 
     @property
     def text(self) -> str:
