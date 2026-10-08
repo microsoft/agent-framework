@@ -19,6 +19,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.exceptions import SettingNotFoundError
 
+from agent_framework_azure_cosmos_memory import __version__
 from agent_framework_azure_cosmos_memory._context_provider import (
     DEFAULT_CONTEXT_PROMPT,
     CosmosMemoryContextProvider,
@@ -155,7 +156,9 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["use_default_credential"] is True
             assert "cosmos_credential" not in kwargs
-            assert kwargs["user_agent"] == "agent-framework-python/test"
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
             mock_get_user_agent.assert_called_once_with()
             # The explicitly provided models are forwarded to the toolkit client.
             assert kwargs["embedding_deployment_name"] == "text-embedding-3-large"
@@ -186,7 +189,9 @@ class TestInit:
             assert kwargs["cosmos_credential"] is sentinel
             assert kwargs["ai_foundry_credential"] is sentinel
             assert kwargs["use_default_credential"] is False
-            assert kwargs["user_agent"] == "agent-framework-python/test"
+            assert kwargs["user_agent"] == (
+                f"agent-framework-python/test agent-framework-azure-cosmos-memory/{__version__}"
+            )
             mock_get_user_agent.assert_called_once_with()
 
     def test_init_raises_without_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
