@@ -11824,3 +11824,79 @@ async def test_unbound_local_approval_response_is_filtered_before_mixed_batch_va
     assert executed == []
     # The warning proves the response was filtered before the completeness check reported it missing.
     assert any("tool-approval response" in record.message for record in caplog.records)
+
+
+async def test_whole_loop_finalization_preserves_per_turn_metadata_and_response_format(client: Any) -> None:
+    """Whole-loop aggregation keeps token metadata local and supports clients without BaseChatClient."""
+    from agent_framework import ContinuationToken, UsageDetails
+
+    class CursorToken(ContinuationToken):
+        cursor: str
+
+    class Answer(BaseModel):
+        reply: str
+
+    token = CursorToken(cursor="next")
+    executed: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def echo(value: str) -> str:
+        """Return the requested value."""
+        executed.append(value)
+        return value
+
+    first_logprobs = [{"token": "First", "logprob": -0.1}]
+    last_logprobs = [{"token": "Second", "logprob": -0.2}]
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="first-message",
+                contents=[Content.from_text("First", additional_properties={"logprobs": first_logprobs})],
+            ),
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="first-message",
+                contents=[Content.from_function_call(call_id="call-1", name="echo", arguments='{"value":"done"}')],
+            ),
+            ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=3, output_token_count=1))]),
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="last-message",
+                response_id="response-2",
+                model="test-model",
+                contents=[
+                    Content.from_text('{"reply":"Second"}', additional_properties={"logprobs": last_logprobs}),
+                    Content.from_usage(UsageDetails(input_token_count=5, output_token_count=2)),
+                ],
+                continuation_token=token,
+                finish_reason="stop",
+                additional_properties={"custom": "kept"},
+            ),
+        ],
+    ]
+    messages = [Message(role="user", contents=["Question"])]
+    response_stream = client.get_response(messages, stream=True, options={"tools": [echo], "response_format": Answer})
+    assert isinstance(response_stream, ResponseStream)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert executed == ["done"]
+    assert client.call_count == 2
+    assert messages[0].text == "Question"
+    assert len(messages) == 1
+    texts = [content for message in response.messages for content in message.contents if content.type == "text"]
+    assert [content.additional_properties["logprobs"] for content in texts] == [first_logprobs, last_logprobs]
+    assert sum(content.type == "function_call" for message in response.messages for content in message.contents) == 1
+    assert sum(content.type == "function_result" for message in response.messages for content in message.contents) == 1
+    assert response.response_id == "response-2"
+    assert response.model == "test-model"
+    assert response.finish_reason == "stop"
+    assert response.continuation_token == token
+    assert response.additional_properties["custom"] == "kept"
+    assert response.usage_details == {"input_token_count": 8, "output_token_count": 3}
+    assert isinstance(response.value, Answer)
+    assert response.value.reply == "Second"
+    assert len(updates) > 0

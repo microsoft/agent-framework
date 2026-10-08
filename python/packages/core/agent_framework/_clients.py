@@ -28,6 +28,8 @@ from typing import (
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
 from ._types import (
+    AgentResponse,
+    AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
     EmbeddingGenerationOptions,
@@ -354,6 +356,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             updates,
             output_format_type=response_format,
         )
+
+    def _finalize_agent_response_updates(
+        self,
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> AgentResponse[Any]:
+        """Aggregate mapped agent updates without reapplying per-model-turn processing."""
+        return AgentResponse.from_updates(updates, output_format_type=response_format)
 
     def _build_response_stream(
         self,

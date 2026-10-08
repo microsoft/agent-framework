@@ -1491,6 +1491,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
+        if isinstance(self.client, BaseChatClient):
+            return self.client._finalize_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                updates, response_format=response_format
+            )
         return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
