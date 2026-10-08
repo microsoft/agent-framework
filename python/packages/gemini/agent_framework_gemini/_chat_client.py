@@ -484,12 +484,20 @@ class RawGeminiChatClient(
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
                 try:
-                    async for chunk in await generate_content_stream(
+                    response_stream = await generate_content_stream(
                         model=model,
                         contents=contents,
                         config=config,
-                    ):
-                        yield self._process_chunk(chunk)
+                    )
+                    # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                    # instead of leaving the response open until the generator is garbage collected.
+                    try:
+                        async for chunk in response_stream:
+                            yield self._process_chunk(chunk)
+                    finally:
+                        aclose = getattr(response_stream, "aclose", None)
+                        if aclose is not None:
+                            await aclose()
                 except AgentFrameworkException:
                     raise
                 except Exception as ex:

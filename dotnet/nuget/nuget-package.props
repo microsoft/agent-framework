@@ -1,9 +1,9 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>1.23.0</VersionPrefix>
+    <VersionPrefix>1.24.0</VersionPrefix>
     <RCNumber>1</RCNumber>
-    <DateSuffix>260928</DateSuffix>
+    <DateSuffix>261006</DateSuffix>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.$(DateSuffix).1</PackageVersion>
