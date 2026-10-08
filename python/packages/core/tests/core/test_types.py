@@ -450,11 +450,7 @@ def test_code_interpreter_tool_call_stream_concatenates_indent_prefix_deltas() -
 
 
 def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() -> None:
-    """A provider *.done payload is authoritative and replaces prior delta text."""
-
-    class _DoneEvent:
-        type = "response.code_interpreter_call_code.done"
-
+    """A stream_complete snapshot is authoritative and replaces prior delta text."""
     updates = [
         ChatResponseUpdate(
             contents=[
@@ -468,7 +464,7 @@ def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() ->
                     inputs=[
                         Content.from_text(
                             text="import os\nimport sys",
-                            raw_representation=_DoneEvent(),
+                            additional_properties={"stream_complete": True},
                         )
                     ],
                 )

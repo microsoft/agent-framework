@@ -3863,6 +3863,8 @@ class RawOpenAIChatClient(
                     "output_index": event.output_index,
                     "sequence_number": event.sequence_number,
                     "item_id": event.item_id,
+                    # Authoritative full code; core merges replace prior deltas.
+                    "stream_complete": True,
                 }
                 contents.append(
                     Content.from_code_interpreter_tool_call(

@@ -2351,12 +2351,13 @@ def _content_items_text(items: Any) -> str | None:
 
 
 def _content_items_are_complete_value(items: Any) -> bool:
-    """Return True when items carry an authoritative full value (e.g. a ``*.done`` stream event).
+    """Return True when items are marked as an authoritative full value.
 
-    OpenAI Responses emits ``code_interpreter_call_code.done`` with the full code after
-    incremental ``.delta`` events. Only that kind of payload should replace prior text;
-    ordinary deltas must always concatenate even when one happens to be a string prefix
-    of the other (see #8955 / #8903).
+    Providers that resend a complete snapshot after incremental deltas should set
+    ``additional_properties["stream_complete"]`` (or ``"complete"``) on the text
+    content. Core only looks at that generic flag -- not provider event shapes --
+    so ordinary deltas always concatenate even when one text is a string prefix of
+    the other (see #8955 / #8903).
     """
     if not isinstance(items, list):
         return False
@@ -2366,10 +2367,6 @@ def _content_items_are_complete_value(items: Any) -> bool:
         props = item.additional_properties or {}
         if props.get("stream_complete") or props.get("complete"):
             return True
-        raw = item.raw_representation
-        raw_type = getattr(raw, "type", None) if raw is not None else None
-        if isinstance(raw_type, str) and raw_type.endswith(".done"):
-            return True
     return False
 
 
@@ -2377,7 +2374,8 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     """Merge streamed nested content lists.
 
     Incremental text deltas are always concatenated. A later complete/full value
-    (provider ``*.done`` event or ``stream_complete`` flag) replaces the accumulation.
+    (``stream_complete`` / ``complete`` on ``additional_properties``) replaces the
+    accumulation.
     """
     if incoming is None:
         return existing
