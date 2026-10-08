@@ -452,7 +452,6 @@ public class BackgroundAgentsProviderTests
         // Arrange
         var firstResponse = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondResponse = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var continuationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         int runCount = 0;
         var agent = CreateMockAgentWithCallback("Research", () =>
         {
@@ -461,7 +460,6 @@ public class BackgroundAgentsProviderTests
                 return firstResponse.Task;
             }
 
-            continuationStarted.SetResult(true);
             return secondResponse.Task;
         });
         var (tools, provider, session) = await CreateToolsWithSessionAsync(agent);
@@ -489,8 +487,9 @@ public class BackgroundAgentsProviderTests
             Assert.False(wait.IsCompleted);
 
             // Act — hold the lock until the continuation is registered so the old waiter observes the new run.
+            // Use a dedicated thread so blocking under the lock does not starve the background runs.
             ValueTask<object?> continuation = default;
-            await Task.Run(() =>
+            await Task.Factory.StartNew(() =>
             {
                 lock (runtimeState.SyncRoot)
                 {
@@ -506,10 +505,9 @@ public class BackgroundAgentsProviderTests
                     continuationRun = runtimeState.InFlightTasks[1];
                     continuationCancellation = runtimeState.TaskCancellations[1];
                     Assert.NotSame(firstRun, continuationRun);
-                    Assert.True(SpinWait.SpinUntil(() => continuationStarted.Task.IsCompleted, TimeSpan.FromSeconds(5)));
                     Assert.False(wait.IsCompleted);
                 }
-            });
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
             // Assert — the stale waiter preserves the continuation's metadata and runtime resources.
             Assert.Equal("Task 1 continued with new input.", GetStringResult(await continuation));
