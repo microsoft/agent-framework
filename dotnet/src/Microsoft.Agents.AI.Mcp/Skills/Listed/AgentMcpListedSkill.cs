@@ -127,7 +127,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         return path is not null && suffix is not null
             && !path.StartsWith('/')
             && !path.Contains("://", StringComparison.Ordinal)
-            && !path.Split(['/', '?', '#']).Any(segment => segment.TrimEnd(' ') == "..")
+            && !path.Split(['/', '?', '#']).Any(segment => string.Equals(segment.TrimEnd(' '), "..", StringComparison.Ordinal))
             && !(path + suffix).Any(char.IsControl);
     }
 
