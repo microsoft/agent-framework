@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, NamedTuple, NewType, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
 
 from typing_extensions import Required, TypedDict
 
