@@ -2742,7 +2742,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse, ChatResponseUpdate
+                from agent_framework import ChatResponse, ChatResponseUpdate, Content
 
                 # Create some response updates
                 updates = [
