@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -209,6 +210,50 @@ def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments(
     )
     for key in ("aws_access_key", "aws_secret_key", "aws_session_token"):
         assert type(factory.call_args.kwargs[key]) is str
+
+
+def test_raw_anthropic_bedrock_client_preserves_default_region(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    mock_transport = _create_mock_transport("https://bedrock-runtime.us-east-1.amazonaws.com")
+
+    with (
+        patch("boto3.Session") as session_factory,
+        patch(
+            "agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock",
+            return_value=mock_transport,
+        ) as factory,
+        caplog.at_level(logging.WARNING, logger="agent_framework.anthropic"),
+    ):
+        session_factory.return_value.region_name = None
+        RawAnthropicBedrockClient(model="claude-bedrock-test")
+
+    assert factory.call_args.kwargs["aws_region"] == "us-east-1"
+    assert "No AWS region specified, defaulting to us-east-1" in caplog.text
+
+
+def test_raw_anthropic_bedrock_client_uses_profile_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    mock_transport = _create_mock_transport("https://bedrock-runtime.eu-west-1.amazonaws.com")
+
+    with (
+        patch("boto3.Session") as session_factory,
+        patch(
+            "agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock",
+            return_value=mock_transport,
+        ) as factory,
+    ):
+        session_factory.return_value.region_name = "eu-west-1"
+        RawAnthropicBedrockClient(model="claude-bedrock-test", aws_profile="test-profile")
+
+    session_factory.assert_called_once_with(profile_name="test-profile")
+    assert factory.call_args.kwargs["aws_region"] == "eu-west-1"
 
 
 @pytest.mark.parametrize("access_token", ["access-token", SecretString("access-token")], ids=["str", "secret"])

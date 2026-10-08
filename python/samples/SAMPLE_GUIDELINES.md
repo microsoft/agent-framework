@@ -68,7 +68,7 @@ Sample docstring explaining what the sample does.
 
 async def main() -> None:
     client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
+        project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
         model="gpt-4o",
         credential=AzureCliCredential(),
     )

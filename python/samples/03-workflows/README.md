@@ -120,6 +120,10 @@ For additional observability samples in Agent Framework, see the [observability 
 
 ### orchestration
 
+See [group chat message filtering](./orchestrations/group_chat_message_filtering.py)
+for a custom orchestrator that filters participant responses before other agents
+receive them.
+
 Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magentic), including builder-based
 `workflow.as_agent(...)` variants, are documented in the [orchestrations](./orchestrations/README.md) directory.
 
