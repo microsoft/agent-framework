@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable MAAIANTHROPIC001 // This test covers experimental Anthropic beta service extensions.
+
 using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
