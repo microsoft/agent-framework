@@ -62,7 +62,11 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
     /// Create a new instance of <see cref="ChatClientAgentContinuationToken"/> from the provided <paramref name="token"/>.
     /// </summary>
     /// <param name="token">The token to create the <see cref="ChatClientAgentContinuationToken"/> from.</param>
-    /// <returns>A <see cref="ChatClientAgentContinuationToken"/> equivalent of the provided <paramref name="token"/>.</returns>
+    /// <returns>
+    /// A <see cref="ChatClientAgentContinuationToken"/> equivalent of the provided <paramref name="token"/>.
+    /// If <paramref name="token"/> is not a <see cref="ChatClientAgentContinuationToken"/> in either its object or serialized form,
+    /// it is treated as a token of the underlying <see cref="IChatClient"/> and wrapped as is.
+    /// </returns>
     internal static ChatClientAgentContinuationToken FromToken(ResponseContinuationToken token)
     {
         if (token is ChatClientAgentContinuationToken chatClientContinuationToken)
@@ -72,18 +76,19 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
 
         ReadOnlyMemory<byte> data = token.ToBytes();
 
-        if (data.Length == 0)
+        // Anything that is not a serialized agent token is a token minted for the underlying IChatClient
+        // (for example by a host that received a push notification), so pass it through untouched.
+        if (!IsSerializedAgentToken(data))
         {
-            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it does not contain any data.");
+            return new ChatClientAgentContinuationToken(token);
         }
 
         Utf8JsonReader reader = new(data.Span);
 
-        // Move to the start object token.
+        // Move past the start object token and the type discriminator, which IsSerializedAgentToken already validated.
         _ = reader.Read();
-
-        // Validate that the token is of this type.
-        ValidateTokenType(reader, token);
+        _ = reader.Read();
+        _ = reader.Read();
 
         ResponseContinuationToken? innerToken = null;
         IEnumerable<ChatMessage>? inputMessages = null;
@@ -134,22 +139,25 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
         };
     }
 
-    private static void ValidateTokenType(Utf8JsonReader reader, ResponseContinuationToken token)
+    private static bool IsSerializedAgentToken(ReadOnlyMemory<byte> data)
     {
+        if (data.IsEmpty)
+        {
+            return false;
+        }
+
         try
         {
-            // Move to the first property.
-            _ = reader.Read();
+            Utf8JsonReader reader = new(data.Span);
 
-            // If the first property name is not "type", or its value does not match this token type name, then we know its not this token type.
-            if (reader.GetString() != TypeDiscriminator || !reader.Read() || reader.GetString() != TokenTypeName)
-            {
-                Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it is not of the correct type.");
-            }
+            // The type discriminator is always the first property written by ToBytes.
+            return reader.Read() && reader.TokenType == JsonTokenType.StartObject
+                && reader.Read() && reader.TokenType == JsonTokenType.PropertyName && reader.GetString() == TypeDiscriminator
+                && reader.Read() && reader.TokenType == JsonTokenType.String && reader.GetString() == TokenTypeName;
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it could not be parsed.", ex);
+            return false;
         }
     }
 
