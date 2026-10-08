@@ -720,6 +720,38 @@ def _mcp_header_identity(headers: Mapping[str, str]) -> _MCPHeaderIdentity:
     return tuple(sorted(normalized.items()))
 
 
+def _canonicalize_schema(schema: Any) -> Any:
+    """Recursively sort schema properties deterministically to preserve prompt cache stability.
+
+    Sorts keys within 'properties', 'patternProperties', and schema definition mappings
+    ('$defs', 'definitions'), and recursively canonicalizes nested schemas in objects and arrays.
+    Non-dict/list values and schema structures without these keys are returned unmodified.
+    """
+    if isinstance(schema, dict):
+        result: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key in {"properties", "patternProperties", "$defs", "definitions"} and isinstance(value, dict):
+                # Sort mapping keys deterministically, recursively canonicalizing each subschema
+                result[key] = {k: _canonicalize_schema(v) for k, v in sorted(value.items())}
+            elif key == "items":
+                if isinstance(value, dict):
+                    result[key] = _canonicalize_schema(value)
+                elif isinstance(value, list):
+                    result[key] = [_canonicalize_schema(item) for item in value]
+                else:
+                    result[key] = value
+            elif key in {"allOf", "anyOf", "oneOf"} and isinstance(value, list):
+                result[key] = [_canonicalize_schema(sub) for sub in value]
+            elif isinstance(value, (dict, list)):
+                result[key] = _canonicalize_schema(value)
+            else:
+                result[key] = value
+        return result
+    if isinstance(schema, list):
+        return [_canonicalize_schema(item) for item in schema]
+    return schema
+
+
 # Internal polling bounds for MCP long-running tasks. Not user-tunable today;
 # promote to MCPTaskOptions if a concrete need arises.
 _MCP_TASK_MIN_POLL_INTERVAL = timedelta(milliseconds=500)
@@ -2604,8 +2636,8 @@ class MCPTool:
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
                 elif isinstance(input_schema.get("properties"), dict):
-                    # Sort property keys deterministically to preserve prompt cache stability
-                    input_schema["properties"] = dict(sorted(input_schema["properties"].items()))
+                    # Sort property keys recursively to preserve prompt cache stability
+                    input_schema = _canonicalize_schema(input_schema)
 
                 # Register declared param names before the existing-tool skip below so that
                 # reloads (e.g. notifications/tools/list_changed) preserve the allowlist for
