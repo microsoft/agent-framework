@@ -107,6 +107,7 @@ SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
+_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY: Final[str] = "_parent_service_session_state_keys"
 
 
 def _has_authoritative_approval_session(invocation_session: AgentSession | None) -> bool:
@@ -2099,6 +2100,7 @@ async def _auto_invoke_function(
             "middleware",
             "conversation_id",
             _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,
         }
     }
     raw_parent_approval_source_ids = (custom_args or {}).get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
@@ -2106,6 +2108,12 @@ async def _auto_invoke_function(
     parent_approval_source_ids = (
         cast("frozenset[str]", raw_parent_approval_source_ids)
         if isinstance(raw_parent_approval_source_ids, frozenset)
+        else frozenset()
+    )
+    raw_parent_service_keys = (custom_args or {}).get(_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY)
+    parent_service_session_state_keys: frozenset[str] = (
+        cast("frozenset[str]", raw_parent_service_keys)
+        if isinstance(raw_parent_service_keys, frozenset)
         else frozenset()
     )
     if invocation_session is not None:
@@ -2124,6 +2132,7 @@ async def _auto_invoke_function(
                     arguments=args,
                     session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
+                    parent_service_session_state_keys=parent_service_session_state_keys,
                     tools=live_tools,
                 )
                 direct_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
@@ -2163,6 +2172,7 @@ async def _auto_invoke_function(
         arguments=args,
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
+        parent_service_session_state_keys=parent_service_session_state_keys,
         tools=live_tools,
     )
     middleware_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
