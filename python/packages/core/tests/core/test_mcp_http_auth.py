@@ -736,7 +736,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         existing_session = tool.session
         existing_functions = list(tool.functions)
         existing_call_meta = dict(tool._tool_call_meta_by_name)
-        existing_task_support = dict(tool._tool_task_support_by_name)
         existing_param_names = {name: set(params) for name, params in tool._tool_param_names_by_name.items()}
 
         async def cancel_reconnect() -> None:
@@ -752,7 +751,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         assert tool.session is existing_session
         assert tool.functions == existing_functions
         assert tool._tool_call_meta_by_name == existing_call_meta
-        assert tool._tool_task_support_by_name == existing_task_support
         assert tool._tool_param_names_by_name == existing_param_names
 
         await tool.call_tool("record", credential="token-b")
@@ -940,7 +938,6 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
                 assert not tool._prompts_loaded
                 assert tool.functions == []
                 assert tool._tool_call_meta_by_name == {}
-                assert tool._tool_task_support_by_name == {}
                 assert tool._tool_param_names_by_name == {}
                 assert all(not client.event_hooks["request"] for client in clients)
                 assert all(client.is_closed is owned_client for client in clients)
