@@ -27,13 +27,13 @@ internal sealed class InMemoryMcpServer : IAsyncDisposable
     private readonly ServiceProvider _serviceProvider;
     private readonly Task _serverTask;
 
-    public InMemoryMcpServer(Action<IMcpServerBuilder> configure)
+    public InMemoryMcpServer(Action<IMcpServerBuilder> configure, Action<McpServerOptions>? configureOptions = null)
     {
         var services = new ServiceCollection();
         services.AddLogging(builder => builder.AddProvider(NullLoggerProvider.Instance));
 
         IMcpServerBuilder builder = services
-            .AddMcpServer()
+            .AddMcpServer(options => configureOptions?.Invoke(options))
             .WithStreamServerTransport(
                 inputStream: this._clientToServerPipe.Reader.AsStream(),
                 outputStream: this._serverToClientPipe.Writer.AsStream());
