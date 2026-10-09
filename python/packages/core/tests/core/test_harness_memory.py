@@ -134,6 +134,19 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
     assert "MemoryTopicRecord(" in repr(record)
 
 
+def test_memory_topic_record_normalizes_multiline_memories() -> None:
+    """Record memories collapse line breaks so the markdown round-trip stays stable."""
+    record = MemoryTopicRecord(
+        topic="deployment",
+        summary="Deployment",
+        memories=["Deploy staging.\nThen deploy production.", "  \n  "],
+        updated_at="2026-04-21T10:05:00+00:00",
+    )
+
+    assert record.memories == ["Deploy staging. Then deploy production."]
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
+
+
 @pytest.mark.parametrize(
     "summary",
     [
@@ -958,6 +971,43 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == pre_state
     surviving = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="preferences")
     assert surviving.summary == "Prefers concise answers."
+
+
+async def test_memory_consolidation_round_trips_multiline_memories(tmp_path) -> None:
+    """A consolidated memory containing line breaks must survive a fresh-store reload."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    multiline_client = _MemoryHarnessClient(
+        consolidation_payload={
+            "summary": "Deployment",
+            "memories": ["Deploy staging.\nThen deploy production.", "Roll back\r\nif health checks fail."],
+        }
+    )
+    provider = MemoryContextProvider(store=store, consolidation_client=multiline_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="deployment",
+            summary="Deployment",
+            memories=["Deploy staging."],
+            updated_at="2026-04-21T10:00:00+00:00",
+            session_ids=["session-1"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    consolidated_count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=multiline_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        session=session,
+        force=True,
+        now=datetime(2026, 4, 22, tzinfo=timezone.utc),
+    )
+
+    assert consolidated_count == 1
+    fresh_store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    reloaded = fresh_store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="deployment")
+    assert reloaded.memories == ["Deploy staging. Then deploy production.", "Roll back if health checks fail."]
 
 
 async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:

@@ -382,7 +382,10 @@ class MemoryTopicRecord:
         normalized_topic = _normalize_topic(topic)
         self.topic = normalized_topic
         self.slug = _slugify_topic(slug or normalized_topic)
-        self.memories = _dedupe_strings(memories)
+        # Collapse line breaks up front: the markdown format stores one bullet per line,
+        # and the consolidation path hands LLM-supplied strings in raw, so a memory kept
+        # multiline here would write fine but lose its continuation on the next read.
+        self.memories = _dedupe_strings([_normalize_memory_text(memory) for memory in memories if memory.strip()])
         self.summary = _coerce_summary(summary, self.memories)
         self.updated_at = updated_at
         self.session_ids = _dedupe_strings(session_ids or [])
