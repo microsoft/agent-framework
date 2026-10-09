@@ -258,7 +258,7 @@ group = "tool-runtime"
 # Workspace setup
 [tool.poe.tasks.install]
 help = "Install all workspace packages, extras, and dependency groups from the lockfile."
-cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary"
+cmd = "uv sync --all-packages --all-extras --all-groups --no-group tool-runtime --no-group tool-hooks --no-group tool-markdown --frozen --prerelease=if-necessary"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."

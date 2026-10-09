@@ -238,7 +238,10 @@ uv venv
 
 and then you can run the following tasks:
 ```bash
-uv sync --all-extras --all-groups
+uv sync --all-extras --all-groups \
+  --no-group tool-runtime \
+  --no-group tool-hooks \
+  --no-group tool-markdown
 ```
 
 After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the prek hooks.
@@ -252,7 +255,8 @@ uv run poe setup -P 3.12
 ```
 
 #### `install`
-Install all dependencies (including extras and dependency groups) from the lockfile using frozen resolution:
+Install workspace packages, extras, and test dependency groups from the
+lockfile using frozen resolution. On-demand `tool-*` groups are excluded:
 ```bash
 uv run poe install
 ```

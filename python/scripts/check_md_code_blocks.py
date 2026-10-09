@@ -123,7 +123,7 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
                         "run",
                         "--locked",
                         "--group",
-                        "test",
+                        "dev",
                         "--with-requirements",
                         str(WORKSPACE_ROOT / "tooling" / "requirements-typing.txt"),
                         "pyright",

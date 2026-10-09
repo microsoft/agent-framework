@@ -48,7 +48,15 @@ runs:
         shell: bash
         run: |
           cd python
-          sync_args=(--all-packages --all-extras --all-groups --prerelease=if-necessary)
+          sync_args=(
+            --all-packages
+            --all-extras
+            --all-groups
+            --no-group tool-runtime
+            --no-group tool-hooks
+            --no-group tool-markdown
+            --prerelease=if-necessary
+          )
           if [[ -z "${{ inputs.exclude-packages }}" ]]; then
             sync_args+=(--frozen)
           fi

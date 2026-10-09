@@ -56,9 +56,9 @@ uv run poe markdown-code-lint
 ```
 
 Poe and the pytest toolchain stay in the cross-version development
-environment. Ruff, the type checkers, and prek are single-version tools and
-are added from their pinned `tooling/requirements-*.txt` files only when
-needed.
+environment. Ruff and the type checkers use pinned
+`tooling/requirements-*.txt` files; prek is selected from the `tool-hooks`
+dependency group only when needed.
 
 ## Pre-commit Hooks (prek)
 
