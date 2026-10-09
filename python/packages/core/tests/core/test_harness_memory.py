@@ -1093,4 +1093,42 @@ def test_slugify_topic_keeps_safe_stems_byte_identical() -> None:
     assert _slugify_topic("旅行计划") != _slugify_topic("饮食偏好")
 
 
+def test_memory_file_store_delete_keeps_unrelated_stem_file(tmp_path) -> None:
+    """A legacy-named file owned by another topic must survive deleting this one."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("café", ["accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("caf", ["ascii fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["ascii fact"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+
+
+def test_memory_file_store_write_keeps_unrelated_stem_file(tmp_path) -> None:
+    """Writing an accented topic must not absorb the ASCII topic's own file."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("caf", ["ascii fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("café", ["accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["ascii fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["accent fact"]
+
+
+def test_memory_file_store_legacy_fallback_requires_matching_stored_topic(tmp_path) -> None:
+    """A legacy-named file is a fallback alias only when its stored topic agrees."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè")
+    store.write_topic(session, _record("cafè", ["grave accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert legacy_path.exists()
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè").memories == ["grave accent fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["legacy accent fact"]
+
+
 # endregion

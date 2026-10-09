@@ -800,9 +800,24 @@ class MemoryFileStore(MemoryStore):
     def _topic_read_candidates(self, session: AgentSession, *, source_id: str, topic: str) -> list[Path]:
         candidates = [self._topic_path(session, source_id=source_id, topic=topic)]
         legacy = self._legacy_topic_path(session, source_id=source_id, topic=topic)
-        if legacy is not None:
+        if legacy is not None and self._topic_file_matches(legacy, topic=topic):
             candidates.append(legacy)
         return candidates
+
+    @staticmethod
+    def _topic_file_matches(path: Path, *, topic: str) -> bool:
+        """True when the file's stored topic is the requested topic.
+
+        A legacy-named file is only a fallback alias for ``topic`` when the
+        topic recorded inside the file agrees. The slug strips accents and
+        non-ASCII text, so a same-stem file can belong to a different topic
+        and must not be read, migrated, or deleted through the fallback.
+        """
+        try:
+            record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+        return record.topic == _normalize_topic(topic)
 
     @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
@@ -874,7 +889,7 @@ class MemoryFileStore(MemoryStore):
             if (path := self._legacy_topic_path(session, source_id=source_id, topic=value)) is not None
         }
         for legacy_path in legacy_paths:
-            if legacy_path.exists():
+            if legacy_path.exists() and self._topic_file_matches(legacy_path, topic=record.topic):
                 legacy_path.unlink()
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
