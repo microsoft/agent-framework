@@ -552,6 +552,7 @@ source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "powerfx", marker = "python_full_version < '3.14'" },
     { name = "pyyaml" },
 ]
@@ -565,6 +566,7 @@ dev = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "httpx", specifier = ">=0.27,<0.29" },
+    { name = "httpx2", specifier = ">=2.0.0,<3" },
     { name = "powerfx", marker = "python_full_version < '3.14'", specifier = ">=0.0.32,<0.0.35" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
 ]
@@ -675,6 +677,7 @@ dependencies = [
     { name = "azure-ai-agentserver-invocations" },
     { name = "azure-ai-agentserver-responses" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "mcp" },
 ]
 
@@ -685,6 +688,7 @@ requires-dist = [
     { name = "azure-ai-agentserver-invocations", specifier = ">=1.1.0,<2" },
     { name = "azure-ai-agentserver-responses", specifier = ">=2.2.0b1,<3" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2.0.0,<3" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
 ]
 
