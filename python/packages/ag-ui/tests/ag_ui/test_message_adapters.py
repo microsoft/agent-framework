@@ -2274,6 +2274,32 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_skips_abandoned_later_turn_reusing_completed_call_id():
+    """A result from an earlier turn does not stop a later abandoned call reusing its ID from being skipped."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    def call() -> Message:
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="reused", name="get_weather", arguments="{}")],
+        )
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="First")]),
+        call(),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="sunny")]),
+        Message(role="user", contents=[Content.from_text(text="Second")]),
+        call(),
+        Message(role="user", contents=[Content.from_text(text="Actually, never mind")]),
+    ]
+
+    result = _sanitize_tool_history(messages)
+
+    assert [msg.role for msg in result] == ["user", "assistant", "tool", "user", "assistant", "tool", "user"]
+    assert result[2].contents[0].result == "sunny"
+    assert "skipped" in str(result[5].contents[0].result).lower()
+
+
 def test_sanitize_pending_tool_does_not_skip_server_owned_approval_call():
     """Server-owned approval state means a pending tool call is not abandoned."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history

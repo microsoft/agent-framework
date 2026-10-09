@@ -79,12 +79,24 @@ def _tool_call_ids_per_occurrence(contents: list[Content]) -> list[str]:
     return [str(content.call_id) for content in contents if content.type == "function_call" and content.call_id]
 
 
-def _function_result_call_ids(messages: list[Message]) -> set[str]:
+def _answered_call_ids_from(messages: list[Message], start: int) -> set[str]:
+    """Return call IDs that get a function result from ``start`` on, before the call ID is declared again.
+
+    A result from an earlier turn belongs to that turn's occurrence, and a result after the call ID
+    is declared again belongs to the later occurrence, so neither answers the pending occurrence.
+    """
     result_ids: set[str] = set()
-    for msg in messages:
+    redeclared_ids: set[str] = set()
+    for msg in messages[start:]:
+        is_assistant = get_role_value(msg) == "assistant"
         for content in msg.contents or []:
-            if content.type == "function_result" and content.call_id:
-                result_ids.add(str(content.call_id))
+            if not content.call_id:
+                continue
+            call_id = str(content.call_id)
+            if content.type == "function_call" and is_assistant:
+                redeclared_ids.add(call_id)
+            elif content.type == "function_result" and call_id not in redeclared_ids:
+                result_ids.add(call_id)
     return result_ids
 
 
@@ -97,9 +109,13 @@ def _sanitize_tool_history(
     sanitized: list[Message] = []
     pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
-    non_abandoned_tool_call_ids = set(protected_tool_call_ids or set()) | _function_result_call_ids(messages)
+    protected_ids = set(protected_tool_call_ids or set())
 
-    for msg in messages:
+    def non_abandoned_tool_call_ids(start: int) -> set[str]:
+        """Protected calls and calls answered from ``start`` on; earlier turns do not count."""
+        return protected_ids | _answered_call_ids_from(messages, start)
+
+    for idx, msg in enumerate(messages):
         role_value = get_role_value(msg)
 
         if role_value == "assistant":
@@ -112,7 +128,7 @@ def _sanitize_tool_history(
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - assistant continued before the tool result was available.",
-                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
@@ -239,7 +255,7 @@ def _sanitize_tool_history(
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - user provided follow-up message",
-                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids(idx + 1),
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
@@ -279,7 +295,7 @@ def _sanitize_tool_history(
                 sanitized,
                 pending_tool_call_ids,
                 "Tool execution skipped - conversation continued before the tool result was available.",
-                excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
             )
 
         sanitized.append(msg)
@@ -295,7 +311,7 @@ def _sanitize_tool_history(
             sanitized,
             pending_tool_call_ids,
             "Tool execution skipped - conversation ended before the tool result was available.",
-            excluded_tool_call_ids=non_abandoned_tool_call_ids,
+            excluded_tool_call_ids=non_abandoned_tool_call_ids(len(messages)),
         )
 
     return sanitized
