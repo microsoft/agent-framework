@@ -2194,7 +2194,10 @@ async def test_custom_run_loop_agent_nested_sub_agent_persists_inline() -> None:
                 # The custom loop invokes the sub-agent tool directly, bypassing
                 # _execute_single_function_call (like GitHubCopilotAgent's loop).
                 tool_context = FunctionInvocationContext(
-                    function=sub_tool, arguments={"task": "delegated task"}, session=session
+                    function=sub_tool,
+                    arguments={"task": "delegated task"},
+                    session=session,
+                    parent_service_session_state_keys=(),
                 )
                 await sub_tool.invoke(arguments={"task": "delegated task"}, context=tool_context)
                 response: AgentResponse[Any] = AgentResponse(

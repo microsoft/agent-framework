@@ -475,7 +475,7 @@ def test_optional_nullable_enum_and_const_decode_deterministically() -> None:
     tool = FunctionTool(name="weather", func=lambda **kwargs: kwargs, input_model=Arguments)
     plan = compile_tool_call_plan(
         [tool],
-        tool_mode=cast(ToolMode, {"mode": "required", "required_function_name": "weather"}),
+        tool_mode={"mode": "required", "required_function_name": "weather"},
         user_question_ids=set(),
     )
 

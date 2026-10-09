@@ -1,46 +1,30 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Reuse one agent session across multiple turns.
+
+The shared session preserves conversation history between calls.
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
-"""
-Multi-Turn Conversations — Use AgentSession to maintain context
-
-This sample shows how to keep conversation history across multiple calls
-by reusing the same session object.
-"""
-
 
 async def main() -> None:
-    # <create_agent>
-    client = FoundryChatClient(
-        project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
-        model="gpt-4o",
-        credential=AzureCliCredential(),
-    )
-
     agent = Agent(
-        client=client,
-        name="ConversationAgent",
+        client=FoundryChatClient(
+            project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
+            model="gpt-6-luna",
+            credential=AzureCliCredential(),
+        ),
         instructions="You are a friendly assistant. Keep your answers brief.",
     )
-    # </create_agent>
-
-    # <multi_turn>
-    # Create a session to maintain conversation history
     session = agent.create_session()
 
-    # First turn
-    result = await agent.run("My name is Alice and I love hiking.", session=session)
-    print(f"Agent: {result}\n")
-
-    # Second turn — the agent should remember the user's name and hobby
-    result = await agent.run("What do you remember about me?", session=session)
-    print(f"Agent: {result}")
-    # </multi_turn>
+    print(await agent.run("My name is Alice and I love hiking.", session=session))
+    print(await agent.run("What do you remember about me?", session=session))
 
 
 if __name__ == "__main__":

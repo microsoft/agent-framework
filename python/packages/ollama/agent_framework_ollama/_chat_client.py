@@ -32,6 +32,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    validate_tool_mode,
 )
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
@@ -97,7 +98,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
-        tool_choice: Ollama only supports auto tool choice.
+        tool_choice: Only ``auto`` and ``none`` are supported (``none`` omits the tools).
+            ``required`` and ``allowed_tools`` raise ``ChatClientInvalidRequestException``.
         allow_multiple_tool_calls: Not configurable.
         user: Not supported.
         store: Not supported.
@@ -216,9 +218,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     """For thinking models: whether the model should think before responding."""
 
     # ChatOptions fields not supported in Ollama
-    tool_choice: None  # type: ignore[misc]
-    """Not supported. Ollama only supports auto tool choice."""
-
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Not configurable in Ollama."""
 
@@ -372,8 +371,15 @@ class OllamaChatClient(
                 except Exception as ex:
                     raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-                async for part in response_object:
-                    yield self._parse_streaming_response_from_ollama(part)
+                # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                # instead of leaving the response open until the generator is garbage collected.
+                try:
+                    async for part in response_object:
+                        yield self._parse_streaming_response_from_ollama(part)
+                finally:
+                    aclose = getattr(response_object, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -407,7 +413,7 @@ class OllamaChatClient(
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Keys to exclude from processing
-        exclude_keys = {"instructions", "tool_choice"}
+        exclude_keys = {"instructions", "tool_choice", "tools"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}
@@ -453,8 +459,21 @@ class OllamaChatClient(
             run_options["model"] = self.model
 
         # tools
+        # Ollama has no tool_choice parameter. Only "auto" (send the tools) and "none" (don't send them)
+        # can be honored, so anything else is rejected instead of silently behaving like "auto".
+        tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is not None:
+            if tool_mode.get("mode") == "required":
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice mode 'required'. Use 'auto' or 'none'."
+                )
+            if "allowed_tools" in tool_mode:
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice 'allowed_tools'. Pass only the tools you want to allow."
+                )
         tools = options.get("tools")
-        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tools_disabled = tool_mode is not None and tool_mode.get("mode") == "none"
+        if tools is not None and not tools_disabled and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options

@@ -60,6 +60,14 @@ The provider supports the same authentication modes as other Azure integrations:
 
 Existing configurations can continue using `FOUNDRY_ENDPOINT`; the provider treats it as a legacy fallback.
 
+### User-Agent Identification
+
+When the provider creates its memory client, Cosmos DB requests include
+`agent-framework-azure-cosmos-memory/<provider-package-version>` alongside the
+Agent Framework and Agent Memory Toolkit identifiers. This dedicated token
+distinguishes the provider from direct toolkit usage. Caller-supplied
+`memory_client` instances retain their existing User-Agent configuration.
+
 ### Development Setup
 
 To avoid dependency conflicts with your system Python, it's recommended to use a virtual environment:
