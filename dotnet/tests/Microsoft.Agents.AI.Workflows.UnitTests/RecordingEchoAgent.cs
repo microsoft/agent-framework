@@ -18,6 +18,7 @@ internal sealed class RecordingEchoAgent(string? id = null, string? name = null,
     : TestEchoAgent(id, name, prefix)
 {
     public List<List<ChatMessage>> RecordedInputs { get; } = [];
+    public List<AgentRunOptions?> RecordedRunOptions { get; } = [];
 
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
@@ -28,6 +29,7 @@ internal sealed class RecordingEchoAgent(string? id = null, string? name = null,
         // Materialize once so the deferred input is recorded and replayed identically.
         List<ChatMessage> recorded = messages.ToList();
         this.RecordedInputs.Add(recorded);
+        this.RecordedRunOptions.Add(options);
 
         await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(recorded, session, options, cancellationToken))
         {
