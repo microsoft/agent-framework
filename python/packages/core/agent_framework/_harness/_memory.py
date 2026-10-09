@@ -866,6 +866,11 @@ class MemoryFileStore(MemoryStore):
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
+            if topic_path.stem == _legacy_slugify_topic(record.topic) and topic_path.stem != record.slug:
+                # Not yet migrated: the file still sits at its pre-digest name. Key the
+                # record by the stem that exists on disk so index pointers and
+                # get_topic(entry.slug) resolve to it before a rewrite migrates it.
+                record.slug = topic_path.stem
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 

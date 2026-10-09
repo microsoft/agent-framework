@@ -1131,4 +1131,47 @@ def test_memory_file_store_legacy_fallback_requires_matching_stored_topic(tmp_pa
     assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["legacy accent fact"]
 
 
+def test_memory_file_store_lists_pre_digest_topic_under_its_on_disk_stem(tmp_path) -> None:
+    """An unmigrated legacy file must be listed under the stem that exists on disk."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+
+    (entry,) = store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert entry.topic == "café"
+    assert entry.slug == "caf"
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=entry.slug).memories == [
+        "legacy accent fact"
+    ]
+    store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=50, line_length=200)
+    index_text = store._get_index_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID).read_text(encoding="utf-8")
+    assert "topics/caf.md" in index_text
+    # Keying by the on-disk stem must not widen the fallback: a same-stem but
+    # different topic still does not alias this file.
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè")
+
+
+async def test_memory_context_provider_loads_unmigrated_legacy_topic(tmp_path) -> None:
+    """``before_run`` must resolve an index entry whose file still uses its pre-digest name."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+    provider = MemoryContextProvider(store=store, recent_turns=0, max_extractions=0)
+
+    from agent_framework._sessions import SessionContext
+
+    context = SessionContext(
+        session_id=session.session_id,
+        input_messages=[Message(role="user", contents=["tell me the legacy accent fact"])],
+    )
+
+    await provider.before_run(agent=None, session=session, context=context, state={})
+
+    assert any("legacy accent fact" in message.text for message in context.get_messages())
+
+
 # endregion
