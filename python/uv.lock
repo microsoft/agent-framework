@@ -58,6 +58,7 @@ members = [
     "agent-framework-mistral",
     "agent-framework-mongodb",
     "agent-framework-monty",
+    "agent-framework-nvidia",
     "agent-framework-ollama",
     "agent-framework-openai",
     "agent-framework-oracle",
@@ -903,6 +904,21 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "pydantic-monty", specifier = ">=0.0.23,<0.1" },
+]
+
+[[package]]
+name = "agent-framework-nvidia"
+version = "1.0.0a260929"
+source = { editable = "packages/nvidia" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-openai", editable = "packages/openai" },
 ]
 
 [[package]]
