@@ -10,8 +10,13 @@ control contract as one coherent feature on the framework's native middleware se
 - ``pre_tool_call`` / ``post_tool_call`` ride the function seam.
 
 The public entry points are :func:`create_agent_hooks_middleware` (one agent-hooks
-session per run) and :func:`create_agent_hooks_middleware_from_emitter` (host-owned
-session). Both return a :class:`~agent_framework.MiddlewareBundle`: the three middleware
+session per run), :func:`create_agent_hooks_middleware_from_emitter` (host-owned
+session) and the host-declaration factories
+:func:`create_agent_hooks_middleware_from_declaration`,
+:func:`create_agent_hooks_middleware_from_declaration_path` and
+:func:`create_agent_hooks_middleware_from_declaration_json` (one session per run, with the
+configuration and the interceptor bindings read from a host declaration document, spec
+section 7.7). All return a :class:`~agent_framework.MiddlewareBundle`: the three middleware
 implementations are deliberately private and travel as one indivisible unit, because
 installing only part of them would enforce only part of the control contract. Install
 exactly one bundle per agent, placed first in the middleware list: middleware listed
@@ -101,6 +106,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
@@ -142,9 +148,12 @@ if TYPE_CHECKING:
     from agent_hooks import (
         AgentContextBuilder,
         ApprovalResolver,
+        BindingContext,
         CompositionConfig,
         EmitOutcome,
         EnforcementMode,
+        HostDeclaration,
+        HostRegistry,
         IdentityProvider,
         InterceptionBlocked,
         InterceptionEmitter,
@@ -163,6 +172,22 @@ _SDK_MISSING_MESSAGE = (
     "The agent-hooks middleware requires the optional `agent-hooks-sdk` package. "
     "Please install it with `pip install agent-hooks-sdk`."
 )
+
+_DECLARATION_SDK_MISSING_MESSAGE = (
+    "Loading a host declaration requires `agent-hooks-sdk` 0.1.0b2 or later (the first release "
+    "that accepts the agent-hooks-declaration/1.0 document). Please upgrade it with "
+    "`pip install --upgrade agent-hooks-sdk`."
+)
+
+# The binding kind this framework registers when a factory receives ``interceptors``:
+# ``{"id": "egress", "kind": "agent_framework.interceptor", "config": {"name": "egress"}}``
+# binds the interceptor supplied under that name (``name`` defaults to the binding id).
+_DECLARATION_KIND = "agent_framework.interceptor"
+# The code surface a declaration is resolved against (spec section 7.7.4): every point, the
+# capabilities the conformance claim lists, and the ``terminate`` posture this module
+# implements at the tool seam.
+_DECLARATION_CAPABILITIES = ("model_calls", "tool_calls", "int64_json", "bigint_json", "host_declaration")
+_DECLARATION_POSTURE = "terminate"
 
 _TRIO_REQUIRED_MESSAGE = (
     "agent-hooks {seam} middleware was invoked without an active agent-hooks run. "
@@ -211,6 +236,21 @@ def _require_sdk() -> None:
         del AgentContextBuilder, EnforcementMode, InterceptionBlocked, InterceptionEmitter
 
 
+def _require_declaration_sdk() -> None:
+    """Like :func:`_require_sdk`, for the host-declaration loader (``agent-hooks-sdk`` 0.1.0b2+).
+
+    An installed SDK that predates the loader raises ``ImportError`` on these names; that case
+    gets an upgrade hint instead of a bare "cannot import name" message.
+    """
+    _require_sdk()
+    try:
+        from agent_hooks import HostDeclaration, HostRegistry, HostSurface
+    except ImportError as exc:
+        raise ImportError(_DECLARATION_SDK_MISSING_MESSAGE) from exc
+    else:
+        del HostDeclaration, HostRegistry, HostSurface
+
+
 # region Run state
 
 
@@ -227,6 +267,9 @@ class _AgentHooksConfig:
     record_sink: Callable[[InterceptionRecord], None] | None
     emitter: InterceptionEmitter | None
     builder: AgentContextBuilder | None
+    # Set by the host-declaration factories: every run loads a fresh emitter from this pair.
+    declaration: HostDeclaration | None = None
+    registry: HostRegistry | None = None
 
 
 @dataclass
@@ -1036,17 +1079,23 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             session_id=uuid.uuid4().hex,
             agent_name=str(agent_name) if agent_name else None,
         )
-        kwargs: dict[str, Any] = {
-            "resolver": config.resolver,
-            "timeout": config.timeout,
-            "composition": config.composition,
-            "identity_provider": config.identity_provider,
-        }
-        if config.mode is not None:
-            kwargs["mode"] = config.mode
-        emitter = InterceptionEmitter(**kwargs)
-        for name, interceptor in config.interceptors:
-            emitter.register(interceptor, name)
+        if config.declaration is not None and config.registry is not None:
+            # One session per run, configured by the declaration: the loader rebuilds the
+            # sealed emitter from the same document and registry the factory validated, so
+            # every run gets the same resolved declaration and a fresh session (spec 7.7.7).
+            emitter = InterceptionEmitter.from_declaration(config.declaration, config.registry)
+        else:
+            kwargs: dict[str, Any] = {
+                "resolver": config.resolver,
+                "timeout": config.timeout,
+                "composition": config.composition,
+                "identity_provider": config.identity_provider,
+            }
+            if config.mode is not None:
+                kwargs["mode"] = config.mode
+            emitter = InterceptionEmitter(**kwargs)
+            for name, interceptor in config.interceptors:
+                emitter.register(interceptor, name)
         if config.record_sink is not None:
             emitter.set_record_sink(config.record_sink)
         return _RunState(emitter=emitter, builder=builder, session_scoped=False, config=config)
@@ -1696,6 +1745,250 @@ def create_agent_hooks_middleware_from_emitter(
         builder=builder,
     )
     return _build_bundle(config)
+
+
+def _host_registry() -> HostRegistry:
+    from agent_hooks import HostRegistry, HostSurface
+
+    surface = HostSurface.from_capabilities(_DECLARATION_CAPABILITIES, tool_seam_host_error=_DECLARATION_POSTURE)
+    return HostRegistry(surface)
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+def create_agent_hooks_host_registry() -> HostRegistry:
+    """Create the agent-hooks host registry for this framework's code surface.
+
+    A host declaration (spec section 7.7) is resolved against what the host's code can honour:
+    its interception points, capabilities and tool-seam posture, plus the names registered in
+    code that a document may reference. This returns a fresh ``agent_hooks.HostRegistry`` over
+    the surface the agent-hooks middleware implements (all eight points; ``model_calls``,
+    ``tool_calls``, ``int64_json``, ``bigint_json`` and ``host_declaration``; posture
+    ``tool_seam_host_error: terminate``; buffered streaming). Register binding kinds, custom
+    identity providers, approval resolvers and approval redactors on it, then pass it as
+    ``registry`` to one of the ``create_agent_hooks_middleware_from_declaration*`` factories.
+
+    Note:
+        A document's ``configuration.posture.tool_seam_host_error`` must equal the posture the
+        code implements, and the spec default is ``continue``, so every document for this
+        framework has to write ``"posture": {"tool_seam_host_error": "terminate"}`` or the
+        loader refuses it with ``declaration_error:surface_unsupported``.
+
+    Returns:
+        A registry with this framework's surface and no registered names.
+
+    Raises:
+        ModuleNotFoundError: If the optional ``agent-hooks-sdk`` package is not installed.
+        ImportError: If the installed ``agent-hooks-sdk`` predates the host-declaration loader.
+    """
+    _require_declaration_sdk()
+    return _host_registry()
+
+
+def _interceptor_kind_resolver(interceptors: Mapping[str, Interceptor]) -> Callable[[Any, BindingContext], Interceptor]:
+    """The resolver behind the ``agent_framework.interceptor`` kind.
+
+    ``config`` is ``{}`` or ``{"name": "<key>"}``; the key defaults to the binding id. Anything
+    else refuses the binding (``declaration_error:binding_rejected``). Messages name the binding
+    id (the loader prints ids itself) but never echo the config, as spec section 7.7.5 requires.
+    """
+
+    def resolve(config: Any, binding: BindingContext) -> Interceptor:
+        if not isinstance(config, Mapping):
+            raise ValueError(f"binding {binding.id!r}: config must be an object with an optional 'name' member")
+        members = cast("Mapping[str, Any]", config)  # a JSON object: string keys
+        if set(members) - {"name"}:
+            raise ValueError(f"binding {binding.id!r}: config accepts only the 'name' member")
+        name: Any = members.get("name", binding.id)
+        if not isinstance(name, str):
+            raise ValueError(f"binding {binding.id!r}: config.name must be a string")
+        try:
+            return interceptors[name]
+        except KeyError:
+            raise ValueError(f"binding {binding.id!r}: no interceptor was supplied under the name it binds") from None
+
+    return resolve
+
+
+def _bundle_from_declaration(
+    declaration: HostDeclaration,
+    *,
+    interceptors: Mapping[str, Interceptor] | None,
+    registry: HostRegistry | None,
+    record_sink: Callable[[InterceptionRecord], None] | None,
+) -> MiddlewareBundle:
+    from agent_hooks import InterceptionEmitter
+
+    if registry is None:
+        registry = _host_registry()
+    if interceptors is not None:
+        registry.kind(_DECLARATION_KIND, _interceptor_kind_resolver(dict(interceptors)))
+    # Load once here so a refused document (every class of spec section 7.7.6, kind resolvers
+    # included) raises ``agent_hooks.DeclarationError`` at construction, before any run.
+    InterceptionEmitter.from_declaration(declaration, registry)
+    config = _AgentHooksConfig(
+        interceptors=(),
+        resolver=None,
+        mode=None,
+        composition=None,
+        identity_provider=None,
+        timeout=None,
+        record_sink=record_sink,
+        emitter=None,
+        builder=None,
+        declaration=declaration,
+        registry=registry,
+    )
+    return _build_bundle(config)
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+def create_agent_hooks_middleware_from_declaration(
+    declaration: Mapping[str, Any] | HostDeclaration,
+    *,
+    interceptors: Mapping[str, Interceptor] | None = None,
+    registry: HostRegistry | None = None,
+    record_sink: Callable[[InterceptionRecord], None] | None = None,
+) -> MiddlewareBundle:
+    """Build the agent-hooks middleware bundle from a host declaration value.
+
+    A host declaration (spec section 7.7) is one JSON document that fixes the enforcement
+    configuration (mode, composition, identity provider, approval resolver and redactor,
+    timeouts, record bound), the declared surface and the interceptor bindings. The loader
+    validates it against this framework's code surface and the names in ``registry`` and
+    refuses anything the framework cannot honour before any emission. Enforcement semantics,
+    the one-session-per-run model and the composition-order requirements are those of
+    :func:`create_agent_hooks_middleware`; every record additionally carries the contract
+    version the emitter was built from (``declaration: "agent-hooks-declaration/1.0"``).
+
+    Bindings name a kind the host registered in code; a kind is a lookup key, never a module
+    or class the loader imports. Passing ``interceptors`` registers the framework's own kind,
+    ``agent_framework.interceptor``: a binding ``{"id": "egress", "kind":
+    "agent_framework.interceptor"}`` runs the interceptor supplied as ``interceptors["egress"]``
+    (``config: {"name": ...}`` picks a different key). Other kinds, custom identity providers,
+    approval resolvers and approval redactors are registered on a registry from
+    :func:`create_agent_hooks_host_registry` and passed in as ``registry``.
+
+    The emitter the loader builds is sealed, so each run loads a fresh one from the same
+    document and registry (kind resolvers run once at construction and once per run); the
+    interceptors bound through ``agent_framework.interceptor`` are the supplied instances and
+    stay shared across runs, exactly as with :func:`create_agent_hooks_middleware`. To scope
+    one declaration-built session across several runs instead, build the emitter yourself
+    with ``agent_hooks.InterceptionEmitter.from_declaration_path`` (or ``_json`` / ``_value``)
+    and pass it to :func:`create_agent_hooks_middleware_from_emitter`.
+
+    Args:
+        declaration: The document as a mapping (any JSON value shape), or an
+            ``agent_hooks.HostDeclaration`` (for example from ``agent_hooks.DeclarationBuilder``).
+
+    Keyword Args:
+        interceptors: Interceptors by name for the ``agent_framework.interceptor`` kind.
+            ``None`` leaves the kind unregistered, so a document that uses it is refused.
+        registry: The host registry to resolve against; ``None`` uses a fresh registry with
+            this framework's surface and no registered names. The registry is used as given,
+            with the ``agent_framework.interceptor`` kind added when ``interceptors`` is set.
+        record_sink: Optional callable receiving every interception record.
+
+    Returns:
+        The middleware bundle to pass (as one element) to ``Agent(middleware=...)``.
+
+    Raises:
+        ModuleNotFoundError: If the optional ``agent-hooks-sdk`` package is not installed.
+        ImportError: If the installed ``agent-hooks-sdk`` predates the host-declaration loader.
+        agent_hooks.DeclarationError: If the loader refuses the document (unsupported version,
+            unknown member, a posture or surface the framework does not implement, an
+            unregistered name or kind, a binding its kind resolver rejects, and so on).
+        ValueError: If ``registry`` already has the ``agent_framework.interceptor`` kind while
+            ``interceptors`` is also given.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent, create_agent_hooks_middleware_from_declaration
+
+            declaration = {
+                "declaration": "agent-hooks-declaration/1.0",
+                "configuration": {"posture": {"tool_seam_host_error": "terminate"}},
+                "bindings": [{"id": "egress", "kind": "agent_framework.interceptor"}],
+            }
+            agent = Agent(
+                client=client,
+                name="assistant",
+                middleware=[
+                    create_agent_hooks_middleware_from_declaration(declaration, interceptors={"egress": EgressGuard()})
+                ],
+            )
+    """
+    _require_declaration_sdk()
+    from agent_hooks import HostDeclaration
+
+    document = declaration if isinstance(declaration, HostDeclaration) else HostDeclaration.from_value(declaration)
+    return _bundle_from_declaration(document, interceptors=interceptors, registry=registry, record_sink=record_sink)
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+def create_agent_hooks_middleware_from_declaration_path(
+    path: str | os.PathLike[str],
+    *,
+    interceptors: Mapping[str, Interceptor] | None = None,
+    registry: HostRegistry | None = None,
+    record_sink: Callable[[InterceptionRecord], None] | None = None,
+) -> MiddlewareBundle:
+    """Build the agent-hooks middleware bundle from a host declaration file.
+
+    The file is read once, here, through ``agent_hooks.HostDeclaration.from_path`` (a regular
+    UTF-8 file of at most 1 MiB; an unreadable file is
+    ``agent_hooks.DeclarationError`` with class ``unreadable``). Everything else is as
+    :func:`create_agent_hooks_middleware_from_declaration`.
+
+    Args:
+        path: The path of the declaration document.
+
+    Keyword Args:
+        interceptors: See :func:`create_agent_hooks_middleware_from_declaration`.
+        registry: See :func:`create_agent_hooks_middleware_from_declaration`.
+        record_sink: Optional callable receiving every interception record.
+
+    Returns:
+        The middleware bundle to pass (as one element) to ``Agent(middleware=...)``.
+    """
+    _require_declaration_sdk()
+    from agent_hooks import HostDeclaration
+
+    return _bundle_from_declaration(
+        HostDeclaration.from_path(path), interceptors=interceptors, registry=registry, record_sink=record_sink
+    )
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+def create_agent_hooks_middleware_from_declaration_json(
+    json_str: str,
+    *,
+    interceptors: Mapping[str, Interceptor] | None = None,
+    registry: HostRegistry | None = None,
+    record_sink: Callable[[InterceptionRecord], None] | None = None,
+) -> MiddlewareBundle:
+    """Build the agent-hooks middleware bundle from host declaration JSON text.
+
+    The text goes through ``agent_hooks.HostDeclaration.from_json``; everything else is as
+    :func:`create_agent_hooks_middleware_from_declaration`.
+
+    Args:
+        json_str: The declaration document as JSON text.
+
+    Keyword Args:
+        interceptors: See :func:`create_agent_hooks_middleware_from_declaration`.
+        registry: See :func:`create_agent_hooks_middleware_from_declaration`.
+        record_sink: Optional callable receiving every interception record.
+
+    Returns:
+        The middleware bundle to pass (as one element) to ``Agent(middleware=...)``.
+    """
+    _require_declaration_sdk()
+    from agent_hooks import HostDeclaration
+
+    return _bundle_from_declaration(
+        HostDeclaration.from_json(json_str), interceptors=interceptors, registry=registry, record_sink=record_sink
+    )
 
 
 def _build_bundle(config: _AgentHooksConfig) -> MiddlewareBundle:
