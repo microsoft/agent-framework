@@ -55,7 +55,8 @@ internal struct AgentInvocationResult(AgentResponse agentResponse, string? hando
 
 internal record HandoffAgentHostState(
     HandoffState? IncomingState,
-    int ConversationBookmark)
+    int ConversationBookmark,
+    string? PendingHandoffCallId = null)
 {
     [MemberNotNullWhen(true, nameof(IncomingState))]
     [JsonIgnore]
@@ -377,6 +378,37 @@ internal sealed class HandoffAgentExecutor :
                                                   : incomingMessages)
                                              .CopyWithAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
+        if (state.IncomingState.RequestedHandoffTargetAgentId is not null
+            && state.PendingHandoffCallId is not null
+            && !incomingMessages.Any(IsUserRequest)
+            && messagesForAgent.Any(message => message.Contents.OfType<FunctionResultContent>()
+                .Any(result => string.Equals(result.CallId, state.PendingHandoffCallId, StringComparison.Ordinal))))
+        {
+            await this._sharedStateRef.InvokeWithStateAsync(
+                (sharedState, ctx, ct) =>
+                {
+                    if (sharedState is null)
+                    {
+                        throw new InvalidOperationException("Handoff Orchestration shared state was not properly initialized.");
+                    }
+
+                    // The old handoff result completes the pending call, but is not a fresh request to act on.
+                    // Reissue the latest user request only to this participant, not to the shared conversation.
+                    ChatMessage? userRequest = sharedState.Conversation.CloneHistory().LastOrDefault(IsUserRequest);
+                    if (userRequest is not null)
+                    {
+                        ChatMessage freshRequest = userRequest.Clone();
+                        freshRequest.MessageId = Guid.NewGuid().ToString("N");
+                        freshRequest.CreatedAt = DateTimeOffset.UtcNow;
+                        messagesForAgent.Add(freshRequest);
+                    }
+
+                    return new ValueTask();
+                },
+                context,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         bool emitUpdateEvents = state.IncomingState!.ShouldEmitStreamingEvents(this._options.EmitAgentResponseUpdateEvents);
         AgentInvocationResult result = await this.InvokeAgentAsync(messagesForAgent, context, emitUpdateEvents, cancellationToken)
                                                      .ConfigureAwait(false);
@@ -387,6 +419,7 @@ internal sealed class HandoffAgentExecutor :
         }
 
         int newConversationBookmark = state.ConversationBookmark;
+        string? pendingHandoffCallId = null;
         List<ChatMessage>? conversationSnapshot = null;
         await this._sharedStateRef.InvokeWithStateAsync(
             (sharedState, ctx, ct) =>
@@ -417,12 +450,13 @@ internal sealed class HandoffAgentExecutor :
                     }
 
                     if (handoffCallResultMessage.Contents.Count != 1 ||
-                        handoffCallResultMessage.Contents[0] is not FunctionResultContent)
+                        handoffCallResultMessage.Contents[0] is not FunctionResultContent handoffResult)
                     {
                         throw new InvalidOperationException("The Tool message in a handoff response must contain exactly one content item of type FunctionResultContent.");
                     }
 
                     _ = sharedState.Conversation.AddMessage(handoffCallResultMessage);
+                    pendingHandoffCallId = handoffResult.CallId;
 
                     // Reset this agent's autonomous-turn counter when it chooses to hand off, so that
                     // if control returns to this agent later in the turn (e.g. via another handoff),
@@ -451,7 +485,7 @@ internal sealed class HandoffAgentExecutor :
         // happens if we have no outstanding requests.
         if (this.HasOutstandingRequests)
         {
-            return state with { ConversationBookmark = newConversationBookmark };
+            return state with { ConversationBookmark = newConversationBookmark, PendingHandoffCallId = null };
         }
 
         // Evaluate the termination condition (when configured and no handoff was requested) and stamp
@@ -469,8 +503,11 @@ internal sealed class HandoffAgentExecutor :
 
         // Reset the turn-local state; keep the conversation bookmark and the agent session so the
         // next invocation (handoff back, autonomous loop-back, or new user turn) resumes cleanly.
-        return state with { IncomingState = null, ConversationBookmark = newConversationBookmark };
+        return state with { IncomingState = null, ConversationBookmark = newConversationBookmark, PendingHandoffCallId = pendingHandoffCallId };
     }
+
+    private static bool IsUserRequest(ChatMessage message)
+        => message.Role == ChatRole.User && message.Contents.Any(content => content is not ToolApprovalResponseContent);
 
     public override ValueTask HandleAsync(HandoffState message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
