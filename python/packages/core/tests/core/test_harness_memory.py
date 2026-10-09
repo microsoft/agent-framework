@@ -1005,4 +1005,92 @@ def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -
     assert parts[1] == "user_alice"
 
 
+def _topic_store(tmp_path):
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    return store, session
+
+
+def _record(topic: str, memories: list[str]) -> MemoryTopicRecord:
+    return MemoryTopicRecord(
+        topic=topic,
+        summary="",
+        memories=memories,
+        updated_at=datetime(2026, 10, 9, tzinfo=timezone.utc).isoformat(),
+    )
+
+
+def test_memory_file_store_keeps_distinct_non_ascii_topics_separate(tmp_path) -> None:
+    """Topics whose slugs collapse to the same stem must not share a file."""
+    store, session = _topic_store(tmp_path)
+    travel = _record("旅行计划", ["护照已续签"])
+    food = _record("饮食偏好", ["不吃香菜"])
+
+    store.write_topic(session, travel, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, food, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划").memories == ["护照已续签"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好").memories == ["不吃香菜"]
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好")
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划").memories == ["护照已续签"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好")
+
+
+def test_memory_file_store_keeps_accent_folded_topics_separate(tmp_path) -> None:
+    """Accents the slug strips still distinguish topics, as does case folding."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("café", ["a"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("cafè", ["b"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("My Topic", ["c"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["a"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè").memories == ["b"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="My Topic").memories == ["c"]
+
+
+def test_memory_file_store_reads_and_absorbs_pre_digest_topic_files(tmp_path) -> None:
+    """Files written before the digest suffix stay readable and migrate on rewrite."""
+    store, session = _topic_store(tmp_path)
+    record = _record("café", ["legacy fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+
+    loaded = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+    assert loaded.memories == ["legacy fact"]
+
+    store.write_topic(session, _record("café", ["new fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert not legacy_path.exists()
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["new fact"]
+
+
+def test_memory_file_store_deletes_pre_digest_topic_file(tmp_path) -> None:
+    """Deleting a topic removes its legacy-named file as well."""
+    store, session = _topic_store(tmp_path)
+    record = _record("旅行计划", ["legacy fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "memory-topic.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划")
+    assert not legacy_path.exists()
+    with pytest.raises(FileNotFoundError):
+        store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划")
+
+
+def test_slugify_topic_keeps_safe_stems_byte_identical() -> None:
+    """Safe lowercase stems keep their pre-digest names; derived slugs are idempotent."""
+    from agent_framework._harness._memory import _slugify_topic
+
+    assert _slugify_topic("my-topic") == "my-topic"
+    spaced = _slugify_topic("travel plans")
+    assert spaced.startswith("travel-plans-") and spaced != "travel-plans"
+    derived = _slugify_topic("café")
+    assert _slugify_topic(derived) == derived
+    assert _slugify_topic("旅行计划") != _slugify_topic("饮食偏好")
+
+
 # endregion
