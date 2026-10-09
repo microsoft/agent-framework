@@ -307,8 +307,11 @@ async def test_tools_reject_nested_paths() -> None:
 
     saved = await tools["file_memory_write"].invoke(arguments={"file_name": "notes/plan.md", "content": "x"})
     assert "subdirectory" in _text(saved)
-    # Nothing should have been written for the nested name.
-    assert await store.list_children("") == []
+    # Nothing should have been written for the nested name. The session
+    # directory created during before_run is the only root entry, and the
+    # rejected write leaves it empty (no "notes" child).
+    assert [entry.name for entry in await store.list_children("")] == ["session-1"]
+    assert await store.list_children("session-1") == []
 
     # Backslash separators are normalized to "/" and rejected the same way.
     saved_backslash = await tools["file_memory_write"].invoke(arguments={"file_name": "notes\\plan.md", "content": "x"})
