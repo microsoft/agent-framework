@@ -857,6 +857,56 @@ async def test_magentic_stall_and_reset_reach_limits():
     assert output_event.data.text == "Workflow terminated due to reaching maximum reset count."
 
 
+async def test_magentic_reset_gives_participants_a_fresh_session():
+    """After a stall forces a reset and replan, participants must not see their earlier history."""
+
+    class RecordingChatClient(BaseChatClient):
+        """Captures the message texts handed to the model on each call."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[str]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            self.calls.append([m.text for m in messages])
+            reply = f"reply-{len(self.calls)}"
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=[reply]))
+
+            return _get()
+
+    class StallOnceManager(NotProgressingManager):
+        """Asks agentA, stalls once (forcing a reset and replan), asks agentA again, then finishes."""
+
+        def __init__(self) -> None:
+            super().__init__(max_round_count=10, max_stall_count=0)
+            self.rounds = 0
+
+        async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+            self.rounds += 1
+            instruction = "before reset" if self.rounds == 1 else "after reset"
+            progress = self.rounds != 2
+            return MagenticProgressLedger(
+                is_request_satisfied=MagenticProgressLedgerItem(reason="r", answer=self.rounds >= 4),
+                is_in_loop=MagenticProgressLedgerItem(reason="r", answer=not progress),
+                is_progress_being_made=MagenticProgressLedgerItem(reason="r", answer=progress),
+                next_speaker=MagenticProgressLedgerItem(reason="r", answer="agentA"),
+                instruction_or_question=MagenticProgressLedgerItem(reason="r", answer=instruction),
+            )
+
+    client = RecordingChatClient()
+    manager = StallOnceManager()
+    wf = MagenticBuilder(participants=[Agent(name="agentA", client=client)], manager=manager).build()
+
+    await wf.run("test reset")
+
+    assert manager.rounds == 4
+    assert client.calls[0] == ["before reset"]
+    assert client.calls[1] == ["after reset"], "agentA kept its pre-reset session history"
+
+
 async def test_magentic_checkpoint_runtime_only() -> None:
     """Test checkpointing configured ONLY at runtime, not at build time."""
     storage = InMemoryCheckpointStorage()
