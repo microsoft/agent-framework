@@ -93,13 +93,14 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         // resumes can be processed in one invocation.
         return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
         {
-            pendingMessages.Add(new ChatMessage(ChatRole.User, [response])
+            ChatMessage responseMessage = new(ChatRole.User, [response])
             {
                 CreatedAt = DateTimeOffset.UtcNow,
                 MessageId = Guid.NewGuid().ToString("N"),
-            });
+            };
+            pendingMessages.Add(responseMessage);
 
-            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct, responseMessage).ConfigureAwait(false);
 
             // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
             return null;
@@ -176,7 +177,12 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                                         || (this._functionCallHandler?.HasPendingRequests == true);
 
     // While we save this on the instance, we are not cross-run shareable, but as AgentBinding uses the factory pattern this is not an issue
-    private async ValueTask ContinueTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken)
+    private async ValueTask ContinueTurnAsync(
+        List<ChatMessage> messages,
+        IWorkflowContext context,
+        bool emitEvents,
+        CancellationToken cancellationToken,
+        ChatMessage? approvalResponseMessage = null)
     {
         this._currentTurnEmitEvents = emitEvents;
         if (this._options.ForwardIncomingMessages)
@@ -194,7 +200,13 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         // that are internal to this agent. Forwarding them to other agents in the workflow
         // causes invalid request errors when the receiving agent uses the Responses API,
         // because these item types are not valid as input items.
-        List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages).ToList();
+        List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages);
+        if (!this._options.ForwardIncomingMessages && approvalResponseMessage is not null)
+        {
+            // Other agents received the approval request; they also need its answer before the tool result.
+            forwardableMessages.InsertRange(0, FilterForwardableMessages([approvalResponseMessage]));
+        }
+
         if (forwardableMessages.Count > 0)
         {
             await context.SendMessageAsync(forwardableMessages, cancellationToken)

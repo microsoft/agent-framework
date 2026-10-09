@@ -14,6 +14,115 @@ public class ApprovalResponseBindingChatClientTests
 {
     private const string RequestId = "ficc_call1";
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PrepareApprovalMessages_NoAnswersToMove_ReturnsOriginalList(bool emptyAdditionalResponses)
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        var historicalAnswer = new ToolApprovalResponseContent(
+            "old-request", false, new FunctionCallContent("old-call", "toolA") { InformationalOnly = true });
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [request]),
+            new(ChatRole.User, [historicalAnswer, new TextContent("New question")]),
+        ];
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(messages, emptyAdditionalResponses ? [] : null);
+
+        // Assert
+        Assert.Same(messages, result);
+        Assert.Equal(2, messages[1].Contents.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PrepareApprovalMessages_LateMixedAnswer_PreservesPrefixAndOriginalContents(bool useSequence)
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        var answer = request.CreateResponse(approved: true);
+        var additionalAnswer = new ToolApprovalRequestContent("request2", new FunctionCallContent("call2", "toolB")).CreateResponse(approved: false);
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.User, "Original question"),
+            new(ChatRole.Assistant, [request]),
+            new(ChatRole.User, "New question"),
+            new(ChatRole.User, [new TextContent("Before"), answer, new TextContent("After")]) { MessageId = "mixed" },
+        ];
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(
+            useSequence ? messages.Select(m => m) : messages, [additionalAnswer]);
+
+        // Assert
+        Assert.NotSame(messages, result);
+        Assert.Equal(6, result.Count);
+        Assert.Same(messages[0], result[0]);
+        Assert.Same(messages[1], result[1]);
+        Assert.Same(answer, Assert.Single(result[2].Contents));
+        Assert.Equal("mixed", result[2].MessageId);
+        Assert.Same(additionalAnswer, Assert.Single(result[3].Contents));
+        Assert.Same(messages[2], result[4]);
+        Assert.Equal(2, result[5].Contents.Count);
+        Assert.Equal("Before", Assert.IsType<TextContent>(result[5].Contents[0]).Text);
+        Assert.Equal("After", Assert.IsType<TextContent>(result[5].Contents[1]).Text);
+        Assert.Equal("mixed", result[5].MessageId);
+        Assert.Equal(3, messages[3].Contents.Count);
+        Assert.Same(answer, messages[3].Contents[1]);
+    }
+
+    [Fact]
+    public void PrepareApprovalMessages_OnlyAdditionalAnswers_DoesNotModifyOriginalList()
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        var answer = request.CreateResponse(approved: false);
+        List<ChatMessage> messages = [new(ChatRole.Assistant, [request]), new(ChatRole.User, "New question")];
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(messages, [answer]);
+
+        // Assert
+        Assert.NotSame(messages, result);
+        Assert.Equal(3, result.Count);
+        Assert.Same(messages[0], result[0]);
+        Assert.Same(answer, Assert.Single(result[1].Contents));
+        Assert.Same(messages[1], result[2]);
+        Assert.Equal(2, messages.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PrepareApprovalMessages_Sequence_IsEnumeratedOnce(bool hasAnswer)
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        ChatMessage question = new(ChatRole.User, "New question");
+        int enumerationCount = 0;
+        IEnumerable<ChatMessage> GetMessages()
+        {
+            enumerationCount++;
+            yield return question;
+            if (hasAnswer)
+            {
+                yield return new(ChatRole.User, [request.CreateResponse(approved: true)]);
+            }
+        }
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(GetMessages(), null);
+
+        // Assert
+        Assert.Equal(1, enumerationCount);
+        Assert.Same(question, result[hasAnswer ? 1 : 0]);
+        Assert.Equal(hasAnswer ? 2 : 1, result.Count);
+    }
+
     [Fact]
     public async Task GetResponseAsync_NoApprovalContent_PassesThroughUnchangedAsync()
     {
@@ -97,8 +206,10 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Equal(1, call.Arguments!["amount"]);
     }
 
-    [Fact]
-    public async Task GetResponseAsync_EquivalentResponse_KeepsOriginalWithoutRebuildAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_EquivalentResponse_CopiesRecordedCallAsync(bool informationalOnly)
     {
         // Arrange — turn 1 records a request; turn 2 approves it with a matching (equivalent) tool call.
         var session = new ChatClientAgentSession();
@@ -108,7 +219,14 @@ public class ApprovalResponseBindingChatClientTests
         var matching = new ToolApprovalResponseContent(
             RequestId,
             approved: true,
-            new FunctionCallContent("call1", "toolA", new Dictionary<string, object?> { ["amount"] = 1 }));
+            new FunctionCallContent("call1", "toolA", new Dictionary<string, object?> { ["amount"] = 1 })
+            {
+                InformationalOnly = informationalOnly
+            })
+        {
+            Reason = "Approved by the host.",
+            AdditionalProperties = new() { ["decision"] = "original" }
+        };
 
         var capture = new Capture();
         var inner = CreateCapturingChatClient(capture);
@@ -117,9 +235,19 @@ public class ApprovalResponseBindingChatClientTests
         // Act
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [matching])]);
 
-        // Assert — the already-matching response is forwarded unchanged (same instance, no rebuild).
+        // Assert — equivalent responses are copied too, so invocation cannot mutate the caller's call.
         var forwarded = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
-        Assert.Same(matching, forwarded);
+        Assert.NotSame(matching, forwarded);
+        Assert.NotSame(matching.ToolCall, forwarded.ToolCall);
+        var call = Assert.IsType<FunctionCallContent>(forwarded.ToolCall);
+        Assert.Equal("toolA", call.Name);
+        Assert.Equal(1, call.Arguments!["amount"]);
+        Assert.True(forwarded.Approved);
+        Assert.False(call.InformationalOnly);
+        Assert.Equal(informationalOnly, Assert.IsType<FunctionCallContent>(matching.ToolCall).InformationalOnly);
+        Assert.Equal(matching.Reason, forwarded.Reason);
+        Assert.Equal("original", forwarded.AdditionalProperties!["decision"]);
+        Assert.NotSame(matching.AdditionalProperties, forwarded.AdditionalProperties);
     }
 
     [Fact]
@@ -227,7 +355,7 @@ public class ApprovalResponseBindingChatClientTests
         // Act
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.Assistant, [request])]);
 
-        // Assert — approval requests are the pairing authority and are never stripped.
+        // Assert — requests remain model context but do not grant permission by themselves.
         Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalRequestContent);
     }
 
@@ -397,7 +525,8 @@ public class ApprovalResponseBindingChatClientTests
             new ToolApprovalRequestContent("req2", secondCall)]);
 
         var response = new ToolApprovalResponseContent(RequestId, approved: true, firstCall);
-        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(new Capture()));
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
 
         // Act
         await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]);
@@ -405,6 +534,192 @@ public class ApprovalResponseBindingChatClientTests
         // Assert — neither record survives the turn.
         Assert.False(HasPendingRequest(session, RequestId));
         Assert.False(HasPendingRequest(session, "req2"));
+        var responses = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToList();
+        Assert.Equal(2, responses.Count);
+        Assert.NotSame(response, responses[0]);
+        Assert.Equal(RequestId, responses[0].RequestId);
+        Assert.True(responses[0].Approved);
+        Assert.Equal("req2", responses[1].RequestId);
+        Assert.False(responses[1].Approved);
+        Assert.Equal("call2", responses[1].ToolCall.CallId);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GetResponseAsync_UnansweredRequests_AreRejectedWithoutChangingInputAsync(bool streaming, bool emptyInput)
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestsAsync(session,
+        [
+            new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")),
+            new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "toolB"))
+        ]);
+        var capture = new Capture();
+        var inner = streaming
+            ? CreateMockStreamingChatClient((messages, _, _) =>
+            {
+                capture.Messages = messages.ToList();
+                return UpdatesAsync(new ChatResponseUpdate(ChatRole.Assistant, "Done."));
+            })
+            : CreateCapturingChatClient(capture);
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+        var message = new ChatMessage(ChatRole.User, "New question.");
+        List<ChatMessage> input = emptyInput ? [] : [message];
+
+        // Act
+        if (streaming)
+        {
+            await RunStreamingAsync(decorator, session, input);
+        }
+        else
+        {
+            await RunAsync(decorator, session, input);
+        }
+
+        // Assert
+        Assert.Equal(emptyInput ? 0 : 1, input.Count);
+        Assert.IsType<TextContent>(Assert.Single(message.Contents));
+        if (!emptyInput)
+        {
+            Assert.Same(message, capture.Messages![1]);
+        }
+
+        var responses = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().ToList();
+        Assert.Equal(2, responses.Count);
+        Assert.Contains(responses, r => r.RequestId == RequestId);
+        Assert.Contains(responses, r => r.RequestId == "req2");
+        Assert.All(responses, r =>
+        {
+            Assert.False(r.Approved);
+            Assert.Equal("No approval response was provided for this approval required tool call.", r.Reason);
+        });
+        Assert.False(HasPendingRequest(session, RequestId));
+        Assert.False(HasPendingRequest(session, "req2"));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_UnansweredRequestWithResult_IsNotRejectedAgainAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var call = new FunctionCallContent("call1", "toolA");
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, call));
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        var result = new FunctionResultContent("call1", "Already completed.");
+
+        // Act
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.Tool, [result])]);
+
+        // Assert
+        Assert.Same(result, Assert.Single(Assert.Single(capture.Messages!).Contents));
+        Assert.False(HasPendingRequest(session, RequestId));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GetResponseAsync_RequestWithResultButNoAnswer_IsNotRepairedAsync(bool hasPendingRequest, bool streaming)
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        var session = new ChatClientAgentSession();
+        if (hasPendingRequest)
+        {
+            await RecordRequestAsync(session, request);
+        }
+
+        var capture = new Capture();
+        using var inner = new FunctionInvokingChatClient(CreateCapturingChatClient(capture));
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+        var result = new FunctionResultContent("call1", "Already completed.");
+
+        // Act
+        List<ChatMessage> input =
+        [
+            new ChatMessage(ChatRole.Assistant, [request]),
+            new ChatMessage(ChatRole.Tool, [result]),
+            new ChatMessage(ChatRole.User, "Continue.")
+        ];
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => streaming
+            ? RunStreamingAsync(decorator, session, input)
+            : RunAsync(decorator, session, input));
+
+        // Assert
+        Assert.False(Assert.IsType<FunctionCallContent>(request.ToolCall).InformationalOnly);
+        Assert.Contains("no matching ToolApprovalResponseContent", exception.Message);
+        Assert.Null(capture.Messages);
+        Assert.Equal(hasPendingRequest, HasPendingRequest(session, RequestId));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_ReplayedBatch_DecisionsFollowRequestsAndPrecedeNewTextAsync()
+    {
+        // Arrange
+        var requests = new List<ToolApprovalRequestContent>
+        {
+            new(RequestId, new FunctionCallContent("call1", "toolA")),
+            new("req2", new FunctionCallContent("call2", "toolB"))
+        };
+        var session = new ChatClientAgentSession();
+        await RecordRequestsAsync(session, requests);
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        var previousQuestion = new ChatMessage(ChatRole.User, "Previous question.");
+        var requestMessage = new ChatMessage(ChatRole.Assistant, requests.Cast<AIContent>().ToList());
+        var nextQuestion = new ChatMessage(ChatRole.User, "New question.");
+        List<ChatMessage> input =
+        [
+            previousQuestion,
+            requestMessage,
+            nextQuestion,
+            new(ChatRole.User, [requests[0].CreateResponse(true)])
+        ];
+
+        // Act
+        await RunAsync(decorator, session, input);
+
+        // Assert
+        Assert.Equal(4, input.Count);
+        Assert.Same(previousQuestion, capture.Messages![0]);
+        Assert.Equal(2, capture.Messages[1].Contents.OfType<ToolApprovalRequestContent>().Count());
+        Assert.True(Assert.Single(capture.Messages[2].Contents.OfType<ToolApprovalResponseContent>()).Approved);
+        Assert.False(Assert.Single(capture.Messages[3].Contents.OfType<ToolApprovalResponseContent>()).Approved);
+        Assert.Same(nextQuestion, capture.Messages[4]);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_RequestMissingFromHistory_PreservesHistoricalPrefixAsync()
+    {
+        // Arrange
+        var request = new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA"));
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, request);
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        var history = new ChatMessage(ChatRole.User, "Previous question.")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory);
+        var question = new ChatMessage(ChatRole.User, "New question.");
+
+        // Act
+        await RunAsync(decorator, session,
+        [
+            history,
+            question,
+            new ChatMessage(ChatRole.User, [request.CreateResponse(true)])
+        ]);
+
+        // Assert
+        Assert.Same(history, capture.Messages![0]);
+        Assert.True(Assert.Single(capture.Messages[1].Contents.OfType<ToolApprovalResponseContent>()).Approved);
+        Assert.Same(question, capture.Messages[2]);
     }
 
     [Fact]
@@ -447,6 +762,88 @@ public class ApprovalResponseBindingChatClientTests
             () => RunStreamingAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]));
 
         // Assert
+        Assert.True(HasPendingRequest(session, RequestId));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_GeneratedRejection_ReturnedCallIsNotChangedByInnerClientAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+        ToolApprovalResponseContent? processedDecision = null;
+        var inner = CreateMockChatClient((messages, _, _) =>
+        {
+            processedDecision = Assert.Single(messages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+            Assert.IsType<FunctionCallContent>(processedDecision.ToolCall).InformationalOnly = true;
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done.")]));
+        });
+
+        // Act
+        var response = await RunAsync(new ApprovalResponseBindingChatClient(inner), session, []);
+
+        // Assert
+        var returnedDecision = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(response.Messages[0].Contents));
+        Assert.False(returnedDecision.Approved);
+        Assert.Equal(RequestId, returnedDecision.RequestId);
+        Assert.Equal(processedDecision!.Reason, returnedDecision.Reason);
+        Assert.NotSame(processedDecision.ToolCall, returnedDecision.ToolCall);
+        Assert.False(Assert.IsType<FunctionCallContent>(returnedDecision.ToolCall).InformationalOnly);
+        Assert.Equal("Done.", response.Messages[1].Text);
+        Assert.False(HasPendingRequest(session, RequestId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetStreamingResponseAsync_GeneratedRejection_AbnormalEndRetainsPendingRequestAsync(bool stopAfterDecision)
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+        int innerCalls = 0;
+        var inner = CreateMockStreamingChatClient((_, _, _) =>
+        {
+            innerCalls++;
+            return ThrowingUpdatesAsync(new InvalidOperationException("Service failure."));
+        });
+        var decorator = new ApprovalResponseBindingChatClient(inner);
+        List<ChatResponseUpdate> updates = [];
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (_, _, _, ct) =>
+            {
+                await foreach (var update in decorator.GetStreamingResponseAsync([], null, ct))
+                {
+                    updates.Add(update);
+                    if (stopAfterDecision)
+                    {
+                        break;
+                    }
+                }
+
+                return new AgentResponse();
+            }
+        };
+
+        // Act
+        if (stopAfterDecision)
+        {
+            await agent.RunAsync([], session);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([], session));
+        }
+
+        // Assert
+        var decisionUpdate = Assert.Single(updates);
+        Assert.Equal(ChatRole.User, decisionUpdate.Role);
+        Assert.NotNull(decisionUpdate.MessageId);
+        var decision = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(decisionUpdate.Contents));
+        Assert.Equal(RequestId, decision.RequestId);
+        Assert.False(decision.Approved);
+        Assert.Equal(stopAfterDecision ? 0 : 1, innerCalls);
         Assert.True(HasPendingRequest(session, RequestId));
     }
 
@@ -595,6 +992,7 @@ public class ApprovalResponseBindingChatClientTests
         // present. Nothing is recorded server-side because the pending entry was consumed when it was answered.
         var session = new ChatClientAgentSession();
         var call = new FunctionCallContent("call1", "toolA");
+        var decision = new ToolApprovalResponseContent(RequestId, approved: true, call);
 
         var capture = new Capture();
         var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
@@ -605,16 +1003,18 @@ public class ApprovalResponseBindingChatClientTests
             session,
             [
                 new ChatMessage(ChatRole.Assistant, [new ToolApprovalRequestContent(RequestId, call)]),
-                new ChatMessage(ChatRole.User, [new ToolApprovalResponseContent(RequestId, approved: true, call)]),
+                new ChatMessage(ChatRole.User, [decision]),
                 new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call1", "result")]),
                 new ChatMessage(ChatRole.User, "next question")
             ]);
 
-        // Assert — the settled pair survives untouched. The call already has a result so it cannot execute again,
-        // and dropping the response would strand the request and break every later turn of a replayed conversation.
+        // Assert — the settled pair remains historical context and cannot execute again.
         var forwarded = capture.Messages!.SelectMany(m => m.Contents).ToList();
         Assert.Contains(forwarded, c => c is ToolApprovalRequestContent);
-        Assert.Contains(forwarded, c => c is ToolApprovalResponseContent { Approved: true });
+        Assert.Same(decision, Assert.Single(forwarded.OfType<ToolApprovalResponseContent>()));
+        Assert.All(forwarded.OfType<ToolApprovalRequestContent>(), r => Assert.False(Assert.IsType<FunctionCallContent>(r.ToolCall).InformationalOnly));
+        Assert.All(forwarded.OfType<ToolApprovalResponseContent>(), r => Assert.False(Assert.IsType<FunctionCallContent>(r.ToolCall).InformationalOnly));
+        Assert.False(call.InformationalOnly);
     }
 
     [Fact]
@@ -834,7 +1234,7 @@ public class ApprovalResponseBindingChatClientTests
 
     private sealed class Capture
     {
-        public IList<ChatMessage>? Messages { get; set; }
+        public List<ChatMessage>? Messages { get; set; }
     }
 
     private static IChatClient CreateCapturingChatClient(Capture capture, string reply = "done")

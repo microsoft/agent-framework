@@ -54,6 +54,7 @@ while (approvalRequests.Count > 0)
         });
 
     // Pass the user input responses back to the agent for further processing.
+    // With the default approval checks, requests left unanswered on the next run are rejected automatically.
     response = await agent.RunAsync(userInputResponses, session);
 
     approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();

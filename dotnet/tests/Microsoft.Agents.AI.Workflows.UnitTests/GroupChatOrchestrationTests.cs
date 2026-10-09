@@ -55,15 +55,20 @@ public class GroupChatOrchestrationTests
     /// <summary>
     /// Round-robin group chat with two participants. The first participant exposes an
     /// <see cref="ApprovalRequiredAIFunction"/> and emits a <see cref="FunctionCallContent"/> for it on
-    /// its first turn. The test denies the approval and asserts that the conversation continues:
-    /// the first agent runs once more (the FICC denial branch produces a final assistant message),
-    /// then the host broadcasts that message and selects the second agent, which produces its own
-    /// reply. This mirrors <c>Handoffs_TwoTransfers_SecondAgentUserApproval_ResponseServedByThirdAgentAsync</c>
+    /// its first turn. The test answers the approval and asserts that the conversation continues:
+    /// the first agent runs once more, then the host broadcasts the answer and result and selects
+    /// the second agent, which produces its own reply without executing the completed call again.
+    /// This mirrors <c>Handoffs_TwoTransfers_SecondAgentUserApproval_ResponseServedByThirdAgentAsync</c>
     /// but on the group-chat path.
     /// </summary>
-    [Fact]
-    public async Task GroupChat_ToolApproval_DeniedResponse_ConversationContinuesAsync()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GroupChat_ToolApproval_Response_ConversationContinuesAsync(bool approved, bool streaming)
     {
+        // Arrange
         int approvalToolCallCount = 0;
 
         const string ApprovalCallId = "approve_call_1";
@@ -118,7 +123,7 @@ public class GroupChatOrchestrationTests
 
         await using (StreamingRun firstRun = await env.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "hello") }))
         {
-            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: streaming)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -145,14 +150,15 @@ public class GroupChatOrchestrationTests
         Assert.True(approvalRequest.ToolCall is FunctionCallContent);
         Assert.Equal(ApprovalToolName, ((FunctionCallContent)approvalRequest.ToolCall).Name);
 
-        // Deny the request and continue the conversation.
-        ExternalResponse denial = pendingRequest.CreateResponse(approvalRequest.CreateResponse(approved: false, reason: "Denied"));
+        // Act
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved, reason: "User decision");
+        ExternalResponse decision = pendingRequest.CreateResponse(approvalResponse);
 
         List<WorkflowEvent> secondRunEvents = [];
         List<ChatMessage>? finalOutput = null;
         await using (StreamingRun resumed = await env.ResumeStreamingAsync(workflow, lastCheckpoint!))
         {
-            await resumed.SendResponseAsync(denial);
+            await resumed.SendResponseAsync(decision);
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -165,16 +171,24 @@ public class GroupChatOrchestrationTests
             }
         }
 
+        // Assert
         Assert.Empty(secondRunEvents.OfType<WorkflowErrorEvent>() ?? []);
         Assert.Empty(secondRunEvents.OfType<ExecutorFailedEvent>() ?? []);
 
-        Assert.Equal(0, approvalToolCallCount);
+        Assert.Equal(approved ? 1 : 0, approvalToolCallCount);
         Assert.True(agent1CallCount >= 2);
         Assert.Equal(1, agent2CallCount);
 
         Assert.NotNull(finalOutput);
         Assert.Contains(finalOutput!, m => m.AuthorName == "agent1");
         Assert.Contains(finalOutput, m => m.AuthorName == "agent2" && m.Text == "agent2 reply");
+        ToolApprovalResponseContent forwardedDecision = Assert.Single(finalOutput.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+        Assert.Equal(approvalResponse.RequestId, forwardedDecision.RequestId);
+        Assert.Equal(approved, forwardedDecision.Approved);
+        Assert.Equal("User decision", forwardedDecision.Reason);
+        Assert.False(Assert.IsType<FunctionCallContent>(forwardedDecision.ToolCall).InformationalOnly);
+        Assert.True(finalOutput.FindIndex(m => m.Contents.Contains(forwardedDecision))
+            < finalOutput.FindIndex(m => m.Contents.OfType<FunctionResultContent>().Any(r => r.CallId == ApprovalCallId)));
     }
 
     /// <summary>

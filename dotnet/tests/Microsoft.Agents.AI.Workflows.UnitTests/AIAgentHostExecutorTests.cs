@@ -291,6 +291,79 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
 
     #region FilterForwardableMessages tests
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Test_AgentHostExecutor_ForwardsExternalApprovalAnswerBeforeResultAsync(
+        bool forwardIncomingMessages, bool streaming)
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "tool"));
+        ToolApprovalResponseContent answer = request.CreateResponse(approved: false, reason: "Denied");
+        List<ChatMessage> agentMessages = [new(ChatRole.Assistant, [request])];
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new(agentMessages, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new()
+        {
+            ForwardIncomingMessages = forwardIncomingMessages,
+            EmitAgentUpdateEvents = streaming,
+        });
+        testContext.ConfigureExecutor(executor);
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+        ExternalRequest pendingRequest = Assert.Single(testContext.ExternalRequests);
+        testContext.QueuedMessages.Clear();
+        agentMessages.Clear();
+        agentMessages.Add(new(ChatRole.Tool, [new FunctionResultContent("call-id", "Rejected")]));
+        agentMessages.Add(new(ChatRole.Assistant, "Done"));
+
+        // Act
+        await executor.Router.RouteMessageAsync(
+            new List<ChatMessage> { new(ChatRole.User, "new question") },
+            testContext.BindWorkflowContext(executor.Id));
+        await executor.Router.RouteMessageAsync(pendingRequest.CreateResponse(answer), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+        ToolApprovalResponseContent forwardedAnswer = Assert.Single(forwardedMessages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+        Assert.Same(answer, forwardedAnswer);
+        Assert.Equal("Denied", forwardedAnswer.Reason);
+        Assert.True(forwardedMessages.FindIndex(m => m.Contents.Contains(forwardedAnswer))
+            < forwardedMessages.FindIndex(m => m.Contents.OfType<FunctionResultContent>().Any()));
+        Assert.Equal(forwardIncomingMessages, forwardedMessages.Any(m => m.Text == "new question"));
+    }
+
+    [Fact]
+    public async Task Test_AgentHostExecutor_DoesNotRebroadcastIncomingApprovalAnswersAsync()
+    {
+        // Arrange
+        ToolApprovalRequestContent request = new("request-id", new FunctionCallContent("call-id", "tool"));
+        ChatMessage incomingAnswer = new(ChatRole.User, [request.CreateResponse(approved: false)]);
+        TestRunContext testContext = new();
+        MixedContentAgent agent = new([new(ChatRole.Assistant, "Reply")], TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new() { ForwardIncomingMessages = false });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.Router.RouteMessageAsync(
+            new List<ChatMessage> { incomingAnswer },
+            testContext.BindWorkflowContext(executor.Id));
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        List<ChatMessage> forwardedMessages = testContext.QueuedMessages[executor.Id]
+            .Select(e => e.Message)
+            .OfType<List<ChatMessage>>()
+            .SelectMany(list => list)
+            .ToList();
+        Assert.Equal("Reply", Assert.Single(forwardedMessages).Text);
+    }
+
     /// <summary>
     /// An agent that returns response messages containing a mix of content types,
     /// including non-portable server-side artifacts like TextReasoningContent and
