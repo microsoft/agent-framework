@@ -15,9 +15,8 @@ public sealed class AgentResponseUpdateEvent : WorkflowOutputEvent
     /// </summary>
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
     /// <param name="update">The agent run response update.</param>
-    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update) : base(update, executorId)
+    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update) : this(executorId, update, tags: null)
     {
-        this.Update = Throw.IfNull(update);
     }
 
     /// <summary>
@@ -26,9 +25,8 @@ public sealed class AgentResponseUpdateEvent : WorkflowOutputEvent
     /// <param name="executorId">The identifier of the executor that generated this event.</param>
     /// <param name="update">The agent run response update.</param>
     /// <param name="tag">The output tag to associate with this event.</param>
-    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update, OutputTag tag) : base(update, executorId, tag)
+    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update, OutputTag tag) : this(executorId, update, [tag])
     {
-        this.Update = Throw.IfNull(update);
     }
 
     /// <summary>
@@ -40,6 +38,11 @@ public sealed class AgentResponseUpdateEvent : WorkflowOutputEvent
     public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update, IEnumerable<OutputTag>? tags) : base(update, executorId, tags)
     {
         this.Update = Throw.IfNull(update);
+        if (!string.IsNullOrEmpty(executorId))
+        {
+            this.Update.AdditionalProperties ??= [];
+            this.Update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId] = executorId;
+        }
     }
 
     /// <summary>
