@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Pause, Play, Square, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Download, Pause, Play, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const AUDIO_UI_TEXT = {
@@ -7,6 +7,7 @@ const AUDIO_UI_TEXT = {
   cancelRecording: "Cancel recording",
   pausePreview: "Pause recording preview",
   playPreview: "Play recording preview",
+  downloadAudio: "Download audio",
   removeRecording: "Remove recording",
   stopRecording: "Stop recording and attach voice message",
   recordingMessage: "Recording voice message",
@@ -122,6 +123,10 @@ export function AudioMessagePreview({
   disabled,
   previewBeforeSend = true,
   onRemove,
+  autoPlay = false,
+  downloadFilename,
+  maxWidth = 760,
+  minWidth = 420,
   className = "",
 }: {
   audio: AudioPreviewData;
@@ -129,15 +134,36 @@ export function AudioMessagePreview({
   disabled?: boolean;
   previewBeforeSend?: boolean;
   onRemove?: () => void;
+  autoPlay?: boolean;
+  downloadFilename?: string;
+  maxWidth?: number;
+  minWidth?: number;
   className?: string;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const lastAutoPlayedUrlRef = useRef<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const duration = Math.max(audio.durationSeconds, 0.01);
   const progress = Math.min(1, Math.max(0, currentTime / duration));
-  const previewWidth = Math.round(Math.min(760, Math.max(420, 320 + duration * 32)));
+  const previewWidth = Math.round(Math.min(maxWidth, Math.max(minWidth, 320 + duration * 32)));
+
+  useEffect(() => {
+    if (!autoPlay || lastAutoPlayedUrlRef.current === audio.blobUrl) {
+      return;
+    }
+
+    const audioElement = audioRef.current;
+    if (!audioElement) {
+      return;
+    }
+
+    lastAutoPlayedUrlRef.current = audio.blobUrl;
+    audioElement.play().catch(() => {
+      setIsPlaying(false);
+    });
+  }, [audio.blobUrl, autoPlay]);
 
   const seekTo = (time: number) => {
     const nextTime = Math.min(duration, Math.max(0, time));
@@ -249,6 +275,17 @@ export function AudioMessagePreview({
           >
             <X className="h-4 w-4" />
           </Button>
+        )}
+        {downloadFilename && (
+          <a
+            href={audio.blobUrl}
+            download={downloadFilename}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={AUDIO_UI_TEXT.downloadAudio}
+            aria-label={AUDIO_UI_TEXT.downloadAudio}
+          >
+            <Download className="h-4 w-4" />
+          </a>
         )}
       </div>
       {previewBeforeSend && isExpanded && (

@@ -15,20 +15,25 @@ import {
   X,
   Clock,
 } from "lucide-react";
-import type { MessageContent } from "@/types/openai";
+import type { MessageContent, MessageOutputFile } from "@/types/openai";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { AudioMessagePreview } from "@/components/ui/audio-message-preview";
 import {
   analyzeAudioBlob,
   createAudioBlobFromBase64,
+  createRecordedAudioFromBase64,
+  createRecordedAudioFromBlob,
   type AudioAnalysis,
   type RecordedAudio,
+  type SupportedAudioFormat,
 } from "@/hooks";
+import { useDevUIStore } from "@/stores/devuiStore";
 
 interface ContentRendererProps {
   content: MessageContent;
   className?: string;
   isStreaming?: boolean;
+  autoPlayAudio?: boolean;
 }
 
 const AUDIO_PREVIEW_CACHE_LIMIT = 25;
@@ -182,17 +187,21 @@ function useBase64ToBlobUrl(data: string | undefined, mimeType: string): string 
 }
 
 // File content renderer (handles both input and output files)
-function FileContentRenderer({ content, className }: ContentRendererProps) {
+function FileContentRenderer({ content, className, autoPlayAudio }: ContentRendererProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
   // Determine file properties (must be before hooks for conditional logic)
   const isFileContent = content.type === "input_file" || content.type === "output_file";
   const fileUrl = isFileContent ? (content.file_url || content.file_data) : undefined;
   const filename = isFileContent ? (content.filename || "file") : undefined;
+  const mimeType = content.type === "output_file" ? content.mime_type : undefined;
 
   // Determine file type from filename or data URI
   const isPdf = filename?.toLowerCase().endsWith(".pdf") || fileUrl?.includes("application/pdf");
-  const isAudio = filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/);
+  const isAudioOutput = content.type === "output_file" && Boolean(
+    filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/) ||
+      mimeType?.startsWith("audio/")
+  );
 
   // Convert base64 to blob URL for PDFs (better browser compatibility)
   // Use file_data (raw base64) if available, otherwise try file_url
@@ -270,18 +279,13 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
   }
 
   // For audio files
-  if (isAudio && fileUrl) {
+  if (isAudioOutput && fileUrl) {
     return (
-      <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-        <div className="flex items-center gap-2 mb-2">
-          <Music className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{filename}</span>
-        </div>
-        <audio controls className="w-full">
-          <source src={fileUrl} />
-          Your browser does not support audio playback.
-        </audio>
-      </div>
+      <OutputAudioFileRenderer
+        content={content as MessageOutputFile}
+        className={className}
+        autoPlay={autoPlayAudio}
+      />
     );
   }
 
@@ -304,6 +308,134 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
           </a>
         )}
       </div>
+    </div>
+  );
+}
+
+function getOutputAudioFormat(content: MessageOutputFile): SupportedAudioFormat | null {
+  const mimeType = content.mime_type?.split(";")[0].trim().toLowerCase();
+  const filename = content.filename.toLowerCase();
+
+  if (mimeType === "audio/wav" || mimeType === "audio/x-wav" || filename.endsWith(".wav")) {
+    return "wav";
+  }
+  if (
+    mimeType === "audio/mpeg" ||
+    mimeType === "audio/mp3" ||
+    mimeType === "audio/x-mpeg" ||
+    filename.endsWith(".mp3")
+  ) {
+    return "mp3";
+  }
+
+  return null;
+}
+
+function audioSourceUrl(content: MessageOutputFile): string | undefined {
+  if (content.file_url) {
+    return content.file_url;
+  }
+  if (content.file_data) {
+    const mimeType = content.mime_type || "audio/mpeg";
+    return content.file_data.startsWith("data:")
+      ? content.file_data
+      : `data:${mimeType};base64,${content.file_data}`;
+  }
+  return undefined;
+}
+
+function OutputAudioFileRenderer({
+  content,
+  className,
+  autoPlay,
+}: {
+  content: MessageOutputFile;
+  className?: string;
+  autoPlay?: boolean;
+}) {
+  const [audioPreview, setAudioPreview] = useState<RecordedAudio | null>(null);
+  const [previewError, setPreviewError] = useState(false);
+  const autoPlayAgentAudio = useDevUIStore((state) => state.audioInput.autoPlayAgentAudio);
+  const format = getOutputAudioFormat(content);
+  const sourceUrl = audioSourceUrl(content);
+  const label = `${content.filename || "Voice message"}${format ? ` (${format.toUpperCase()})` : ""}`;
+
+  useEffect(() => {
+    if (!format || !sourceUrl) {
+      setAudioPreview(null);
+      setPreviewError(true);
+      return;
+    }
+
+    let isCancelled = false;
+    let activePreview: RecordedAudio | null = null;
+
+    setAudioPreview(null);
+    setPreviewError(false);
+
+    const preparePreview = async () => {
+      if (content.file_data || sourceUrl.startsWith("data:")) {
+        return createRecordedAudioFromBase64(sourceUrl, format);
+      }
+
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load audio output: ${response.status}`);
+      }
+      return createRecordedAudioFromBlob(await response.blob(), format);
+    };
+
+    preparePreview()
+      .then((preview) => {
+        if (isCancelled) {
+          URL.revokeObjectURL(preview.blobUrl);
+          return;
+        }
+        activePreview = preview;
+        setAudioPreview(preview);
+      })
+      .catch((error) => {
+        console.error("Failed to prepare output audio preview:", error);
+        if (!isCancelled) {
+          setPreviewError(true);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+      if (activePreview) {
+        URL.revokeObjectURL(activePreview.blobUrl);
+      }
+    };
+  }, [content.file_data, format, sourceUrl]);
+
+  if (audioPreview && !previewError) {
+    return (
+      <AudioMessagePreview
+        audio={audioPreview}
+        label={label}
+        previewBeforeSend
+        autoPlay={Boolean(autoPlay && autoPlayAgentAudio)}
+        downloadFilename={content.filename}
+        maxWidth={460}
+        minWidth={320}
+        className={`my-2 bg-card text-card-foreground ${className || ""}`}
+      />
+    );
+  }
+
+  return (
+    <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <Music className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">{label}</span>
+      </div>
+      {sourceUrl && (
+        <audio controls className="w-full">
+          <source src={sourceUrl} type={content.mime_type} />
+          Your browser does not support audio playback.
+        </audio>
+      )}
     </div>
   );
 }
@@ -497,7 +629,7 @@ function FunctionApprovalRequestRenderer({ content, className }: ContentRenderer
 }
 
 // Main content renderer that delegates to specific renderers
-export function OpenAIContentRenderer({ content, className, isStreaming }: ContentRendererProps) {
+export function OpenAIContentRenderer({ content, className, isStreaming, autoPlayAudio }: ContentRendererProps) {
   switch (content.type) {
     case "text":
     case "input_text":
@@ -509,7 +641,7 @@ export function OpenAIContentRenderer({ content, className, isStreaming }: Conte
       return <ImageContentRenderer content={content} className={className} />;
     case "input_file":
     case "output_file":
-      return <FileContentRenderer content={content} className={className} />;
+      return <FileContentRenderer content={content} className={className} autoPlayAudio={autoPlayAudio} />;
     case "input_audio":
       return <AudioContentRenderer content={content} className={className} />;
     case "output_data":

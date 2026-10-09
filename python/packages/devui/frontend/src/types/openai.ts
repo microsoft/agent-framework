@@ -582,6 +582,7 @@ export interface MessageOutputFile {
   file_url?: string;
   file_data?: string; // base64
   mime_type: string;
+  auto_play?: boolean;
 }
 
 export interface MessageOutputData {

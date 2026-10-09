@@ -207,6 +207,41 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
     assert "TestCity" in full_json
 
 
+async def test_audio_data_content_maps_to_visible_output_file(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    """Agent audio output should stream as a visible output_file item."""
+    update = create_test_agent_update([Content.from_data(data=b"mp3-bytes", media_type="audio/mpeg")])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.type == "response.output_item.added"
+    assert event.item.type == "output_file"
+    assert event.item.filename == "output.mp3"
+    assert event.item.mime_type == "audio/mpeg"
+    assert event.item.file_url == "data:audio/mpeg;base64,bXAzLWJ5dGVz"
+    assert event.item.file_data == "bXAzLWJ5dGVz"
+
+
+async def test_audio_data_content_is_preserved_in_final_response(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    """Agent audio output should be present in non-streaming final responses."""
+    update = create_test_agent_update([Content.from_data(data=b"mp3-bytes", media_type="audio/mpeg")])
+    events = await mapper.convert_event(update, test_request)
+
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    output_files = [item for item in response.output if getattr(item, "type", None) == "output_file"]
+    assert len(output_files) == 1
+    assert output_files[0].mime_type == "audio/mpeg"
+    assert output_files[0].file_data == "bXAzLWJ5dGVz"
+
+
 async def test_streaming_function_call_mapping_adds_item_once(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:

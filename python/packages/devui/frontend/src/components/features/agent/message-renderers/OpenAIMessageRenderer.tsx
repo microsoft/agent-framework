@@ -24,7 +24,6 @@ export function OpenAIMessageRenderer({
     // Determine if message is actively streaming
     const isStreaming = item.status === "in_progress";
     const hasContent = item.content.length > 0;
-
     return (
       <div className={className}>
         {item.content.map((content, index) => (
@@ -33,6 +32,7 @@ export function OpenAIMessageRenderer({
             content={content}
             className={index > 0 ? "mt-2" : ""}
             isStreaming={isStreaming}
+            autoPlayAudio={content.type === "output_file" && content.auto_play}
           />
         ))}
 

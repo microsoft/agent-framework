@@ -32,11 +32,14 @@ from openai.types.shared import Metadata, ResponsesModel
 from ._discovery_models import Deployment, DeploymentConfig, DeploymentEvent, DiscoveryResponse, EntityInfo
 from ._openai_custom import (
     AgentFrameworkRequest,
+    CustomResponseCompletedEvent,
+    CustomResponseFailedEvent,
     CustomResponseOutputItemAddedEvent,
     CustomResponseOutputItemDoneEvent,
     ExecutorActionItem,
     MetaResponse,
     OpenAIError,
+    OpenAIResponse,
     ResponseFunctionResultComplete,
     ResponseOutputData,
     ResponseOutputFile,
@@ -46,15 +49,14 @@ from ._openai_custom import (
     ResponseWorkflowEventComplete,
 )
 
-# Type alias for compatibility
-OpenAIResponse = Response
-
 # Export all types for easy importing
 __all__ = [
     "AgentFrameworkRequest",
     "Conversation",
     "ConversationDeletedResource",
     "ConversationItem",
+    "CustomResponseCompletedEvent",
+    "CustomResponseFailedEvent",
     "CustomResponseOutputItemAddedEvent",
     "CustomResponseOutputItemDoneEvent",
     "Deployment",

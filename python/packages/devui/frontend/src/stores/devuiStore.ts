@@ -90,6 +90,7 @@ interface DevUIState {
     noiseSuppression: boolean;
     autoGainControl: boolean;
     previewBeforeSend: boolean;
+    autoPlayAgentAudio: boolean;
   };
 
   // Debug Panel Preferences (persisted)
@@ -295,6 +296,7 @@ export const useDevUIStore = create<DevUIStore>()(
           noiseSuppression: true,
           autoGainControl: true,
           previewBeforeSend: true,
+          autoPlayAgentAudio: false,
         },
 
         // Debug Panel Preferences (persisted)

@@ -26,13 +26,14 @@ from openai.types.responses import (
 
 from .models import (
     AgentFrameworkRequest,
+    CustomResponseCompletedEvent,
+    CustomResponseFailedEvent,
     CustomResponseOutputItemAddedEvent,
     CustomResponseOutputItemDoneEvent,
     ExecutorActionItem,
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
-    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -62,6 +63,7 @@ EventType = Union[
     ResponseStreamEvent,
     ResponseWorkflowEventComplete,
     ResponseOutputItemAddedEvent,
+    CustomResponseOutputItemAddedEvent,
     ResponseTraceEventComplete,
 ]
 
@@ -321,6 +323,7 @@ class MessageMapper:
 
             # Track complete message items that do not use the text-delta lifecycle.
             complete_messages: dict[str, ResponseOutputMessage] = {}
+            custom_output_items: list[Any] = []
 
             for event in events:
                 event_type = getattr(event, "type", None)
@@ -385,6 +388,8 @@ class MessageMapper:
                                     message_order.append(item.id)
                                 if item.content:
                                     complete_messages[item.id] = item
+                        elif item_type in {"output_image", "output_file", "output_data"}:
+                            custom_output_items.append(item)
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":
@@ -449,6 +454,8 @@ class MessageMapper:
                 )
                 output_items.append(response_output_message)
 
+            output_items.extend(custom_output_items)
+
             # If no output items at all, create an empty message
             if not output_items and failed_response is None:
                 response_output_text = ResponseOutputText(type="output_text", text="", annotations=[])
@@ -494,7 +501,7 @@ class MessageMapper:
 
     async def finalize_stream(
         self, events: Sequence[Any], request: AgentFrameworkRequest
-    ) -> ResponseCompletedEvent | ResponseFailedEvent:
+    ) -> CustomResponseCompletedEvent | CustomResponseFailedEvent:
         """Create the single terminal event for a mapped response stream."""
         final_response = await self.aggregate_to_response(events, request)
 
@@ -508,13 +515,13 @@ class MessageMapper:
                 break
 
         if final_response.status == "failed":
-            return ResponseFailedEvent(
+            return CustomResponseFailedEvent(
                 type="response.failed",
                 response=final_response,
                 sequence_number=last_sequence_number + 1,
             )
 
-        return ResponseCompletedEvent(
+        return CustomResponseCompletedEvent(
             type="response.completed",
             response=final_response,
             sequence_number=last_sequence_number + 1,
@@ -1613,7 +1620,7 @@ class MessageMapper:
 
     async def _map_data_content(
         self, content: Any, context: dict[str, Any]
-    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+    ) -> CustomResponseOutputItemAddedEvent | ResponseTraceEventComplete:
         """Map DataContent to proper output item (image/file/data) or fallback to trace.
 
         Maps Agent Framework DataContent to appropriate output types:
@@ -1622,7 +1629,11 @@ class MessageMapper:
         - Generic data → ResponseOutputData
         - Unknown/debugging content → ResponseTraceEventComplete (fallback)
         """
-        mime_type = getattr(content, "mime_type", "application/octet-stream")
+        mime_type = (
+            getattr(content, "media_type", None)
+            or getattr(content, "mime_type", None)
+            or "application/octet-stream"
+        )
         item_id = f"item_{uuid.uuid4().hex[:16]}"
 
         # Extract data/uri
@@ -1654,9 +1665,9 @@ class MessageMapper:
                     sequence_number=self._next_sequence(context),
                 )
 
-            return ResponseOutputItemAddedEvent(
+            return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(  # type: ignore[arg-type]
+                item=ResponseOutputImage(
                     id=item_id,
                     type="output_image",
                     image_url=image_url,
@@ -1689,7 +1700,7 @@ class MessageMapper:
             # Prefer URI
             if uri_value:
                 file_url = uri_value
-                file_data = None
+                file_data = uri_value.split(",", 1)[1] if uri_value.startswith("data:") and "," in uri_value else None
             elif data_value:
                 # Convert bytes to base64
                 import base64
@@ -1711,9 +1722,9 @@ class MessageMapper:
                     sequence_number=self._next_sequence(context),
                 )
 
-            return ResponseOutputItemAddedEvent(
+            return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(  # type: ignore[arg-type]
+                item=ResponseOutputFile(
                     id=item_id,
                     type="output_file",
                     filename=filename,
@@ -1741,9 +1752,9 @@ class MessageMapper:
             else:
                 data_str = str(data_value)
 
-        return ResponseOutputItemAddedEvent(
+        return CustomResponseOutputItemAddedEvent(
             type="response.output_item.added",
-            item=ResponseOutputData(  # type: ignore[arg-type]
+            item=ResponseOutputData(
                 id=item_id,
                 type="output_data",
                 data=data_str,
@@ -1756,7 +1767,7 @@ class MessageMapper:
 
     async def _map_uri_content(
         self, content: Any, context: dict[str, Any]
-    ) -> ResponseOutputItemAddedEvent | ResponseTraceEventComplete:
+    ) -> CustomResponseOutputItemAddedEvent | ResponseTraceEventComplete:
         """Map UriContent to proper output item (image/file) based on MIME type.
 
         UriContent has a URI and MIME type, so we can create appropriate output items:
@@ -1764,7 +1775,7 @@ class MessageMapper:
         - Common files → ResponseOutputFile
         - Other URIs → ResponseTraceEventComplete (fallback for debugging)
         """
-        mime_type = getattr(content, "mime_type", "text/plain")
+        mime_type = getattr(content, "media_type", None) or getattr(content, "mime_type", None) or "text/plain"
         uri = getattr(content, "uri", "")
         item_id = f"item_{uuid.uuid4().hex[:16]}"
 
@@ -1781,9 +1792,9 @@ class MessageMapper:
 
         # Handle images
         if mime_type.startswith("image/"):
-            return ResponseOutputItemAddedEvent(
+            return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(  # type: ignore[arg-type]
+                item=ResponseOutputImage(
                     id=item_id,
                     type="output_image",
                     image_url=uri,
@@ -1810,9 +1821,9 @@ class MessageMapper:
             # Extract filename from URI or use generic name
             filename = uri.split("/")[-1] if "/" in uri else f"output.{mime_type.split('/')[-1]}"
 
-            return ResponseOutputItemAddedEvent(
+            return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(  # type: ignore[arg-type]
+                item=ResponseOutputFile(
                     id=item_id,
                     type="output_file",
                     filename=filename,

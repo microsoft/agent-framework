@@ -29,6 +29,7 @@ export const SUPPORTED_INPUT_AUDIO_ACCEPT = "audio/wav,audio/x-wav,audio/mpeg,au
 
 const MP3_MEDIA_TYPES = new Set(["audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"]);
 const AUDIO_FILE_EXTENSION_PATTERN = /\.(aac|flac|m4a|mp3|ogg|wav)$/i;
+const MICROPHONE_WARMUP_MS = 600;
 
 function getAudioContextConstructor(): typeof AudioContext | undefined {
   return window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -238,6 +239,7 @@ export async function createRecordedAudioFromBase64(
 
 export function useAudioRecorder(options: AudioRecorderOptions) {
   const [isRecording, setIsRecording] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -247,6 +249,7 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number>(0);
   const intervalRef = useRef<number | null>(null);
+  const warmupTimeoutRef = useRef<number | null>(null);
   const cancelledRef = useRef(false);
 
   const isSupported = useMemo(() => {
@@ -270,6 +273,13 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     streamRef.current = null;
   }, []);
 
+  const clearWarmupTimer = useCallback(() => {
+    if (warmupTimeoutRef.current !== null) {
+      window.clearTimeout(warmupTimeoutRef.current);
+      warmupTimeoutRef.current = null;
+    }
+  }, []);
+
   const startRecording = useCallback(async () => {
     if (!isSupported) {
       setError("Microphone input requires a supported browser and a secure context (localhost or HTTPS).");
@@ -277,6 +287,7 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     }
 
     setError(null);
+    setIsStarting(true);
     chunksRef.current = [];
     cancelledRef.current = false;
 
@@ -299,33 +310,45 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
         }
       };
 
+      recorder.onstart = () => {
+        warmupTimeoutRef.current = window.setTimeout(() => {
+          if (cancelledRef.current) {
+            return;
+          }
+
+          startedAtRef.current = Date.now();
+          setRecordingSeconds(0);
+          setIsRecording(true);
+          setIsStarting(false);
+
+          intervalRef.current = window.setInterval(() => {
+            setRecordingSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
+          }, 250);
+        }, MICROPHONE_WARMUP_MS);
+      };
+
       streamRef.current = stream;
       mediaRecorderRef.current = recorder;
-      startedAtRef.current = Date.now();
-      setRecordingSeconds(0);
-      setIsRecording(true);
-
-      intervalRef.current = window.setInterval(() => {
-        setRecordingSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
-      }, 250);
 
       recorder.start();
     } catch (recordingError) {
       releaseStream();
       setIsRecording(false);
+      setIsStarting(false);
       setError(recordingError instanceof Error ? recordingError.message : "Microphone permission was denied.");
     }
   }, [isSupported, options, releaseStream]);
 
   const stopRecording = useCallback(async (): Promise<RecordedAudio | null> => {
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder || recorder.state === "inactive" || isStarting) {
       return null;
     }
 
     return new Promise((resolve, reject) => {
       recorder.onstop = async () => {
         clearTimer();
+        clearWarmupTimer();
         setIsRecording(false);
         setIsProcessing(true);
         releaseStream();
@@ -368,20 +391,30 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
 
       recorder.stop();
     });
-  }, [clearTimer, options.maxDurationSeconds, options.maxPayloadBytes, options.sampleRate, releaseStream]);
+  }, [
+    clearTimer,
+    clearWarmupTimer,
+    isStarting,
+    options.maxDurationSeconds,
+    options.maxPayloadBytes,
+    options.sampleRate,
+    releaseStream,
+  ]);
 
   const cancelRecording = useCallback(() => {
     cancelledRef.current = true;
+    clearTimer();
+    clearWarmupTimer();
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
-    clearTimer();
     releaseStream();
     setIsRecording(false);
+    setIsStarting(false);
     setRecordingSeconds(0);
     chunksRef.current = [];
-  }, [clearTimer, releaseStream]);
+  }, [clearTimer, clearWarmupTimer, releaseStream]);
 
   useEffect(() => {
     return () => {
@@ -392,6 +425,7 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
   return {
     isSupported,
     isRecording,
+    isStarting,
     isProcessing,
     recordingSeconds,
     error,

@@ -30,7 +30,6 @@ import { useDevUIStore } from "@/stores";
 import { AudioMessagePreview, RecordingBar } from "@/components/ui/audio-message-preview";
 import type { ResponseInputContent, ResponseInputTextParam, ResponseInputImageParam, ResponseInputFileParam, ResponseInputAudioParam } from "@/types/agent-framework";
 
-const AUDIO_WARNING_MESSAGE = "DevUI sends audio directly without transcription. Text-only agents may reject or ignore it.";
 const UNSUPPORTED_AUDIO_UPLOAD_MESSAGE = "Only WAV and MP3 audio uploads can be sent as agent audio input.";
 
 export interface ChatMessageInputProps {
@@ -77,6 +76,7 @@ export function ChatMessageInput({
   const {
     isSupported: isAudioSupported,
     isRecording,
+    isStarting: isStartingAudio,
     isProcessing: isProcessingAudio,
     recordingSeconds,
     error: audioError,
@@ -449,6 +449,10 @@ export function ChatMessageInput({
   };
 
   const handleAudioButtonClick = async () => {
+    if (isStartingAudio) {
+      return;
+    }
+
     if (isRecording) {
       try {
         const recording = await stopRecording();
@@ -461,7 +465,7 @@ export function ChatMessageInput({
       return;
     }
 
-    await startRecording();
+    void startRecording();
   };
 
   const handleRemoveAudioRecording = () => {
@@ -477,6 +481,7 @@ export function ChatMessageInput({
     !disabled &&
     !isSubmitting &&
     !isStreaming &&
+    !isStartingAudio &&
     !isRecording &&
     !isProcessingAudio &&
     (inputValue.trim() || attachments.length > 0 || pendingAudio);
@@ -487,12 +492,15 @@ export function ChatMessageInput({
     !disabled &&
     !isSubmitting &&
     !isStreaming &&
+    !isStartingAudio &&
     !isProcessingAudio;
 
   const audioButtonTitle = !audioInput.enabled
     ? "Microphone input is disabled in settings"
     : !isAudioSupported
     ? "Microphone input requires a supported browser and localhost or HTTPS"
+    : isStartingAudio
+    ? "Preparing microphone"
     : isRecording
     ? "Stop recording"
     : "Record voice message";
@@ -545,7 +553,7 @@ export function ChatMessageInput({
         </div>
       )}
 
-      {(pendingAudio || isProcessingAudio || audioError) && (
+      {(pendingAudio || isStartingAudio || isProcessingAudio || audioError) && (
         <div className="mb-3 space-y-2">
           {pendingAudio && (
             <AudioMessagePreview
@@ -556,6 +564,12 @@ export function ChatMessageInput({
               onRemove={handleRemoveAudioRecording}
             />
           )}
+          {isStartingAudio && (
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-2 text-sm text-muted-foreground">
+              <LoadingSpinner size="sm" />
+              Preparing microphone...
+            </div>
+          )}
           {isProcessingAudio && (
             <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-2 text-sm text-muted-foreground">
               <LoadingSpinner size="sm" />
@@ -565,11 +579,6 @@ export function ChatMessageInput({
           {audioError && (
             <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-2 text-xs text-orange-700 dark:text-orange-300">
               {audioError}
-            </div>
-          )}
-          {pendingAudio && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
-              {AUDIO_WARNING_MESSAGE}
             </div>
           )}
         </div>
@@ -619,7 +628,7 @@ export function ChatMessageInput({
                 title={audioButtonTitle}
                 aria-label={audioButtonTitle}
               >
-                {isProcessingAudio ? (
+                {isStartingAudio || isProcessingAudio ? (
                   <LoadingSpinner size="sm" />
                 ) : (
                   <Mic className="h-4 w-4" />

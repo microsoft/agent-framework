@@ -1518,12 +1518,19 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                     mime_type: item.mime_type,
                   } as import("@/types/openai").MessageOutputImage;
                 } else if (item.type === "output_file") {
+                  const outputFileItem = item as import("@/types/openai").ResponseOutputFileItem;
+                  const shouldAutoPlay =
+                    outputFileItem.mime_type.startsWith("audio/") &&
+                    !existingContent.some(
+                      (content) => content.type === "output_file" && content.mime_type.startsWith("audio/")
+                    );
                   newContent = {
                     type: "output_file",
-                    filename: item.filename,
-                    file_url: item.file_url,
-                    file_data: item.file_data,
-                    mime_type: item.mime_type,
+                    filename: outputFileItem.filename,
+                    file_url: outputFileItem.file_url,
+                    file_data: outputFileItem.file_data,
+                    mime_type: outputFileItem.mime_type,
+                    auto_play: shouldAutoPlay,
                   } as import("@/types/openai").MessageOutputFile;
                 } else if (item.type === "output_data") {
                   newContent = {
@@ -1759,7 +1766,16 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                   } else if (content.type === "output_image") {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
                   } else if (content.type === "output_file") {
-                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputFile);
+                    const outputFile = content as unknown as import("@/types/openai").MessageOutputFile;
+                    assistantContent.push({
+                      ...outputFile,
+                      auto_play:
+                        outputFile.mime_type.startsWith("audio/") &&
+                        !assistantContent.some(
+                          (existingContent) =>
+                            existingContent.type === "output_file" && existingContent.mime_type.startsWith("audio/")
+                        ),
+                    });
                   } else if (content.type === "output_data") {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputData);
                   }
