@@ -734,14 +734,14 @@ class DeclarativeWorkflowState:
             evaluated_args: list[str] = []
             for arg in args:
                 arg = arg.strip()
-                if arg.startswith('"') and arg.endswith('"'):
+                if re.fullmatch(r'"(?:[^"]|"")*"', arg):
                     # String literal
-                    evaluated_args.append(arg[1:-1])
+                    evaluated_args.append(arg[1:-1].replace('""', '"'))
                 elif arg.startswith("'") and arg.endswith("'"):
                     # Single-quoted string literal
                     evaluated_args.append(arg[1:-1])
                 else:
-                    # Variable reference - evaluate it
+                    # Variable reference or expression - evaluate it
                     result = self.eval(f"={arg}")
                     evaluated_args.append(str(result) if result is not None else "")
             return "".join(evaluated_args)
