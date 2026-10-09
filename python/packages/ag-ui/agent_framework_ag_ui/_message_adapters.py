@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import logging
+from collections import Counter
 from typing import Any, cast, get_args
 
 from agent_framework import (
@@ -54,7 +55,8 @@ def _append_synthetic_tool_results(
     excluded_tool_call_ids: set[str] | None = None,
 ) -> None:
     excluded_tool_call_ids = excluded_tool_call_ids or set()
-    for pending_call_id in pending_tool_call_ids:
+    # A call ID awaiting several occurrences still gets a single synthetic result.
+    for pending_call_id in dict.fromkeys(pending_tool_call_ids):
         if pending_call_id in excluded_tool_call_ids:
             logger.info("Not injecting synthetic tool result for non-abandoned call_id=%s", pending_call_id)
             continue
@@ -72,26 +74,29 @@ def _append_synthetic_tool_results(
         )
 
 
-def _ordered_unique_tool_call_ids(contents: list[Content]) -> list[str]:
-    tool_ids: list[str] = []
-    seen: set[str] = set()
-    for content in contents:
-        if content.type != "function_call" or not content.call_id:
-            continue
-        tool_id = str(content.call_id)
-        if tool_id in seen:
-            continue
-        tool_ids.append(tool_id)
-        seen.add(tool_id)
-    return tool_ids
+def _tool_call_ids_per_occurrence(contents: list[Content]) -> list[str]:
+    """Return one call ID per function call, so a call ID reused by several occurrences awaits each result."""
+    return [str(content.call_id) for content in contents if content.type == "function_call" and content.call_id]
 
 
-def _function_result_call_ids(messages: list[Message]) -> set[str]:
+def _answered_call_ids_from(messages: list[Message], start: int) -> set[str]:
+    """Return call IDs that get a function result from ``start`` on, before the call ID is declared again.
+
+    A result from an earlier turn belongs to that turn's occurrence, and a result after the call ID
+    is declared again belongs to the later occurrence, so neither answers the pending occurrence.
+    """
     result_ids: set[str] = set()
-    for msg in messages:
+    redeclared_ids: set[str] = set()
+    for msg in messages[start:]:
+        is_assistant = get_role_value(msg) == "assistant"
         for content in msg.contents or []:
-            if content.type == "function_result" and content.call_id:
-                result_ids.add(str(content.call_id))
+            if not content.call_id:
+                continue
+            call_id = str(content.call_id)
+            if content.type == "function_call" and is_assistant:
+                redeclared_ids.add(call_id)
+            elif content.type == "function_result" and call_id not in redeclared_ids:
+                result_ids.add(call_id)
     return result_ids
 
 
@@ -104,9 +109,13 @@ def _sanitize_tool_history(
     sanitized: list[Message] = []
     pending_tool_call_ids: list[str] | None = None
     pending_confirm_changes_id: str | None = None
-    non_abandoned_tool_call_ids = set(protected_tool_call_ids or set()) | _function_result_call_ids(messages)
+    protected_ids = set(protected_tool_call_ids or set())
 
-    for msg in messages:
+    def non_abandoned_tool_call_ids(start: int) -> set[str]:
+        """Protected calls and calls answered from ``start`` on; earlier turns do not count."""
+        return protected_ids | _answered_call_ids_from(messages, start)
+
+    for idx, msg in enumerate(messages):
         role_value = get_role_value(msg)
 
         if role_value == "assistant":
@@ -119,12 +128,12 @@ def _sanitize_tool_history(
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - assistant continued before the tool result was available.",
-                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
 
-            tool_ids = _ordered_unique_tool_call_ids(msg.contents or [])
+            tool_ids = _tool_call_ids_per_occurrence(msg.contents or [])
             confirm_changes_call = None
             for content in msg.contents or []:
                 if content.type == "function_call" and content.name == "confirm_changes":
@@ -246,7 +255,7 @@ def _sanitize_tool_history(
                     sanitized,
                     pending_tool_call_ids,
                     "Tool execution skipped - user provided follow-up message",
-                    excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                    excluded_tool_call_ids=non_abandoned_tool_call_ids(idx + 1),
                 )
                 pending_tool_call_ids = None
                 pending_confirm_changes_id = None
@@ -264,12 +273,11 @@ def _sanitize_tool_history(
                     call_id = str(content.call_id)
                     if call_id in pending_tool_call_ids:
                         keep = True
-                        # Remove the call_id from pending since we now have its result.
+                        # Remove one pending occurrence of the call_id since we now have its result.
                         # This prevents duplicate synthetic "skipped" results from being
-                        # injected when a user message arrives later.
-                        pending_tool_call_ids = [
-                            pending_id for pending_id in pending_tool_call_ids if pending_id != call_id
-                        ]
+                        # injected when a user message arrives later, while later occurrences
+                        # that reuse the call_id still wait for their own results.
+                        pending_tool_call_ids.remove(call_id)
                         if call_id == pending_confirm_changes_id:
                             pending_confirm_changes_id = None
                         break
@@ -287,7 +295,7 @@ def _sanitize_tool_history(
                 sanitized,
                 pending_tool_call_ids,
                 "Tool execution skipped - conversation continued before the tool result was available.",
-                excluded_tool_call_ids=non_abandoned_tool_call_ids,
+                excluded_tool_call_ids=non_abandoned_tool_call_ids(idx),
             )
 
         sanitized.append(msg)
@@ -303,7 +311,7 @@ def _sanitize_tool_history(
             sanitized,
             pending_tool_call_ids,
             "Tool execution skipped - conversation ended before the tool result was available.",
-            excluded_tool_call_ids=non_abandoned_tool_call_ids,
+            excluded_tool_call_ids=non_abandoned_tool_call_ids(len(messages)),
         )
 
     return sanitized
@@ -313,38 +321,48 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
     """Remove duplicate messages while preserving order."""
     seen_keys: dict[Any, int] = {}
     unique_messages: list[Message] = []
+    # A provider call ID can be reused by several function calls, in one assistant message or in a
+    # later turn. Each declared occurrence opens one result slot, so every occurrence keeps its own
+    # result while replayed results beyond the open slots are dropped.
+    open_result_slots: Counter[str] = Counter()
+    declared_call_ids: set[str] = set()
+    tool_result_indexes: dict[str, list[int]] = {}
 
     for idx, msg in enumerate(messages):
         role_value = get_role_value(msg)
 
         if role_value == "tool" and msg.contents and msg.contents[0].type == "function_result":
             call_id = str(msg.contents[0].call_id)
-            key: Any = (role_value, call_id)
+            kept_indexes = tool_result_indexes.setdefault(call_id, [])
 
-            if key in seen_keys:
-                existing_idx = seen_keys[key]
-                existing_msg = unique_messages[existing_idx]
-
-                existing_result = None
-                if existing_msg.contents and existing_msg.contents[0].type == "function_result":
-                    existing_result = existing_msg.contents[0].result
+            if open_result_slots[call_id] > 0:
+                open_result_slots[call_id] -= 1
+            elif call_id in declared_call_ids or kept_indexes:
                 new_result = msg.contents[0].result
+                for existing_idx in kept_indexes:
+                    existing_msg = unique_messages[existing_idx]
+                    existing_result = None
+                    if existing_msg.contents and existing_msg.contents[0].type == "function_result":
+                        existing_result = existing_msg.contents[0].result
 
-                if (not existing_result or existing_result == "") and new_result:
-                    logger.info(f"Replacing empty tool result at index {existing_idx} with data from index {idx}")
-                    unique_messages[existing_idx] = msg
+                    if (not existing_result or existing_result == "") and new_result:
+                        logger.info(f"Replacing empty tool result at index {existing_idx} with data from index {idx}")
+                        unique_messages[existing_idx] = msg
+                        break
                 else:
                     logger.info(f"Skipping duplicate tool result at index {idx}: call_id={call_id}")
                 continue
 
-            seen_keys[key] = len(unique_messages)
+            kept_indexes.append(len(unique_messages))
             unique_messages.append(msg)
 
         elif role_value == "assistant" and msg.contents and any(c.type == "function_call" for c in msg.contents):
             tool_call_ids = tuple(
                 sorted(str(c.call_id) for c in msg.contents if c.type == "function_call" and c.call_id)
             )
-            key = (role_value, tool_call_ids)
+            # As for other messages, a shared message_id marks a replay of the same message, while a
+            # later turn reusing the same call IDs arrives as a distinct message.
+            key: Any = ("id", msg.message_id) if msg.message_id else (role_value, tool_call_ids)
 
             if key in seen_keys:
                 logger.info(f"Skipping duplicate assistant tool call at index {idx}")
@@ -352,6 +370,8 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
 
             seen_keys[key] = len(unique_messages)
             unique_messages.append(msg)
+            open_result_slots.update(tool_call_ids)
+            declared_call_ids.update(tool_call_ids)
 
         else:
             # Use message_id for deduplication when available — two messages with the
