@@ -307,7 +307,9 @@
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowEval/Evaluation_WorkflowEval.csproj" />
     <Project Path="samples/03-workflows/Evaluation/Evaluation_WorkflowExpectedOutputs/Evaluation_WorkflowExpectedOutputs.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/" />
+  <Folder Name="/Samples/04-hosting/">
+    <Project Path="samples/04-hosting/ContainerWorkflow/ContainerWorkflow.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/af-hosting/">
     <File Path="samples/04-hosting/af-hosting/README.md" />
   </Folder>
