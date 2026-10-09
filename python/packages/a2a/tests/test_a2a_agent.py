@@ -2874,3 +2874,83 @@ async def test_context_manager_closes_self_created_http_client() -> None:
             pass
 
         mock_http_client.aclose.assert_called_once()
+
+
+def _forwarding_agent(mock_a2a_client: MockA2AClient, forwarded_kwargs: list[str] | None) -> A2AAgent:
+    return A2AAgent(
+        name="Test Agent",
+        id="test-agent",
+        client=cast(Any, mock_a2a_client),
+        http_client=None,
+        forwarded_kwargs=forwarded_kwargs,
+    )
+
+
+async def test_run_forwards_selected_kwargs_in_request_metadata(mock_a2a_client: MockA2AClient) -> None:
+    """Only keys named in forwarded_kwargs are sent, grouped by their source kwargs, in the request metadata."""
+    agent = _forwarding_agent(mock_a2a_client, ["tenant", "trace"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run(
+        "Hello",
+        function_invocation_kwargs={"tenant": "acme", "secret": "do-not-send"},
+        client_kwargs={"trace": {"id": "abc"}, "other": 1},
+    )
+
+    assert MessageToDict(mock_a2a_client.last_request.metadata) == {
+        "agent_framework": {
+            "function_invocation_kwargs": {"tenant": "acme"},
+            "client_kwargs": {"trace": {"id": "abc"}},
+        }
+    }
+    assert not mock_a2a_client.last_message.metadata
+
+
+async def test_run_forwards_nothing_by_default(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await a2a_agent.run("Hello", function_invocation_kwargs={"tenant": "acme"}, client_kwargs={"trace": "abc"})
+
+    assert not mock_a2a_client.last_request.metadata
+
+
+async def test_run_forwards_nothing_when_selected_keys_absent(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run("Hello", client_kwargs={"trace": "abc"})
+
+    assert not mock_a2a_client.last_request.metadata
+
+
+async def test_run_rejects_non_json_forwarded_values(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+
+    with raises(AgentInvalidRequestException):
+        await agent.run("Hello", function_invocation_kwargs={"tenant": object()})
+
+    assert mock_a2a_client.call_count == 0
+
+
+@mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), -float("inf"), 2**53 + 1, -(2**53) - 1, 10**400, "\ud800"],
+    ids=["nan", "inf", "-inf", "int-too-large", "int-too-small", "int-overflow", "unpaired-surrogate"],
+)
+async def test_run_rejects_values_protobuf_struct_cannot_carry(mock_a2a_client: MockA2AClient, value: Any) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+
+    with raises(AgentInvalidRequestException):
+        await agent.run("Hello", function_invocation_kwargs={"tenant": value})
+
+    assert mock_a2a_client.call_count == 0
+
+
+async def test_run_forwards_integers_at_the_exact_boundary(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["count"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run("Hello", client_kwargs={"count": 2**53})
+
+    forwarded = MessageToDict(mock_a2a_client.last_request.metadata)["agent_framework"]["client_kwargs"]
+    assert forwarded == {"count": float(2**53)}
