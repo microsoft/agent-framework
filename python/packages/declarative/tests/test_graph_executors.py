@@ -724,6 +724,83 @@ class TestParseValueExecutor:
         result = state.get("Local.parsedValue")
         assert result == 3.14
 
+    @pytest.mark.parametrize("target_type", ["number", "float", "decimal"])
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1e3", 1000.0),
+            ("1E+3", 1000.0),
+            ("-2e-2", -0.02),
+            (" 6e1 ", 60.0),
+            ("3.5e2", 350.0),
+            ("1208925819614629174706177", 1208925819614629174706177),
+            ("123", 123),
+            ("-123", -123),
+            ("3.14", 3.14),
+            ("0", 0),
+            ("", 0),
+            ("not-a-number", 0),
+            ("1e", 0),
+            ("1e309", 0),
+            ("-1e309", 0),
+            ("inf", 0),
+            ("nan", 0),
+        ],
+    )
+    async def test_parse_value_numeric_strings(self, mock_context, mock_state, target_type, raw_value, expected):
+        """Parse scientific notation while retaining integer precision and invalid-input behavior."""
+        from agent_framework_declarative._workflows._executors_basic import ParseValueExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        executor = ParseValueExecutor({
+            "kind": "ParseValue",
+            "variable": "Local.parsedValue",
+            "value": raw_value,
+            "valueType": target_type,
+        })
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.parsedValue")
+        assert result == expected
+        assert type(result) is type(expected)
+
+    @_requires_powerfx
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1e3", "1000.0"),
+            ("1E+3", "1000.0"),
+            ("-2e-2", "-0.02"),
+            (" 6e1 ", "60.0"),
+            ("3.5e2", "350.0"),
+            ("1208925819614629174706177", "1208925819614629174706177"),
+            ("", "0"),
+            ("not-a-number", "0"),
+            ("1e309", "0"),
+            ("-1e309", "0"),
+        ],
+    )
+    async def test_factory_parse_value_numeric_input(self, raw_value, expected):
+        """Caller-supplied numeric strings reach workflow output without becoming zero."""
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "name": "parse_numeric_input",
+            "actions": [
+                {
+                    "kind": "ParseValue",
+                    "id": "parse",
+                    "variable": "Local.parsedValue",
+                    "value": "=Workflow.Inputs.raw",
+                    "valueType": "number",
+                },
+                {"kind": "SendActivity", "id": "send", "activity": "parsed={Local.parsedValue}"},
+            ],
+        })
+
+        result = await workflow.run({"raw": raw_value})
+
+        assert result.get_outputs() == [f"parsed={expected}"]
+
     @pytest.mark.asyncio
     async def test_parse_value_boolean_true(self, mock_context, mock_state):
         """Test ParseValue with boolean type (true)."""
