@@ -81,7 +81,7 @@ Open your browser to: http://localhost:4318
 #### Step 3: Run the Console Application
 
 ```powershell
-cd dotnet/demos/AgentOpenTelemetry
+cd dotnet/samples/02-agents/AgentOpenTelemetry
 $env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
 dotnet run
 ```
@@ -149,6 +149,39 @@ Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-agent>
 Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 ![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
+
+## Providing `ILoggerFactory` for tool-execution logging
+
+`UseFunctionInvocation` is what logs tool-execution failures (message and stack trace). OpenTelemetry spans alone are not enough to surface the exception details for troubleshooting.
+
+Provide an `ILoggerFactory` in one of these ways:
+
+### Option 1: Pass `ILoggerFactory` to `UseFunctionInvocation`
+
+```csharp
+IChatClient instrumentedChatClient = chatClient
+    .AsBuilder()
+    .UseFunctionInvocation(loggerFactory) // logs tool failures
+    .UseOpenTelemetry(sourceName: SourceName, configure: cfg => cfg.EnableSensitiveData = true)
+    .Build();
+```
+
+This sample uses this approach with the `ILoggerFactory` created earlier in `Program.cs`.
+
+### Option 2: Pass `IServiceProvider` to `Build`
+
+If logging is registered in DI, pass the service provider into `Build` so every middleware in the chain (including `UseFunctionInvocation`) can resolve `ILoggerFactory`:
+
+```csharp
+IChatClient instrumentedChatClient = chatClient
+    .AsBuilder()
+    .UseFunctionInvocation()
+    .UseOpenTelemetry(sourceName: SourceName, configure: cfg => cfg.EnableSensitiveData = true)
+    .Build(serviceProvider); // resolves ILoggerFactory from DI
+```
+
+Without one of these, tool exceptions may be returned to the model as a generic failure string while the detailed exception is never logged.
+
 ## Key Features Demonstrated
 
 ### OpenTelemetry Integration
@@ -159,7 +192,7 @@ Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 
 ### Agent Framework Features
 - **ChatClientAgent** created from `AIProjectClient`
-- **OpenTelemetry wrapper** using `.WithOpenTelemetry()`
+- **OpenTelemetry wrapper** using `.UseOpenTelemetry()` on the chat client and agent builders
 - **Conversation threading** for multi-turn conversations
 - **Error handling** with telemetry correlation
 
