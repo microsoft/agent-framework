@@ -7,8 +7,8 @@ There are two common ways to build that:
    native tool schema, validates or parses its arguments, routes the selected
    tool name, and returns its result.
 2. Declare callable tools and let a higher-level server generate the list and
-   call handlers from those declarations. FastMCP follows this model by deriving
-   tool schemas and argument parsing from Python function signatures.
+   call handlers from those declarations. `MCPServer` follows this model by
+   deriving tool schemas and argument parsing from Python function signatures.
 
 Choose between them based on the other MCP features you want to expose and how
 much control you need over the server, schema, validation, lifecycle, and
@@ -44,18 +44,18 @@ Use this when the application needs full control over a custom MCP contract.
 uv run manual_app.py
 ```
 
-### 2. FastMCP server
+### 2. MCPServer
 
-[`fastmcp_app.py`](fastmcp_app.py) keeps the same two conversion functions but
-replaces the low-level server setup with FastMCP. FastMCP derives and validates
+[`mcpserver_app.py`](mcpserver_app.py) keeps the same two conversion functions but
+replaces the low-level server setup with `MCPServer`. `MCPServer` derives and validates
 the tool schema from the decorated `run_agent(...)` function and owns the
 streamable HTTP server.
 
 Use this when a normal Python function signature fully describes the MCP tool.
-FastMCP keeps its generated schema and argument parsing aligned.
+`MCPServer` keeps its generated schema and argument parsing aligned.
 
 ```bash
-uv run fastmcp_app.py
+uv run mcpserver_app.py
 ```
 
 ### 3. Agent-derived tool
@@ -65,7 +65,7 @@ derives the native tool name and description from the agent, owns the configured
 argument schema, runs the agent, and applies the same conversion boundary.
 
 Use this when one Agent Framework agent should be represented as one generated
-MCP tool. Unlike the FastMCP sample, this adapter derives the contract from the
+MCP tool. Unlike the `MCPServer` sample, this adapter derives the contract from the
 agent and its adapter configuration rather than a decorated function signature.
 
 ```bash
@@ -106,8 +106,8 @@ uv run workflow_app.py
 
 | Concept | Responsibility | Used by |
 |---|---|---|
-| `mcp_to_run(...)` | Converts validated MCP arguments into Agent Framework messages and selected chat options. | `manual_app.py`, `fastmcp_app.py` |
-| `mcp_from_run(...)` | Converts a completed agent response into MCP result content blocks. | `manual_app.py`, `fastmcp_app.py` |
+| `mcp_to_run(...)` | Converts validated MCP arguments into Agent Framework messages and selected chat options. | `manual_app.py`, `mcpserver_app.py` |
+| `mcp_from_run(...)` | Converts a completed agent response into MCP result content blocks. | `manual_app.py`, `mcpserver_app.py` |
 | `AgentMCPTool` | Derives one native MCP tool from an agent and keeps schema, execution, and conversion aligned. | `agent_app.py`, `session_app.py` |
 | `WorkflowMCPTool` | Derives one native MCP tool from a workflow start executor and converts workflow outputs. | `workflow_app.py` |
 
@@ -130,8 +130,10 @@ dependency set using PEP 723 inline script metadata.
 
 ## Common behavior
 
-- **No framework choice:** the package does not select FastMCP, Starlette,
+- **No framework choice:** the package does not select `MCPServer`, Starlette,
   Uvicorn, stdio, or streamable HTTP.
+- **Protocol eras:** MCP SDK 2.2 serves modern 2026-07-28 requests and retains
+  legacy `initialize` compatibility. Modern server-to-client input uses MRTR.
 - **Chat options:** only explicitly selected MCP arguments are passed to the
   model client. The samples expose `reasoning_effort` as an example, but any option
   valid for the agent can be exposed.
@@ -139,8 +141,8 @@ dependency set using PEP 723 inline script metadata.
   multimodal input content blocks. The samples do not present an
   application-specific image schema as protocol behavior.
 - **Streaming:** streamable HTTP can carry multiple MCP messages, but a tool
-  call still produces one final `CallToolResult`. Progress notifications and
-  experimental deferred tasks remain application-owned protocol features.
+  call still produces one final `CallToolResult`. The SDK does not yet expose
+  the 2026 Tasks extension runtime, so these samples do not implement deferred tasks.
 - **Authentication:** the local endpoints are intentionally unauthenticated.
   MCP transport session identifiers are not user authorization. Production
   servers must authenticate and authorize before loading tenant or user state.
