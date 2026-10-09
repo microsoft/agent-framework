@@ -994,17 +994,13 @@ class TestA2AExecutorForwardedKwargs:
 
         assert run.call_args.kwargs["function_invocation_kwargs"] == {"tenant": "server", "fixed": True, "extra": "x"}
 
-    async def test_reserved_keys_are_never_accepted(
-        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
-    ) -> None:
-        executor = A2AExecutor(mock_agent, accepted_kwargs=["session", "middleware", "tenant"])
-        metadata = self._forwarded(
-            client_kwargs={"session": "x", "middleware": ["y"], "tenant": "acme"},
-        )
-
-        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
-
-        assert run.call_args.kwargs["client_kwargs"] == {"tenant": "acme"}
+    @mark.parametrize(
+        "reserved",
+        ["stream", "messages", "options", "session", "middleware", "client_kwargs", "_internal"],
+    )
+    def test_framework_owned_names_cannot_be_accepted(self, mock_agent: MagicMock, reserved: str) -> None:
+        with raises(ValueError, match=reserved):
+            A2AExecutor(mock_agent, accepted_kwargs=["tenant", reserved])
 
     @mark.parametrize(
         "metadata",

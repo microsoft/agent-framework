@@ -30,8 +30,19 @@ logger = logging.getLogger("agent_framework.a2a")
 # Key in ``SendMessageRequest.metadata`` that carries forwarded ``function_invocation_kwargs`` and ``client_kwargs``.
 AGENT_FRAMEWORK_METADATA_KEY = "agent_framework"
 _FORWARDED_KWARGS_NAMES = ("function_invocation_kwargs", "client_kwargs")
-# Framework-managed keys that a remote caller can never set.
-_RESERVED_KWARGS = frozenset({"session", "middleware"})
+# Names owned by the framework (chat client and tool invocation parameters). A remote caller must never be able to
+# set them, since a duplicate keyword would fail the task or override framework behavior.
+_RESERVED_KWARGS = frozenset({
+    "messages",
+    "stream",
+    "options",
+    "session",
+    "middleware",
+    "compaction_strategy",
+    "tokenizer",
+    "function_invocation_kwargs",
+    "client_kwargs",
+})
 
 
 class A2AExecutor(AgentExecutor):
@@ -118,10 +129,13 @@ class A2AExecutor(AgentExecutor):
             accepted_kwargs: Names of keys to accept from the request's forwarded
                 ``function_invocation_kwargs`` and ``client_kwargs``. Accepted values are passed to the
                 agent's run method. Values configured in ``run_kwargs`` take precedence on conflict.
-                Defaults to accepting nothing.
+                Defaults to accepting nothing. Framework-owned names (for example ``stream``,
+                ``messages``, ``options`` and ``session``) and names starting with an underscore are
+                rejected.
 
         Raises:
-            ValueError: If run_kwargs contains 'session' or 'stream'.
+            ValueError: If run_kwargs contains 'session' or 'stream', or accepted_kwargs contains a
+                framework-owned name.
         """
         super().__init__()
         self._agent: SupportsAgentRun = agent
@@ -132,7 +146,10 @@ class A2AExecutor(AgentExecutor):
             if "stream" in run_kwargs:
                 raise ValueError("run_kwargs cannot contain 'stream' as it is managed by the executor.")
         self._run_kwargs: Mapping[str, Any] = run_kwargs or {}
-        self._accepted_kwargs: frozenset[str] = frozenset(accepted_kwargs or ()) - _RESERVED_KWARGS
+        reserved = sorted(key for key in accepted_kwargs or () if key in _RESERVED_KWARGS or key.startswith("_"))
+        if reserved:
+            raise ValueError(f"accepted_kwargs cannot contain framework-owned names: {', '.join(reserved)}.")
+        self._accepted_kwargs: frozenset[str] = frozenset(accepted_kwargs or ())
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
