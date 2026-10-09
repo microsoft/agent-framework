@@ -6922,6 +6922,90 @@ async def test_buffered_agent_response_replacement_preserves_terminal_operation_
 # endregion
 
 
+def test_merge_chat_options_single_mapping_tool_is_not_spread_into_keys():
+    """A single tool given as a mapping is one tool, on either side of the merge."""
+
+    @tool
+    def my_tool() -> None:
+        pass
+
+    hosted = {"type": "web_search", "name": "ws"}
+
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": hosted})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, hosted]
+
+    merged = merge_chat_options({"tools": hosted}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [hosted, my_tool]
+
+
+def test_merge_chat_options_same_plain_callable_on_both_sides():
+    """The same undecorated function on both sides is merged into one tool."""
+
+    def my_func() -> None:
+        pass
+
+    merged = merge_chat_options({"tools": [my_func]}, {"tools": [my_func]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["my_func"]
+
+
+def test_merge_chat_options_keeps_distinct_tool_with_same_name():
+    """A different tool that shares a base tool's name is not dropped by the merge."""
+
+    @tool(name="lookup")
+    def base_lookup() -> str:
+        return "base"
+
+    @tool(name="lookup")
+    def override_lookup() -> str:
+        return "override"
+
+    merged = merge_chat_options({"tools": [base_lookup]}, {"tools": [override_lookup]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [base_lookup, override_lookup]
+
+
+def test_merge_chat_options_keeps_tools_that_wrap_the_same_function():
+    """Two decorated tools over one function are different tools and both kept."""
+
+    def lookup() -> str:
+        return "result"
+
+    tool_a = tool(name="a")(lookup)
+    tool_b = tool(name="b")(lookup)
+
+    merged = merge_chat_options({"tools": [tool_a]}, {"tools": [tool_b]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [tool_a, tool_b]
+
+    merged = merge_chat_options({"tools": [lookup]}, {"tools": [tool_a]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["lookup", "a"]
+
+
+def test_merge_chat_options_keeps_pydantic_provider_tool_whole():
+    """A Pydantic provider-native tool spec is one tool, not spread into its fields."""
+
+    class ProviderTool(BaseModel):
+        type: str = "code_interpreter"
+        container: str = "auto"
+
+    @tool
+    def my_tool() -> None:
+        pass
+
+    provider_tool = ProviderTool()
+
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": [provider_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, provider_tool]
+
+    merged = merge_chat_options({"tools": [provider_tool]}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [provider_tool, my_tool]
+
+    # A single, unwrapped provider tool on either side.
+    merged = merge_chat_options({"tools": [my_tool]}, {"tools": provider_tool})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [my_tool, provider_tool]
+
+    merged = merge_chat_options({"tools": provider_tool}, {"tools": [my_tool]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert merged["tools"] == [provider_tool, my_tool]
+
+
 def test_get_data_bytes_as_str_ignores_base64_marker_inside_the_payload():
     """A ';base64,' sequence inside the payload is data, not the encoding marker."""
     content = Content.from_uri(uri="data:text/plain,a;base64,QUJD")
