@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
 from textwrap import dedent
@@ -3879,7 +3879,7 @@ async def test_mcp_tool_refreshes_catalogs_from_modern_subscription() -> None:
         yield PromptsListChanged()
 
     @contextlib.asynccontextmanager
-    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+    async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
         listen_entered.set()
         try:
             yield events()
@@ -3933,7 +3933,7 @@ async def test_mcp_tool_reuses_and_closes_modern_catalog_subscription() -> None:
         yield ToolsListChanged()
 
     @contextlib.asynccontextmanager
-    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+    async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
         nonlocal enter_count, exit_count
         enter_count += 1
         listen_entered.set()
@@ -3986,7 +3986,7 @@ async def test_mcp_tool_replaces_modern_catalog_subscription_on_reset() -> None:
         yield ToolsListChanged()
 
     @contextlib.asynccontextmanager
-    async def listen_context() -> AsyncIterator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
+    async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
         nonlocal enter_count, exit_count
         enter_count += 1
         if enter_count == 2:
@@ -4048,7 +4048,7 @@ async def test_mcp_tool_uses_legacy_catalog_notifications_when_subscription_is_u
             prompts_refreshed.set()
 
     @contextlib.asynccontextmanager
-    async def unsupported_listen() -> AsyncIterator[Any]:
+    async def unsupported_listen() -> AsyncGenerator[Any]:
         listen_attempted.set()
         raise ListenNotSupportedError("2025-11-25")
         yield None  # pragma: no cover
@@ -4077,7 +4077,7 @@ async def test_mcp_tool_uses_legacy_catalog_notifications_when_subscription_is_u
 
 async def test_mcp_tool_cleans_up_when_catalog_subscription_setup_fails() -> None:
     @contextlib.asynccontextmanager
-    async def rejected_listen() -> AsyncIterator[Any]:
+    async def rejected_listen() -> AsyncGenerator[Any]:
         raise RuntimeError("subscription rejected")
         yield None  # pragma: no cover
 
@@ -7472,7 +7472,7 @@ async def test_auto_mode_falls_back_to_legacy_sampling_backchannel() -> None:
     approvals: list[types.CreateMessageRequestParams] = []
 
     @asynccontextmanager
-    async def legacy_transport() -> AsyncIterator[tuple[Any, Any]]:
+    async def legacy_transport() -> AsyncGenerator[tuple[Any, Any]]:
         async with create_client_server_memory_streams() as (client_streams, server_streams):
             client_read, client_write = client_streams
             server_read, server_write = server_streams
