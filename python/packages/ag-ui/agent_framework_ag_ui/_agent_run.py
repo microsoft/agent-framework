@@ -2221,15 +2221,29 @@ def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
     return call_ids
 
 
-def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) -> dict[str, list[dict[str, Any]]]:
+def _resolved_tool_result_snapshot_messages(
+    resolved_messages: list[Message],
+) -> dict[tuple[str, int], list[dict[str, Any]]]:
     """Build replayable AG-UI tool messages from resolved approval results.
 
-    Distinct function-call occurrences can reuse one provider call id, so results are
-    grouped by call id in resolution order rather than collapsed to one per id.
+    Results are keyed by call id and declaration occurrence: the number of assistant messages
+    declaring that call id up to the result (at least one). A later turn that reuses a call id
+    therefore keeps its result apart from the earlier turn's. Distinct function calls inside one
+    assistant message can also share a call id, so each key holds every result in resolution order.
     """
-    results_by_call_id: dict[str, list[dict[str, Any]]] = {}
+    declarations: dict[str, int] = {}
+    results_by_occurrence: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for msg in resolved_messages:
-        if get_role_value(msg) != "tool":
+        role = get_role_value(msg)
+        if role == "assistant":
+            for call_id in {
+                str(content.call_id)
+                for content in msg.contents or []
+                if content.type == "function_call" and content.call_id
+            }:
+                declarations[call_id] = declarations.get(call_id, 0) + 1
+            continue
+        if role != "tool":
             continue
         function_results = [
             content for content in msg.contents or [] if content.type == "function_result" and content.call_id
@@ -2252,8 +2266,26 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
                         _model_items_for_agui_replay(content, llm_result),
                     )
                 )
-            results_by_call_id.setdefault(call_id, []).append(snapshot_message)
-    return results_by_call_id
+            occurrence = (call_id, max(1, declarations.get(call_id, 0)))
+            results_by_occurrence.setdefault(occurrence, []).append(snapshot_message)
+    return results_by_occurrence
+
+
+def _snapshot_tool_message_occurrences(snapshot_messages: list[dict[str, Any]]) -> dict[int, tuple[str, int]]:
+    """Map each snapshot tool message to its call id and declaration occurrence."""
+    declarations: dict[str, int] = {}
+    occurrences: dict[int, tuple[str, int]] = {}
+    for message in snapshot_messages:
+        role = normalize_agui_role(message.get("role", ""))
+        if role == "assistant":
+            for call_id in set(_snapshot_tool_call_ids(message)):
+                declarations[call_id] = declarations.get(call_id, 0) + 1
+        elif role == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
+            if tool_call_id:
+                call_id = str(tool_call_id)
+                occurrences[id(message)] = (call_id, max(1, declarations.get(call_id, 0)))
+    return occurrences
 
 
 def _merge_resolved_approval_results_into_snapshot(
@@ -2262,46 +2294,46 @@ def _merge_resolved_approval_results_into_snapshot(
 ) -> None:
     """Persist approval-resolved tool results under their original tool call ids.
 
-    Every result for a call id follows the assistant message that declares it, in resolution
-    order. Sibling occurrences hidden from the client share the visible call's id, so one
-    declared call can be followed by several results.
+    The results of the n-th assistant message declaring a call id follow the n-th snapshot
+    assistant message declaring it, in resolution order, so a call id reused by a later turn
+    stays paired with its own call. Sibling occurrences hidden from the client share the
+    visible call's id, so one declared call can be followed by several results.
     """
-    results_by_call_id = _resolved_tool_result_snapshot_messages(resolved_messages)
-    if not results_by_call_id:
+    results_by_occurrence = _resolved_tool_result_snapshot_messages(resolved_messages)
+    if not results_by_occurrence:
         snapshot_messages[:] = [message for message in snapshot_messages if not message.get("function_approvals")]
         return
 
+    tool_message_occurrences = _snapshot_tool_message_occurrences(snapshot_messages)
+    replaced_occurrences = set(results_by_occurrence)
     retained_host_messages: set[int] = set()
     for message in snapshot_messages:
-        if normalize_agui_role(message.get("role", "")) != "tool":
+        occurrence = tool_message_occurrences.get(id(message))
+        if occurrence is None or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
             continue
-        tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
-        if not tool_call_id or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
-            continue
-        queued_results = results_by_call_id.get(str(tool_call_id))
+        queued_results = results_by_occurrence.get(occurrence)
         if queued_results and queued_results[0].get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
             # Keep the host-rendered result already in the snapshot for this occurrence.
             queued_results.pop(0)
             retained_host_messages.add(id(message))
-            if not queued_results:
-                results_by_call_id.pop(str(tool_call_id))
 
+    declarations: dict[str, int] = {}
     merged_messages: list[dict[str, Any]] = []
     for message in snapshot_messages:
         if message.get("function_approvals"):
             continue
-        role = normalize_agui_role(message.get("role", ""))
-        if role == "tool" and id(message) not in retained_host_messages:
-            tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
-            if tool_call_id and str(tool_call_id) in results_by_call_id:
-                continue
-        merged_messages.append(message)
-        if role != "assistant":
+        if id(message) not in retained_host_messages and tool_message_occurrences.get(id(message)) in (
+            replaced_occurrences
+        ):
             continue
-        for call_id in _snapshot_tool_call_ids(message):
-            merged_messages.extend(results_by_call_id.pop(call_id, []))
+        merged_messages.append(message)
+        if normalize_agui_role(message.get("role", "")) != "assistant":
+            continue
+        for call_id in dict.fromkeys(_snapshot_tool_call_ids(message)):
+            declarations[call_id] = declarations.get(call_id, 0) + 1
+            merged_messages.extend(results_by_occurrence.pop((call_id, declarations[call_id]), []))
 
-    for queued_results in results_by_call_id.values():
+    for queued_results in results_by_occurrence.values():
         merged_messages.extend(queued_results)
     snapshot_messages[:] = merged_messages
 

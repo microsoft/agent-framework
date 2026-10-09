@@ -305,8 +305,11 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
     """Remove duplicate messages while preserving order."""
     seen_keys: dict[Any, int] = {}
     unique_messages: list[Message] = []
-    # A provider call ID can be reused by several function calls; keep one result per declared occurrence.
-    declared_call_occurrences: Counter[str] = Counter()
+    # A provider call ID can be reused by several function calls, in one assistant message or in a
+    # later turn. Each declared occurrence opens one result slot, so every occurrence keeps its own
+    # result while replayed results beyond the open slots are dropped.
+    open_result_slots: Counter[str] = Counter()
+    declared_call_ids: set[str] = set()
     tool_result_indexes: dict[str, list[int]] = {}
 
     for idx, msg in enumerate(messages):
@@ -316,7 +319,9 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
             call_id = str(msg.contents[0].call_id)
             kept_indexes = tool_result_indexes.setdefault(call_id, [])
 
-            if len(kept_indexes) >= max(1, declared_call_occurrences[call_id]):
+            if open_result_slots[call_id] > 0:
+                open_result_slots[call_id] -= 1
+            elif call_id in declared_call_ids or kept_indexes:
                 new_result = msg.contents[0].result
                 for existing_idx in kept_indexes:
                     existing_msg = unique_messages[existing_idx]
@@ -339,7 +344,9 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
             tool_call_ids = tuple(
                 sorted(str(c.call_id) for c in msg.contents if c.type == "function_call" and c.call_id)
             )
-            key: Any = (role_value, tool_call_ids)
+            # As for other messages, a shared message_id marks a replay of the same message, while a
+            # later turn reusing the same call IDs arrives as a distinct message.
+            key: Any = ("id", msg.message_id) if msg.message_id else (role_value, tool_call_ids)
 
             if key in seen_keys:
                 logger.info(f"Skipping duplicate assistant tool call at index {idx}")
@@ -347,7 +354,8 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
 
             seen_keys[key] = len(unique_messages)
             unique_messages.append(msg)
-            declared_call_occurrences.update(tool_call_ids)
+            open_result_slots.update(tool_call_ids)
+            declared_call_ids.update(tool_call_ids)
 
         else:
             # Use message_id for deduplication when available — two messages with the

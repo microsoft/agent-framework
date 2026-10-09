@@ -6983,6 +6983,122 @@ async def test_endpoint_queued_approval_snapshot_retains_every_released_result(s
     assert [content.call_id for content in replayed_results] == ["call_first", "call_second"]
 
 
+async def test_endpoint_approval_snapshot_pairs_result_with_later_turn_reusing_call_id(streaming_chat_client_stub):
+    """A later approved call reusing an earlier completed call ID keeps both pairs in place."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    executed: list[str] = []
+    messages_received: list[Message] = []
+    turn = {"number": 0}
+
+    def lookup() -> str:
+        executed.append(f"turn-{turn['number']}")
+        return f"result {turn['number']}"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        messages_received[:] = list(messages)
+        if messages[-1].role == "user":
+            turn["number"] += 1
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="lookup", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"Done {turn['number']}.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="lookup", description="Lookup", func=lookup, approval_mode="always_require")],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    client = TestClient(app)
+    thread_id = "thread-reused-call-id-across-turns"
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def approval_id(events: list[dict[str, Any]]) -> str:
+        finished = [event for event in events if event["type"] == "RUN_FINISHED"]
+        return _run_finished_interrupts(finished[-1])[0]["id"]
+
+    def transcript(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        entries: list[tuple[str, str]] = []
+        for message in messages:
+            role = message["role"]
+            if role == "tool":
+                entries.append(
+                    ("tool", f"{message.get('toolCallId') or message.get('tool_call_id')}={message['content']}")
+                )
+            elif role == "assistant" and (message.get("toolCalls") or message.get("tool_calls")):
+                tool_calls = message.get("toolCalls") or message.get("tool_calls")
+                entries.append(("call", ",".join(tool_call["id"] for tool_call in tool_calls)))
+            else:
+                entries.append((role, message.get("content") or ""))
+        return entries
+
+    expected = [
+        ("user", "First"),
+        ("call", "call_reused"),
+        ("tool", "call_reused=result 1"),
+        ("assistant", "Done 1."),
+        ("user", "Second"),
+        ("call", "call_reused"),
+        ("tool", "call_reused=result 2"),
+        ("assistant", "Done 2."),
+    ]
+
+    post("run-first-resume", approval_id=approval_id(post("run-first", text="First")))
+    final_events = post("run-second-resume", approval_id=approval_id(post("run-second", text="Second")))
+    assert executed == ["turn-1", "turn-2"]
+
+    snapshot_events = [event for event in final_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    assert transcript(snapshot_events[-1]["messages"]) == expected
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert transcript(saved.messages) == expected
+
+    post("run-third", text="Third")
+    replayed = [
+        (content.type, content.call_id, content.result if content.type == "function_result" else None)
+        for message in messages_received
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ]
+    assert replayed == [
+        ("function_call", "call_reused", None),
+        ("function_result", "call_reused", "result 1"),
+        ("function_call", "call_reused", None),
+        ("function_result", "call_reused", "result 2"),
+    ]
+
+
 @pytest.mark.parametrize("retry_time", [25.0, 33.0])
 async def test_endpoint_collected_approval_preserves_original_expiration(
     streaming_chat_client_stub, retry_time: float

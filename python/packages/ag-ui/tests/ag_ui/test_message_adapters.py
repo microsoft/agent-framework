@@ -2512,6 +2512,40 @@ def test_deduplicate_keeps_one_tool_result_per_reused_call_id_occurrence():
     ]
 
 
+def test_deduplicate_keeps_later_turn_reusing_call_id():
+    """A later turn reusing a completed call ID keeps its own call and result; a replay is still dropped."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    def call(message_id: str) -> Message:
+        return Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="reused", name="lookup", arguments="{}")],
+            message_id=message_id,
+        )
+
+    def result(message_id: str, value: str) -> Message:
+        return Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="reused", result=value)],
+            message_id=message_id,
+        )
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="First")], message_id="user-1"),
+        call("call-1"),
+        result("result-1", "first"),
+        Message(role="user", contents=[Content.from_text(text="Second")], message_id="user-2"),
+        call("call-2"),
+        result("result-2", "second"),
+        call("call-2"),
+        result("result-2-replayed", "second"),
+    ]
+
+    deduplicated = _deduplicate_messages(messages)
+
+    assert [msg.message_id for msg in deduplicated] == ["user-1", "call-1", "result-1", "user-2", "call-2", "result-2"]
+
+
 def test_deduplicate_assistant_tool_calls():
     """Duplicate assistant messages with same tool_calls are deduplicated."""
     from agent_framework_ag_ui._message_adapters import _deduplicate_messages
