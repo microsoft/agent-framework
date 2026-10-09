@@ -12,10 +12,10 @@ from agent_framework import Filter, VectorStoreField, vectorstoremodel
 from agent_framework_oracle import OracleStore
 
 """
-Use Oracle Database 23ai native vectors with local precomputed embeddings.
+Use Oracle AI Database 26ai native vectors with local precomputed embeddings.
 
 Environment variables:
-    ORACLE_DSN      - Oracle connect string for a disposable 23ai+ schema
+    ORACLE_DSN      - Oracle connect string for a disposable Oracle AI Database 26ai schema
     ORACLE_USER     - User permitted to create and drop tables in that schema
     ORACLE_PASSWORD - Password for that user
 

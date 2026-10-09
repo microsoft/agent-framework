@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-oracle"
-description = "Oracle Database native vector stores for Microsoft Agent Framework."
+description = "Oracle AI Database native vector stores for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,7 +43,7 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 120
-markers = ["integration: requires an explicitly designated disposable Oracle Database 23ai+ schema"]
+markers = ["integration: requires an explicitly designated disposable Oracle AI Database 26ai schema"]
 
 [tool.coverage.run]
 omit = ["**/__init__.py"]

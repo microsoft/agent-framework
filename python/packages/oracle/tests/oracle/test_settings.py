@@ -15,10 +15,14 @@ from agent_framework_oracle import OracleCollection, OracleSettings, OracleStore
 from agent_framework_oracle import _vector_store as module
 
 
+@pytest.fixture(autouse=True)
+def isolate_oracle_settings(monkeypatch):
+    for name in get_type_hints(OracleSettings):
+        monkeypatch.delenv(f"ORACLE_{name.upper()}", raising=False)
+
+
 @pytest.fixture(params=["store", "collection"])
-def constructor(request, definition_factory, monkeypatch):
-    for name in ("ORACLE_DSN", "ORACLE_USER", "ORACLE_PASSWORD"):
-        monkeypatch.delenv(name, raising=False)
+def constructor(request, definition_factory):
     if request.param == "collection":
         return partial(OracleCollection, dict, definition=definition_factory())
     return OracleStore
@@ -28,17 +32,26 @@ def test_public_settings_mask_password(monkeypatch):
     monkeypatch.setenv("ORACLE_DSN", "localhost/service")
     monkeypatch.setenv("ORACLE_USER", "example")
     monkeypatch.setenv("ORACLE_PASSWORD", "private-value")
-    assert get_type_hints(OracleSettings) == {
-        "dsn": str | None,
-        "user": str | None,
-        "password": SecretString | None,
-    }
+    monkeypatch.setenv("ORACLE_WALLET_LOCATION", "/wallet")
+    monkeypatch.setenv("ORACLE_WALLET_PASSWORD", "wallet-private-value")
+    hints = get_type_hints(OracleSettings)
+    assert hints["dsn"] == str | None
+    assert hints["user"] == str | None
+    assert hints["password"] == SecretString | None
+    assert hints["wallet_location"] == str | None
+    assert hints["wallet_password"] == SecretString | None
+    assert hints["min"] == int | None
     settings = load_settings(OracleSettings, env_prefix="ORACLE_")
     assert settings["dsn"] == "localhost/service"
+    assert settings["wallet_location"] == "/wallet"
     password = settings["password"]
+    wallet_password = settings["wallet_password"]
     assert isinstance(password, SecretString)
+    assert isinstance(wallet_password, SecretString)
     assert password.get_secret_value() == "private-value"
+    assert wallet_password.get_secret_value() == "wallet-private-value"
     assert "private-value" not in repr(settings)
+    assert "wallet-private-value" not in repr(settings)
     assert "private-value" not in str(password)
 
 
@@ -54,6 +67,7 @@ def test_explicit_credentials_precede_file_and_environment(constructor, monkeypa
         dsn="explicit",
         user="explicit",
         password=secret,
+        pool_parameters={"dsn": "mapping", "user": "mapping", "password": SecretString("mapping")},
         env_file_path=str(env_file),
     )
     assert instance._client._dsn == instance._client._user == "explicit"
@@ -63,13 +77,22 @@ def test_explicit_credentials_precede_file_and_environment(constructor, monkeypa
 
 
 def test_selected_file_precedes_environment_and_supports_encoding(constructor, monkeypatch, tmp_path):
-    for name in ("ORACLE_DSN", "ORACLE_USER", "ORACLE_PASSWORD"):
+    for name in ("ORACLE_DSN", "ORACLE_USER", "ORACLE_PASSWORD", "ORACLE_WALLET_PASSWORD"):
         monkeypatch.setenv(name, "environment")
+    monkeypatch.setenv("ORACLE_MIN", "1")
     env_file = tmp_path / "oracle.env"
-    env_file.write_text("ORACLE_DSN=file\nORACLE_USER=file\nORACLE_PASSWORD=file\n", encoding="utf-16")
+    env_file.write_text(
+        "ORACLE_DSN=file\nORACLE_USER=file\nORACLE_PASSWORD=file\nORACLE_WALLET_PASSWORD=file-wallet\nORACLE_MIN=2\n",
+        encoding="utf-16",
+    )
     instance = constructor(env_file_path=str(env_file), env_file_encoding="utf-16")
     assert instance._client._dsn == instance._client._user == "file"
     assert instance._client._password.get_secret_value() == "file"
+    assert instance._client._pool_parameters["min"] == 2
+    wallet_password = instance._client._pool_parameters["wallet_password"]
+    assert isinstance(wallet_password, SecretString)
+    assert wallet_password.get_secret_value() == "file-wallet"
+    assert "file-wallet" not in repr(instance._client._pool_parameters)
 
 
 def test_environment_without_implicit_dotenv(constructor, monkeypatch, tmp_path):
@@ -81,6 +104,30 @@ def test_environment_without_implicit_dotenv(constructor, monkeypatch, tmp_path)
         instance = constructor()
     assert instance._client._dsn == "environment"
     assert instance._client._pool is None
+
+
+def test_invalid_pool_parameter_fails_without_connecting(monkeypatch):
+    monkeypatch.setenv("ORACLE_DSN", "dsn")
+    monkeypatch.setenv("ORACLE_USER", "user")
+    monkeypatch.setenv("ORACLE_PASSWORD", "password")
+    monkeypatch.setenv("ORACLE_MAX", "not-an-integer")
+    with (
+        patch.object(module.oracledb, "create_pool_async") as create,
+        pytest.raises(ValueError, match="setting 'max' from environment variable 'ORACLE_MAX'"),
+    ):
+        OracleStore()
+    create.assert_not_called()
+
+
+def test_pool_parameter_unsupported_by_installed_driver_fails(monkeypatch):
+    monkeypatch.setenv("ORACLE_DSN", "dsn")
+    monkeypatch.setenv("ORACLE_USER", "user")
+    monkeypatch.setenv("ORACLE_PASSWORD", "password")
+    monkeypatch.setenv("ORACLE_POOL_ALIAS", "example")
+    supported = module._CREATE_POOL_PARAMETER_NAMES - {"pool_alias"}
+    monkeypatch.setattr(module, "_CREATE_POOL_PARAMETER_NAMES", supported)
+    with pytest.raises(ValueError, match="pool_alias"):
+        OracleStore()
 
 
 @pytest.mark.parametrize("missing", ["dsn", "user", "password"])
@@ -97,11 +144,12 @@ def test_missing_selected_file_is_not_ignored(constructor, tmp_path):
         constructor(dsn="explicit", user="explicit", password="explicit", env_file_path=str(tmp_path / "missing.env"))
 
 
-@pytest.mark.parametrize("option", ["dsn", "user", "password", "env_file_path", "env_file_encoding"])
+@pytest.mark.parametrize("option", ["dsn", "user", "password", "pool_parameters", "env_file_path", "env_file_encoding"])
 def test_borrowed_client_rejects_connection_options(constructor, option):
     client = MagicMock(spec=oracledb.AsyncConnection)
+    value = {"min": 1} if option == "pool_parameters" else "not-read"
     with pytest.raises(ValueError, match="cannot be combined"):
-        constructor(client=client, **{option: "not-read"})
+        constructor(client=client, **{option: value})
 
 
 @pytest.mark.parametrize("client_type", [oracledb.AsyncConnection, oracledb.AsyncConnectionPool])
@@ -147,10 +195,72 @@ async def test_owned_pool_is_lazy_and_closed_once():
             assert await store._client._get_client() is pool
             assert await store._client._get_client() is pool
         await store.close()
-    create.assert_called_once()
+    create.assert_called_once_with(dsn="dsn", user="user", password="password", min=0, max=4)
     pool.close.assert_awaited_once()
     with pytest.raises(RuntimeError, match="closed"):
         await store._client._get_client()
+
+
+async def test_public_pool_parameters_precedence(monkeypatch):
+    monkeypatch.setenv("ORACLE_DSN", "environment-dsn")
+    monkeypatch.setenv("ORACLE_USER", "environment-user")
+    monkeypatch.setenv("ORACLE_PASSWORD", "environment-password")
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    store = OracleStore(
+        dsn="named-dsn",
+        user="named-user",
+        password="named-password",
+        pool_parameters={
+            "dsn": "pool-dsn",
+            "user": "pool-user",
+            "password": SecretString("pool-password"),
+            "min": 1,
+        },
+    )
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+    create.assert_called_once_with(
+        dsn="named-dsn",
+        user="named-user",
+        password="named-password",
+        min=1,
+        max=4,
+    )
+
+
+async def test_owned_pool_forwards_typed_environment_parameters(monkeypatch):
+    values = {
+        "ORACLE_DSN": "dsn",
+        "ORACLE_USER": "user",
+        "ORACLE_PASSWORD": "password",
+        "ORACLE_MIN": "1",
+        "ORACLE_MAX": "8",
+        "ORACLE_HOMOGENEOUS": "false",
+        "ORACLE_TCP_CONNECT_TIMEOUT": "1.5",
+        "ORACLE_WALLET_LOCATION": "/wallet",
+        "ORACLE_WALLET_PASSWORD": "wallet-password",
+        "ORACLE_HOME": "/ignored",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    pool.close = AsyncMock()
+    store = OracleStore()
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+        await store.close()
+    create.assert_called_once_with(
+        dsn="dsn",
+        user="user",
+        password="password",
+        min=1,
+        max=8,
+        homogeneous=False,
+        tcp_connect_timeout=1.5,
+        wallet_location="/wallet",
+        wallet_password="wallet-password",
+    )
+    pool.close.assert_awaited_once()
 
 
 async def test_owned_pool_uses_driver_factory_without_connecting():
