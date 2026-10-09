@@ -95,7 +95,8 @@ __all__ = [
 logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
-BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
+UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -150,8 +151,8 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         a default of 1024 will be used.
 
     Keys:
-        temperature: Sampling temperature between 0 and 1.
-        top_p: Nucleus sampling parameter.
+        temperature: Unsupported by Anthropic SDK 1.x; ignored with a warning.
+        top_p: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         max_tokens: Maximum number of tokens to generate (REQUIRED).
         stop: Stop sequences,
             translates to ``stop_sequences`` in Anthropic API.
@@ -163,7 +164,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         instructions: System instructions for the model, translating to ``system`` in
             the Anthropic API. Use a string for generic instructions or structured
             Anthropic system blocks when you need prompt-cache ``cache_control``.
-        top_k: Number of top tokens to consider for sampling.
+        top_k: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
             When enabled, responses include ``thinking`` content blocks showing Claude's
@@ -174,8 +175,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         additional_beta_flags: Additional beta flags to enable on the request.
     """
 
-    # Anthropic-specific generation parameters (supported by all models)
-    top_k: int
+    # Anthropic-specific generation parameters
     service_tier: Literal["auto", "standard_only"]
 
     # Extended thinking (Claude models)
@@ -191,6 +191,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
     additional_beta_flags: list[str]
 
     # Unsupported base options (override with None to indicate not supported)
+    temperature: None  # type: ignore[misc]
+    top_p: None  # type: ignore[misc]
+    top_k: None
     logit_bias: None  # type: ignore[misc]
     seed: None  # type: ignore[misc]
     frequency_penalty: None  # type: ignore[misc]
@@ -227,6 +230,20 @@ def _apply_option_translations(options: dict[str, Any]) -> None:
             # ChatOptions allows a single stop string; stop_sequences takes a list.
             old_value = [old_value]
         options.setdefault(new_key, old_value)
+
+
+def _drop_unsupported_sampling_options(options: dict[str, Any]) -> None:
+    unsupported_options = [name for name in UNSUPPORTED_SAMPLING_OPTIONS if name in options]
+    if not unsupported_options:
+        return
+
+    for name in unsupported_options:
+        options.pop(name)
+
+    logger.warning(
+        "Ignoring unsupported Anthropic sampling options: %s",
+        ", ".join(unsupported_options),
+    )
 
 
 # region Role and Finish Reason Maps
@@ -332,7 +349,7 @@ class RawAnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -714,6 +731,7 @@ class RawAnthropicClient(
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
+        _drop_unsupported_sampling_options(run_options)
 
         # system message - Anthropic expects system instructions as a separate request parameter
         instructions = options.get("instructions")
@@ -1774,7 +1792,7 @@ class AnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
