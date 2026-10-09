@@ -3,9 +3,14 @@
 import asyncio
 import json
 import os
+import shlex
 import shutil
+import signal
 import sys
 from collections.abc import Awaitable, Mapping, Sequence
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -561,6 +566,270 @@ async def test_persistent_confines_workdir_by_default(tmp_path: os.PathLike[str]
         await tool.run(f"cd {subdir}")
         pwd = await tool.run("pwd")
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+@pytest.mark.parametrize("failure", ["timeout", "unrecoverable_timeout", "overflow"])
+async def test_persistent_queued_command_restarts_after_session_recovery(failure: str) -> None:
+    is_timeout = failure != "overflow"
+    if sys.platform == "win32":
+        command = (
+            "[System.Threading.Thread]::Sleep(30000)"
+            if is_timeout
+            else "while ($true) { [Console]::Write('overflow') }"
+        )
+        followup = "Write-Output recovered"
+    else:
+        command = "trap '' INT; sleep 30" if is_timeout else "while :; do printf 'overflow'; done"
+        followup = "printf 'recovered'"
+
+    async with LocalShellTool(
+        mode="persistent",
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        max_output_bytes=128,
+    ) as tool:
+        session = tool._session
+        assert session is not None
+        original_process = session._proc
+        assert original_process is not None
+        # Keep the real interrupt case, and separately guarantee an
+        # unrecoverable timeout: PowerShell may emit its finally sentinel on
+        # CTRL_BREAK. Only suppress the graceful signal in this extra case;
+        # process shutdown and restart still use real subprocesses.
+        interrupt = (
+            patch.object(session, "_interrupt_current_command", new=AsyncMock())
+            if failure == "unrecoverable_timeout"
+            else nullcontext()
+        )
+        with interrupt:
+            failed, recovered = await asyncio.gather(
+                tool.run(command, timeout=0.5 if is_timeout else 10.0),
+                tool.run(followup, timeout=10.0),
+                return_exceptions=True,
+            )
+        assert original_process.returncode is not None
+        assert session._proc is not original_process
+
+    assert isinstance(failed, ShellResult)
+    assert failed.timed_out if is_timeout else failed.truncated
+    assert isinstance(recovered, ShellResult), recovered
+    assert recovered.stdout.strip() == "recovered"
+    assert recovered.exit_code == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX inherited-pipe regression")
+async def test_persistent_restart_cancels_readers_from_exited_shell(tmp_path: Path) -> None:
+    from agent_framework_tools.shell._session import ShellSession
+
+    release_child = tmp_path / "release-child"
+    release_followup = tmp_path / "release-followup"
+
+    class ExitWithInheritedPipes(ShellSession):
+        def _build_script(self, command: str, sentinel: str) -> str:
+            if command == "exit-with-child":
+                # Keep stdout alive beyond the parent shell's exit. The child
+                # is released only after the replacement shell starts.
+                return (
+                    f"(while [ ! -e {shlex.quote(str(release_child))} ]; do sleep 0.01; done; "
+                    "printf stale-child-output) & "
+                    f"printf '\\n{sentinel}_0\\n'; exit 0\n"
+                )
+            return super()._build_script(command, sentinel)
+
+    async with ExitWithInheritedPipes(["/bin/sh"]) as session:
+        original_process = session._proc
+        original_reader = session._stdout_reader
+        assert original_process is not None
+        assert original_reader is not None
+        followup: asyncio.Task[ShellResult] | None = None
+        try:
+            first = await session.run("exit-with-child", timeout=10.0)
+            assert first.exit_code == 0
+
+            async def wait_for_exit() -> None:
+                while original_process.returncode is None:  # noqa: ASYNC110 - wait() also waits for the inherited pipes
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_exit(), timeout=10.0)
+            assert not original_reader.done()
+            followup = asyncio.create_task(
+                session.run(
+                    f"printf started; while [ ! -e {shlex.quote(str(release_followup))} ]; "
+                    "do sleep 0.01; done; printf recovered",
+                    timeout=10.0,
+                )
+            )
+
+            async def wait_for_replacement() -> None:
+                while session._proc is original_process or b"started" not in session._stdout_buf:  # noqa: ASYNC110
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_replacement(), timeout=10.0)
+            release_child.touch()
+
+            await asyncio.wait_for(asyncio.gather(original_reader, return_exceptions=True), timeout=10.0)
+            release_followup.touch()
+            result = await asyncio.wait_for(followup, timeout=10.0)
+            assert result.stdout == "startedrecovered"
+            assert result.exit_code == 0
+            assert original_reader.cancelled()
+        finally:
+            release_child.touch()
+            release_followup.touch()
+            if followup is not None:
+                followup.cancel()
+                await asyncio.gather(followup, return_exceptions=True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX subprocess simulates Windows recovery policy")
+async def test_windows_timeout_sentinel_does_not_reuse_exiting_process() -> None:
+    from agent_framework_tools.shell import _session
+    from agent_framework_tools.shell._session import ShellSession
+
+    class SentinelThenExit(ShellSession):
+        def _build_script(self, command: str, sentinel: str) -> str:
+            if command == "interrupt-me":
+                # Real SIGINT flushes the completion marker, then waits for
+                # one stdin line before exiting. This deterministically
+                # models a marker preceding process exit: the next line
+                # must be cleanup's exit, not the queued user command.
+                return f"trap 'printf \"\\n{sentinel}_130\\n\"; read ignored; exit 130' INT; sleep 30\n"
+            return super()._build_script(command, sentinel)
+
+        async def _interrupt_current_command(self) -> None:
+            assert self._proc is not None
+            os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
+
+        async def _run_locked(self, command: str, *, timeout: float | None) -> ShellResult:
+            if command == "interrupt-me":
+                # Exercise only the Windows recovery decision on this POSIX
+                # runner; spawn, signal, pipes, readers and shutdown are real.
+                with patch.object(_session, "sys", SimpleNamespace(platform="win32")):
+                    return await super()._run_locked(command, timeout=timeout)
+            return await super()._run_locked(command, timeout=timeout)
+
+    async with SentinelThenExit(["/bin/sh"]) as session:
+        original_process = session._proc
+        assert original_process is not None
+        first, followup = await asyncio.gather(
+            session.run("interrupt-me", timeout=0.5),
+            session.run("printf recovered", timeout=5),
+            return_exceptions=True,
+        )
+        assert isinstance(first, ShellResult), first
+        assert first.timed_out
+        assert first.exit_code == 130
+        assert isinstance(followup, ShellResult), followup
+        assert followup.stdout == "recovered"
+        assert followup.exit_code == 0
+        assert original_process.returncode is not None
+        assert session._proc is not original_process
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX graceful interrupt contract")
+async def test_posix_graceful_timeout_preserves_shell_state() -> None:
+    from agent_framework_tools.shell._session import ShellSession
+
+    async with ShellSession(["/bin/sh"]) as session:
+        original_process = session._proc
+        first = await session.run("export RETAINED=value; trap ':' INT; sleep 30", timeout=0.5)
+        assert first.timed_out
+        followup = await session.run('printf "$RETAINED"', timeout=5)
+        assert followup.stdout == "value"
+        assert session._proc is original_process
+
+
+@pytest.mark.parametrize("queue_during_close", [False, True])
+async def test_persistent_close_rejects_queued_commands(queue_during_close: bool) -> None:
+    if sys.platform == "win32":
+        command = "[Console]::WriteLine('running'); [Console]::Out.Flush(); [System.Threading.Thread]::Sleep(30000)"
+        followup = "Write-Output queued"
+        reopened = "Write-Output reopened"
+    else:
+        command = "printf 'running\\n'; sleep 30"
+        followup = "printf 'queued'"
+        reopened = "printf 'reopened'"
+
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    tasks = [asyncio.create_task(tool.run(command, timeout=10.0))]
+    try:
+
+        async def wait_until_running() -> None:
+            while b"running" not in session._stdout_buf:
+                session._stdout_event.clear()
+                await session._stdout_event.wait()
+
+        await asyncio.wait_for(wait_until_running(), timeout=10.0)
+        if not queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        closing = asyncio.create_task(tool.close())
+        await asyncio.sleep(0)
+        assert tool._get_session_lock().locked()
+        if queue_during_close:
+            tasks.append(asyncio.create_task(tool.run(followup, timeout=10.0)))
+            await asyncio.sleep(0)
+
+        await asyncio.wait_for(closing, timeout=10.0)
+        _, queued = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15.0)
+        assert isinstance(queued, RuntimeError), queued
+        assert tool._session is None
+        assert session._proc is None
+
+        result = await session.run(reopened, timeout=10.0)
+        assert result.stdout.strip() == "reopened"
+        assert result.exit_code == 0
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await tool.close()
+        await session.close()
+
+
+async def test_persistent_close_during_start_does_not_dispatch_command() -> None:
+    tool = LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True)
+    await tool.start()
+    session = tool._session
+    assert session is not None
+    await tool.close()
+    created = asyncio.Event()
+    finish_start = asyncio.Event()
+    create_process = asyncio.create_subprocess_exec
+
+    async def delayed_create_process(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        proc = await create_process(*args, **kwargs)
+        created.set()
+        await finish_start.wait()
+        return proc
+
+    command = "Write-Output unexpected" if sys.platform == "win32" else "printf unexpected"
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        with (
+            patch("agent_framework_tools.shell._session.asyncio.create_subprocess_exec", delayed_create_process),
+            patch.object(session, "_run_locked", wraps=session._run_locked) as run_command,
+        ):
+            tasks.append(asyncio.create_task(session.run(command, timeout=10.0)))
+            await asyncio.wait_for(created.wait(), timeout=10.0)
+            tasks.append(asyncio.create_task(session.close()))
+            await asyncio.sleep(0)
+            finish_start.set()
+            result, _ = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+
+        assert isinstance(result, RuntimeError), result
+        run_command.assert_not_awaited()
+        assert session._proc is None
+    finally:
+        finish_start.set()
+        await session.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell persistent reanchor test")

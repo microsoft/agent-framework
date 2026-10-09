@@ -90,6 +90,7 @@ class ShellSession:
         # Serialises start/close so concurrent first-callers don't spawn
         # multiple subprocesses.
         self._lifecycle_lock = asyncio.Lock()
+        self._close_generation = 0
         self._sentinel_tag = secrets.token_hex(8)
         self._is_pwsh = is_powershell(argv)
 
@@ -109,6 +110,9 @@ class ShellSession:
         async with self._lifecycle_lock:
             if self._proc is not None and self._proc.returncode is None:
                 return
+            # A dead shell can leave inherited pipes open in a child. Stop its
+            # readers before reusing the buffers/events for a new process.
+            await self._cancel_readers()
             popen_kwargs: dict[str, object] = {}
             if sys.platform == "win32":
                 import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - Win32 constants only
@@ -150,6 +154,15 @@ class ShellSession:
 
     async def close(self) -> None:
         """Terminate the shell cleanly, falling back to SIGKILL."""
+        # Invalidate calls queued before or during explicit shutdown.
+        self._close_generation += 1
+        try:
+            await self._close_process()
+        finally:
+            self._close_generation += 1
+
+    async def _close_process(self) -> None:
+        """Stop the process without invalidating commands queued for recovery."""
         async with self._lifecycle_lock:
             proc = self._proc
             self._proc = None
@@ -200,8 +213,14 @@ class ShellSession:
         timeout: float | None,
     ) -> ShellResult:
         """Run ``command`` in the live session and return its result."""
-        await self.start()
+        close_generation = self._close_generation
         async with self._run_lock:
+            if close_generation != self._close_generation:
+                raise RuntimeError("ShellSession is not running; call start() first")
+            await self.start()
+            if close_generation != self._close_generation:
+                await self._close_process()
+                raise RuntimeError("ShellSession is not running; call start() first")
             return await self._run_locked(command, timeout=timeout)
 
     async def _run_locked(self, command: str, *, timeout: float | None) -> ShellResult:
@@ -274,7 +293,7 @@ class ShellSession:
             except (asyncio.TimeoutError, RuntimeError, _SentinelOverflow):
                 # Session is unrecoverable; tear it down so the next call
                 # gets a fresh subprocess.
-                await self.close()
+                await self._close_process()
                 duration_ms = int((time.monotonic() - started) * 1000)
                 stdout_bytes = bytes(self._stdout_buf[stdout_offset:])
                 stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
@@ -288,10 +307,15 @@ class ShellSession:
                     truncated=so_trunc or se_trunc,
                     timed_out=True,
                 )
+            if sys.platform == "win32":
+                # CTRL_BREAK can flush PowerShell's finally sentinel before
+                # the process finishes exiting. Do not dispatch the next
+                # command into that interrupted session, even with a sentinel.
+                await self._close_process()
         except _SentinelOverflow:
             # Runaway output; recover by interrupting and restarting.
             await self._interrupt_current_command()
-            await self.close()
+            await self._close_process()
             duration_ms = int((time.monotonic() - started) * 1000)
             stdout_bytes = bytes(self._stdout_buf[stdout_offset : stdout_offset + hard_cap])
             stderr_bytes = bytes(self._stderr_buf[stderr_offset:])
