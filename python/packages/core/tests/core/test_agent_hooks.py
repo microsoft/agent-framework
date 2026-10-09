@@ -8,12 +8,13 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from enum import Enum, IntEnum
 from threading import Lock
 from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer, field_validator
 
 import agent_framework
 import agent_framework._telemetry as telemetry
@@ -117,6 +118,40 @@ class _HookCustomer(BaseModel):
     def serialize_name(self, value: str) -> str:
         self._serialization_count += 1
         return value
+
+
+class _HookCategory(Enum):
+    REGULAR = "regular"
+
+
+class _HookPriority(IntEnum):
+    REGULAR = 2
+
+
+class _HookStringCategory(str, Enum):
+    REGULAR = "regular"
+
+
+class _EnumHookCustomer(_HookCustomer):
+    category: _HookCategory = _HookCategory.REGULAR
+    categories: tuple[_HookCategory, ...] = (_HookCategory.REGULAR,)
+
+
+class _ValidatedEnumHookCustomer(_EnumHookCustomer):
+    @field_validator("name")
+    @classmethod
+    def prefix_name(cls, value: str) -> str:
+        return f"validated-{value}"
+
+
+class _IntEnumHookCustomer(_HookCustomer):
+    category: _HookPriority = _HookPriority.REGULAR
+    categories: tuple[_HookPriority, ...] = (_HookPriority.REGULAR,)
+
+
+class _StringEnumHookCustomer(_HookCustomer):
+    category: _HookStringCategory = _HookStringCategory.REGULAR
+    categories: tuple[_HookStringCategory, ...] = (_HookStringCategory.REGULAR,)
 
 
 class _ExcludedHookCustomer(_HookCustomer):
@@ -1021,6 +1056,138 @@ async def test_pre_tool_call_reuses_prepared_nested_serialization(
         assert isinstance(executed[0].balance, Decimal)
     assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
     assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("enum_kind", ["plain", "int", "string"])
+async def test_pre_tool_call_projects_nested_enum_defaults(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+    enum_kind: str,
+) -> None:
+    """Hooks expose nested Enum defaults as wire scalars while tools keep native members."""
+    executed: list[_EnumHookCustomer | _IntEnumHookCustomer | _StringEnumHookCustomer] = []
+    if enum_kind == "plain":
+
+        @tool
+        def describe_customer(customer: _EnumHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        expected_member: Enum = _HookCategory.REGULAR
+        expected_wire_value: str | int = "regular"
+    elif enum_kind == "int":
+
+        @tool
+        def describe_customer(customer: _IntEnumHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        expected_member = _HookPriority.REGULAR
+        expected_wire_value = 2
+    else:
+
+        @tool
+        def describe_customer(customer: _StringEnumHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        expected_member = _HookStringCategory.REGULAR
+        expected_wire_value = "regular"
+
+    call_response = ChatResponse(
+        messages=Message(
+            "assistant",
+            [Content.from_function_call("enum-default", function.name, arguments={"customer": {"name": "Ada"}})],
+        ),
+    )
+    responses = [call_response, final_response()]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, tools=[function], middleware=[create_agent_hooks_middleware([guard])])
+    session = agent.create_session()
+    if streaming:
+        response = await agent.run("describe the customer", session=session, stream=True).get_final_response()
+    else:
+        response = await agent.run("describe the customer", session=session)
+
+    assert response.text == "Final response"
+    assert len(executed) == 1
+    assert executed[0].category is expected_member
+    assert executed[0].categories == (expected_member,)
+    assert executed[0].categories[0] is expected_member
+    assert executed[0]._serialization_count == 1
+    expected_args = {
+        "customer": {
+            "name": "Ada",
+            "category": expected_wire_value,
+            "categories": [expected_wire_value],
+        }
+    }
+    assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
+    assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
+
+
+@requires_sdk
+async def test_pre_tool_call_changed_enum_arguments_revalidate_native_model(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Changed Hook arguments are revalidated before invoking the native nested model."""
+    executed: list[_ValidatedEnumHookCustomer] = []
+
+    @tool
+    def describe_customer(customer: _ValidatedEnumHookCustomer) -> str:
+        executed.append(customer)
+        return customer.name
+
+    transformer = PointGuard(
+        "pre_tool_call",
+        Verdict(decision=Decision.TRANSFORM, transform=Transform(path="$target.customer.name", value="Grace")),
+    )
+    guard = AllowGuard()
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant",
+                [
+                    Content.from_function_call(
+                        "changed-enum-default", describe_customer.name, arguments={"customer": {"name": "Ada"}}
+                    )
+                ],
+            ),
+        ),
+        final_response(),
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[describe_customer],
+        middleware=[create_agent_hooks_middleware([transformer, guard])],
+    )
+    session = agent.create_session()
+
+    response = await agent.run("describe the customer", session=session)
+
+    assert response.text == "Final response"
+    assert len(executed) == 1
+    assert executed[0].name == "validated-Grace"
+    assert isinstance(executed[0], _ValidatedEnumHookCustomer)
+    assert executed[0].category is _HookCategory.REGULAR
+    assert executed[0].categories == (_HookCategory.REGULAR,)
+    assert executed[0]._serialization_count == 1
+    assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == {
+        "customer": {"name": "Grace", "category": "regular", "categories": ["regular"]}
+    }
 
 
 @requires_sdk
@@ -3322,6 +3489,7 @@ def test_tool_arguments_codec_merges_only_changed_keys() -> None:
     after = dict(before)
     after["location"] = "Redmond"
 
+    assert before["blob"] == "AAE="
     merged, effective = codecs._ToolArgumentsCodec.write_back(native, before, after)
 
     # Only the transformed key takes the wire value; untouched keys keep their
@@ -3340,6 +3508,23 @@ def test_tool_arguments_codec_merges_only_changed_keys() -> None:
 
     with pytest.raises(MiddlewareException, match="arguments object"):
         codecs._ToolArgumentsCodec.write_back(native, before, "oops")
+
+
+def test_tool_arguments_codec_rejects_enum_values_with_custom_state() -> None:
+    codecs = _codecs()
+
+    class MutableValue(Enum):
+        REGULAR = ["regular"]
+
+    class CustomMemberState(Enum):
+        def __init__(self, value: str) -> None:
+            self.labels = [value]
+
+        REGULAR = "regular"
+
+    for member in (MutableValue.REGULAR, CustomMemberState.REGULAR):
+        with pytest.raises(TypeError, match="simple JSON scalar Enum"):
+            codecs._ToolArgumentsCodec.to_wire({"nested": [{"category": member}]})
 
 
 def test_message_list_write_back_matches_by_identity_not_position() -> None:

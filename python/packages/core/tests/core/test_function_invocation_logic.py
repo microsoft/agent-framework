@@ -7,8 +7,14 @@ import math
 import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from copy import deepcopy
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as datetime_time
+from decimal import Decimal
+from enum import Enum, IntEnum
 from typing import Any, Literal
 from unittest.mock import Mock
+from uuid import UUID, SafeUUID
 
 import pytest
 from pydantic import BaseModel, field_validator
@@ -51,6 +57,90 @@ _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+
+
+class _TypedDefaultStatus(Enum):
+    ACTIVE = "active"
+
+
+class _TypedDefaultNumber(IntEnum):
+    ONE = 1
+
+
+class _TypedDefaultLabel(str, Enum):
+    PRIMARY = "primary"
+
+
+_TYPED_DEFAULT_TIMEZONE = timezone(timedelta(hours=2), "planned")
+
+
+class _NestedTypedDefaults(BaseModel):
+    """Representative standard typed values produced by nested defaults."""
+
+    name: str
+    day: date = date(2026, 1, 2)
+    appointment: datetime = datetime(2026, 1, 2, 9, 30, tzinfo=_TYPED_DEFAULT_TIMEZONE, fold=1)
+    opening_time: datetime_time = datetime_time(9, 30, tzinfo=_TYPED_DEFAULT_TIMEZONE, fold=1)
+    duration: timedelta = timedelta(days=1, seconds=2, microseconds=3)
+    amount: Decimal = Decimal("NaN123")
+    identifier: UUID = UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe)
+    status: _TypedDefaultStatus = _TypedDefaultStatus.ACTIVE
+    numeric_status: _TypedDefaultNumber = _TypedDefaultNumber.ONE
+    string_status: _TypedDefaultLabel = _TypedDefaultLabel.PRIMARY
+    tags: set[str] = {"east", "west"}
+    lanes: frozenset[int] = frozenset({3, 5})
+
+
+class _NestedIntEnumDefaults(BaseModel):
+    name: str
+    status: _TypedDefaultNumber = _TypedDefaultNumber.ONE
+
+
+class _NestedStringEnumDefaults(BaseModel):
+    name: str
+    status: _TypedDefaultLabel = _TypedDefaultLabel.PRIMARY
+
+
+def _assert_nested_typed_default_observation(
+    observation: tuple[_NestedTypedDefaults, dict[str, Any], str],
+) -> None:
+    """Check both native invocation values and the middleware-visible default mapping."""
+    native, normalized, suffix = observation
+    assert isinstance(native, _NestedTypedDefaults)
+    assert suffix == "!"
+    assert set(normalized) == {"schedule"}
+    values = normalized["schedule"]
+    assert isinstance(values, dict)
+    assert values["name"] == "Ada"
+    assert values["day"] == date(2026, 1, 2)
+    assert isinstance(values["appointment"], datetime)
+    assert values["appointment"].fold == 1
+    assert values["appointment"].utcoffset() == timedelta(hours=2)
+    assert values["appointment"].tzname() == "planned"
+    assert isinstance(values["opening_time"], datetime_time)
+    assert values["opening_time"].fold == 1
+    assert values["opening_time"].utcoffset() == timedelta(hours=2)
+    assert values["opening_time"].tzname() == "planned"
+    assert values["duration"] == timedelta(days=1, seconds=2, microseconds=3)
+    assert isinstance(values["amount"], Decimal) and values["amount"].as_tuple() == Decimal("NaN123").as_tuple()
+    assert isinstance(values["identifier"], UUID)
+    assert values["identifier"].int == native.identifier.int
+    assert values["identifier"].is_safe is SafeUUID.safe
+    assert values["status"] is _TypedDefaultStatus.ACTIVE
+    assert values["numeric_status"] is _TypedDefaultNumber.ONE
+    assert values["string_status"] is _TypedDefaultLabel.PRIMARY
+    assert values["tags"] == {"east", "west"}
+    assert values["lanes"] == frozenset({3, 5})
+    assert native.day == date(2026, 1, 2)
+    assert native.appointment.fold == 1
+    assert native.opening_time.fold == 1
+    assert native.amount.as_tuple() == Decimal("NaN123").as_tuple()
+    assert native.identifier.is_safe is SafeUUID.safe
+    assert native.status is _TypedDefaultStatus.ACTIVE
+    assert native.numeric_status is _TypedDefaultNumber.ONE
+    assert native.string_status is _TypedDefaultLabel.PRIMARY
+    assert native.tags == {"east", "west"}
+    assert native.lanes == frozenset({3, 5})
 
 
 def _group_id(message: Message) -> str | None:
@@ -6003,6 +6093,293 @@ async def test_middleware_type_error_remains_function_error(chat_client_base: Su
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_agent_approval_resumes_with_nested_typed_defaults(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A persisted standard approval can resume with faithful nested typed defaults."""
+    observations: list[tuple[_NestedTypedDefaults, dict[str, Any], str]] = []
+    copied_mappings = 0
+
+    class CopyArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal copied_mappings
+            if context.metadata.get("approval_response") is not None:
+                assert isinstance(context.arguments, dict)
+                context.arguments = deepcopy(context.arguments)
+                copied_mappings += 1
+            await call_next()
+
+    @tool(approval_mode="always_require")
+    def book(schedule: _NestedTypedDefaults, ctx: FunctionInvocationContext, suffix: str = "!") -> str:
+        assert isinstance(ctx.arguments, dict)
+        observations.append((schedule, dict(ctx.arguments), suffix))
+        return "booked"
+
+    function_call = Content.from_function_call(
+        call_id="nested-typed-approval",
+        name=book.name,
+        arguments={"schedule": {"name": "Ada"}},
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[book], middleware=[CopyArgumentsMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if streaming:
+            return await agent.run(value, session=session, stream=True).get_final_response()
+        return await agent.run(value, session=session)
+
+    first_response = await run("book a schedule")
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    assert observations == []
+    assert copied_mappings == 0
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.parse_arguments() == {"schedule": {"name": "Ada"}}
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    approval_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    approval_message = Message.from_dict(json.loads(approval_message.to_json()))
+    resumed_response = await run(approval_message)
+
+    assert resumed_response.text == "done"
+    assert len(observations) == 1
+    _assert_nested_typed_default_observation(observations[0])
+    assert copied_mappings == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_policy_allows_nested_typed_defaults_without_violation(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Ordinary no-violation policy execution accepts standard nested typed defaults."""
+    from agent_framework.security import LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware
+
+    observations: list[tuple[_NestedTypedDefaults, dict[str, Any], str]] = []
+
+    @tool(additional_properties={"accepts_untrusted": True})
+    def book(schedule: _NestedTypedDefaults, ctx: FunctionInvocationContext, suffix: str = "!") -> str:
+        assert isinstance(ctx.arguments, dict)
+        observations.append((schedule, dict(ctx.arguments), suffix))
+        return "booked"
+
+    function_call = Content.from_function_call(
+        call_id="nested-typed-policy",
+        name=book.name,
+        arguments={"schedule": {"name": "Ada"}},
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    middleware = [LabelTrackingFunctionMiddleware(), PolicyEnforcementFunctionMiddleware(approval_on_violation=False)]
+    agent = Agent(client=chat_client_base, tools=[book], middleware=middleware)
+    session = agent.create_session()
+    if streaming:
+        response = await agent.run("book a schedule", session=session, stream=True).get_final_response()
+    else:
+        response = await agent.run("book a schedule", session=session)
+
+    assert response.text == "done"
+    assert not any(
+        content.type == "function_approval_request" for message in response.messages for content in message.contents
+    )
+    assert len(observations) == 1
+    _assert_nested_typed_default_observation(observations[0])
+
+
+@pytest.mark.parametrize(
+    "stringify_identifier", [False, True], ids=["keeps_typed_default", "stringifies_typed_default"]
+)
+async def test_typed_argument_repair_fails_before_replacement_request(
+    chat_client_base: SupportsChatGetResponse,
+    stringify_identifier: bool,
+) -> None:
+    """A changed typed default fails closed instead of creating an unpersistable approval."""
+    executions = 0
+    repair_calls = 0
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal repair_calls
+            if context.metadata.get("approval_response") is not None:
+                repair_calls += 1
+                assert isinstance(context.arguments, dict)
+                identifier = context.arguments["schedule"]["identifier"]
+                assert isinstance(identifier, UUID) and identifier.is_safe is SafeUUID.safe
+                repaired = deepcopy(context.arguments)
+                if stringify_identifier:
+                    repaired["schedule"]["identifier"] = str(identifier)
+                repaired["schedule"]["name"] = "Grace"
+                repaired["schedule"]["amount"] = Decimal("1")
+                context.arguments = repaired
+            await call_next()
+
+    @tool(approval_mode="always_require")
+    def book(schedule: _NestedTypedDefaults) -> str:
+        nonlocal executions
+        executions += 1
+        return schedule.name
+
+    function_call = Content.from_function_call(
+        call_id="typed-replacement",
+        name=book.name,
+        arguments={"schedule": {"name": "Ada"}},
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    agent = Agent(client=chat_client_base, tools=[book], middleware=[RepairArgumentsMiddleware()])
+    session = agent.create_session()
+    first_response = await agent.run("book a schedule", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    assert repair_calls == 0
+    assert executions == 0
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    approval_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    approval_message = Message.from_dict(json.loads(approval_message.to_json()))
+    with pytest.raises(
+        MiddlewareFailure, match="Cannot safely persist replacement approval for typed function arguments"
+    ):
+        await agent.run(approval_message, session=session)
+
+    assert repair_calls == 1
+    assert executions == 0
+
+
+@pytest.mark.parametrize(
+    ("model_type", "enum_member", "replace_with_value"),
+    [
+        pytest.param(_NestedIntEnumDefaults, _TypedDefaultNumber.ONE, False, id="int_enum_kept"),
+        pytest.param(_NestedIntEnumDefaults, _TypedDefaultNumber.ONE, True, id="int_enum_as_value"),
+        pytest.param(_NestedStringEnumDefaults, _TypedDefaultLabel.PRIMARY, False, id="str_enum_kept"),
+        pytest.param(_NestedStringEnumDefaults, _TypedDefaultLabel.PRIMARY, True, id="str_enum_as_value"),
+    ],
+)
+async def test_primitive_enum_argument_repair_fails_before_replacement_request(
+    chat_client_base: SupportsChatGetResponse,
+    model_type: type[BaseModel],
+    enum_member: _TypedDefaultNumber | _TypedDefaultLabel,
+    replace_with_value: bool,
+) -> None:
+    """IntEnum and string Enum defaults cannot be rebound through replacement approval."""
+    from agent_framework._tools import _load_pending_approval_requests
+
+    executions = 0
+    repair_calls = 0
+
+    class RepairEnumArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal repair_calls
+            if context.metadata.get("approval_response") is not None:
+                repair_calls += 1
+                assert isinstance(context.arguments, dict)
+                assert context.arguments["schedule"]["status"] is enum_member
+                repaired = deepcopy(context.arguments)
+                if replace_with_value:
+                    repaired["schedule"]["status"] = enum_member.value
+                repaired["schedule"]["name"] = "Grace"
+                context.arguments = repaired
+            await call_next()
+
+    @tool(approval_mode="always_require")
+    def book_int_enum(schedule: _NestedIntEnumDefaults) -> str:
+        nonlocal executions
+        executions += 1
+        return schedule.name
+
+    @tool(approval_mode="always_require")
+    def book_string_enum(schedule: _NestedStringEnumDefaults) -> str:
+        nonlocal executions
+        executions += 1
+        return schedule.name
+
+    book = book_int_enum if model_type is _NestedIntEnumDefaults else book_string_enum
+    function_call = Content.from_function_call(
+        call_id="primitive-enum-replacement",
+        name=book.name,
+        arguments={"schedule": {"name": "Ada"}},
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    agent = Agent(client=chat_client_base, tools=[book], middleware=[RepairEnumArgumentsMiddleware()])
+    session = agent.create_session()
+    first_response = await agent.run("book a schedule", session=session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.parse_arguments() == {"schedule": {"name": "Ada"}}
+    assert executions == 0
+    assert repair_calls == 0
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    pending_before = _load_pending_approval_requests(session)
+    assert approval_request.id in pending_before
+    approval_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    approval_message = Message.from_dict(json.loads(approval_message.to_json()))
+    with pytest.raises(
+        MiddlewareFailure, match="Cannot safely persist replacement approval for typed function arguments"
+    ):
+        await agent.run(approval_message, session=session)
+
+    assert repair_calls == 1
+    assert executions == 0
+    pending_after = _load_pending_approval_requests(session)
+    assert set(pending_after).issubset(pending_before)
+    assert not any(
+        request.additional_properties.get("_replacement_approval_request") for request in pending_after.values()
+    )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
 async def test_approved_argument_repair_requires_replacement_approval(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
@@ -6082,9 +6459,12 @@ async def test_approved_argument_repair_requires_replacement_approval(
     assert replacement_request.function_call.id == first_request.function_call.id
     assert replacement_request.function_call.parse_arguments() == {"count": 3}
 
-    final_response = await run(
-        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)])
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    replacement_approval = Message(
+        role="user", contents=[replacement_request.to_function_approval_response(approved=True)]
     )
+    replacement_approval = Message.from_dict(json.loads(replacement_approval.to_json()))
+    final_response = await run(replacement_approval)
 
     assert executions == [3]
     assert final_response.text == "done"

@@ -7,18 +7,28 @@ import threading
 from collections import defaultdict
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone, tzinfo
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, IntEnum
 from io import BytesIO
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
+from uuid import UUID, SafeUUID
 from zoneinfo import ZoneInfo
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, Field, RootModel, computed_field, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    RootModel,
+    TypeAdapter,
+    computed_field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from typing_extensions import Self
 
 import agent_framework._tools as tools_module
@@ -30,6 +40,7 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionInvocationContext, MiddlewareFailure
 from agent_framework._tools import (
+    _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
     _auto_invoke_function,
     _format_tool_parameters,
     _normalize_tool_description_format,
@@ -716,6 +727,64 @@ async def test_context_inferred_arguments_include_factory_and_validator_defaults
     assert validation_calls == ["Ada"]
 
 
+async def test_context_inferred_standard_default_factories_are_visible_and_run_once() -> None:
+    """Nested native defaults are visible without rerunning their factories."""
+    factory_calls: list[str] = []
+    appointment = datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=2), "planned"))
+    amount = Decimal("1.00")
+    identifier = UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe)
+
+    class Category(Enum):
+        REGULAR = "regular"
+
+    def make_appointment() -> datetime:
+        factory_calls.append("appointment")
+        return appointment
+
+    def make_amount() -> Decimal:
+        factory_calls.append("amount")
+        return amount
+
+    def make_identifier() -> UUID:
+        factory_calls.append("identifier")
+        return identifier
+
+    def make_category() -> Category:
+        factory_calls.append("category")
+        return Category.REGULAR
+
+    class Booking(BaseModel):
+        appointment: datetime = Field(default_factory=make_appointment)
+        amount: Decimal = Field(default_factory=make_amount)
+        identifier: UUID = Field(default_factory=make_identifier)
+        category: Category = Field(default_factory=make_category)
+
+    received: list[Booking] = []
+
+    @tool
+    def describe_booking(booking: Booking, suffix: str = "!") -> str:
+        received.append(booking)
+        return f"{booking.category.value}:{booking.amount}{suffix}"
+
+    context = FunctionInvocationContext(function=describe_booking, arguments={"booking": {}})
+    result = await describe_booking.invoke(context=context)
+
+    assert result[0].text == "regular:1.00!"
+    assert len(received) == 1 and isinstance(received[0], Booking)
+    assert context.arguments == {
+        "booking": {
+            "appointment": appointment,
+            "amount": amount,
+            "identifier": identifier,
+            "category": Category.REGULAR,
+        }
+    }
+    assert isinstance(context.arguments, dict)
+    assert "suffix" not in context.arguments
+    _argument_authority_token(context.arguments, boundary="test")
+    assert sorted(factory_calls) == ["amount", "appointment", "category", "identifier"]
+
+
 async def test_context_inferred_arguments_preserve_root_model() -> None:
     """Root models compare their declared root value with the normalized mapping."""
 
@@ -910,6 +979,162 @@ async def test_context_inferred_arguments_preserve_enum_fields() -> None:
     assert context.arguments == {"customer": {"category": Category.REGULAR}}
 
 
+def test_argument_authority_token_preserves_exact_standard_values() -> None:
+    """Tokens distinguish standard values by every representation field tools can inspect."""
+    first_timezone = timezone(timedelta(hours=2), "planned")
+    renamed_timezone = timezone(timedelta(hours=2), "calendar")
+    safe_uuid = UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe)
+    unknown_safety_uuid = UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.unknown)
+    pairs: list[tuple[Any, Any, bool]] = [
+        (date(2026, 1, 1), date(2026, 1, 1), True),
+        (date(2026, 1, 1), datetime(2026, 1, 1), False),
+        (
+            datetime(2026, 1, 1, 12, tzinfo=first_timezone, fold=0),
+            datetime(2026, 1, 1, 12, tzinfo=first_timezone, fold=1),
+            False,
+        ),
+        (
+            datetime(2026, 1, 1, 12, tzinfo=first_timezone),
+            datetime(2026, 1, 1, 12, tzinfo=renamed_timezone),
+            False,
+        ),
+        (time(12, tzinfo=first_timezone, fold=0), time(12, tzinfo=first_timezone, fold=1), False),
+        (timedelta(days=1), timedelta(hours=24), True),
+        (timedelta(seconds=1), timedelta(seconds=2), False),
+        (Decimal("1.0"), Decimal("1.00"), False),
+        (safe_uuid, unknown_safety_uuid, False),
+    ]
+
+    for left, right, same_token in pairs:
+        left_token = _argument_authority_token(left, boundary="test")
+        right_token = _argument_authority_token(right, boundary="test")
+        assert (left_token == right_token) is same_token
+
+
+def test_argument_authority_token_preserves_existing_json_comparison_rules() -> None:
+    """Token changes keep mapping order-insensitivity, boolean distinction and float bits."""
+    assert _argument_authority_token({"first": 1, "second": 2}, boundary="test") == _argument_authority_token(
+        {"second": 2, "first": 1}, boundary="test"
+    )
+    assert _argument_authority_token({"value": True}, boundary="test") != _argument_authority_token(
+        {"value": 1}, boundary="test"
+    )
+    assert _argument_authority_token({"value": 0.0}, boundary="test") != _argument_authority_token(
+        {"value": -0.0}, boundary="test"
+    )
+
+
+def test_argument_authority_token_accepts_pydantic_fixed_timezone_without_named_import() -> None:
+    """Pydantic parsed fixed-offset timezones need no optional type-name import."""
+    adapter = TypeAdapter(datetime)
+    first = adapter.validate_python("2026-01-01T12:00:00+02:00")
+    same_offset = adapter.validate_python("2026-01-01T12:00:00+02:00")
+    different_offset = adapter.validate_python("2026-01-01T12:00:00+03:00")
+
+    assert isinstance(first, datetime) and first.tzinfo is not None
+    assert _argument_authority_token({"appointment": first}, boundary="test") == _argument_authority_token(
+        {"appointment": same_offset}, boundary="test"
+    )
+    assert _argument_authority_token({"appointment": first}, boundary="test") != _argument_authority_token(
+        {"appointment": different_offset}, boundary="test"
+    )
+
+
+@pytest.mark.parametrize("container_kind", ["set", "frozenset"])
+@pytest.mark.parametrize("scalar_kind", ["float", "decimal"])
+def test_argument_authority_token_counts_nan_members(container_kind: str, scalar_kind: str) -> None:
+    """Unordered set tokens preserve the count of NaNs that share one token."""
+
+    def new_nan() -> Any:
+        return float("nan") if scalar_kind == "float" else Decimal("NaN")
+
+    if container_kind == "set":
+        values: set[Any] | frozenset[Any] = {new_nan(), new_nan()}
+        same_values: set[Any] | frozenset[Any] = {new_nan(), new_nan()}
+        one_value: set[Any] | frozenset[Any] = {new_nan()}
+    else:
+        values = frozenset([new_nan(), new_nan()])
+        same_values = frozenset([new_nan(), new_nan()])
+        one_value = frozenset([new_nan()])
+
+    assert len(values) == 2
+    assert _argument_authority_token(values, boundary="test") == _argument_authority_token(same_values, boundary="test")
+    assert _argument_authority_token(values, boundary="test") != _argument_authority_token(one_value, boundary="test")
+
+
+def test_argument_authority_token_accepts_only_simple_stateless_enum_members() -> None:
+    """Simple scalar enum values are typed; custom values or member state remain opaque."""
+
+    class Category(Enum):
+        REGULAR = "regular"
+
+    class OtherCategory(Enum):
+        REGULAR = "regular"
+
+    class NumericCategory(IntEnum):
+        REGULAR = 2
+
+    class TextCategory(str, Enum):
+        REGULAR = "regular"
+
+    class CompositeCategory(Enum):
+        REGULAR = ("regular", "member metadata")
+
+    class NonFiniteCategory(Enum):
+        NAN = float("nan")
+
+    class StatefulCategory(Enum):
+        REGULAR = "regular"
+
+        def __init__(self, value: str) -> None:
+            self.policy = {"labels": [value]}
+
+    token = _argument_authority_token(Category.REGULAR, boundary="test")
+    assert token == _argument_authority_token(Category.REGULAR, boundary="test")
+    assert token != _argument_authority_token(OtherCategory.REGULAR, boundary="test")
+    assert token != _argument_authority_token("regular", boundary="test")
+    assert _argument_authority_token(NumericCategory.REGULAR, boundary="test") != _argument_authority_token(
+        2, boundary="test"
+    )
+    assert _argument_authority_token(TextCategory.REGULAR, boundary="test") != _argument_authority_token(
+        "regular", boundary="test"
+    )
+
+    for unsupported in (CompositeCategory.REGULAR, NonFiniteCategory.NAN, StatefulCategory.REGULAR):
+        with pytest.raises(MiddlewareFailure, match="Cannot safely bind test"):
+            _argument_authority_token(unsupported, boundary="test")
+
+
+def test_argument_authority_token_rejects_timezone_and_standard_type_subclasses(utc_zone_info: ZoneInfo) -> None:
+    """ZoneInfo, custom tzinfo and subclasses stay outside the authority whitelist."""
+
+    class CustomTimezone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            return timedelta(0)
+
+        def dst(self, dt: datetime | None) -> timedelta:
+            return timedelta(0)
+
+        def tzname(self, dt: datetime | None) -> str:
+            return "custom"
+
+    class CustomDate(date):
+        pass
+
+    class CustomSet(set[str]):
+        pass
+
+    unsupported_values = (
+        datetime(2026, 1, 1, tzinfo=utc_zone_info),
+        datetime(2026, 1, 1, tzinfo=CustomTimezone()),
+        CustomDate(2026, 1, 1),
+        CustomSet({"regular"}),
+    )
+    for value in unsupported_values:
+        with pytest.raises(MiddlewareFailure, match="Cannot safely bind test"):
+            _argument_authority_token({"value": value}, boundary="test")
+
+
 @pytest.mark.parametrize("container_kind", ["set", "frozenset"])
 @pytest.mark.parametrize("scalar_kind", ["float", "decimal"])
 async def test_context_inferred_arguments_reject_changed_set_multiplicity(
@@ -982,6 +1207,34 @@ async def test_invoke_preserves_explicit_input_model_serialization() -> None:
     result = await describe_name.invoke(arguments={"name": "Ada"})
 
     assert result[0].text == "ADA"
+
+
+async def test_invoke_preserves_explicit_nested_input_model_serialization() -> None:
+    """Explicit input models still pass their serialized nested projection to the function."""
+
+    class Customer(BaseModel):
+        name: str
+        category: str = "regular"
+
+        @field_serializer("name")
+        def serialize_name(self, value: str) -> str:
+            return value.upper()
+
+    class CustomerInput(BaseModel):
+        customer: Customer
+
+    received: list[dict[str, Any]] = []
+
+    @tool(schema=CustomerInput)
+    def describe_customer(customer: Any) -> str:
+        assert type(customer) is dict
+        received.append(customer)
+        return customer["name"]
+
+    result = await describe_customer.invoke(arguments={"customer": {"name": "Ada"}})
+
+    assert result[0].text == "ADA"
+    assert received == [{"name": "ADA"}]
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():

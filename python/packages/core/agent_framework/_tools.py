@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import math
 import struct
 import sys
 import typing
@@ -23,11 +24,11 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
 from decimal import Decimal
 from enum import Enum
-from functools import partial, wraps
+from functools import lru_cache, partial, wraps
 from time import perf_counter, time, time_ns
 from typing import (
     TYPE_CHECKING,
@@ -49,8 +50,7 @@ from zoneinfo import ZoneInfo
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, RootModel, ValidationError, create_model
-from pydantic_core import TzInfo
+from pydantic import BaseModel, Field, RootModel, TypeAdapter, ValidationError, create_model
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -172,6 +172,58 @@ class _OpaqueArgumentToken:
     identity: int
 
 
+def _is_simple_enum_member(value: Enum) -> bool:
+    """Limit new enum support to scalar members without custom instance state."""
+    scalar = value.value
+    if type(scalar) not in (type(None), bool, int, float, str):
+        return False
+    if isinstance(scalar, float) and not math.isfinite(scalar):
+        return False
+    return vars(value).keys() <= {"_value_", "_name_", "__objclass__", "_sort_order_"}
+
+
+@lru_cache(maxsize=1)
+def _pydantic_fixed_offset_timezone_type() -> type[object]:
+    """Recognize parsed fixed offsets without requiring a newer pydantic-core export."""
+    parsed = TypeAdapter(datetime).validate_python("2000-01-01T00:00:00+00:00")
+    return type(parsed.tzinfo)
+
+
+def _immutable_scalar_token(value: Any, *, allow_zone_info: bool = False) -> Any:
+    """Snapshot supported scalar fields, retaining observable representation details."""
+    value_type = cast(type[object], type(value))
+    if value is None:
+        return (type(None), None)
+    if value_type in (datetime, datetime_time):
+        temporal_value = cast(datetime | datetime_time, value)
+        zone_token = _immutable_scalar_token(temporal_value.tzinfo, allow_zone_info=allow_zone_info)
+        if isinstance(zone_token, _OpaqueArgumentToken):
+            return _OpaqueArgumentToken(value_type.__qualname__, id(value))
+        return (value_type, temporal_value.isoformat(), temporal_value.fold, zone_token)
+    if value_type is date:
+        return (date, cast(date, value).isoformat())
+    if value_type is timedelta:
+        duration = cast(timedelta, value)
+        return (timedelta, duration.days, duration.seconds, duration.microseconds)
+    if value_type is Decimal:
+        return (Decimal, cast(Decimal, value).as_tuple())
+    if value_type is UUID:
+        identifier = cast(UUID, value)
+        return (UUID, identifier.int, identifier.is_safe)
+    if isinstance(value, Enum) and _is_simple_enum_member(value):
+        return (value_type, value.name, _argument_comparison_token(value.value))
+    if allow_zone_info and value_type is ZoneInfo:
+        # Retained ZoneInfo objects hold immutable rules; a key alone cannot identify them.
+        return (ZoneInfo, id(value))
+    if isinstance(value, tzinfo) and (value_type is timezone or value_type is _pydantic_fixed_offset_timezone_type()):
+        return (
+            value_type,
+            _immutable_scalar_token(value.utcoffset(None)),
+            value.tzname(None),
+        )
+    return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -188,12 +240,20 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
     if isinstance(value, tuple):
         return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if type(value) in (set, frozenset):
+        return (
+            type(value),
+            frozenset(
+                Counter(_argument_comparison_token(item) for item in cast(set[Any] | frozenset[Any], value)).items()
+            ),
+        )
+    if isinstance(value, Enum) and not isinstance(value, int | str):
+        return _immutable_scalar_token(value)
     if isinstance(value, float):
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
-    value_type = cast(type[object], type(value))
-    return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
+    return _immutable_scalar_token(value)
 
 
 def _contains_opaque_argument_token(token: Any) -> bool:
@@ -273,39 +333,9 @@ def _inferred_argument_projection_token(value: Any, *, native: bool) -> Any:
                 ).items()
             ),
         )
-    if value_type is datetime or value_type is datetime_time:
-        temporal_value = cast(datetime | datetime_time, value)
-        return (
-            value_type,
-            temporal_value.isoformat(),
-            temporal_value.fold,
-            _inferred_argument_projection_token(temporal_value.tzinfo, native=native),
-        )
-    if value_type is timezone or value_type is TzInfo:
-        offset_timezone = cast(timezone | TzInfo, value)
-        return (
-            value_type,
-            _inferred_argument_projection_token(offset_timezone.utcoffset(None), native=native),
-            offset_timezone.tzname(None),
-        )
-    if value_type is ZoneInfo:
-        # A ZoneInfo instance holds immutable rules; a key alone cannot identify those rules.
-        return (ZoneInfo, id(value))
-    if value_type is date:
-        return (date, cast(date, value).isoformat())
-    if value_type is timedelta:
-        duration = cast(timedelta, value)
-        return (timedelta, duration.days, duration.seconds, duration.microseconds)
-    if value_type is Decimal:
-        return (Decimal, cast(Decimal, value).as_tuple())
-    if value_type is UUID:
-        identifier = cast(UUID, value)
-        return (UUID, identifier.int, identifier.is_safe)
-    if isinstance(value, Enum):
-        return (value_type, value.name, _inferred_argument_projection_token(value.value, native=native))
     if value is None or value_type in (bool, int, float, str, bytes):
         return _argument_comparison_token(value)
-    return _OpaqueArgumentToken(value_type.__qualname__, id(value))
+    return _immutable_scalar_token(value, allow_zone_info=True)
 
 
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
@@ -2058,12 +2088,38 @@ def _function_argument_validation_error_result(
     )
 
 
+def _contains_typed_approval_token(token: Any, *, include_primitive_enums: bool = True) -> bool:
+    """Identify new authority values that the existing pending-state codec cannot store."""
+    if isinstance(token, tuple) and token and isinstance(token[0], type):
+        value_type = token[0]
+        if value_type in (date, datetime, datetime_time, timedelta, Decimal, UUID, set, frozenset):
+            return True
+        if issubclass(value_type, tzinfo):
+            return True
+        if issubclass(value_type, Enum) and (include_primitive_enums or not issubclass(value_type, int | str)):
+            return True
+    if isinstance(token, tuple | frozenset):
+        return any(
+            _contains_typed_approval_token(item, include_primitive_enums=include_primitive_enums)
+            for item in cast(Iterable[Any], token)
+        )
+    return False
+
+
 def _replacement_approval_request(
     function_call: Content,
     arguments: Mapping[str, Any],
+    *,
+    approved_arguments_token: Any = None,
 ) -> Content:
     """Create a new approval generation for middleware-repaired arguments."""
+    from ._middleware import MiddlewareFailure
     from ._types import Content
+
+    if _contains_typed_approval_token(approved_arguments_token) or _contains_typed_approval_token(
+        _argument_comparison_token(dict(arguments))
+    ):
+        raise MiddlewareFailure("Cannot safely persist replacement approval for typed function arguments.")
 
     call_id = function_call.call_id
     if call_id is None:
@@ -2365,7 +2421,11 @@ async def _auto_invoke_function(
             except _FunctionArgumentsChangedAfterApproval as exc:
                 raise MiddlewareTermination(
                     "Function arguments changed after approval.",
-                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                    result=_replacement_approval_request(
+                        function_call_content,
+                        exc.arguments,
+                        approved_arguments_token=middleware_context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY),
+                    ),
                 ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -2388,7 +2448,11 @@ async def _auto_invoke_function(
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
             "Function arguments changed after approval.",
-            result=_replacement_approval_request(function_call_content, exc.arguments),
+            result=_replacement_approval_request(
+                function_call_content,
+                exc.arguments,
+                approved_arguments_token=middleware_context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY),
+            ),
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)

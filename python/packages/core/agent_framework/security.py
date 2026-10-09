@@ -44,6 +44,8 @@ from ._tools import (
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
+    _argument_comparison_token,  # pyright: ignore[reportPrivateUsage]
+    _contains_typed_approval_token,  # pyright: ignore[reportPrivateUsage]
     tool,
 )
 from ._types import Content, Message
@@ -2791,12 +2793,27 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             return context.arguments.model_dump()
         return dict(context.arguments)
 
+    def _approval_arguments(self, context: FunctionInvocationContext) -> dict[str, Any]:
+        """Encode newly supported scalars only when the existing policy signature is unchanged."""
+        arguments = self._current_arguments(context)
+        if not _contains_typed_approval_token(_argument_comparison_token(arguments), include_primitive_enums=False):
+            return arguments
+        encoded = cast(
+            dict[str, Any],
+            _strict_json_value(arguments, path="approval invocation.arguments", canonical=False),
+        )
+        if self._signature_from_parts(context.function.name, arguments) != self._signature_from_parts(
+            context.function.name, encoded
+        ):
+            raise ValueError("Policy approval arguments cannot retain their signature in JSON.")
+        return encoded
+
     def _build_function_call_content(self, context: FunctionInvocationContext) -> Content:
         """Reconstruct the current function call as Content for approval requests."""
         return Content.from_function_call(
             call_id=self._get_call_id(context),
             name=context.function.name,
-            arguments=self._current_arguments(context),
+            arguments=self._approval_arguments(context),
             id=self._get_approval_id(context),
         )
 
@@ -2816,7 +2833,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         return hashlib.sha256(payload).hexdigest()
 
     def _call_body_signature(self, context: FunctionInvocationContext) -> str:
-        return self._signature_from_parts(context.function.name, self._current_arguments(context))
+        return self._signature_from_parts(context.function.name, self._approval_arguments(context))
 
     def _resolved_arguments(self, context: FunctionInvocationContext) -> dict[str, Any]:
         if isinstance(context.arguments, BaseModel):

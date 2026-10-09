@@ -8305,6 +8305,153 @@ class TestVariableArgumentPolicy:
         assert executed is True
         assert replay.metadata["user_approved_violation"] is True
 
+    async def test_plain_enum_policy_approval_survives_durable_session_roundtrip(self) -> None:
+        """A policy approval for a scalar Enum can be persisted and resumed once."""
+        from enum import Enum
+
+        from agent_framework import InMemoryHistoryProvider
+        from tests.core.conftest import MockBaseChatClient
+
+        class Permission(Enum):
+            READ = "read"
+
+        class EnumArguments(BaseModel):
+            permission: Permission
+            payload_ref: str
+
+        received: list[tuple[Permission, str]] = []
+
+        async def sink(permission: Permission, payload_ref: str) -> str:
+            received.append((permission, payload_ref))
+            return "sent"
+
+        sink_tool = FunctionTool(func=sink, name="plain_enum_sink", input_model=EnumArguments)
+        config = SecureAgentConfig(approval_on_violation=True)
+        client = MockBaseChatClient()
+        session = AgentSession(session_id="plain-enum-policy-approval")
+        variable_id = config.get_variable_store(session).store(
+            "untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        function_call = Content.from_function_call(
+            call_id="plain-enum-call",
+            id="plain-enum-occurrence",
+            name=sink_tool.name,
+            arguments={"permission": "read", "payload_ref": f"[{variable_id}]"},
+        )
+        client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        agent = Agent(
+            client=client,
+            tools=[sink_tool],
+            context_providers=[config, InMemoryHistoryProvider()],
+        )
+
+        first_response = await agent.run("send the payload", session=session)
+
+        assert received == []
+        assert len(first_response.user_input_requests) == 1
+        approval_request = first_response.user_input_requests[0]
+        assert approval_request.function_call is not None
+        request_arguments = approval_request.function_call.parse_arguments()
+        assert request_arguments == {"permission": "read", "payload_ref": f"[{variable_id}]"}
+
+        restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        resumed = await agent.run(approval_request.to_function_approval_response(True), session=restored)
+
+        assert resumed.text == "done"
+        assert received == [(Permission.READ, "untrusted payload")]
+
+    async def test_policy_approval_rejects_enum_projection_that_changes_tuple_signature(self) -> None:
+        """Enum normalization must not turn a tuple-bound policy approval into a list approval."""
+        from enum import Enum
+
+        class Permission(Enum):
+            READ = "read"
+
+        async def sink(access: Any, trigger: str) -> str:
+            return "sent"
+
+        sink_tool = FunctionTool(func=sink, name="tuple_enum_sink")
+        config = SecureAgentConfig(approval_on_violation=True)
+        session = AgentSession(session_id="tuple-enum-policy-approval")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        variable_id = config.get_variable_store(session).store(
+            "untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=sink_tool,
+            arguments={"access": (Permission.READ,), "trigger": f"[{variable_id}]"},
+            session=session,
+        )
+        context.metadata.update({
+            "call_id": "tuple-enum-call",
+            "function_call_occurrence_id": "tuple-enum-occurrence",
+        })
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert executed is False
+        assert isinstance(context.result, dict)
+        assert context.result["violation_type"] == "unsafe_approval_binding"
+        assert policy._scope_for_session(session).pending_approvals == {}
+
+    @pytest.mark.parametrize("typed_kind", ["date", "decimal", "uuid"])
+    async def test_policy_approval_keeps_strict_json_typed_value_boundary(self, typed_kind: str) -> None:
+        """Unsupported typed scalars fail closed before a policy request is recorded."""
+        from datetime import date
+        from decimal import Decimal
+        from uuid import UUID
+
+        typed_value = {
+            "date": date(2026, 10, 9),
+            "decimal": Decimal("1.25"),
+            "uuid": UUID("12345678-1234-5678-1234-567812345678"),
+        }[typed_kind]
+
+        async def sink(value: Any, trigger: str) -> str:
+            return "sent"
+
+        sink_tool = FunctionTool(func=sink, name=f"{typed_kind}_sink")
+        config = SecureAgentConfig(approval_on_violation=True)
+        session = AgentSession(session_id=f"strict-{typed_kind}-policy-approval")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        variable_id = config.get_variable_store(session).store(
+            "untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=sink_tool,
+            arguments={"value": typed_value, "trigger": f"[{variable_id}]"},
+            session=session,
+        )
+        context.metadata.update({
+            "call_id": f"{typed_kind}-call",
+            "function_call_occurrence_id": f"{typed_kind}-occurrence",
+        })
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert executed is False
+        assert isinstance(context.result, dict)
+        assert context.result["violation_type"] == "unsafe_approval_binding"
+        assert policy._scope_for_session(session).pending_approvals == {}
+
 
 @pytest.mark.asyncio
 async def test_rewritten_arguments_no_rewrites():

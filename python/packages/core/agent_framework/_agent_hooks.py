@@ -105,6 +105,7 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from pydantic import BaseModel
@@ -397,14 +398,37 @@ def _write_back_message_list(
     return result
 
 
+def _argument_value_to_wire(value: Any) -> Any:
+    """Recursively encode simple Enum scalars before the existing JSON-safe projection."""
+    if isinstance(value, Enum):
+        # IntEnum and str-backed enums already follow make_json_safe's scalar behavior.
+        if isinstance(value, (str, int, float, bool)):
+            return make_json_safe(value)
+        from ._tools import _is_simple_enum_member  # pyright: ignore[reportPrivateUsage]
+
+        if not _is_simple_enum_member(value):
+            raise TypeError("agent-hooks arguments require a simple JSON scalar Enum without custom member state.")
+        return value.value
+    if isinstance(value, BaseModel):
+        return _argument_value_to_wire(value.model_dump())
+    if isinstance(value, dict):
+        value_as_dict = cast("dict[Any, Any]", value)
+        return {str(key): _argument_value_to_wire(item) for key, item in value_as_dict.items()}
+    if isinstance(value, list):
+        return [_argument_value_to_wire(item) for item in cast("list[Any]", value)]
+    if isinstance(value, tuple):
+        return [_argument_value_to_wire(item) for item in cast("tuple[Any, ...]", value)]
+    return make_json_safe(value)
+
+
 def _arguments_to_wire(arguments: Any) -> dict[str, Any]:
     """Project tool-call arguments as the spec's ``args`` object."""
     if arguments is None:
         return {}
     if isinstance(arguments, BaseModel):
-        return {str(key): make_json_safe(item) for key, item in arguments.model_dump().items()}
+        return {str(key): _argument_value_to_wire(item) for key, item in arguments.model_dump().items()}
     if isinstance(arguments, Mapping):
-        return {str(key): make_json_safe(item) for key, item in cast("Mapping[Any, Any]", arguments).items()}
+        return {str(key): _argument_value_to_wire(item) for key, item in cast("Mapping[Any, Any]", arguments).items()}
     if isinstance(arguments, str):
         with contextlib.suppress(ValueError):
             parsed = json.loads(arguments)
