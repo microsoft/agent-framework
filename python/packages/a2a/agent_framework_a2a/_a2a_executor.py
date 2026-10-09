@@ -4,9 +4,9 @@ import base64
 import logging
 import uuid
 from asyncio import CancelledError
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 from a2a.helpers import new_task_from_user_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -26,6 +26,23 @@ from ._feature_usage import FeatureIndex
 from ._utils import get_uri_data
 
 logger = logging.getLogger("agent_framework.a2a")
+
+# Key in ``SendMessageRequest.metadata`` that carries forwarded ``function_invocation_kwargs`` and ``client_kwargs``.
+AGENT_FRAMEWORK_METADATA_KEY = "agent_framework"
+_FORWARDED_KWARGS_NAMES = ("function_invocation_kwargs", "client_kwargs")
+# Names owned by the framework (chat client and tool invocation parameters). A remote caller must never be able to
+# set them, since a duplicate keyword would fail the task or override framework behavior.
+_RESERVED_KWARGS = frozenset({
+    "messages",
+    "stream",
+    "options",
+    "session",
+    "middleware",
+    "compaction_strategy",
+    "tokenizer",
+    "function_invocation_kwargs",
+    "client_kwargs",
+})
 
 
 class A2AExecutor(AgentExecutor):
@@ -89,9 +106,19 @@ class A2AExecutor(AgentExecutor):
         agent: The AI agent to execute.
         stream: Whether to stream the agent response. Defaults to False.
         run_kwargs: Additional keyword arguments to pass to the agent's run method.
+        accepted_kwargs: Names of keys the executor accepts from the caller's request. A client that
+            forwards ``function_invocation_kwargs`` and ``client_kwargs`` (see ``A2AAgent``) sends them
+            in the request metadata, and only the keys named here are passed to the agent's run
+            method. The default (``None``) accepts nothing.
     """
 
-    def __init__(self, agent: SupportsAgentRun, stream: bool = False, run_kwargs: Mapping[str, Any] | None = None):
+    def __init__(
+        self,
+        agent: SupportsAgentRun,
+        stream: bool = False,
+        run_kwargs: Mapping[str, Any] | None = None,
+        accepted_kwargs: Sequence[str] | None = None,
+    ):
         """Initialize the A2AExecutor with the specified agent.
 
         Args:
@@ -99,9 +126,16 @@ class A2AExecutor(AgentExecutor):
             stream: Whether to stream the agent response. Defaults to False.
             run_kwargs: Additional keyword arguments to pass to the agent's run method.
                 Cannot contain 'session' or 'stream' as these are managed by the executor.
+            accepted_kwargs: Names of keys to accept from the request's forwarded
+                ``function_invocation_kwargs`` and ``client_kwargs``. Accepted values are passed to the
+                agent's run method. Values configured in ``run_kwargs`` take precedence on conflict.
+                Defaults to accepting nothing. Framework-owned names (for example ``stream``,
+                ``messages``, ``options`` and ``session``) and names starting with an underscore are
+                rejected.
 
         Raises:
-            ValueError: If run_kwargs contains 'session' or 'stream'.
+            ValueError: If run_kwargs contains 'session' or 'stream', or accepted_kwargs contains a
+                framework-owned name.
         """
         super().__init__()
         self._agent: SupportsAgentRun = agent
@@ -112,6 +146,10 @@ class A2AExecutor(AgentExecutor):
             if "stream" in run_kwargs:
                 raise ValueError("run_kwargs cannot contain 'stream' as it is managed by the executor.")
         self._run_kwargs: Mapping[str, Any] = run_kwargs or {}
+        reserved = sorted(key for key in accepted_kwargs or () if key in _RESERVED_KWARGS or key.startswith("_"))
+        if reserved:
+            raise ValueError(f"accepted_kwargs cannot contain framework-owned names: {', '.join(reserved)}.")
+        self._accepted_kwargs: frozenset[str] = frozenset(accepted_kwargs or ())
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -165,10 +203,11 @@ class A2AExecutor(AgentExecutor):
 
             session = self._agent.create_session(session_id=task.context_id)
 
+            run_kwargs = self._build_run_kwargs(context)
             if self._stream:
-                await self._run_stream(query, session, updater)
+                await self._run_stream(query, session, updater, run_kwargs)
             else:
-                await self._run(query, session, updater)
+                await self._run(query, session, updater, run_kwargs)
 
             # Mark as complete
             await updater.complete()
@@ -181,9 +220,33 @@ class A2AExecutor(AgentExecutor):
                 message=updater.new_agent_message([Part(text=str(e))]),
             )
 
-    async def _run_stream(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
+    def _build_run_kwargs(self, context: RequestContext) -> dict[str, Any]:
+        """Merge the accepted request kwargs under the configured ``run_kwargs``."""
+        run_kwargs: dict[str, Any] = dict(self._run_kwargs)
+        if not self._accepted_kwargs:
+            return run_kwargs
+        forwarded = context.metadata.get(AGENT_FRAMEWORK_METADATA_KEY)
+        if not isinstance(forwarded, Mapping):
+            return run_kwargs
+        for name in _FORWARDED_KWARGS_NAMES:
+            values = cast("Mapping[str, Any]", forwarded).get(name)
+            if not isinstance(values, Mapping):
+                continue
+            accepted = {
+                key: value for key, value in cast("Mapping[str, Any]", values).items() if key in self._accepted_kwargs
+            }
+            if accepted:
+                configured = run_kwargs.get(name)
+                run_kwargs[name] = {**accepted, **(configured or {})}
+        return run_kwargs
+
+    async def _run_stream(
+        self, query: Any, session: AgentSession, updater: TaskUpdater, run_kwargs: Mapping[str, Any] | None = None
+    ) -> None:
         """Run the agent in streaming mode and publish updates to the task updater."""
-        response_stream = self._agent.run(query, session=session, stream=True, **self._run_kwargs)
+        response_stream = self._agent.run(
+            query, session=session, stream=True, **(self._run_kwargs if run_kwargs is None else run_kwargs)
+        )
         streamed_artifact_ids: set[str] = set()
         # Generate a stable artifact ID for the entire stream so all chunks share the same ID.
         # This ensures clients can coalesce streaming tokens into a single artifact/message
@@ -200,9 +263,13 @@ class A2AExecutor(AgentExecutor):
             )
         ).get_final_response()
 
-    async def _run(self, query: Any, session: AgentSession, updater: TaskUpdater) -> None:
+    async def _run(
+        self, query: Any, session: AgentSession, updater: TaskUpdater, run_kwargs: Mapping[str, Any] | None = None
+    ) -> None:
         """Run the agent in non-streaming mode and publish messages to the task updater."""
-        response = await self._agent.run(query, session=session, stream=False, **self._run_kwargs)
+        response = await self._agent.run(
+            query, session=session, stream=False, **(self._run_kwargs if run_kwargs is None else run_kwargs)
+        )
         response_messages = response.messages
 
         if not isinstance(response_messages, list):

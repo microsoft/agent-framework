@@ -13,7 +13,7 @@ from agent_framework import (
 )
 from agent_framework._types import AgentResponse
 from agent_framework.a2a import A2AExecutor
-from pytest import fixture, raises
+from pytest import fixture, mark, raises
 
 
 @fixture
@@ -923,3 +923,121 @@ class TestA2AExecutorIntegration:
             mock_updater.start_work.assert_called_once()
             cast(Any, executor.handle_events).assert_called_once()
             mock_updater.complete.assert_called_once()
+
+
+class TestA2AExecutorForwardedKwargs:
+    """Tests for accepting forwarded function_invocation_kwargs and client_kwargs."""
+
+    @staticmethod
+    async def _execute(executor: A2AExecutor, metadata: Any, mock_event_queue: MagicMock, mock_task: Task) -> MagicMock:
+        request_context = MagicMock()
+        request_context.get_user_input = MagicMock(return_value="Hello")
+        request_context.current_task = mock_task
+        request_context.context_id = "ctx-123"
+        request_context.message = MagicMock()
+        request_context.metadata = metadata
+
+        response = MagicMock(spec=AgentResponse)
+        response.messages = [Message(role="assistant", contents=[Content.from_text(text="Hi")])]
+        cast(Any, executor._agent).run = AsyncMock(return_value=response)
+        cast(Any, executor._agent).create_session = MagicMock()
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            for name in ("submit", "start_work", "complete", "update_status"):
+                setattr(mock_updater, name, AsyncMock())
+            mock_updater_class.return_value = mock_updater
+            await executor.execute(request_context, mock_event_queue)
+        return cast(MagicMock, executor._agent.run)
+
+    @staticmethod
+    def _forwarded(**kwargs: Any) -> dict[str, Any]:
+        return {"agent_framework": kwargs}
+
+    async def test_accepted_keys_are_passed_to_agent_run(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(mock_agent, accepted_kwargs=["tenant", "trace"])
+        metadata = self._forwarded(
+            function_invocation_kwargs={"tenant": "acme", "other": 1},
+            client_kwargs={"trace": {"id": "abc"}, "other": 2},
+        )
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        kwargs = run.call_args.kwargs
+        assert kwargs["function_invocation_kwargs"] == {"tenant": "acme"}
+        assert kwargs["client_kwargs"] == {"trace": {"id": "abc"}}
+
+    async def test_nothing_is_accepted_by_default(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(mock_agent)
+        metadata = self._forwarded(function_invocation_kwargs={"tenant": "acme"}, client_kwargs={"trace": "abc"})
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        assert "function_invocation_kwargs" not in run.call_args.kwargs
+        assert "client_kwargs" not in run.call_args.kwargs
+
+    async def test_configured_run_kwargs_win_on_conflict(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(
+            mock_agent,
+            run_kwargs={"function_invocation_kwargs": {"tenant": "server", "fixed": True}},
+            accepted_kwargs=["tenant", "extra"],
+        )
+        metadata = self._forwarded(function_invocation_kwargs={"tenant": "caller", "extra": "x"})
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        assert run.call_args.kwargs["function_invocation_kwargs"] == {"tenant": "server", "fixed": True, "extra": "x"}
+
+    @mark.parametrize(
+        "reserved",
+        ["stream", "messages", "options", "session", "middleware", "client_kwargs", "_internal"],
+    )
+    def test_framework_owned_names_cannot_be_accepted(self, mock_agent: MagicMock, reserved: str) -> None:
+        with raises(ValueError, match=reserved):
+            A2AExecutor(mock_agent, accepted_kwargs=["tenant", reserved])
+
+    @mark.parametrize(
+        "metadata",
+        [{}, {"agent_framework": "text"}, {"agent_framework": {"client_kwargs": "text"}}],
+        ids=["missing", "not-a-mapping", "values-not-a-mapping"],
+    )
+    async def test_malformed_metadata_is_ignored(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task, metadata: Any
+    ) -> None:
+        executor = A2AExecutor(mock_agent, accepted_kwargs=["tenant"])
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        assert "client_kwargs" not in run.call_args.kwargs
+        assert "function_invocation_kwargs" not in run.call_args.kwargs
+
+    async def test_accepted_kwargs_are_passed_when_streaming(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(mock_agent, stream=True, accepted_kwargs=["tenant"])
+        stream = MagicMock()
+        stream.with_transform_hook = MagicMock(return_value=stream)
+        stream.get_final_response = AsyncMock()
+        request_context = MagicMock()
+        request_context.get_user_input = MagicMock(return_value="Hello")
+        request_context.current_task = mock_task
+        request_context.context_id = "ctx-123"
+        request_context.message = MagicMock()
+        request_context.metadata = self._forwarded(function_invocation_kwargs={"tenant": "acme"})
+        cast(Any, mock_agent).run = MagicMock(return_value=stream)
+        cast(Any, mock_agent).create_session = MagicMock()
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            for name in ("submit", "start_work", "complete", "update_status"):
+                setattr(mock_updater, name, AsyncMock())
+            mock_updater_class.return_value = mock_updater
+            await executor.execute(request_context, mock_event_queue)
+
+        assert mock_agent.run.call_args.kwargs["function_invocation_kwargs"] == {"tenant": "acme"}
