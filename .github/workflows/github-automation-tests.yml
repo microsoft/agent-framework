@@ -13,6 +13,7 @@ on:
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
+      - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
   push:
     branches:
@@ -28,6 +29,7 @@ on:
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
+      - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
 
 permissions:

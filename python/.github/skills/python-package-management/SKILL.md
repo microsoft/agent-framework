@@ -107,6 +107,10 @@ uv run poe test
   refreshes; it repins exact dependencies across development groups and
   `tooling/requirements-*.txt`, refreshes `uv.lock`, and reruns `check` and
   `typing`.
+- Upgrade the root uv version manually as one coordinated change across the
+  `dev` requirement, `[tool.uv].required-version`, setup workflows, and the
+  uv pre-commit revision. Automated dependency updates intentionally ignore
+  the root uv pin.
 - Run Lab dependency and validation commands from `packages/lab`; root workspace tasks deliberately do not
   discover or update the Lab project.
 

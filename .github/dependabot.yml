@@ -71,7 +71,6 @@ updates:
     groups:
       basics:
         patterns:
-          - "uv"
           - "ruff"
           - "prek"
           - "poethepoet"
@@ -94,6 +93,10 @@ updates:
           - "pyrefly"
           - "ty"
           - "zuban"
+    # Root uv upgrades must update required-version, workflow pins, and the
+    # pre-commit revision together. Lab retains its independent uv updater.
+    ignore:
+      - dependency-name: "uv"
     labels:
       - "python"
       - "dependencies"
@@ -110,7 +113,6 @@ updates:
       # by the pip updater above. This entry covers pyproject.toml and uv.lock.
       basics:
         patterns:
-          - "uv"
           - "prek"
           - "poethepoet"
           - "tomli"
@@ -124,6 +126,9 @@ updates:
       flit:
         patterns:
           - "flit*"
+    # Avoid partial root uv bumps; coordinated uv upgrades are manual.
+    ignore:
+      - dependency-name: "uv"
     labels:
       - "python"
       - "dependencies"

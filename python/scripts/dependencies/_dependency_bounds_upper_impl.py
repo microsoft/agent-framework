@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
 AZURE_MONITOR_OPENTELEMETRY = "azure-monitor-opentelemetry"
 OPENTELEMETRY_SDK = "opentelemetry-sdk"
-VALIDATION_TOOL_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "zuban"})
+MANUALLY_MANAGED_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "uv", "zuban"})
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -320,9 +320,9 @@ def _collect_development_pin_replacements(
         current_exact_version = _exact_pin_version(parsed_requirement)
         if current_exact_version is None:
             continue
-        if dependency_name in VALIDATION_TOOL_DEV_PINS:
+        if dependency_name in MANUALLY_MANAGED_DEV_PINS:
             logger.info(
-                "Skipping %s in %s because validation tool upgrades should be handled separately.",
+                "Skipping %s in %s because its version must be coordinated separately.",
                 dependency_name,
                 pyproject_file,
             )
