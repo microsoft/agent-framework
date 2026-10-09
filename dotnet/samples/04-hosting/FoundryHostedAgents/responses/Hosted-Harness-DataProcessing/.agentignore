@@ -1,0 +1,19 @@
+﻿# Controls which files are excluded from the source-deploy ZIP (.gitignore syntax).
+azure.yaml
+.agentignore
+
+.env
+.env.*
+.azure/
+.git/
+
+bin/
+obj/
+out/
+*.user
+*.suo
+.vs/
+
+.checkpoints/
+
+# Include working/sales.csv, local-feed/, and nuget.config in the upload.
