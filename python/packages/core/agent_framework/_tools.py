@@ -1268,7 +1268,9 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            # JSON mode, so enums, datetimes, UUIDs and JSON-only field serializers apply. Values
+            # Pydantic cannot serialize to JSON (arbitrary types) fall back to str individually.
+            return value.model_dump(mode="json", fallback=str)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):

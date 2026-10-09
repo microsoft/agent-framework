@@ -4041,6 +4041,46 @@ def test_parse_result_nested_pydantic_model():
     assert "18.0" in parsed[0].text or "18" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+def test_parse_result_pydantic_model_uses_json_mode():
+    """Enum and datetime fields are serialized the way Pydantic writes them to JSON."""
+    from enum import Enum
+
+    class Status(Enum):
+        OPEN = "open"
+
+    class Ticket(BaseModel):
+        status: Status
+        created: datetime
+
+    parsed = FunctionTool.parse_result(Ticket(status=Status.OPEN, created=datetime(2024, 1, 1, 12)))
+
+    assert json.loads(parsed[0].text) == {"status": "open", "created": "2024-01-01T12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+def test_parse_result_pydantic_model_with_arbitrary_type():
+    """Only the field Pydantic cannot serialize to JSON falls back to str; the others stay in JSON mode."""
+    from pydantic import field_serializer
+
+    class Handle:
+        def __str__(self) -> str:
+            return "handle-1"
+
+    class Result(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        handle: Handle
+        created: datetime
+        token: str
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
+
+    parsed = FunctionTool.parse_result(Result(handle=Handle(), created=datetime(2024, 1, 1, 12), token="secret"))
+
+    assert json.loads(parsed[0].text) == {"handle": "handle-1", "created": "2024-01-01T12:00:00", "token": "***"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 
