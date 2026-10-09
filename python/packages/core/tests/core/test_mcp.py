@@ -10182,7 +10182,12 @@ async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
 
 async def test_load_tools_sorts_input_schema_properties_deterministically() -> None:
     """Verify that inputSchema properties are sorted deterministically for prompt caching."""
-    tool = MCPTool(name="test")  # type: ignore[abstract]
+
+    class TestServer(MCPTool):
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    tool = TestServer(name="test")
     tool.session = AsyncMock()
     tool.load_tools_flag = True
 
@@ -10214,7 +10219,12 @@ async def test_load_tools_sorts_input_schema_properties_deterministically() -> N
 
 async def test_load_tools_sorts_nested_input_schema_deterministically() -> None:
     """Verify that nested properties, items, and $defs are recursively sorted deterministically."""
-    tool = MCPTool(name="test")  # type: ignore[abstract]
+
+    class TestServer(MCPTool):
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    tool = TestServer(name="test")
     tool.session = AsyncMock()
     tool.load_tools_flag = True
 
