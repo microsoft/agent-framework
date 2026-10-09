@@ -7,13 +7,13 @@
 #     "mcp>=2.2.0,<3",
 # ]
 # ///
-# Run with: uv run fastmcp_app.py
+# Run with: uv run mcpserver_app.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host an Agent Framework agent with FastMCP and the conversion helpers.
+"""Host an Agent Framework agent with MCPServer and the conversion helpers.
 
-FastMCP derives the native MCP tool schema from the decorated function
+MCPServer derives the native MCP tool schema from the decorated function
 signature. The Agent Framework hosting package only converts the validated
 arguments and completed agent response at the protocol boundary.
 
@@ -53,7 +53,7 @@ agent = Agent(
 
 @asynccontextmanager
 async def lifespan(_server: MCPServer[None]) -> AsyncGenerator[None]:
-    """Close the model credential when the FastMCP server stops."""
+    """Close the model credential when the MCP server stops."""
     async with credential:
         yield
 
@@ -74,7 +74,7 @@ async def run_agent(
     task: str,
     reasoning_effort: Literal["low", "medium", "high"] | None = None,
 ) -> types.CallToolResult:
-    """Run the agent with FastMCP-validated arguments."""
+    """Run the agent with MCPServer-validated arguments."""
     arguments: dict[str, object] = {"task": task}
     if reasoning_effort is not None:
         arguments["reasoning_effort"] = reasoning_effort
