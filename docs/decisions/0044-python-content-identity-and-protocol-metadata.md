@@ -39,8 +39,9 @@ field marks the hosted server boundary in spec 004's approval scenarios; the imp
 hosted-server-boundary scenario row and its authoritative test mapping.
 
 `additional_properties` merges are shallow and not uniform: text, reasoning, and function-call addition keeps the
-existing value on collision, code-interpreter aggregation keeps the incoming value, and nested values are shared by
-copies. Grouping metadata in nested mappings therefore requires changing how core merges and copies them.
+existing value on collision, the optimized one-pass text and reasoning coalescer independently reproduces that
+shallow merge, code-interpreter aggregation keeps the incoming value, and nested values are shared by copies.
+Grouping metadata in nested mappings therefore requires changing how core merges and copies them.
 
 ## Decision Drivers
 
@@ -189,9 +190,9 @@ from another producer. Core therefore changes how `additional_properties` are co
 - One core merge function combines two mappings. When both hold a mapping under the same top-level key, it merges
   them one level deep. Each merge site keeps its existing conflict rule for colliding keys: content addition keeps
   the existing value; code-interpreter and response aggregation keep the incoming value.
-- Every core merge site uses it: content addition, code-interpreter aggregation, response aggregation, workflow-agent
-  response merging, and function-result carriers. Packages that merge metadata themselves, such as A2A combining task
-  metadata, use it too.
+- Every core merge site uses it: direct content addition, one-pass text and reasoning coalescing, code-interpreter
+  aggregation, response aggregation, workflow-agent response merging, and function-result carriers. Packages that
+  merge metadata themselves, such as A2A combining task metadata, use it too.
 - The rule applies to any top-level mapping, not only known namespace names, because core cannot list every
   third-party provider. Application values that are mappings therefore also merge one level deep when streamed
   fragments are combined, instead of being replaced.
