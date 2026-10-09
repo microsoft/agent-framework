@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable
+from typing import Any, Literal, overload
 from unittest.mock import MagicMock
 
 import pytest
+from agent_framework import (
+    AgentExecutor,
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentRunInputs,
+    AgentSession,
+    BaseAgent,
+    Content,
+    Message,
+    ResponseStream,
+    WorkflowBuilder,
+)
 
-from agent_framework_foundry._oauth_helpers import _validate_consent_link, try_parse_oauth_consent_event
+from agent_framework_foundry._oauth_helpers import (
+    _validate_consent_link,
+    parse_oauth_consent_output_items,
+    try_parse_oauth_consent_event,
+)
 
 # region _validate_consent_link tests
 
@@ -159,6 +176,124 @@ def test_empty_contents_for_https_empty_netloc(caplog: pytest.LogCaptureFixture)
     assert update is not None
     assert len(update.contents) == 0
     assert "non-HTTPS" in caplog.text
+
+
+# endregion
+
+
+# region consent request id
+
+
+def _make_output_item(*, item_id: Any = "oauth-item-1", consent_link: str = "https://consent.example.com/auth") -> Any:
+    """Create a mock non-streaming ``oauth_consent_request`` output item."""
+    item = MagicMock()
+    item.type = "oauth_consent_request"
+    item.consent_link = consent_link
+    item.id = item_id
+    return item
+
+
+def test_output_item_added_keeps_provider_item_id() -> None:
+    """The consent content carries the provider item id, as user-input requests need one."""
+    update = try_parse_oauth_consent_event(_make_output_item_event(item_id="oauth-item-42"), "test-model")
+
+    assert update is not None
+    assert [c.id for c in update.contents if c.type == "oauth_consent_request"] == ["oauth-item-42"]
+
+
+def test_top_level_consent_requested_event_keeps_event_id() -> None:
+    """A top-level ``response.oauth_consent_requested`` event keeps its id on the content."""
+    update = try_parse_oauth_consent_event(_make_top_level_event(event_id="consent-event-7"), "test-model")
+
+    assert update is not None
+    assert [c.id for c in update.contents if c.type == "oauth_consent_request"] == ["consent-event-7"]
+
+
+def test_non_streaming_output_item_keeps_provider_item_id() -> None:
+    """Non-streaming output items keep the provider item id on the consent content."""
+    contents = parse_oauth_consent_output_items([_make_output_item(item_id="oauth-item-9")])
+
+    assert len(contents) == 1
+    assert contents[0].type == "oauth_consent_request"
+    assert contents[0].user_input_request is True
+    assert contents[0].id == "oauth-item-9"
+
+
+def test_consent_content_without_string_id_has_no_id() -> None:
+    """A provider item without a usable id does not get a made-up one."""
+    contents = parse_oauth_consent_output_items([_make_output_item(item_id=None)])
+
+    assert len(contents) == 1
+    assert contents[0].id is None
+
+
+class _ConsentEmittingAgent(BaseAgent):
+    """Agent that returns the consent content parsed from a Foundry output item."""
+
+    def __init__(self, *, item_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._item_id = item_id
+
+    def _consent_contents(self) -> list[Content]:
+        return parse_oauth_consent_output_items([_make_output_item(item_id=self._item_id)])
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        contents = self._consent_contents()
+
+        if stream:
+
+            async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=contents, role="assistant")
+
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+        async def _run() -> AgentResponse:
+            return AgentResponse(messages=[Message("assistant", contents)])
+
+        return _run()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_pauses_for_oauth_consent_request(stream: bool) -> None:
+    """In a workflow, the consent request becomes a ``request_info`` event keyed by the provider item id."""
+    agent = _ConsentEmittingAgent(item_id="oauth-item-wf", id="consent_agent", name="ConsentAgent")
+    workflow = WorkflowBuilder(start_executor=AgentExecutor(agent, id="consent_exec")).build()
+
+    if stream:
+        events = [event async for event in workflow.run("connect my calendar", stream=True)]
+    else:
+        events = list(await workflow.run("connect my calendar"))
+
+    request_info_events = [event for event in events if event.type == "request_info"]
+    assert len(request_info_events) == 1
+    assert request_info_events[0].request_id == "oauth-item-wf"
 
 
 # endregion

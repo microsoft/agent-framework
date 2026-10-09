@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -48,28 +49,47 @@ def try_parse_oauth_consent_event(event: Any, model: str) -> ChatResponseUpdate 
     else:
         return None
 
+    return ChatResponseUpdate(
+        contents=_oauth_consent_contents(raw_item, consent_link),
+        role="assistant",
+        model=model,
+        raw_representation=event,
+    )
+
+
+def parse_oauth_consent_output_items(output: Iterable[Any] | None) -> list[Content]:
+    """Parse ``oauth_consent_request`` items from a non-streaming response's ``output``.
+
+    Non-streaming responses carry the consent request as an output item instead of
+    a stream event, so it has to be surfaced from the completed response as well.
+    """
+    contents: list[Content] = []
+    for item in output or ():
+        if getattr(item, "type", None) == "oauth_consent_request":
+            contents.extend(_oauth_consent_contents(item, getattr(item, "consent_link", None) or ""))
+    return contents
+
+
+def _oauth_consent_contents(raw_item: Any, consent_link: str) -> list[Content]:
+    """Build the consent content for an oauth_consent_request item, validating its link."""
     item_id = getattr(raw_item, "id", "<unknown>")
 
     if consent_link:
         consent_link = _validate_consent_link(consent_link, item_id)
 
-    contents: list[Content] = []
     if consent_link:
-        contents.append(
-            Content.from_oauth_consent_request(
-                consent_link=consent_link,
-                raw_representation=raw_item,
-            )
+        content = Content.from_oauth_consent_request(
+            consent_link=consent_link,
+            raw_representation=raw_item,
         )
-    else:
-        logger.warning(
-            "Received oauth_consent_request output without valid consent_link (item id=%s)",
-            item_id,
-        )
-
-    return ChatResponseUpdate(
-        contents=contents,
-        role="assistant",
-        model=model,
-        raw_representation=event,
+        # The consent request is a user-input request: workflows (``AgentExecutor``) register it
+        # under its id, so keep the provider item id instead of leaving it empty.
+        raw_id = getattr(raw_item, "id", None)
+        if isinstance(raw_id, str) and raw_id:
+            content.id = raw_id
+        return [content]
+    logger.warning(
+        "Received oauth_consent_request output without valid consent_link (item id=%s)",
+        item_id,
     )
+    return []
