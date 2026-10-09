@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -139,6 +140,21 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
 
 
 def _slugify_topic(topic: str) -> str:
+    normalized = _normalize_topic(topic)
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
+    if slug == normalized.lower():
+        # Already a safe stem; the mapping lost nothing, so the filename
+        # stays byte-identical to what older versions wrote.
+        return slug
+    # The readable slug is a lossy projection (non-ASCII, accents, case,
+    # punctuation): two distinct topics can share it. Suffix a digest of the
+    # normalized topic so byte-distinct topics get distinct files.
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}-{digest}" if slug else f"memory-topic-{digest}"
+
+
+def _legacy_slugify_topic(topic: str) -> str:
+    """The pre-digest slug derivation, kept to read stores written by older versions."""
     slug = re.sub(r"[^a-z0-9]+", "-", _normalize_topic(topic).lower()).strip("-")
     return slug or "memory-topic"
 
@@ -776,6 +792,33 @@ class MemoryFileStore(MemoryStore):
     def _topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path:
         return self._get_topics_directory(session, source_id=source_id) / f"{_slugify_topic(topic)}.md"
 
+    def _legacy_topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path | None:
+        """The path a pre-digest version wrote for this topic, if it differs."""
+        legacy = self._get_topics_directory(session, source_id=source_id) / f"{_legacy_slugify_topic(topic)}.md"
+        return legacy if legacy != self._topic_path(session, source_id=source_id, topic=topic) else None
+
+    def _topic_read_candidates(self, session: AgentSession, *, source_id: str, topic: str) -> list[Path]:
+        candidates = [self._topic_path(session, source_id=source_id, topic=topic)]
+        legacy = self._legacy_topic_path(session, source_id=source_id, topic=topic)
+        if legacy is not None and self._topic_file_matches(legacy, topic=topic):
+            candidates.append(legacy)
+        return candidates
+
+    @staticmethod
+    def _topic_file_matches(path: Path, *, topic: str) -> bool:
+        """True when the file's stored topic is the requested topic.
+
+        A legacy-named file is only a fallback alias for ``topic`` when the
+        topic recorded inside the file agrees. The slug strips accents and
+        non-ASCII text, so a same-stem file can belong to a different topic
+        and must not be read, migrated, or deleted through the fallback.
+        """
+        try:
+            record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+        return record.topic == _normalize_topic(topic)
+
     @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
         serialized = dumps(value)
@@ -823,27 +866,46 @@ class MemoryFileStore(MemoryStore):
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
+            if topic_path.stem == _legacy_slugify_topic(record.topic) and topic_path.stem != record.slug:
+                # Not yet migrated: the file still sits at its pre-digest name. Key the
+                # record by the stem that exists on disk so index pointers and
+                # get_topic(entry.slug) resolve to it before a rewrite migrates it.
+                record.slug = topic_path.stem
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
     def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
         """Return one topic memory file by topic name or slug."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
-        if not topic_path.exists():
-            raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        for topic_path in self._topic_read_candidates(session, source_id=source_id, topic=topic):
+            if topic_path.exists():
+                return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file."""
         topic_path = self._topic_path(session, source_id=source_id, topic=record.slug)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
+        # Absorb pre-digest files into the new name so the topic does not
+        # list twice. The record's slug is already the derived stem, so the
+        # legacy name has to be re-derived from the human-readable topic too.
+        legacy_paths = {
+            path
+            for value in (record.topic, record.slug)
+            if (path := self._legacy_topic_path(session, source_id=source_id, topic=value)) is not None
+        }
+        for legacy_path in legacy_paths:
+            if legacy_path.exists() and self._topic_file_matches(legacy_path, topic=record.topic):
+                legacy_path.unlink()
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
-        if not topic_path.exists():
+        candidates = [
+            path for path in self._topic_read_candidates(session, source_id=source_id, topic=topic) if path.exists()
+        ]
+        if not candidates:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        topic_path.unlink()
+        for topic_path in candidates:
+            topic_path.unlink()
 
     def rebuild_index(
         self,

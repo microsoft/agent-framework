@@ -1059,4 +1059,173 @@ def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -
     assert parts[1] == "user_alice"
 
 
+def _topic_store(tmp_path):
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    return store, session
+
+
+def _record(topic: str, memories: list[str]) -> MemoryTopicRecord:
+    return MemoryTopicRecord(
+        topic=topic,
+        summary="",
+        memories=memories,
+        updated_at=datetime(2026, 10, 9, tzinfo=timezone.utc).isoformat(),
+    )
+
+
+def test_memory_file_store_keeps_distinct_non_ascii_topics_separate(tmp_path) -> None:
+    """Topics whose slugs collapse to the same stem must not share a file."""
+    store, session = _topic_store(tmp_path)
+    travel = _record("旅行计划", ["护照已续签"])
+    food = _record("饮食偏好", ["不吃香菜"])
+
+    store.write_topic(session, travel, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, food, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划").memories == ["护照已续签"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好").memories == ["不吃香菜"]
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好")
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划").memories == ["护照已续签"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="饮食偏好")
+
+
+def test_memory_file_store_keeps_accent_folded_topics_separate(tmp_path) -> None:
+    """Accents the slug strips still distinguish topics, as does case folding."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("café", ["a"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("cafè", ["b"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("My Topic", ["c"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["a"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè").memories == ["b"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="My Topic").memories == ["c"]
+
+
+def test_memory_file_store_reads_and_absorbs_pre_digest_topic_files(tmp_path) -> None:
+    """Files written before the digest suffix stay readable and migrate on rewrite."""
+    store, session = _topic_store(tmp_path)
+    record = _record("café", ["legacy fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+
+    loaded = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+    assert loaded.memories == ["legacy fact"]
+
+    store.write_topic(session, _record("café", ["new fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert not legacy_path.exists()
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["new fact"]
+
+
+def test_memory_file_store_deletes_pre_digest_topic_file(tmp_path) -> None:
+    """Deleting a topic removes its legacy-named file as well."""
+    store, session = _topic_store(tmp_path)
+    record = _record("旅行计划", ["legacy fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "memory-topic.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划")
+    assert not legacy_path.exists()
+    with pytest.raises(FileNotFoundError):
+        store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划")
+
+
+def test_slugify_topic_keeps_safe_stems_byte_identical() -> None:
+    """Safe lowercase stems keep their pre-digest names; derived slugs are idempotent."""
+    from agent_framework._harness._memory import _slugify_topic
+
+    assert _slugify_topic("my-topic") == "my-topic"
+    spaced = _slugify_topic("travel plans")
+    assert spaced.startswith("travel-plans-") and spaced != "travel-plans"
+    derived = _slugify_topic("café")
+    assert _slugify_topic(derived) == derived
+    assert _slugify_topic("旅行计划") != _slugify_topic("饮食偏好")
+
+
+def test_memory_file_store_delete_keeps_unrelated_stem_file(tmp_path) -> None:
+    """A legacy-named file owned by another topic must survive deleting this one."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("café", ["accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("caf", ["ascii fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["ascii fact"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café")
+
+
+def test_memory_file_store_write_keeps_unrelated_stem_file(tmp_path) -> None:
+    """Writing an accented topic must not absorb the ASCII topic's own file."""
+    store, session = _topic_store(tmp_path)
+    store.write_topic(session, _record("caf", ["ascii fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, _record("café", ["accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["ascii fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["accent fact"]
+
+
+def test_memory_file_store_legacy_fallback_requires_matching_stored_topic(tmp_path) -> None:
+    """A legacy-named file is a fallback alias only when its stored topic agrees."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè")
+    store.write_topic(session, _record("cafè", ["grave accent fact"]), source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert legacy_path.exists()
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè").memories == ["grave accent fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["legacy accent fact"]
+
+
+def test_memory_file_store_lists_pre_digest_topic_under_its_on_disk_stem(tmp_path) -> None:
+    """An unmigrated legacy file must be listed under the stem that exists on disk."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+
+    (entry,) = store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert entry.topic == "café"
+    assert entry.slug == "caf"
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=entry.slug).memories == [
+        "legacy accent fact"
+    ]
+    store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=50, line_length=200)
+    index_text = store._get_index_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID).read_text(encoding="utf-8")
+    assert "topics/caf.md" in index_text
+    # Keying by the on-disk stem must not widen the fallback: a same-stem but
+    # different topic still does not alias this file.
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="cafè")
+
+
+async def test_memory_context_provider_loads_unmigrated_legacy_topic(tmp_path) -> None:
+    """``before_run`` must resolve an index entry whose file still uses its pre-digest name."""
+    store, session = _topic_store(tmp_path)
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{_record('café', ['legacy accent fact']).to_markdown()}\n", encoding="utf-8")
+    provider = MemoryContextProvider(store=store, recent_turns=0, max_extractions=0)
+
+    from agent_framework._sessions import SessionContext
+
+    context = SessionContext(
+        session_id=session.session_id,
+        input_messages=[Message(role="user", contents=["tell me the legacy accent fact"])],
+    )
+
+    await provider.before_run(agent=None, session=session, context=context, state={})
+
+    assert any("legacy accent fact" in message.text for message in context.get_messages())
+
+
 # endregion
