@@ -184,6 +184,7 @@ class TestProviderLifetimes:
             if "id" not in body:
                 return httpx.Response(202)
             headers: dict[str, str] = {}
+            result: dict[str, Any]
             if method == "server/discover":
                 initialized.append(f"discovery-{len(initialized) + 1}")
                 result = {
