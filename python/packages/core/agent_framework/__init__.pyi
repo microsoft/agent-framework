@@ -106,6 +106,12 @@ from ._harness._memory import (
     MemoryTopicRecord,
 )
 from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent_mode, set_agent_mode
+from ._harness._signals import (
+    LoopExitReason,
+    SignalParser,
+    get_loop_exit_reason,
+    signal_should_continue,
+)
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
@@ -509,6 +515,7 @@ __all__ = [
     "InlineSkillScript",
     "JudgeVerdict",
     "LocalEvaluator",
+    "LoopExitReason",
     "MCPSkill",
     "MCPSkillResource",
     "MCPSkillsSource",
@@ -551,6 +558,7 @@ __all__ = [
     "ServiceSessionId",
     "SessionContext",
     "SessionStore",
+    "SignalParser",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
@@ -651,6 +659,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_agent_mode",
+    "get_loop_exit_reason",
     "get_run_context",
     "handler",
     "included_messages",
@@ -670,6 +679,7 @@ __all__ = [
     "resolve_agent_id",
     "response_handler",
     "set_agent_mode",
+    "signal_should_continue",
     "step",
     "todos_remaining",
     "todos_remaining_message",

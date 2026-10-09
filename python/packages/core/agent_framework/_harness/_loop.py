@@ -22,6 +22,15 @@ going. It serves two common patterns through a single configurable class:
    structured output; provider-specific formats can be supplied with a parser that converts the
    response into ``JudgeVerdict``. The loop continues while the answer is "no". This is a convenience
    wrapper that builds an async ``should_continue`` predicate, so it is a special case of (1).
+3. Signal protocol (via :func:`~agent_framework.signal_should_continue` from ``_signals.py``) - the
+   agent emits ``TASK_COMPLETE: <summary>`` or ``NEED_INPUT: <question>`` in its response text to
+   signal terminal intent. Only assistant-role messages are scanned; user-role nudges injected between
+   iterations do not trigger false positives. ``TASK_COMPLETE:`` is checked first. Read the result
+   with :func:`~agent_framework.get_loop_exit_reason`, which returns a
+   :class:`~agent_framework.LoopExitReason` string (``"completed"``, ``"iteration_cap_reached"``,
+   ``"need_input"``). When ``max_iterations`` fires the loop stamps
+   ``additional_properties["loop_exit_reason"] = "iteration_cap_reached"``; signal tokens always win
+   over the cap.
 
 In every case, the input for the next iteration is controlled by the ``next_message`` callable.
 """
@@ -538,6 +547,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         snapshot: dict[str, Any] | None,
     ) -> None:
         iteration = 0
+        cap_fired = False
         work_iterations = 0
         progress: list[str] = []
         # Aggregated transcript across iterations: each iteration's response messages plus the
@@ -584,6 +594,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                 # Decide whether to stop and capture any feedback from should_continue first, so the
                 # feedback is available to both the progress and next-message callables this iteration.
                 stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                    cap_fired = True
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -617,6 +629,9 @@ class AgentLoopMiddleware(AgentMiddleware):
         finally:
             context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
+        if cap_fired:
+            final_result.additional_properties["loop_exit_reason"] = "iteration_cap_reached"
+
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
         await self._fire_turn_scoped_after_providers(
@@ -638,6 +653,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         async def _generator() -> Any:
             iteration = 0
+            cap_fired = False
             work_iterations = 0
             progress: list[str] = []
             stamped_options = dict(context.options) if context.options is not None else {}
@@ -686,6 +702,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # Decide whether to stop and capture any feedback from should_continue first, so the
                     # feedback is available to both the progress and next-message callables this iteration.
                     stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
+                    if stop and self.max_iterations is not None and work_iterations >= self.max_iterations:
+                        cap_fired = True
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -721,6 +739,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                         yield self._message_to_update(message)
             finally:
                 context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
+                if cap_fired and holder["final"] is not None:
+                    holder["final"].additional_properties["loop_exit_reason"] = "iteration_cap_reached"
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:

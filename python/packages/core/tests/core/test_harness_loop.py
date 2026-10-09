@@ -24,14 +24,18 @@ from agent_framework import (
     Content,
     ContextProvider,
     JudgeVerdict,
+    LoopExitReason,
     Message,
     MiddlewareTermination,
     ResponseStream,
+    SignalParser,
     TodoItem,
     TodoProvider,
     background_tasks_running,
     background_tasks_running_message,
+    get_loop_exit_reason,
     set_agent_mode,
+    signal_should_continue,
     todos_remaining,
     todos_remaining_message,
     tool,
@@ -42,6 +46,7 @@ from agent_framework._harness._loop import (
     DEFAULT_NEXT_MESSAGE,
     AgentLoopMiddleware,
 )
+from agent_framework._harness._signals import LOOP_EXIT_REASON_KEY
 
 from .conftest import MockBaseChatClient
 
@@ -1697,3 +1702,230 @@ async def test_concurrent_same_agent_run_during_stream_pause_is_not_suppressed()
 
     # once for the loop boundary, once for the concurrent run's own boundary
     assert turn_scoped.after_calls == 2
+
+
+# --- Signal Protocol Tests ---
+
+
+def _make_signal_response(text: str, additional_properties: dict[str, Any] | None = None) -> AgentResponse:
+    return AgentResponse(
+        messages=[Message(role="assistant", contents=[text])],
+        additional_properties=additional_properties,
+    )
+
+
+def test_signal_parser_task_complete_stops_and_extracts_summary() -> None:
+    response = _make_signal_response("TASK_COMPLETE: finished the job")
+    assert SignalParser()(last_result=response) == (False, "finished the job")
+
+
+def test_signal_parser_need_input_stops_and_extracts_question() -> None:
+    response = _make_signal_response("NEED_INPUT: which file should I edit?")
+    assert SignalParser()(last_result=response) == (False, "which file should I edit?")
+
+
+def test_signal_parser_no_signal_continues() -> None:
+    response = _make_signal_response("I am still working on it.")
+    assert SignalParser()(last_result=response) == (True, None)
+
+
+def test_signal_parser_task_complete_wins_over_need_input() -> None:
+    response = _make_signal_response("TASK_COMPLETE: done\nNEED_INPUT: are you sure?")
+    assert SignalParser()(last_result=response) == (False, "done")
+
+
+def test_signal_parser_extracts_only_first_line_after_token() -> None:
+    response = _make_signal_response("Some preamble\nTASK_COMPLETE: line1\nmore stuff after")
+    assert SignalParser()(last_result=response) == (False, "line1")
+
+
+def test_signal_parser_empty_response_continues() -> None:
+    response = AgentResponse(messages=[])
+    assert SignalParser()(last_result=response) == (True, None)
+
+
+def test_signal_parser_token_with_no_following_text_returns_none_feedback() -> None:
+    response = _make_signal_response("TASK_COMPLETE:")
+    assert SignalParser()(last_result=response) == (False, None)
+
+
+def test_get_loop_exit_reason_completed_from_text() -> None:
+    response = _make_signal_response("TASK_COMPLETE: done")
+    assert get_loop_exit_reason(response) == LoopExitReason.completed
+
+
+def test_get_loop_exit_reason_need_input_from_text() -> None:
+    response = _make_signal_response("NEED_INPUT: which approach?")
+    assert get_loop_exit_reason(response) == LoopExitReason.need_input
+
+
+def test_get_loop_exit_reason_cap_from_additional_properties() -> None:
+    response = _make_signal_response(
+        "still going", additional_properties={LOOP_EXIT_REASON_KEY: "iteration_cap_reached"}
+    )
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+def test_get_loop_exit_reason_signal_wins_over_additional_properties() -> None:
+    response = _make_signal_response(
+        "TASK_COMPLETE: done", additional_properties={LOOP_EXIT_REASON_KEY: "iteration_cap_reached"}
+    )
+    assert get_loop_exit_reason(response) == LoopExitReason.completed
+
+
+def test_get_loop_exit_reason_unknown_returns_none() -> None:
+    response = _make_signal_response("nothing special")
+    assert get_loop_exit_reason(response) is None
+
+
+@pytest.mark.parametrize("value", [1, True, ["iteration_cap_reached"], {"reason": "x"}, ""])
+def test_get_loop_exit_reason_ignores_non_string_additional_property(value: Any) -> None:
+    response = _make_signal_response("nothing special", additional_properties={LOOP_EXIT_REASON_KEY: value})
+    assert get_loop_exit_reason(response) is None
+
+
+def test_signal_parser_exposes_tokens() -> None:
+    assert SignalParser.TASK_COMPLETE_TOKEN == "TASK_COMPLETE:"
+    assert SignalParser.NEED_INPUT_TOKEN == "NEED_INPUT:"
+
+
+@pytest.mark.parametrize("obj", [LoopExitReason, SignalParser, signal_should_continue, get_loop_exit_reason])
+def test_signal_protocol_symbols_are_experimental(obj: Any) -> None:
+    assert obj.__feature_stage__ == "experimental"
+    assert obj.__feature_id__ == "HARNESS"
+
+
+def test_signal_should_continue_factory_returns_signal_parser() -> None:
+    assert isinstance(signal_should_continue(), SignalParser)
+
+
+async def test_loop_stops_on_task_complete_signal() -> None:
+    client = RecordingChatClient(texts=["TASK_COMPLETE: all done"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 1
+    assert get_loop_exit_reason(response) == LoopExitReason.completed
+    assert LOOP_EXIT_REASON_KEY not in response.additional_properties
+
+
+async def test_loop_stops_on_need_input_signal() -> None:
+    client = RecordingChatClient(texts=["NEED_INPUT: which approach?"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 1
+    assert get_loop_exit_reason(response) == LoopExitReason.need_input
+    assert LOOP_EXIT_REASON_KEY not in response.additional_properties
+
+
+async def test_loop_sets_iteration_cap_reason_when_no_signal() -> None:
+    client = RecordingChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+async def test_loop_sets_iteration_cap_reason_streaming() -> None:
+    client = RecordingChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+
+
+class StaleExitReasonChatClient(RecordingChatClient):
+    """Stamps a stale ``loop_exit_reason`` on every response, emulating an inner provider or nested loop."""
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        inner = super()._inner_get_response(messages=messages, stream=stream, options=options, **kwargs)
+        if isinstance(inner, ResponseStream):
+
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                async for update in inner:
+                    update.additional_properties = {LOOP_EXIT_REASON_KEY: "stale_reason"}
+                    yield update
+
+            return ResponseStream(_gen(), finalizer=ChatResponse.from_updates)
+
+        async def _get() -> ChatResponse:
+            response = await inner
+            response.additional_properties = {LOOP_EXIT_REASON_KEY: "stale_reason"}
+            return response
+
+        return _get()
+
+
+async def test_loop_cap_overwrites_pre_existing_exit_reason() -> None:
+    client = StaleExitReasonChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+async def test_loop_cap_overwrites_pre_existing_exit_reason_streaming() -> None:
+    client = StaleExitReasonChatClient()
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+async def test_get_loop_exit_reason_ignores_nudge_text_with_token() -> None:
+    # A next_message nudge that mentions TASK_COMPLETE: must not trigger a false positive.
+    # Scripted texts keep the agent from echoing the nudge back in its own messages.
+    client = RecordingChatClient(texts=["working...", "still working..."])
+    agent = Agent(
+        client=client,
+        middleware=[
+            AgentLoopMiddleware(
+                signal_should_continue(),
+                max_iterations=2,
+                next_message=lambda **kwargs: "Reminder: emit TASK_COMPLETE: when done.",
+            )
+        ],
+    )
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert response.additional_properties.get(LOOP_EXIT_REASON_KEY) == LoopExitReason.iteration_cap_reached
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+async def test_loop_continues_when_no_signal() -> None:
+    client = RecordingChatClient(texts=["working...", "still working...", "TASK_COMPLETE: finally done"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 3
+    assert get_loop_exit_reason(response) == LoopExitReason.completed
