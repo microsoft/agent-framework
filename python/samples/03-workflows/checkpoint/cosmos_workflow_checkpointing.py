@@ -38,6 +38,7 @@ from agent_framework import (
     WorkflowCheckpoint,
     WorkflowContext,
     handler,
+    register_checkpoint_type,
 )
 
 if sys.version_info >= (3, 12):
@@ -113,6 +114,10 @@ async def main() -> None:
     if not cosmos_endpoint or not cosmos_database_name or not cosmos_container_name:
         print("Please set AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, and AZURE_COSMOS_CONTAINER_NAME.")
         return
+
+    # Register the application-defined message type so checkpoints that contain it can be restored.
+    # Alternatively, pass allowed_checkpoint_types to CosmosCheckpointStorage to scope it to that storage.
+    register_checkpoint_type(ComputeTask)
 
     # Authentication: supports both managed identity/RBAC and key-based auth.
     # When AZURE_COSMOS_KEY is set, key-based auth is used.
