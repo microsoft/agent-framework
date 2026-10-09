@@ -287,6 +287,28 @@ async def test_run_with_message_response(a2a_agent: A2AAgent, mock_a2a_client: M
     assert mock_a2a_client.call_count == 1
 
 
+@mark.parametrize("stream", [False, True])
+async def test_run_with_empty_data_content(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient, stream: bool) -> None:
+    """An empty attachment reaches the remote agent as a raw binary part."""
+    mock_a2a_client.add_message_response("msg-empty", "Received empty file")
+    message = Message(role="user", contents=[Content.from_data(b"", "application/octet-stream")])
+
+    if stream:
+        updates = [update async for update in a2a_agent.run(message, stream=True)]
+        assert updates[0].text == "Received empty file"
+    else:
+        response = await a2a_agent.run(message)
+        assert response.text == "Received empty file"
+
+    assert mock_a2a_client.call_count == 1
+    assert len(mock_a2a_client.last_message.parts) == 1
+    part = mock_a2a_client.last_message.parts[0]
+    assert part.WhichOneof("content") == "raw"
+    wire_part = MessageToDict(part)
+    assert wire_part["raw"] == ""
+    assert wire_part["mediaType"] == "application/octet-stream"
+
+
 async def test_run_with_task_response_single_artifact(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
     """Test run() method with Task response containing single artifact."""
     artifacts = [{"id": "art-1", "content": "Generated report content"}]
