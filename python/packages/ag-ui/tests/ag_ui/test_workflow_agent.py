@@ -622,7 +622,8 @@ async def test_workflow_hitl_resume_keeps_repeated_yes_on_empty_messages() -> No
     assert len(yes_turns) >= 2
 
 
-async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -> None:
+@pytest.mark.parametrize("replay_ids", [True, False], ids=["with-ids", "without-ids"])
+async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes(replay_ids: bool) -> None:
     """Client-replayed prior 'yes' in messages must not drop a new resume interrupt yes."""
     from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
     from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
@@ -661,7 +662,9 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
         {
             "thread_id": "thread-hitl-replay-yes",
             "run_id": "run-yes-replay",
-            "messages": list(prior),
+            "messages": [
+                {key: value for key, value in message.items() if replay_ids or key != "id"} for message in prior
+            ],
             "resume": {
                 "interrupts": [
                     {
@@ -685,7 +688,7 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes() -
     yes_turns = [
         message for message in snapshot.messages if message.get("role") == "user" and message.get("content") == "yes"
     ]
-    assert len(yes_turns) >= 2
+    assert len(yes_turns) == 2
 
 
 @pytest.mark.parametrize(
@@ -1011,6 +1014,84 @@ def test_message_identity_supports_multimodal_content() -> None:
     # Must be hashable for set membership during resume dedupe.
     assert _message_identity(multimodal) in {_message_identity(multimodal)}
     assert _append_unique_snapshot_messages([multimodal], [multimodal]) == [multimodal]
+
+
+def test_message_identity_reuses_model_serialization() -> None:
+    from pydantic import BaseModel
+
+    from agent_framework_ag_ui._workflow import _message_content_identity
+
+    class TextPart(BaseModel):
+        type: str = "text"
+        text: str
+
+    modeled = {"role": "user", "content": [TextPart(text="yes")]}
+    wire = {"role": "user", "content": [{"text": "yes", "type": "text"}]}
+    assert _message_content_identity(modeled) == _message_content_identity(wire)
+
+
+@pytest.mark.parametrize("with_client_overlap", [False, True])
+async def test_workflow_hitl_resume_preserves_typed_message_id(with_client_overlap: bool) -> None:
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    class TypedMessageRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("first", list[Message], request_id="first-input")
+
+        @response_handler
+        async def reply(self, original_request: str, response: list[Message], ctx: WorkflowContext[Any, str]) -> None:
+            assert response
+            if original_request == "first":
+                await ctx.request_info("second", list[Message], request_id="second-input")
+            else:
+                await ctx.yield_output("Done")
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(
+        workflow=WorkflowBuilder(start_executor=TypedMessageRequestExecutor(id="typed-request")).build(),
+        snapshot_store=store,
+    )
+    start = {"id": "start", "role": "user", "content": "start"}
+    reply = Message(role="user", contents=["yes"], message_id="typed-reply")
+    setup = await _run(agent, {"thread_id": "typed-thread", "messages": [start], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    assert not [event for event in setup if event.type == "RUN_ERROR"]
+    current = {"id": "typed-reply", "role": "user", "content": "yes"}
+    payload = {
+        "thread_id": "typed-thread",
+        "messages": [start, current] if with_client_overlap else [],
+        "resume": {"interrupts": [{"id": "first-input", "value": [reply.to_dict()]}]},
+        _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+    }
+    original_payload = deepcopy(payload)
+    resumed = await _run(agent, payload)
+    assert not [event for event in resumed if event.type == "RUN_ERROR"]
+    assert payload == original_payload
+    snapshot = await store.get(scope="scope", thread_id="typed-thread")
+    assert snapshot is not None
+    user_replies = [message for message in snapshot.messages if message.get("content") == "yes"]
+    assert user_replies == [current]
+    prior_transcript = deepcopy(snapshot.messages)
+
+    replay = await _run(
+        agent,
+        {
+            "thread_id": "typed-thread",
+            "messages": prior_transcript,
+            "resume": {
+                "interrupts": [
+                    {"id": "second-input", "value": [Message("user", ["next"], message_id="next").to_dict()]}
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+        },
+    )
+    assert not [event for event in replay if event.type == "RUN_ERROR"]
+    snapshot = await store.get(scope="scope", thread_id="typed-thread")
+    assert snapshot is not None
+    assert [message for message in snapshot.messages if message.get("content") == "yes"] == [current]
 
 
 def test_append_unique_snapshot_messages_dedupes_client_replay() -> None:

@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from collections import Counter
 from collections.abc import AsyncGenerator, Callable
 from typing import Any, cast
 
+import msgspec
 from ag_ui.core import (
     BaseEvent,
     MessagesSnapshotEvent,
@@ -41,6 +41,8 @@ from ._run_common import (
     _extract_resume_payload,
     _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
+    _snapshot_messages_match,
+    _snapshot_overlap_length,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._snapshots import (
@@ -73,10 +75,7 @@ def _hashable_message_content(content: Any) -> Any:
     """Return a hashable, order-stable form of snapshot message content."""
     if isinstance(content, (str, int, float, bool)) or content is None:
         return content
-    try:
-        return json.dumps(content, sort_keys=True, default=str)
-    except TypeError:
-        return repr(content)
+    return msgspec.json.encode(make_json_safe(content), order="deterministic")
 
 
 def _snapshot_messages_from_resume_value(
@@ -125,6 +124,8 @@ def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
     user turn as assistant/tool-control history.
     """
     normalized = {key: value for key, value in message.items() if key in _RESUME_USER_ALLOWED_KEYS}
+    if not normalized.get("id") and message.get("message_id"):
+        normalized["id"] = message["message_id"]
     normalized["role"] = "user"
     if normalized.get("content") not in (None, ""):
         normalized.pop("contents", None)
@@ -145,6 +146,28 @@ def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
 def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
     """Role+content identity used when message IDs differ across messages vs resume."""
     return (message.get("role"), _hashable_message_content(message.get("content")))
+
+
+def _current_turn_client_messages(
+    stored_messages: list[dict[str, Any]], client_messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Exclude confirmed prior transcript overlap before resume content matching."""
+    if not stored_messages or not client_messages:
+        return client_messages
+    matched_count = max(
+        (
+            overlap
+            for start, stored_message in enumerate(stored_messages)
+            if _snapshot_messages_match(stored_message, client_messages[0])
+            and (
+                (overlap := _snapshot_overlap_length(stored_messages, client_messages, start=start)) >= 2
+                or (stored_message.get("id") and stored_message.get("id") == client_messages[0].get("id"))
+            )
+        ),
+        default=0,
+    )
+    stored_ids = {message.get("id") for message in stored_messages if message.get("id")}
+    return [message for message in client_messages[matched_count:] if message.get("id") not in stored_ids]
 
 
 def _append_unique_snapshot_messages(
@@ -805,16 +828,9 @@ class AgentFrameworkWorkflow:
             hitl_messages = [
                 message for value in values for message in _snapshot_messages_from_resume_value(make_json_safe(value))
             ]
-            stored_ids = {
-                message.get("id")
-                for message in (stored_snapshot.messages if stored_snapshot is not None else [])
-                if message.get("id")
-            }
-            current_turn_client_messages = [
-                message
-                for message in client_request_messages
-                if not (message.get("id") and message.get("id") in stored_ids)
-            ]
+            current_turn_client_messages = _current_turn_client_messages(
+                stored_snapshot.messages if stored_snapshot is not None else [], client_request_messages
+            )
             snapshot_builder.append_resume_messages(
                 hitl_messages,
                 content_dedupe_against=agui_messages_to_snapshot_format(current_turn_client_messages),
