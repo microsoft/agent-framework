@@ -15,7 +15,7 @@ from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from copy import copy
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, cast
@@ -25,7 +25,6 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import deprecated  # pragma: no cover
 
-from mcp.client import IncomingMessage
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -66,6 +65,7 @@ if TYPE_CHECKING:
     import httpx2
     from httpx import Request
     from mcp import Client, types
+    from mcp.client import IncomingMessage
     from mcp.client.context import ClientRequestContext
     from mcp.client.session import ClientSession
 
@@ -2157,9 +2157,7 @@ class MCPTool:
                 mcp_client = await self._exit_stack.enter_async_context(
                     Client(
                         server=self.get_mcp_client(),
-                        read_timeout_seconds=(
-                            timedelta(seconds=self.request_timeout).seconds if self.request_timeout else None
-                        ),
+                        read_timeout_seconds=self.request_timeout,
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         log_level=log_level,

@@ -5035,6 +5035,22 @@ async def test_connect_no_sampling_capabilities_without_client():
             await tool.close()
 
 
+async def test_connect_preserves_request_timeout_over_24_hours() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=90_000,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
+
+
 async def test_connect_retains_and_close_clears_sdk_client() -> None:
     """Test a framework-owned Client and its session share one lifecycle."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
