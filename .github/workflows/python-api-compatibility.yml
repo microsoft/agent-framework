@@ -97,8 +97,29 @@ jobs:
 
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
             > "$RUNNER_TEMP/check_python_api_compatibility.py"
-          git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/tooling/requirements-api-compatibility.txt" \
-            > "$RUNNER_TEMP/python-api-compatibility-requirements.txt"
+          if git -C "$GITHUB_WORKSPACE" cat-file -e \
+            "$BASE_SHA:python/tooling/requirements-api-compatibility.txt" 2>/dev/null; then
+            git -C "$GITHUB_WORKSPACE" show \
+              "$BASE_SHA:python/tooling/requirements-api-compatibility.txt" \
+              > "$RUNNER_TEMP/python-api-compatibility-requirements.txt"
+          else
+            git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/pyproject.toml" \
+              > "$RUNNER_TEMP/python-base-pyproject.toml"
+            python3 - "$RUNNER_TEMP/python-base-pyproject.toml" \
+              > "$RUNNER_TEMP/python-api-compatibility-requirements.txt" <<'PY'
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject_file:
+              dev_dependencies = tomllib.load(pyproject_file)["dependency-groups"]["dev"]
+          requirements = [
+              dependency for dependency in dev_dependencies if dependency.startswith("griffe")
+          ]
+          if len(requirements) != 1:
+              raise SystemExit("Expected exactly one Griffe development dependency")
+          print(requirements[0])
+          PY
+          fi
 
           griffe_requirement="$(
             python3 - "$RUNNER_TEMP/python-api-compatibility-requirements.txt" <<'PY'
