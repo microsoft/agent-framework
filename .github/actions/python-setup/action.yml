@@ -47,4 +47,9 @@ runs:
       - name: Install the project
         shell: bash
         run: |
-          cd python && uv sync --all-packages --all-extras --all-groups --prerelease=if-necessary
+          cd python
+          sync_args=(--all-packages --all-extras --all-groups --prerelease=if-necessary)
+          if [[ -z "${{ inputs.exclude-packages }}" ]]; then
+            sync_args+=(--frozen)
+          fi
+          uv sync "${sync_args[@]}"

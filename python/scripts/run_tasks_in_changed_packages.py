@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from rich import print
-from task_runner import build_work_items, discover_projects, run_tasks
+from scripts.task_runner import build_work_items, discover_projects, run_tasks
 
 # Tasks that need to run in all packages when core changes (type info propagates)
 TYPE_CHECK_TASKS = {"pyright", "mypy"}

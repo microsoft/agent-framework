@@ -148,9 +148,9 @@ Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are chec
 Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including
 members of a staged class—are excluded. Package state and feature-stage markers are read
 from the base commit, so changing either in the same pull request cannot suppress a
-compatibility finding. The Griffe version is pinned with the other Python development
-dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
-commit. Instance-attribute initializer values are excluded because Griffe derives them from
+compatibility finding. The Griffe version is pinned in
+`python/tooling/requirements-api-compatibility.txt`; the workflow reads that pin from the
+trusted base commit. Instance-attribute initializer values are excluded because Griffe derives them from
 constructor control flow and can report implementation-only assignment changes; other
 Griffe-detected attribute value changes remain checked.
 

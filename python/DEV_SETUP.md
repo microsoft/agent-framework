@@ -22,8 +22,9 @@ Ensure you have the WSL extension for VSCode installed.
 uv allows us to use AF from the local files, without worrying about paths, as
 if you had AF pip package installed.
 
-To install AF and all the required tools in your system, first, navigate to the directory containing
-this DEV_SETUP using your chosen shell.
+To install AF, first navigate to the directory containing this DEV_SETUP using
+your chosen shell. Development tools are resolved on demand and are not
+installed into the workspace environment.
 
 ### For windows (non-WSL)
 
@@ -52,6 +53,10 @@ brew install uv
 
 ### After installing uv
 
+The exact supported uv version is declared by `required-version` in
+`pyproject.toml`. uv will stop with an actionable error when the installed
+version does not match.
+
 You can then run the following commands manually:
 
 ```bash
@@ -60,15 +65,15 @@ uv python install 3.10 3.11 3.12 3.13
 # Create a virtual environment with Python 3.10 (you can change this to 3.11, 3.12 or 3.13)
 PYTHON_VERSION="3.10"
 uv venv --python $PYTHON_VERSION
-# Install AF and all dependencies
-uv sync --all-groups
-# Install all the tools and dependencies
+# Install AF and all workspace dependencies
 uv run poe install
 # Install prek hooks
 uv run poe prek-install
 ```
 
-Alternatively, you can reinstall the venv, packages, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+Alternatively, you can reinstall the venv, packages, dependencies and prek
+hooks with a single command. Poe is part of the cross-version development
+environment:
 
 ```bash
 uv run poe setup -p 3.13
@@ -251,13 +256,17 @@ Install all dependencies (including extras and dependency groups) from the lockf
 ```bash
 uv run poe install
 ```
-The root `dev` group contains shared tooling and source/type-check support. Package-specific test fixtures use
-`test` groups. The standalone Lab project keeps its own development and feature groups, including `tau2`, under
-`packages/lab/pyproject.toml`.
+The test framework and Poe remain in the root `dev` group across Python
+versions. Script-only libraries live in `tool-runtime`, while other
+single-version tools are pinned under `tooling/` or their own `tool-*` group
+and added only to commands that need them. Package-specific test fixtures use
+`test` groups. The standalone Lab project keeps its own development and
+feature groups, including `tau2`, under `packages/lab/pyproject.toml`.
 For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
 For repo-wide development dependency refreshes, run `uv run poe upgrade-dev-dependencies` to repin exact
-dependencies in development groups, refresh `uv.lock`, and rerun validation, typing, and tests.
+dependencies in development groups and `tooling/`, refresh
+`uv.lock`, and rerun validation and typing.
 This root task does not update Lab; use `uv lock --upgrade` from `packages/lab` or its dedicated Dependabot updates.
 
 #### `venv`
@@ -416,11 +425,15 @@ uv run poe add-dependency-and-validate-bounds -P core -D "<dependency-spec>"
 ```
 
 #### `upgrade-dev-dependencies`
-Refresh exact development dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+Refresh exact development dependency and on-demand tool pins across the
+workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then
+rerun validation and typing:
 ```bash
 uv run poe upgrade-dev-dependencies
 ```
-Use this for repo-wide development tooling and dependency-group refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
+Use this for repo-wide tooling and dependency-group refreshes. For targeted
+runtime dependency upgrades, prefer `uv lock --upgrade-package
+<dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Building and Publishing
 
@@ -428,20 +441,6 @@ Use this for repo-wide development tooling and dependency-group refreshes. For t
 Publish packages to PyPI:
 ```bash
 uv run poe publish
-```
-
-### Compatibility aliases
-
-These legacy commands still work during the transition, but prefer the newer forms above:
-
-```bash
-uv run poe fmt             # prefer: uv run poe syntax -F
-uv run poe format          # prefer: uv run poe syntax -F
-uv run poe lint            # prefer: uv run poe syntax -C
-uv run poe all-tests       # prefer: uv run poe test -A
-uv run poe all-tests-cov   # prefer: uv run poe test -A -C
-uv run poe samples-lint    # prefer: uv run poe syntax -S -C
-uv run poe samples-syntax  # prefer: uv run poe pyright -S
 ```
 
 ## Prek Hooks
@@ -458,5 +457,5 @@ They do **not** run workspace `pyright` or `mypy` by default. Use `uv run poe py
 You can run the installed hooks directly with:
 
 ```bash
-uv run prek run -a
+uv run --group tool-hooks prek run -a
 ```

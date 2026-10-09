@@ -6,7 +6,7 @@
 # ]
 # ///
 # Run from python/ with the workspace environment:
-#   uv run --group test python samples/02-agents/observability/foundry_agent_tracing.py
+#   uv run python samples/02-agents/observability/foundry_agent_tracing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 

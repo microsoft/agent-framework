@@ -63,6 +63,7 @@ updates:
   - package-ecosystem: "pip"
     directories:
       - "python/"
+      - "python/tooling/"
       - "python/packages/lab/"
     schedule:
       interval: "weekly"
@@ -76,6 +77,10 @@ updates:
           - "poethepoet"
           - "tomli"
           - "rich"
+          - "packaging"
+          - "pygments"
+          - "griffe"
+          - "opentelemetry-sdk"
       pytest:
         patterns:
           - "pytest*"
@@ -101,27 +106,24 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      # Single-version tools in python/tooling/requirements-*.txt are handled
+      # by the pip updater above. This entry covers pyproject.toml and uv.lock.
       basics:
         patterns:
           - "uv"
-          - "ruff"
           - "prek"
           - "poethepoet"
           - "tomli"
           - "rich"
+          - "packaging"
+          - "pygments"
+          - "opentelemetry-sdk"
       pytest:
         patterns:
           - "pytest*"
       flit:
         patterns:
           - "flit*"
-      python-type-checkers:
-        patterns:
-          - "mypy"
-          - "pyright"
-          - "pyrefly"
-          - "ty"
-          - "zuban"
     labels:
       - "python"
       - "dependencies"

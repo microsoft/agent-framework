@@ -51,7 +51,7 @@ repos:
     hooks:
       - id: poe-check
         name: Run checks through Poe
-        entry: uv run python scripts/workspace_poe_tasks.py prek-check
+        entry: uv run --locked --group tool-runtime --group tool-markdown python -m scripts.workspace_poe_tasks prek-check
         language: system
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4
@@ -62,7 +62,7 @@ repos:
         additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.11.6
+    rev: 0.12.23
     hooks:
       # Update the uv lockfile
       - id: uv-lock
