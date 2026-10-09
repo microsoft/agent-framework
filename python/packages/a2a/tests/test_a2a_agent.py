@@ -2930,3 +2930,27 @@ async def test_run_rejects_non_json_forwarded_values(mock_a2a_client: MockA2ACli
         await agent.run("Hello", function_invocation_kwargs={"tenant": object()})
 
     assert mock_a2a_client.call_count == 0
+
+
+@mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), -float("inf"), 2**53 + 1, -(2**53) - 1, 10**400, "\ud800"],
+    ids=["nan", "inf", "-inf", "int-too-large", "int-too-small", "int-overflow", "unpaired-surrogate"],
+)
+async def test_run_rejects_values_protobuf_struct_cannot_carry(mock_a2a_client: MockA2AClient, value: Any) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+
+    with raises(AgentInvalidRequestException):
+        await agent.run("Hello", function_invocation_kwargs={"tenant": value})
+
+    assert mock_a2a_client.call_count == 0
+
+
+async def test_run_forwards_integers_at_the_exact_boundary(mock_a2a_client: MockA2AClient) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["count"])
+    mock_a2a_client.add_message_response("msg-1", "Done")
+
+    await agent.run("Hello", client_kwargs={"count": 2**53})
+
+    forwarded = MessageToDict(mock_a2a_client.last_request.metadata)["agent_framework"]["client_kwargs"]
+    assert forwarded == {"count": float(2**53)}

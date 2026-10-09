@@ -49,6 +49,7 @@ from agent_framework._types import AgentRunInputs, _set_operation_state  # pyrig
 from agent_framework.exceptions import AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
+from google.protobuf.struct_pb2 import Struct
 
 from ._feature_usage import FeatureIndex
 from ._utils import AGENT_FRAMEWORK_METADATA_KEY, get_uri_data
@@ -217,6 +218,34 @@ IN_PROGRESS_TASK_STATES = [
 A2AStreamItem: TypeAlias = StreamResponse
 
 
+# Largest magnitude at which every integer is exactly representable as the double protobuf Struct uses.
+_MAX_EXACT_STRUCT_INT = 2**53
+
+
+def _parse_exact_int(text: str) -> int:
+    value = int(text)
+    if abs(value) > _MAX_EXACT_STRUCT_INT:
+        raise ValueError(f"integer {text[:20]} is outside the exactly representable range of a protobuf Struct")
+    return value
+
+
+def _to_struct_safe_json(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a JSON round-tripped copy of ``values`` that a protobuf ``Struct`` can carry exactly.
+
+    Raises:
+        TypeError: If a value is not JSON-compatible.
+        ValueError: If a value is NaN, infinite, an out-of-range integer, or otherwise unrepresentable.
+        OverflowError: If a number is too large for a protobuf ``Struct``.
+    """
+    # allow_nan=False rejects NaN and infinities, and parse_int rejects integers a Struct would round.
+    round_tripped = cast(
+        "dict[str, Any]", json.loads(json.dumps(dict(values), allow_nan=False), parse_int=_parse_exact_int)
+    )
+    # Dry run so any remaining Struct conversion failure (for example an unpaired surrogate) surfaces here.
+    Struct().update(round_tripped)
+    return round_tripped
+
+
 class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
@@ -269,7 +298,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             forwarded_kwargs: Names of keys to forward to the remote A2A server. Keys are looked up in
                 the ``function_invocation_kwargs`` and ``client_kwargs`` passed to :meth:`run` and sent
                 in ``SendMessageRequest.metadata`` under ``"agent_framework"``. The default (``None``)
-                sends nothing. Values must be JSON-compatible. The receiving ``A2AExecutor`` decides
+                sends nothing. Values must be JSON-compatible with finite numbers and integers within
+                +/-2**53 (protobuf ``Struct`` stores numbers as doubles), otherwise
+                ``AgentInvalidRequestException`` is raised. The receiving ``A2AExecutor`` decides
                 which keys it accepts.
             kwargs: any additional properties, passed to BaseAgent.
         """
@@ -1121,11 +1152,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if not selected:
                 continue
             try:
-                # Round trip through JSON so only JSON-compatible values reach the protobuf Struct.
-                forwarded[name] = cast("dict[str, Any]", json.loads(json.dumps(selected)))
-            except (TypeError, ValueError) as ex:
+                forwarded[name] = _to_struct_safe_json(selected)
+            except (TypeError, ValueError, OverflowError) as ex:
                 raise AgentInvalidRequestException(
-                    f"Forwarded {name} must contain only JSON-compatible values."
+                    f"Forwarded {name} must contain only values that protobuf Struct can carry "
+                    f"(JSON-compatible, finite numbers, integers within +/-2**53): {ex}"
                 ) from ex
         return forwarded
 
