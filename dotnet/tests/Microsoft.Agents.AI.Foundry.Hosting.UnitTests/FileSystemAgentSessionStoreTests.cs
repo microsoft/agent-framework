@@ -176,6 +176,33 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_RemovesOnlyTheTargetedSessionFileAsync()
+    {
+        var store = new FileSystemAgentSessionStore(this._root);
+        var agent = new TestAgent();
+        var aliceKey = new AgentSessionStoreKey("shared").WithPartition("user", "alice");
+        var bobKey = new AgentSessionStoreKey("shared").WithPartition("user", "bob");
+        await store.SaveSessionAsync(agent, aliceKey, NewSession());
+        await store.SaveSessionAsync(agent, bobKey, NewSession());
+
+        await store.DeleteSessionAsync(agent, aliceKey);
+
+        Assert.False(File.Exists(SessionPath(store, "name:test-agent", aliceKey)));
+        Assert.True(File.Exists(SessionPath(store, "name:test-agent", bobKey)));
+        Assert.Null(await store.GetSessionAsync(agent, aliceKey));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_MissingSession_DoesNotThrowAsync()
+    {
+        var store = new FileSystemAgentSessionStore(this._root);
+
+        await store.DeleteSessionAsync(new TestAgent(), new AgentSessionStoreKey("missing"));
+
+        Assert.False(Directory.Exists(this._root));
+    }
+
+    [Fact]
     public async Task SaveSessionAsync_ConcurrentSavesOnSameKey_DoNotCollideOnTempFileAsync()
     {
         var store = new FileSystemAgentSessionStore(this._root);
