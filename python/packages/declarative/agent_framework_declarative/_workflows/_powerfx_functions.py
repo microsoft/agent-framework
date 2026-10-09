@@ -15,6 +15,79 @@ from __future__ import annotations
 from typing import Any, cast
 
 
+def _content_items_text(items: Any) -> str:
+    """Join the text entries of a structured content list.
+
+    Covers the .NET record shape (``[{"type": "text", "value": ...}]``,
+    capitalized keys included) and objects exposing a text attribute.
+    Records declaring a non-text type (image URLs, files) are skipped:
+    their ``value`` is a payload reference, not displayable text.
+    """
+    if not isinstance(items, list):
+        return ""
+    parts: list[str] = []
+    for item in cast(list[Any], items):
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            item_dict = cast(dict[str, Any], item)
+            declared_type = item_dict.get("type", item_dict.get("Type"))
+            if isinstance(declared_type, str) and declared_type.lower() != "text":
+                continue
+            for key in ("text", "value", "Text", "Value"):
+                if isinstance(item_dict.get(key), str):
+                    parts.append(item_dict[key])
+                    break
+        elif (item_text := getattr(item, "text", None)) is not None:
+            parts.append(str(item_text))
+    return " ".join(parts)
+
+
+def _extract_message_text(message: Any) -> str:
+    """Extract the displayable text of a single message-shaped value.
+
+    Messages reach the evaluators in three shapes: flat ``content`` (this
+    module's producers), flat ``text`` (DeclarativeWorkflowState's custom
+    evaluators), and a structured content list (the .NET record shape).
+    Accept all three so a message that crosses eval paths never extracts
+    as empty. Top-level keys are probed in PascalCase too, because a
+    record serialized by .NET (``{"Role": ..., "Content": ...}``) keeps
+    its capitalized property names.
+    """
+    if isinstance(message, str):
+        return message
+    if isinstance(message, dict):
+        message_dict = cast(dict[str, Any], message)
+        content: Any = message_dict.get("content", message_dict.get("Content"))
+        if isinstance(content, str):
+            return content
+        text: Any = message_dict.get("text", message_dict.get("Text"))
+        if isinstance(text, str):
+            return text
+        for key in ("content", "contents", "Content", "Contents"):
+            items_text = _content_items_text(message_dict.get(key))
+            if items_text:
+                return items_text
+        if content is not None and not isinstance(content, list | dict):
+            nested_text = getattr(content, "text", None)
+            if nested_text is not None:
+                return str(nested_text)
+            return str(content) if content else ""
+        return ""
+    text_attr = getattr(message, "text", None)
+    if text_attr is not None:
+        return str(text_attr)
+    content_attr = getattr(message, "content", None)
+    if isinstance(content_attr, str):
+        return content_attr
+    if content_attr is not None:
+        nested_attr = getattr(content_attr, "text", None)
+        if nested_attr is not None:
+            return str(nested_attr)
+        return str(content_attr) if content_attr else ""
+    return ""
+
+
 def message_text(messages: Any) -> str:
     """Extract text content from a message or list of messages.
 
@@ -40,49 +113,20 @@ def message_text(messages: Any) -> str:
 
     if isinstance(messages, dict):
         # Single message object
-        messages_dict = cast(dict[str, Any], messages)
-        content: Any = messages_dict.get("content", "")
-        if isinstance(content, str):
-            return content
-        text_attr = getattr(content, "text", None)
-        if text_attr is not None:
-            return str(text_attr)
-        return str(content) if content else ""
+        return _extract_message_text(messages)
 
     if isinstance(messages, list):
         # List of messages - concatenate all text
         texts: list[str] = []
         message_list = cast(list[Any], messages)
         for msg in message_list:
-            if isinstance(msg, str):
-                texts.append(msg)
-            elif isinstance(msg, dict):
-                msg_dict = cast(dict[str, Any], msg)
-                msg_content: Any = msg_dict.get("content", "")
-                if isinstance(msg_content, str):
-                    texts.append(msg_content)
-                elif msg_content:
-                    texts.append(str(msg_content))
-            else:
-                msg_obj: object = msg
-                if hasattr(msg_obj, "content"):
-                    msg_obj_content: Any = getattr(msg_obj, "content", None)
-                    if isinstance(msg_obj_content, str):
-                        texts.append(msg_obj_content)
-                    elif (msg_obj_text := getattr(msg_obj_content, "text", None)) is not None:
-                        texts.append(str(msg_obj_text))
-                    elif msg_obj_content:
-                        texts.append(str(msg_obj_content))
+            extracted = _extract_message_text(msg)
+            if extracted:
+                texts.append(extracted)
         return " ".join(texts)
 
-    # Try to get text attribute
-    if hasattr(messages, "text"):
-        return str(messages.text)
-    if hasattr(messages, "content"):
-        content_attr: Any = messages.content
-        if isinstance(content_attr, str):
-            return content_attr
-        return str(content_attr) if content_attr else ""
+    if hasattr(messages, "text") or hasattr(messages, "content"):
+        return _extract_message_text(messages)
 
     return str(messages) if messages else ""
 

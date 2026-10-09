@@ -46,6 +46,7 @@ from agent_framework import (
 from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
+from ._powerfx_functions import _extract_message_text  # pyright: ignore[reportPrivateUsage]
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
 from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
 
@@ -854,34 +855,11 @@ class DeclarativeWorkflowState:
         messages: Any = self.eval(f"={inner_expr}")
         if isinstance(messages, list) and messages:
             message_list = cast(list[Any], messages)
-            last_msg: Any = message_list[-1]
-            if isinstance(last_msg, dict):
-                last_msg_dict = cast(dict[str, Any], last_msg)
-                # Try "text" key first (simple dict format)
-                if "text" in last_msg_dict:
-                    return str(last_msg_dict["text"])
-                # Try extracting from "contents" (Message dict format)
-                # Message.text concatenates text from all TextContent items
-                contents_obj = last_msg_dict.get("contents", [])
-                if isinstance(contents_obj, list):
-                    contents = cast(list[Any], contents_obj)
-                    text_parts: list[str] = []
-                    for content in contents:
-                        if isinstance(content, dict):
-                            content_dict = cast(dict[str, Any], content)
-                            # TextContent has a "text" key
-                            if content_dict.get("type") == "text" or "text" in content_dict:
-                                text_parts.append(str(content_dict.get("text", "")))
-                        else:
-                            content_obj: object = content
-                            if hasattr(content_obj, "text"):
-                                text_parts.append(str(getattr(content_obj, "text", "")))
-                    if text_parts:
-                        return " ".join(text_parts)
-                return ""
-            last_msg_obj: object = last_msg
-            if hasattr(last_msg_obj, "text"):
-                return str(getattr(last_msg_obj, "text", ""))
+            # Delegate to the shared extractor: messages can arrive in the
+            # flat "text" shape from this state's evaluators, the flat
+            # "content" shape from the fallback function module, or the
+            # structured .NET content list, and each must read cleanly.
+            return _extract_message_text(message_list[-1])
         return ""
 
     def _parse_function_args(self, args_str: str) -> list[str]:
