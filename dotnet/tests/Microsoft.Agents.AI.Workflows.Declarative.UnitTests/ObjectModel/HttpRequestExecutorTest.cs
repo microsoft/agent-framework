@@ -418,6 +418,8 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
     [InlineData(RequestValueLocation.JsonBody)]
     [InlineData(RequestValueLocation.RawBody)]
     [InlineData(RequestValueLocation.ContentType)]
+    [InlineData(RequestValueLocation.ConversationId)]
+    [InlineData(RequestValueLocation.ConnectionName)]
     public async Task HttpRequestWithProtectedEnvironmentValueThrowsAsync(RequestValueLocation location)
     {
         // Arrange
@@ -807,6 +809,15 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
                     ContentType = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
                 };
                 break;
+            case RequestValueLocation.ConversationId:
+                builder.ConversationId = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression));
+                break;
+            case RequestValueLocation.ConnectionName:
+                builder.Connection = new RemoteConnection.Builder
+                {
+                    Name = new StringExpression.Builder(StringExpression.Expression(EnvironmentExpression)),
+                };
+                break;
         }
 
         return AssignParent<HttpRequestAction>(builder);
@@ -821,6 +832,8 @@ public sealed class HttpRequestExecutorTest(ITestOutputHelper output) : Workflow
         JsonBody,
         RawBody,
         ContentType,
+        ConversationId,
+        ConnectionName,
     }
 
     private sealed class MockHttpRequestHandler : Mock<IHttpRequestHandler>

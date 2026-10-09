@@ -13,9 +13,28 @@ server = ResponsesHostServer(agent=create_agent)
 ```
 
 Passing an instance reuses that object for the lifetime of the host. Pass a callable when the agent keeps mutable state
-outside `AgentSession`. In particular, a `WorkflowAgent` wraps a stateful workflow, so its callable should build a new
-workflow, executors, and wrapped agents. Keep the workflow name and executor IDs stable so later requests can find and
-restore its checkpoints:
+outside `AgentSession`. The Responses host continues regular agents through its existing session store and workflow
+agents through its existing checkpoint store. A callable does not make arbitrary instance fields persistent; state
+needed by later requests must remain in the supported stores.
+
+### Hosting a `WorkflowAgent` is deprecated
+
+Hosting a `WorkflowAgent` (for example `workflow.as_agent()`) through `agent=` is deprecated and should be avoided, and
+both `ResponsesHostServer` and `InvocationsHostServer` emit a `DeprecationWarning` for it and log the same message at
+`WARNING` level, once per host. A `WorkflowAgent` is stateful: its workflow state stays in memory between runs, so one
+instance must never serve requests from different users or conversations. Host the workflow natively with `workflow=`
+and a request-aware factory instead; see
+[Native Responses workflows](#native-responses-workflows) and
+[Native Invocations workflows](#native-invocations-workflows):
+
+```python
+# build_workflow(request) returns a freshly built Workflow for each request.
+server = ResponsesHostServer(workflow=build_workflow, parse_response=parse_response)
+```
+
+Until you migrate `ResponsesHostServer`, pass a callable that builds a new workflow, executors, and wrapped agents for
+every request, and never return a shared instance. Keep the workflow name and executor IDs stable so later requests can
+find and restore its checkpoints:
 
 ```python
 def create_agent():
@@ -25,15 +44,96 @@ def create_agent():
 server = ResponsesHostServer(agent=create_agent)
 ```
 
-The Responses host continues regular agents through its existing session store and workflow agents through its
-existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
-requests must remain in the supported stores.
+`InvocationsHostServer` does not restore workflow checkpoints for agents, so a per-request factory only suits stateless,
+single-turn workflows there. Use `workflow=` for any workflow that pauses or spans turns.
 
-For Responses integrations, use a factory when an MCP connection, provider, tool
-cache or client carries request identity. A Toolbox's streamable-HTTP writer
-inherits the context of the request that **connects** it; sharing that connection
-across callers can retain the first call ID. Create the Toolbox and its skills
-provider inside the factory, not at process startup.
+## Native Responses workflows
+
+Use `workflow=` to host a built `Workflow` directly, without `.as_agent()`.
+`parse_response` is required and returns exactly one typed start input or a
+complete batch of validated pending replies:
+
+```python
+from pydantic import BaseModel
+
+from agent_framework_foundry_hosting import (
+    CheckpointStoreProvider,
+    HostedResponseRequest,
+    ResponsesHostServer,
+    WorkflowTurn,
+)
+
+
+class Ticket(BaseModel):
+    text: str
+
+
+def build_workflow(request: HostedResponseRequest):
+    return build_fresh_graph()  # stable workflow/executor IDs; fresh mutable resources
+
+
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]:
+    items = await request.get_input_items()
+    if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
+        return WorkflowTurn(responses=await request.get_workflow_responses())
+    return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
+
+
+ResponsesHostServer(
+    workflow=build_workflow,
+    parse_response=parse_response,
+    checkpoint_store_provider=CheckpointStoreProvider(
+        allowed_checkpoint_types=[f"{Ticket.__module__}:{Ticket.__qualname__}"],
+    ),
+)
+```
+
+A direct built workflow is single-use. Use a request-aware sync or async
+factory for continuation, approval/user-input pauses, or background recovery.
+The factory must return a freshly built graph and freshly owned executors,
+agents, clients, context providers, and mutable tools; hosting rejects known
+sharing rather than cloning or unwrapping it. Workflow names and executor IDs
+must remain stable so the exact scoped checkpoint can be restored.
+
+Native workflow state is scoped to the trusted platform user plus Foundry
+sandbox. Each outer stored `response.id` is bound to its exact MAF checkpoint,
+graph identity, lineage, pending reply authority, output, and usage. The host
+never chooses an unrelated latest checkpoint. Named conversations and
+`previous_response_id` continuations advance one conditional head; stale,
+forked, replayed, partial, duplicate, forged, cross-user, and cross-sandbox
+replies fail before execution.
+
+`store=False` writes no native host state or inner service history and rejects
+a pause that would require later resumption. Native `Agent` executors receive
+request options through the existing agent middleware boundary, with supported
+inner clients forced to `store=False`. A bare `RawAgent` is accepted only from a
+fresh factory when its model overrides are already materialized in unchanged
+defaults and a storing client explicitly defaults to `store=False`. Private
+provider continuation is rejected before output is paired or committed.
+
+For legacy message-input workflows, `response_input_messages(request)` converts
+only the current Responses turn to `list[Message]`. It does not load outer
+history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
+remains for this beta with a once-per-host deprecation warning because wrapper
+context providers, history, event projection, and request-info translation are
+real semantics and are not silently unwrapped. See
+[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)
+for the instance-sharing restriction.
+
+With `resilient_background=True`, the application must also enable the
+AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
+recover emitted output and usage without selecting newer unpaired workflow
+state. This is not an exactly-once guarantee for external tools: make
+side-effecting operations idempotent. Legacy unscoped workflow state is not
+read; migration starts a fresh Responses chain.
+
+For Responses integrations, use a factory when a provider, tool cache, client or
+credential carries request identity or needs request-owned cleanup.
+`FoundryToolbox` resolves platform headers at each operation boundary and
+rebinds its MCP session when that identity changes, so a long-lived Toolbox does
+not retain the first request's call ID. The integration samples still construct
+it inside the factory because they also own request-scoped clients, credentials
+and providers.
 
 Factory agents are entered/exited for each request, including failed entry and
 cancellation. `Agent` manages context-managed clients and MCP tools, but it does
@@ -344,3 +444,101 @@ locally. Stored checkpoints are scoped under `checkpoints`.
 `ResponsesHostServer` persists function approvals durably. By default, it uses the
 `FoundryFunctionApprovalStore`, backed by Foundry storage when hosted and file-based
 storage locally. Stored approvals are scoped under `function_approvals`.
+
+## Native Invocations workflows
+
+Host a native workflow with an explicit application parser rather than wrapping it
+with `workflow.as_agent()`, which is deprecated for hosting (see
+[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)):
+
+```python
+server = InvocationsHostServer(
+    workflow=build_workflow,
+    parse_request=parse_request,
+    checkpoint_store_provider=CheckpointStoreProvider(
+        allowed_checkpoint_types=["my_app:Ticket", "my_app:TicketState"]
+    ),
+)
+```
+
+The sync/async parser receives the raw Starlette `Request` and must return either
+`WorkflowTurn(input=typed_input, stream=...)` or
+`WorkflowTurn(responses={request_id: typed_reply, ...}, stream=...)`. There is no
+default workflow JSON schema. Validate your application input and reply types,
+including duplicate fields or decisions, in the parser; the host additionally
+validates the entire reply batch against its exact pending checkpoint.
+
+A sync/async `build_workflow(request)` factory returns a **built**, fresh `Workflow`,
+with stable name, executor IDs and graph identity. Build fresh executors, agents,
+clients, providers and tools for each request; allocation must not execute tools or
+workflow side effects. Hosted workflows require a factory. Local built instances
+are single-use and remain application-owned. Factory-owned agents are entered and
+closed per turn; applications must explicitly own external credentials/providers
+through their resource-managing agent subclasses. Do not configure another
+checkpoint store on `WorkflowBuilder` or share mutable graphs between requests.
+
+Native `AgentExecutor` graphs support `Agent` and constrained bare `RawAgent`.
+For `Agent`, hosting applies options through a request-owned agent middleware
+policy, disables inner service storage and preserves the developer's defaults.
+A bare `RawAgent` must come from a validated fresh factory with a client declaring
+its storage capability. A storing raw client requires explicit factory default
+`store=False`; requested model overrides must already be materialized and matched
+in that fresh agent's defaults. Unsafe/custom agents, mismatched overrides and
+unexpected downstream continuation are rejected before successful output or
+commit. The host never forwards duplicate `options=` through client kwargs, and
+caller JSON cannot assert factory ownership.
+
+The workflow uses one fixed Invocations lineage inside the trusted user and
+platform sandbox scope. Later turns restore the **exact** committed checkpoint,
+not a workflow name's unrelated latest checkpoint. Graph changes, stale writers,
+forged/cross-scope/replayed decisions and duplicate authority fail before
+executor/response-handler dispatch. Reply with the complete pending batch:
+partial, unallowlisted, or invalid batches do not claim or consume any usable
+authority, so the complete valid batch can be retried. Native factories
+and explicit `client_kwargs`/`function_invocation_kwargs` keep their existing
+purposes; they do not introduce arbitrary entry-state or per-executor run-option
+APIs. Host-controlled identity, storage and execution controls cannot be supplied
+as caller generation settings.
+
+Non-streaming responses are JSON `{"output": [...]}` containing typed `output` and
+`request_info` event objects. JSON primitives, dataclasses, Pydantic models and
+framework `Message`, `Content` and response values retain their supported encoding.
+All nested mappings, including mappings returned by model/dataclass/framework
+serializers, require string keys before JSON conversion so key coercion cannot
+silently collide. Private provider continuation tokens are omitted;
+unsupported/nonfinite/circular values fail explicitly. Streaming emits framed
+`output`/`request_info` SSE,
+then `done` with the **sandbox** `session_id`. Live output is provisional until
+`done`; pending authority and following frames are buffered until the exact cursor
+is conditionally committed. Snapshot retention is bounded by both event count and
+encoded bytes; exceeding either limit fails the turn without `done`. A conflict,
+encoding failure, execution failure or
+interruption cannot emit successful completion. Failed claimed turns are blocked
+to avoid replaying uncertain effects; start a new sandbox instead of blindly
+retrying non-idempotent work. Checkpoints do not provide exactly-once tool effects.
+If a connection drops after commit, retrying the same trusted user/sandbox/call ID
+replays that response's complete stored snapshot without executing the workflow or
+replacing its head. A different call ID starts normal turn validation and cannot
+retrieve that snapshot.
+Local callers may pass one built workflow for a one-shot non-pausing run. Any
+workflow that can pause for external input must use a request-aware factory so a
+fresh graph can restore and consume the durable reply on the next request.
+After a newer Invocations head is durably committed, the host reclaims completed
+ancestor response records and checkpoints oldest-first, retaining only current,
+pending, active or blocked authority. Cleanup failures are logged and retried by
+a later successful turn without changing the already committed result; default
+store expiry remains a backstop. Custom checkpoint providers own their conditional
+delete and retention behavior.
+
+The existing Invocations sandbox-routing and trusted user/call requirements apply,
+including the verified `agent_session_id` query alternative when the platform
+does not configure `FOUNDRY_AGENT_SESSION_ID`. Body/header IDs cannot establish
+sandbox routing or select private checkpoints. The agent path still uses its
+separate `invocation_sessions` store, existing hooks/defaults and JSON/`delta` SSE
+contract. Agent-only `legacy_wire_format=True`, `prepare_options` and
+`agent_session_store_provider` are rejected for native workflows rather than
+silently reinterpreted.
+
+See the [typed Ticket/review example](../../samples/04-hosting/foundry-hosted-agents/invocations/basic/README.md#native-workflow-with-typed-tickets)
+for the parser, stable graph, checkpoint type allowlist, pending replies,
+JSON/SSE and local/hosted migration guidance.

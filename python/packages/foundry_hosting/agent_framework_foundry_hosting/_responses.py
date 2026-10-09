@@ -24,7 +24,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Generic, Literal, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -45,9 +45,11 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     UsageDetails,
+    Workflow,
     WorkflowAgent,
     add_usage_details,
 )
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
@@ -63,10 +65,12 @@ from azure.ai.agentserver.responses.models import (
     ComputerAction,
     ComputerCallSafetyCheckParam,
     ComputerScreenshotImage,
+    ContainerFileCitationBody,
     CreateResponse,
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
+    FunctionShellCallOutputTimeoutOutcome,
     Item,
     ItemReasoningItem,
     LocalEnvironmentResource,
@@ -102,6 +106,7 @@ from ._request import (
     HostedResponseRequest,
     OptionsHook,
     UnsupportedOptions,
+    WorkflowTurn,
     prepare_response_options,
     response_run_options,
     validate_default_transport_options,
@@ -117,6 +122,10 @@ from ._state_store import (
     FunctionApprovalStoreProvider,
     StoreProvider,
 )
+from ._workflow_source import WorkflowSource, validate_workflow_source
+
+if TYPE_CHECKING:
+    from ._workflow_responses import NativeResponsesWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +139,91 @@ _HOSTED_CONVERSATION_CLAIM_KEY = "_foundry_conversation_claim"
 _HOSTED_CONVERSATION_COMMITTED_KEY = "_foundry_conversation_committed"
 _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
+_PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
+_CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
 
 _HistorySource = Literal["agent_server", "agent", "service"]
+_AGENT_SOURCE_UNSET = object()
+
+
+@dataclass(frozen=True)
+class _ContainerFileCitation:
+    container_id: str
+    file_id: str
+    filename: str
+
+
+def _has_container_filename_boundaries(text: str, start_index: int, end_index: int) -> bool:
+    """Return whether a filename match is not embedded in another filename-like token."""
+    before = text[start_index - 1] if start_index > 0 else None
+    after = text[end_index] if end_index < len(text) else None
+    return (before is None or not (before.isalnum() or before in "._-")) and (
+        after is None or not (after.isalnum() or after in "._-")
+    )
+
+
+def _container_file_citations_from_function_result(content: Content) -> list[_ContainerFileCitation]:
+    """Extract validated container file citations from a core-preserved MCP Host payload."""
+    raw_payload = content.additional_properties.get(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY)
+    if not isinstance(raw_payload, Mapping):
+        return []
+    payload = cast(Mapping[str, Any], raw_payload)
+
+    metadata_blocks: list[Mapping[str, Any]] = []
+    raw_result_meta = payload.get("_meta")
+    if isinstance(raw_result_meta, Mapping):
+        metadata_blocks.append(cast(Mapping[str, Any], raw_result_meta))
+
+    raw_content = payload.get("content")
+    if isinstance(raw_content, Sequence) and not isinstance(raw_content, (str, bytes, bytearray)):
+        for raw_item in cast(Sequence[Any], raw_content):
+            if not isinstance(raw_item, Mapping):
+                continue
+            item = cast(Mapping[str, Any], raw_item)
+            raw_item_meta = item.get("_meta")
+            if isinstance(raw_item_meta, Mapping):
+                metadata_blocks.append(cast(Mapping[str, Any], raw_item_meta))
+
+    citations: list[_ContainerFileCitation] = []
+    for metadata in metadata_blocks:
+        raw_citations = metadata.get(_CONTAINER_FILE_CITATIONS_KEY)
+        if isinstance(raw_citations, str):
+            try:
+                raw_citations = json.loads(raw_citations)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+
+        citation_values: list[Any]
+        if isinstance(raw_citations, Mapping):
+            citation_values = [cast(Mapping[str, Any], raw_citations)]
+        elif isinstance(raw_citations, Sequence) and not isinstance(raw_citations, (str, bytes, bytearray)):
+            citation_values = list(cast(Sequence[Any], raw_citations))
+        else:
+            continue
+
+        fallback_container_id = metadata.get("container_id")
+        for raw_citation in citation_values:
+            if not isinstance(raw_citation, Mapping):
+                continue
+            citation = cast(Mapping[str, Any], raw_citation)
+            container_id = citation.get("container_id") or fallback_container_id
+            file_id = citation.get("file_id")
+            filename = citation.get("filename")
+            if not isinstance(container_id, str) or not container_id:
+                continue
+            if not isinstance(file_id, str) or not file_id:
+                continue
+            if not isinstance(filename, str) or not filename:
+                continue
+            citations.append(
+                _ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                )
+            )
+
+    return citations
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -652,12 +744,17 @@ def _initialize_agent_history(agent: SupportsAgentRun, configuration: _AgentConf
 
 # region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
-    """A responses server host for an agent."""
+    """A Responses server host for an agent or a native, typed workflow."""
 
     def __init__(
         self,
-        agent: SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]],
+        agent: SupportsAgentRun
+        | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]]
+        | object = _AGENT_SOURCE_UNSET,
         *,
+        workflow: WorkflowSource[HostedResponseRequest] | None = None,
+        parse_response: Callable[[HostedResponseRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]]
+        | None = None,
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
@@ -677,6 +774,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
+                must never serve requests from different users or conversations. Use `workflow=` instead.
+            workflow: A built, unrun native workflow for one-shot execution, or a request-aware
+                sync/async factory returning fresh built graphs, executors, agents, clients, tools,
+                and providers with stable graph/executor IDs. Cannot be combined with ``agent``.
+                Use a factory for continuation, pauses, or background recovery.
+            parse_response: Required for ``workflow``. Maps this turn's ``HostedResponseRequest``
+                to a typed ``WorkflowTurn(input=...)`` or validated pending ``responses``.
+                Native workflows use checkpoints, not the agent's history-source policy.
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Deprecated alias for `response_store`.
@@ -779,7 +885,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise ValueError("Provider background requires history_source='service'.")
         if background_source == "provider" and options and options.steerable_conversations:
             raise ValueError("Provider background and steerable_conversations cannot be combined.")
-        validate_agent_source(agent)
+        agent_supplied = agent is not _AGENT_SOURCE_UNSET
+        if not agent_supplied and workflow is None:
+            raise ValueError("Pass exactly one of agent or workflow.")
+        if agent_supplied and workflow is not None:
+            raise ValueError("Pass exactly one of agent or workflow.")
+        if workflow is not None:
+            validate_workflow_source(workflow)
+            if parse_response is None or not callable(parse_response):
+                raise TypeError("parse_response is required for native workflow hosting.")
+            if history_source != "agent_server" or background_source != "agent_server":
+                raise ValueError(
+                    "Native workflows use checkpoint history and AgentServer background, not agent policies."
+                )
+            if isinstance(workflow, Workflow) and options and options.resilient_background:
+                raise ValueError("Native workflow background recovery requires a request-aware factory.")
+        else:
+            if parse_response is not None:
+                raise ValueError("parse_response is only supported with workflow.")
+            validate_agent_source(agent)
 
         resolved_agent = agent if is_agent(agent) else None
         configuration = (
@@ -801,7 +925,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             set_resilient_tasks_enabled(True)
 
-        self._agent_source = agent
+        self._agent_source = cast(
+            SupportsAgentRun | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]] | None,
+            None if not agent_supplied else agent,
+        )
         self._agent = resolved_agent
         self._configuration = configuration
         self._history_source: _HistorySource = history_source
@@ -813,6 +940,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             configuration.agent_server_history if configuration is not None else history_source == "agent_server"
         )
         self._resilient_background = bool(options and options.resilient_background)
+        self._warned_workflow_agent = False
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
 
@@ -831,6 +959,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
+        self._native_workflow: NativeResponsesWorkflow | None = None
+        if workflow is not None and parse_response is not None:
+            from ._workflow_responses import NativeResponsesWorkflow
+
+            self._native_workflow = NativeResponsesWorkflow(
+                workflow,
+                parse_response,
+                config=self.config,
+                checkpoint_store_provider=self._checkpoint_storage_provider,
+                prepare_options=prepare_options,
+                resilient_background=self._resilient_background,
+                allowed_oauth_consent_origins=self._allowed_oauth_consent_origins,
+            )
+            self._native_workflow.bind_streaming_route(
+                self.router,
+                prefix=prefix,
+                keep_alive=bool(
+                    (options and options.sse_keep_alive_interval_seconds) or self.config.sse_keepalive_interval
+                ),
+            )
+        if isinstance(resolved_agent, WorkflowAgent):
+            self._warn_legacy_workflow()
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -843,6 +993,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self.response_handler(self._handle_response)
 
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
+
+    def _warn_legacy_workflow(self) -> None:
+        if not self._warned_workflow_agent:
+            self._warned_workflow_agent = True
+            message = (
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
+                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
+                "never serve requests from different users or conversations. "
+                "Use workflow=a_request_aware_factory with an explicit parse_response. "
+                "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
+                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped."
+            )
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
+            # warning there; log it as well.
+            logger.warning("DEPRECATION: %s", message)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -882,6 +1048,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
+        if self._native_workflow is not None:
+            async with aclosing(self._native_workflow.response_events(request, context, cancellation_signal)) as events:
+                async for event in events:
+                    yield event
+            return
         response_event_stream = _create_response_event_stream(context)
         if context.is_steered_turn:
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
@@ -893,12 +1064,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             scope = FoundryRequestScope.from_context(
                 self.config, get_request_context(), local_session_id=context.response_id
             )
+            if self._agent_source is None:
+                raise RuntimeError("The hosted agent source is not configured.")
             agent = await resolve_agent(self._agent_source)
             configuration = self._configuration or _validate_agent_configuration(
                 agent, self._history_source, self._host_options, background_source=self._background_source
             )
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
+            if configuration.workflow:
+                self._warn_legacy_workflow()
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
@@ -1105,6 +1280,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # selecting the terminal event. Same ``client_cancelled`` gate as above.
                 return
 
+            tracker.discard_pending_container_file_citations()
             incomplete_reason = tracker.incomplete_reason
             if tracker.oauth_consent_requested or incomplete_reason is not None:
                 yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
@@ -2038,6 +2214,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield from tracker.close()
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
+            tracker.discard_pending_container_file_citations()
         message = str(ex) or type(ex).__name__
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
@@ -2093,6 +2270,8 @@ class _OutputItemTracker:
         self._outstanding_function_calls: dict[str, str | None] = {}
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
+        self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
+        self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
         # can tell a cut-short turn from a successful one. Mirrored into the stream's
@@ -2103,6 +2282,33 @@ class _OutputItemTracker:
         if isinstance(persisted_reason, str):
             with suppress(ValueError):
                 self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
+        persisted_citations = stream.internal_metadata.get(_PENDING_CONTAINER_FILE_CITATIONS_KEY)
+        if persisted_citations is not None:
+            if not isinstance(persisted_citations, Sequence) or isinstance(
+                persisted_citations, (str, bytes, bytearray)
+            ):
+                raise RuntimeError("The persisted container file citations are invalid.")
+            for raw_citation in cast(Sequence[Any], persisted_citations):
+                if not isinstance(raw_citation, Mapping):
+                    raise RuntimeError("The persisted container file citations are invalid.")
+                citation = cast(Mapping[str, Any], raw_citation)
+                container_id = citation.get("container_id")
+                file_id = citation.get("file_id")
+                filename = citation.get("filename")
+                if (
+                    not isinstance(container_id, str)
+                    or not container_id
+                    or not isinstance(file_id, str)
+                    or not file_id
+                    or not isinstance(filename, str)
+                    or not filename
+                ):
+                    raise RuntimeError("The persisted container file citations are invalid.")
+                self._pending_container_file_citations[filename] = _ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                )
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -2260,6 +2466,11 @@ class _OutputItemTracker:
         elif content.type == "function_result":
             for event in self._close():
                 yield event
+            citations = _container_file_citations_from_function_result(content)
+            if citations:
+                for citation in citations:
+                    self._pending_container_file_citations[citation.filename] = citation
+                self._persist_pending_container_file_citations()
             async for event in self._stream.output_item_function_call_output(
                 content.call_id,  # type: ignore[arg-type]
                 _json_safe_to_str(content.result),
@@ -2349,14 +2560,19 @@ class _OutputItemTracker:
             if content.outputs:
                 for out in content.outputs:
                     exit_code = getattr(out, "exit_code", None)
+                    outcome = (
+                        FunctionShellCallOutputTimeoutOutcome(type="timeout")
+                        if getattr(out, "timed_out", False)
+                        else FunctionShellCallOutputExitOutcome(
+                            type="exit",
+                            exit_code=exit_code if exit_code is not None else 0,
+                        )
+                    )
                     output_items.append(
                         FunctionShellCallOutputContent(
                             stdout=getattr(out, "stdout", "") or "",
                             stderr=getattr(out, "stderr", "") or "",
-                            outcome=FunctionShellCallOutputExitOutcome(
-                                type="exit",
-                                exit_code=exit_code if exit_code is not None else 0,
-                            ),
+                            outcome=outcome,
                         )
                     )
             async for event in self._stream.output_item_function_shell_call_output(
@@ -2501,8 +2717,13 @@ class _OutputItemTracker:
             logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
     def close(self) -> Generator[ResponseStreamEvent]:
-        """Close any remaining active builder."""
+        """Flush any remaining active builder without discarding recoverable state."""
         yield from self._close()
+
+    def discard_pending_container_file_citations(self) -> None:
+        """Discard unmatched citations immediately before a terminal response event."""
+        self._pending_container_file_citations.clear()
+        self._persist_pending_container_file_citations()
 
     # -- Private open/close helpers --
 
@@ -2524,6 +2745,7 @@ class _OutputItemTracker:
         yield from self._open_message(content_type)
 
     def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
+        self._message_text_annotations.clear()
         self._message_item = self._stream.add_output_item_message()
         yield self._message_item.emit_added()
         yield from self._open_message_content(content_type)
@@ -2591,8 +2813,27 @@ class _OutputItemTracker:
         if self._active_type in {"text", "refusal"}:
             yield from self._close_message_content()
             if self._message_item is not None:
-                yield self._message_item.emit_done()
+                message_done = self._message_item.emit_done()
+                if self._message_text_annotations:
+                    message_done_dict = cast(dict[str, Any], message_done)
+                    item = cast(dict[str, Any], message_done_dict["item"])
+                    content_parts = cast(list[dict[str, Any]], item["content"])
+                    for content_index, annotations in self._message_text_annotations.items():
+                        if content_index >= len(content_parts):
+                            raise RuntimeError("Container file citation content index is out of range.")
+                        content_parts[content_index]["annotations"] = annotations
+
+                    response_output = self._stream.response.get("output")
+                    output_index = self._message_item.output_index
+                    if not isinstance(response_output, list):
+                        raise RuntimeError("Container file citation output index is out of range.")
+                    response_output_items = cast(list[Any], response_output)
+                    if output_index >= len(response_output_items):
+                        raise RuntimeError("Container file citation output index is out of range.")
+                    response_output_items[output_index] = item
+                yield message_done
             self._message_item = None
+            self._message_text_annotations.clear()
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
             accumulated = "".join(self._accumulated)
@@ -2631,8 +2872,17 @@ class _OutputItemTracker:
     def _close_message_content(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
+            annotations = self._container_file_annotations_for_text(accumulated)
             yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
+            for annotation in annotations:
+                yield self._text_content.emit_annotation_added(annotation)
+            content_done = self._text_content.emit_done()
+            if annotations:
+                content_done_dict = cast(dict[str, Any], content_done)
+                part = cast(dict[str, Any], content_done_dict["part"])
+                part["annotations"] = annotations
+                self._message_text_annotations[self._text_content.content_index] = annotations
+            yield content_done
             self._text_content = None
         elif self._active_type == "refusal" and self._refusal_content is not None:
             yield self._refusal_content.emit_refusal_done(accumulated)
@@ -2641,6 +2891,64 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._accumulated.clear()
+
+    def _container_file_annotations_for_text(self, text: str) -> list[ContainerFileCitationBody]:
+        candidates: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        for filename, citation in self._pending_container_file_citations.items():
+            search_index = 0
+            while True:
+                start_index = text.find(filename, search_index)
+                if start_index < 0:
+                    break
+                end_index = start_index + len(filename)
+                if _has_container_filename_boundaries(text, start_index, end_index):
+                    candidates.append((start_index, end_index, filename, citation))
+                search_index = start_index + 1
+
+        candidates.sort(key=lambda match: (-(match[1] - match[0]), match[0], match[2]))
+        selected: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        selected_filenames: set[str] = set()
+        for candidate in candidates:
+            start_index, end_index, filename, _ = candidate
+            if filename in selected_filenames:
+                continue
+            if any(
+                start_index < selected_end and selected_start < end_index
+                for selected_start, selected_end, _, _ in selected
+            ):
+                continue
+            selected.append(candidate)
+            selected_filenames.add(filename)
+
+        annotations: list[ContainerFileCitationBody] = []
+        for start_index, end_index, filename, citation in sorted(selected, key=lambda match: match[0]):
+            annotations.append(
+                ContainerFileCitationBody(
+                    type="container_file_citation",
+                    container_id=citation.container_id,
+                    file_id=citation.file_id,
+                    filename=citation.filename,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+            )
+            del self._pending_container_file_citations[filename]
+        if annotations:
+            self._persist_pending_container_file_citations()
+        return annotations
+
+    def _persist_pending_container_file_citations(self) -> None:
+        if not self._pending_container_file_citations:
+            self._stream.internal_metadata.pop(_PENDING_CONTAINER_FILE_CITATIONS_KEY, None)
+            return
+        self._stream.internal_metadata[_PENDING_CONTAINER_FILE_CITATIONS_KEY] = [
+            {
+                "container_id": citation.container_id,
+                "file_id": citation.file_id,
+                "filename": citation.filename,
+            }
+            for citation in self._pending_container_file_citations.values()
+        ]
 
 
 # endregion
@@ -2770,6 +3078,17 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     return output
 
 
+def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
+    outcome = output["outcome"]
+    outcome_type = outcome.get("type")
+    return Content.from_shell_command_output(
+        stdout=output.get("stdout") or "",
+        stderr=output.get("stderr") or "",
+        exit_code=outcome.get("exit_code") if outcome_type == "exit" else None,
+        timed_out=True if outcome_type == "timeout" else False if outcome_type == "exit" else None,
+    )
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -2887,14 +3206,7 @@ async def _item_to_message(
         )
 
     if item["type"] == "shell_call_output":
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out["stdout"] or "",
-                stderr=out["stderr"] or "",
-                exit_code=out["outcome"].get("exit_code"),
-            )
-            for out in (item["output"] or [])
-        ]
+        outputs = [_shell_command_output_to_content(out) for out in (item["output"] or [])]
         return Message(
             role="tool",
             contents=[

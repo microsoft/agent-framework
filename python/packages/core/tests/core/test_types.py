@@ -2,9 +2,10 @@
 
 import asyncio
 import base64
+import contextlib
 import json
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -1570,6 +1571,49 @@ def test_chat_response_from_streaming_updates_parses_final_assistant_message() -
     assert response.value.response == "Hello"
 
 
+def test_chat_response_to_updates_carries_response_level_fields() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        conversation_id="conv-1",
+        model="model-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = ChatResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.conversation_id == "conv-1"
+    assert round_tripped.model == "model-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_chat_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = ChatResponse(messages=[], response_id="resp-1", model="model-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].model == "model-1"
+    assert updates[0].finish_reason == "stop"
+
+
 # region ToolMode
 
 
@@ -1887,6 +1931,47 @@ def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     ])
 
     assert response.agent_id == "source-agent"
+
+
+def test_agent_run_response_to_updates_carries_response_level_fields() -> None:
+    response = AgentResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text("first")], message_id="m1"),
+            Message(role="tool", contents=[Content.from_text("second")], message_id="m2"),
+        ],
+        response_id="resp-1",
+        agent_id="agent-1",
+        created_at="2024-01-01T00:00:00Z",
+        finish_reason="stop",
+        continuation_token=cast(Any, {"token": "token-1"}),
+        usage_details=UsageDetails(input_token_count=3, output_token_count=5),
+        additional_properties={"custom": "value"},
+    )
+
+    round_tripped = AgentResponse.from_updates(response.to_updates())
+
+    assert round_tripped.response_id == "resp-1"
+    assert round_tripped.agent_id == "agent-1"
+    assert round_tripped.created_at == response.created_at
+    assert round_tripped.finish_reason == "stop"
+    assert round_tripped.continuation_token == {"token": "token-1"}
+    assert round_tripped.additional_properties["custom"] == "value"
+    assert round_tripped.usage_details is not None
+    assert round_tripped.usage_details["input_token_count"] == 3
+    assert round_tripped.usage_details["output_token_count"] == 5
+    assert [message.role for message in round_tripped.messages] == ["assistant", "tool"]
+    assert round_tripped.text == response.text
+
+
+def test_agent_run_response_to_updates_without_messages_still_carries_fields() -> None:
+    response = AgentResponse(messages=[], response_id="resp-1", agent_id="agent-1", finish_reason="stop")
+
+    updates = response.to_updates()
+
+    assert len(updates) == 1
+    assert updates[0].response_id == "resp-1"
+    assert updates[0].agent_id == "agent-1"
+    assert updates[0].finish_reason == "stop"
 
 
 def test_agent_run_response_str_method(chat_message: Message) -> None:
@@ -4276,6 +4361,38 @@ class TestResponseStreamBasicIteration:
         assert stream.updates[0].text == "update_0"
         assert stream.updates[1].text == "update_1"
 
+    async def test_pull_context_added_by_factory_applies_to_current_pull(self) -> None:
+        """A pull context registered by the first factory wraps the same iterator pull."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            events.append("pull")
+            yield ChatResponseUpdate(contents=[Content.from_text("update")], role="assistant")
+
+        @contextlib.contextmanager
+        def added_context() -> Any:
+            events.append("added_enter")
+            try:
+                yield
+            finally:
+                events.append("added_exit")
+
+        @contextlib.contextmanager
+        def initial_context() -> Any:
+            events.append("initial_enter")
+            stream.with_pull_context_manager(added_context)
+            try:
+                yield
+            finally:
+                events.append("initial_exit")
+
+        stream = ResponseStream(updates(), finalizer=_combine_updates).with_pull_context_manager(initial_context)
+
+        await anext(stream)
+        await stream.close()
+
+        assert events == ["initial_enter", "added_enter", "pull", "added_exit", "initial_exit"]
+
     async def test_auto_finalize_on_iteration_completion(self) -> None:
         """Stream auto-finalizes when async iteration completes."""
         stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
@@ -4447,6 +4564,66 @@ class TestResponseStreamTransformHooks:
 
         assert collected == ["async_update_0", "async_update_1"]
 
+    async def test_transform_added_while_async_transform_waits_applies_to_current_update(self) -> None:
+        """A transform registered during an awaited transform applies before the current update is released."""
+        transform_started = asyncio.Event()
+        release_transform = asyncio.Event()
+
+        async def waiting_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            transform_started.set()
+            await release_transform.wait()
+            return update
+
+        def uppercase_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return ChatResponseUpdate(
+                contents=[Content.from_text((update.text or "").upper())],
+                role=cast(Any, update.role),
+            )
+
+        stream = ResponseStream(_generate_updates(1), finalizer=_combine_updates).with_transform_hook(waiting_transform)
+        pending_update = asyncio.create_task(anext(stream))
+
+        await transform_started.wait()
+        stream.with_transform_hook(uppercase_transform)
+        release_transform.set()
+
+        assert (await pending_update).text == "UPDATE_0"
+
+
+class _FailingCloseIterator:
+    def __init__(
+        self,
+        failure: BaseException | None,
+        close_error: BaseException | None,
+        *,
+        close_waiting: asyncio.Event | None = None,
+    ) -> None:
+        self._failure = failure
+        self._close_error = close_error
+        self._close_waiting = close_waiting
+        self._yielded = False
+        self.close_calls = 0
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._yielded:
+            self._yielded = True
+            return "first"
+        if self._failure is not None:
+            raise self._failure
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        if self._close_waiting is not None and self.close_calls == 1:
+            self._close_waiting.set()
+            await asyncio.Event().wait()
+        await asyncio.sleep(0)
+        if self._close_error is not None:
+            raise self._close_error
+
 
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
@@ -4492,6 +4669,132 @@ class TestResponseStreamCleanupHooks:
         await outer.close()
 
         assert events == ["iterator", "inner", "outer"]
+
+    async def test_async_with_break_closes_iterator(self) -> None:
+        """Breaking out of `async with stream:` releases the iterator without a manual close."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async with stream:
+            async for _ in stream:
+                break
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_transform_hook_error_closes_iterator(self) -> None:
+        """A hook that fails after a yielded update releases the suspended iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        def failing_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise RuntimeError("hook blew up")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[failing_hook],  # ty: ignore[invalid-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+        assert events == ["iterator"]
+
+    async def test_cancellation_closes_iterator(self) -> None:
+        """Cancelling the consumer mid-iteration releases the suspended iterator."""
+        events: list[str] = []
+        provider_suspended = asyncio.Event()
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                provider_suspended.set()
+                await asyncio.sleep(60)
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(), cleanup_hooks=[lambda: events.append("cleanup")]
+        )
+
+        async def consume() -> None:
+            async for _ in stream:
+                pass
+
+        task = asyncio.create_task(consume())
+        await provider_suspended.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert events == ["iterator", "cleanup"]
+
+    async def test_cancelled_error_from_hook_closes_iterator(self) -> None:
+        """A hook raising CancelledError after a yielded update still closes the iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        stream: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(
+            updates(),
+            transform_hooks=[cancelling_hook],  # ty: ignore[invalid-argument-type]
+            cleanup_hooks=[lambda: events.append("cleanup")],
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in stream:
+                pass
+
+        # Error path runs cleanup before close() releases the iterator.
+        assert events == ["cleanup", "iterator"]
+
+    async def test_cancelled_error_from_map_transform_closes_inner_stream(self) -> None:
+        """A cancelled async map transform releases the wrapped provider iterator."""
+        events: list[str] = []
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+            finally:
+                events.append("iterator")
+
+        async def cancelling_transform(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            raise asyncio.CancelledError
+
+        inner: ResponseStream[ChatResponseUpdate, Sequence[ChatResponseUpdate]] = ResponseStream(updates())
+        outer = inner.map(cancelling_transform, _combine_updates)
+
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in outer:
+                pass
+
+        assert events == ["iterator"]
 
     async def test_cleanup_hook_called_after_iteration(self) -> None:
         """Cleanup hook is called after iteration completes."""
@@ -4624,6 +4927,210 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert cleanup_called["value"] is True
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    @pytest.mark.parametrize("cleanup_kind", ["iterator", "hook"])
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_primary_error_survives_cleanup_failure(
+        self,
+        stream_updates: bool,
+        cleanup_kind: Literal["iterator", "hook"],
+        failure_kind: Literal["runtime", "cancelled"],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        failure = RuntimeError("operation failed") if failure_kind == "runtime" else asyncio.CancelledError("cancelled")
+        cleanup_error = OSError("cleanup failed")
+        source = _FailingCloseIterator(failure, cleanup_error if cleanup_kind == "iterator" else None)
+        cleanup_calls = 0
+
+        async def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            await asyncio.sleep(0)
+            if cleanup_kind == "hook":
+                raise cleanup_error
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=stream_updates,
+        )
+        with pytest.raises(type(failure)) as error:
+            async for _ in stream:
+                pass
+
+        assert error.value is failure
+        assert source.close_calls >= 1
+        assert cleanup_calls == 1
+        assert any(record.exc_info is not None for record in caplog.records)
+        if not stream_updates:
+            close_calls = source.close_calls
+            with pytest.raises(type(failure)) as repeated_error:
+                await anext(stream)
+            assert repeated_error.value is failure
+            assert source.close_calls == close_calls
+            assert cleanup_calls == 1
+
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_context_body_error_survives_close_failure(
+        self, failure_kind: Literal["runtime", "cancelled"]
+    ) -> None:
+        failure = RuntimeError("body failed") if failure_kind == "runtime" else asyncio.CancelledError("body cancelled")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+        stream: ResponseStream[str, str] = ResponseStream(source, finalizer=lambda values: "".join(values))
+
+        with pytest.raises(type(failure)) as error:
+            async with stream:
+                assert await anext(stream) == "first"
+                raise failure
+
+        assert error.value is failure
+        assert source.close_calls == 1
+
+    @pytest.mark.parametrize("release_kind", ["close", "context", "complete", "buffered_complete"])
+    @pytest.mark.parametrize("cleanup_kind", ["iterator", "hook"])
+    async def test_cleanup_failure_without_body_error_is_reported(
+        self,
+        release_kind: Literal["close", "context", "complete", "buffered_complete"],
+        cleanup_kind: Literal["iterator", "hook"],
+    ) -> None:
+        cleanup_error = OSError("cleanup failed")
+        source = _FailingCloseIterator(None, cleanup_error if cleanup_kind == "iterator" else None)
+        cleanup_calls = 0
+
+        async def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            if cleanup_kind == "hook":
+                raise cleanup_error
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=release_kind != "buffered_complete",
+        )
+        with pytest.raises(OSError) as error:
+            if release_kind == "close":
+                await anext(stream)
+                await stream.close()
+            else:
+                async with stream:
+                    if release_kind == "context":
+                        await anext(stream)
+                    else:
+                        async for _ in stream:
+                            pass
+
+        assert error.value is cleanup_error
+        assert source.close_calls >= 1
+        assert cleanup_calls == 1
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    async def test_finalizer_error_survives_close_failure(self, stream_updates: bool) -> None:
+        failure = ValueError("finalizer failed")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+
+        def finalize(values: Sequence[str]) -> str:
+            raise failure
+
+        stream: ResponseStream[str, str] = ResponseStream(source, finalizer=finalize, stream_updates=stream_updates)
+        with pytest.raises(ValueError) as error:
+            async with stream:
+                async for _ in stream:
+                    pass
+
+        assert error.value is failure
+        assert source.close_calls >= 1
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    @pytest.mark.parametrize("cleanup_fails", [False, True], ids=["cleanup-success", "cleanup-failure"])
+    async def test_new_cancellation_during_error_cleanup_propagates(
+        self, stream_updates: bool, cleanup_fails: bool
+    ) -> None:
+        cleanup_waiting = asyncio.Event()
+        source = _FailingCloseIterator(RuntimeError("operation failed"), None, close_waiting=cleanup_waiting)
+        cleanup_calls = 0
+
+        def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            if cleanup_fails:
+                raise OSError("cleanup hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=stream_updates,
+        )
+        if stream_updates:
+            await anext(stream)
+        task = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(cleanup_waiting.wait(), timeout=5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert task.cancelled()
+            assert cleanup_calls == 1
+            if not stream_updates:
+                close_calls = source.close_calls
+                with pytest.raises(asyncio.CancelledError):
+                    await anext(stream)
+                assert source.close_calls == close_calls
+                assert cleanup_calls == 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_iterator_close_error_survives_cleanup_hook_failure(
+        self, failure_kind: Literal["runtime", "cancelled"]
+    ) -> None:
+        failure = OSError("iterator close failed") if failure_kind == "runtime" else asyncio.CancelledError("cancelled")
+        source = _FailingCloseIterator(None, failure)
+        cleanup_calls = 0
+
+        def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            raise ValueError("cleanup hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source, finalizer=lambda values: "".join(values), cleanup_hooks=[cleanup]
+        )
+        await anext(stream)
+        with pytest.raises(type(failure)) as error:
+            await stream.close()
+
+        assert error.value is failure
+        assert source.close_calls == 1
+        assert cleanup_calls == 1
+
+    async def test_buffered_error_hook_failure_does_not_skip_cleanup(self) -> None:
+        failure = ValueError("release failed")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+
+        def fail_release() -> None:
+            raise failure
+
+        def fail_error_hook(error: BaseException) -> None:
+            assert error is failure
+            raise RuntimeError("error hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source, finalizer=lambda values: "".join(values), stream_updates=False
+        )
+        stream._with_release_hook(fail_release)._with_release_error_hook(fail_error_hook)
+
+        with pytest.raises(ValueError) as error:
+            await anext(stream)
+
+        assert error.value is failure
+        assert source.close_calls == 1
+        assert stream.updates == []
 
 
 class TestResponseStreamResultHooks:
@@ -5939,3 +6446,23 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
 
 
 # endregion
+
+
+def test_get_data_bytes_as_str_ignores_base64_marker_inside_the_payload():
+    """A ';base64,' sequence inside the payload is data, not the encoding marker."""
+    content = Content.from_uri(uri="data:text/plain,a;base64,QUJD")
+    with raises(ContentError, match="base64 encoding"):
+        _get_data_bytes_as_str(content)
+
+
+def test_data_uri_readers_agree_on_the_base64_marker():
+    """Validation, media type detection and payload extraction share one reading of a data URI."""
+    png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
+    uri = f"data:image/png;charset=utf-8;base64,{png_b64}"
+    content = Content.from_uri(uri=uri)
+    assert content.media_type == "image/png"
+    assert _get_data_bytes_as_str(content) == png_b64
+    assert detect_media_type_from_base64(data_uri=uri) == "image/png"
+    payload_marker = f"data:image/png,x;base64,{png_b64}"
+    with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
+        detect_media_type_from_base64(data_uri=payload_marker)

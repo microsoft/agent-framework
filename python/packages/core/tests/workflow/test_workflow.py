@@ -130,6 +130,100 @@ def test_coerce_request_info_response_rejects_mismatched_type() -> None:
         _coerce_request_info_response("not-an-int", int, "typed")
 
 
+async def test_public_stream_close_immediately_drains_live_executor_without_gc() -> None:
+    started, cancelled, closed, release = (asyncio.Event() for _ in range(4))
+    cleanup: list[str] = []
+
+    class SuspendedExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            started.set()
+            try:
+                await ctx.yield_output(message)
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finally:
+                cleanup.append("closed")
+                closed.set()
+
+    workflow = WorkflowBuilder(start_executor=SuspendedExecutor(id="live")).build()
+    stream = workflow.run("visible", stream=True)
+    try:
+        async for event in stream:
+            if event.type == "output":
+                break
+        assert started.is_set() and not closed.is_set()
+        await asyncio.wait_for(stream.close(), timeout=1)
+        assert cancelled.is_set() and closed.is_set()
+        assert cleanup == ["closed"]
+        await stream.close()
+        assert cleanup == ["closed"]
+    finally:
+        release.set()
+        await stream.close()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_owned_workflow_iterators_preserve_completion_and_original_failure(fail: bool) -> None:
+    cleanup: list[str] = []
+    failure = RuntimeError("original executor failure")
+
+    class FinishingExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            try:
+                await ctx.yield_output(message)
+                if fail:
+                    raise failure
+            finally:
+                cleanup.append("closed")
+
+    workflow = WorkflowBuilder(start_executor=FinishingExecutor(id="finish")).build()
+    stream = workflow.run("visible", stream=True)
+    if fail:
+        with pytest.raises(RuntimeError, match="original executor failure") as raised:
+            await stream.get_final_response()
+        assert raised.value is failure
+    else:
+        result = await stream.get_final_response()
+        assert result.get_outputs() == ["visible"]
+        assert result.get_final_state() == WorkflowRunState.IDLE
+    await stream.close()
+    assert cleanup == ["closed"]
+
+
+async def test_cancelled_workflow_consumer_drains_owned_executor_before_returning() -> None:
+    started, stopped, release = (asyncio.Event() for _ in range(3))
+
+    class SuspendedExecutor(Executor):
+        @handler
+        async def execute_live(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            started.set()
+            try:
+                await release.wait()
+                await ctx.yield_output(message)
+            finally:
+                stopped.set()
+
+    workflow = WorkflowBuilder(start_executor=SuspendedExecutor(id="live")).build()
+    stream = workflow.run("never emitted", stream=True)
+    consumer = asyncio.create_task(stream.get_final_response())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert stopped.is_set()
+    finally:
+        release.set()
+        if not consumer.done():
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+        await stream.close()
+
+
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
