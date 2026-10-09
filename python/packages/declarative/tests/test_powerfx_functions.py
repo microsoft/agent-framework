@@ -767,6 +767,11 @@ class TestWholeCallArgs:
         """An unclosed comment swallows the rest of the formula, so nothing matches."""
         assert whole_call_args('Upper("x" /* unterminated', "Upper") is None
 
+    def test_trailing_unterminated_block_comment_falls_through(self):
+        """A complete call followed by an unterminated /* is a larger expression."""
+        assert whole_call_args('Concat("a") /* unterminated', "Concat") is None
+        assert whole_call_args('Upper("x") /* unterminated', "Upper") is None
+
     def test_escaped_quote_inside_a_literal_is_data(self):
         """``""`` is an escaped quote, so the literal does not end there."""
         assert whole_call_args('Concat("a"")", "b")', "Concat") == '"a"")", "b"'
@@ -822,3 +827,7 @@ class TestEvalCustomFunctionExtent:
         """
         assert self._state()._eval_custom_function('Concat("a", "b") /* done */') == "ab"
         assert self._state()._eval_custom_function('Concat("a", "b") // done') == "ab"
+
+    def test_trailing_unterminated_comment_falls_through(self):
+        """An unterminated trailing /* is not trivia, so PowerFx handles the formula."""
+        assert self._state()._eval_custom_function('Concat("a") /* unterminated') is None

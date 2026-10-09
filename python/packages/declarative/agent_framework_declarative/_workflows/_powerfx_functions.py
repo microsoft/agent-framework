@@ -45,8 +45,15 @@ def _skip_trailing_trivia(formula: str, start: int) -> int:
     while index < len(formula):
         if formula[index].isspace():
             index += 1
-        elif formula.startswith(("//", "/*"), index):
+        elif formula.startswith("//", index):
             index = _skip_powerfx_opaque_token(formula, index)
+        elif formula.startswith("/*", index):
+            end = formula.find("*/", index + 2)
+            if end == -1:
+                # An unterminated /* is not a complete comment, so it is not
+                # trailing trivia: the call is part of a larger expression.
+                break
+            index = end + 2
         else:
             break
     return index
