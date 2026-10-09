@@ -65,7 +65,7 @@ _METRICS = {
 _ORDER_OPERATORS = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
 
-class OracleSettings(TypedDict, total=False):
+class OracleSettings(TypedDict, total=False, extra_items=Any):
     """Connection and pool settings resolved from arguments, a selected .env file, or ``ORACLE_`` variables."""
 
     dsn: str | None
@@ -366,7 +366,7 @@ def _create_client(
     dsn: str | None,
     user: str | None,
     password: str | SecretString | None,
-    pool_parameters: Mapping[str, Any] | None,
+    pool_parameters: OracleSettings | None,
     client: OracleClient | None,
     env_file_path: str | None,
     env_file_encoding: str | None,
@@ -555,7 +555,7 @@ class OracleCollection(
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
-        pool_parameters: Mapping[str, Any] | None = None,
+        pool_parameters: OracleSettings | None = None,
         client: OracleClient | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -975,7 +975,7 @@ class OracleStore(BaseVectorStore):
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
-        pool_parameters: Mapping[str, Any] | None = None,
+        pool_parameters: OracleSettings | None = None,
         client: OracleClient | None = None,
         embedding_generator: EmbeddingClient | None = None,
         env_file_path: str | None = None,

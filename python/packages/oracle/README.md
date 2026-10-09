@@ -30,8 +30,10 @@ when opening a connection. Missing or empty credentials are errors.
 
 Explicit `pool_parameters` keys are forwarded when they are accepted by the
 installed `python-oracledb` version, including newly added driver options not
-yet declared by `OracleSettings`. Unsupported names and typos raise an error;
-unrecognized `ORACLE_` environment variables remain ignored.
+yet declared by the open `OracleSettings` typed dictionary. This preserves
+editor discovery for known options while allowing forward-compatible keys.
+Unsupported names and typos raise an error; unrecognized `ORACLE_` environment
+variables remain ignored.
 
 Recognized scalar `oracledb.create_pool_async()` options can also be supplied as
 `ORACLE_` settings. The prefix is removed, the remainder is converted to the

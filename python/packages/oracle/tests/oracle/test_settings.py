@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import get_type_hints
+from typing import Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import oracledb
@@ -131,12 +131,13 @@ def test_pool_parameter_unsupported_by_installed_driver_fails(monkeypatch):
 
 
 def test_unknown_explicit_pool_parameter_fails_without_connecting():
+    pool_parameters: Any = {"maxx": 8}
     with patch.object(module.oracledb, "create_pool_async") as create, pytest.raises(ValueError, match="maxx"):
         OracleStore(
             dsn="dsn",
             user="user",
             password="password",
-            pool_parameters={"maxx": 8},
+            pool_parameters=pool_parameters,
         )
     create.assert_not_called()
 
@@ -241,13 +242,14 @@ async def test_public_pool_parameters_precedence(monkeypatch):
 
 async def test_pool_parameters_forward_installed_driver_options_not_in_settings(monkeypatch):
     future_value = object()
+    pool_parameters: Any = {"future_option": future_value}
     monkeypatch.setattr(module, "_CREATE_POOL_PARAMETER_NAMES", module._CREATE_POOL_PARAMETER_NAMES | {"future_option"})
     pool = MagicMock(spec=oracledb.AsyncConnectionPool)
     store = OracleStore(
         dsn="dsn",
         user="user",
         password="password",
-        pool_parameters={"future_option": future_value},
+        pool_parameters=pool_parameters,
     )
     with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
         assert await store._client._get_client() is pool
