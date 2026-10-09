@@ -114,4 +114,54 @@ public sealed class LoopAgentOptions
     /// it fires multiple times, the most recent invocation carries the session the loop is currently using.
     /// </remarks>
     public Func<AgentSession, CancellationToken, ValueTask>? SessionCreatedCallback { get; set; }
+
+    /// <summary>Gets or sets the maximum total LLM token spend across all iterations, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// Counts <c>TotalTokenCount</c> from each iteration's <c>AgentResponse.Usage</c>, falling back to
+    /// <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c> is absent.
+    /// When exceeded, the loop stamps <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "token_budget_exceeded"</c>
+    /// (non-streaming only) and returns the last response.
+    /// </remarks>
+    public long? MaxTokens
+    {
+        get;
+        set
+        {
+            if (value.HasValue && value.Value < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "MaxTokens must be a positive integer.");
+            }
+
+            field = value;
+        }
+    }
+
+    /// <summary>Gets or sets the maximum wall-clock duration for the entire loop run, or <see langword="null"/> for unconstrained.</summary>
+    /// <remarks>
+    /// <para>
+    /// The duration is checked between iterations: after each inner agent call (or stream) completes, and again after
+    /// the evaluators run. Once it is exceeded, the loop does not start another iteration and returns the last response,
+    /// stamping <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "time_budget_exceeded"</c> (non-streaming only).
+    /// This bounds the number of slow iterations a run can start, which token budgets cannot detect.
+    /// </para>
+    /// <para>
+    /// This is not a hard deadline: it does not interrupt an in-flight inner agent call, stream, or evaluator, so a run can
+    /// exceed the duration by as long as that work takes. Callers that need a hard deadline should pass a
+    /// <see cref="CancellationToken"/> that cancels after a timeout (for example via
+    /// <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>).
+    /// </para>
+    /// </remarks>
+    public TimeSpan? MaxDuration
+    {
+        get;
+        set
+        {
+            if (value.HasValue && value.Value <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), "MaxDuration must be a positive duration.");
+            }
+
+            field = value;
+        }
+    }
 }
