@@ -8215,6 +8215,117 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].inputs[0].additional_properties[_CONTENT_ITEM_SNAPSHOT_KEY] is True
 
 
+def test_parse_chunk_from_openai_code_interpreter_output_item_done() -> None:
+    """Test _parse_chunk_from_openai with a completed code_interpreter_call output item.
+
+    `response.output_item.done` is the only place `outputs` (logs/images) are ever delivered
+    for a streamed code interpreter call - there is no incremental outputs event - so this
+    completed item must be parsed, and its `code` must be tagged as a snapshot like
+    `code_interpreter_call_code.done` is, since both can carry the same final code.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_log_output = MagicMock()
+    mock_log_output.type = "logs"
+    mock_log_output.logs = "hello"
+
+    mock_done_event = MagicMock()
+    mock_done_event.type = "response.output_item.done"
+    mock_done_item = MagicMock()
+    mock_done_item.type = "code_interpreter_call"
+    mock_done_item.call_id = "ci_789"
+    mock_done_item.id = "ci_789"
+    mock_done_item.code = "print('hello')"
+    mock_done_item.outputs = [mock_log_output]
+    mock_done_event.item = mock_done_item
+
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)
+    call_contents = [c for c in result.contents if c.type == "code_interpreter_tool_call"]
+    result_contents = [c for c in result.contents if c.type == "code_interpreter_tool_result"]
+    assert len(call_contents) == 1
+    assert call_contents[0].call_id == "ci_789"
+    assert call_contents[0].inputs
+    assert call_contents[0].inputs[0].text == "print('hello')"
+    assert call_contents[0].inputs[0].additional_properties[_CONTENT_ITEM_SNAPSHOT_KEY] is True
+    assert len(result_contents) == 1
+    assert result_contents[0].call_id == "ci_789"
+    assert result_contents[0].outputs
+    assert any(out.type == "text" and out.text == "hello" for out in result_contents[0].outputs)
+
+
+def test_code_interpreter_streaming_sequence_does_not_duplicate_code_and_captures_outputs() -> None:
+    """A realistic added/delta/done/output_item.done sequence must not duplicate code.
+
+    `code_interpreter_call_code.done` and `response.output_item.done` can both carry the
+    same final code for one call; without both being tagged as snapshots, the second one
+    to arrive would concatenate onto the first instead of being recognized as a repeat of
+    the same authoritative value.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    updates = []
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_item = MagicMock()
+    added_item.type = "code_interpreter_call"
+    added_item.call_id = "ci_1"
+    added_item.id = "ci_1"
+    added_item.code = None
+    added_item.outputs = None
+    added_event.item = added_item
+    updates.append(client._parse_chunk_from_openai(added_event, chat_options, function_call_ids))
+
+    for index, delta in enumerate(["import pandas", " as pd"]):
+        delta_event = MagicMock()
+        delta_event.type = "response.code_interpreter_call_code.delta"
+        delta_event.item_id = "ci_1"
+        delta_event.delta = delta
+        delta_event.output_index = 0
+        delta_event.sequence_number = index + 1
+        delta_event.call_id = None
+        delta_event.id = None
+        updates.append(client._parse_chunk_from_openai(delta_event, chat_options, function_call_ids))
+
+    done_code_event = MagicMock()
+    done_code_event.type = "response.code_interpreter_call_code.done"
+    done_code_event.item_id = "ci_1"
+    done_code_event.code = "import pandas as pd"
+    done_code_event.output_index = 0
+    done_code_event.sequence_number = 3
+    done_code_event.call_id = None
+    done_code_event.id = None
+    updates.append(client._parse_chunk_from_openai(done_code_event, chat_options, function_call_ids))
+
+    mock_log_output = MagicMock()
+    mock_log_output.type = "logs"
+    mock_log_output.logs = "pandas 2.1.0"
+    done_item_event = MagicMock()
+    done_item_event.type = "response.output_item.done"
+    done_item = MagicMock()
+    done_item.type = "code_interpreter_call"
+    done_item.call_id = "ci_1"
+    done_item.id = "ci_1"
+    done_item.code = "import pandas as pd"
+    done_item.outputs = [mock_log_output]
+    done_item_event.item = done_item
+    updates.append(client._parse_chunk_from_openai(done_item_event, chat_options, function_call_ids))
+
+    response = ChatResponse.from_updates(updates)
+    calls = [c for c in response.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    results = [c for c in response.messages[0].contents if c.type == "code_interpreter_tool_result"]
+    assert len(calls) == 1
+    assert calls[0].inputs
+    assert "".join(item.text or "" for item in calls[0].inputs) == "import pandas as pd"
+    assert _CONTENT_ITEM_SNAPSHOT_KEY not in calls[0].inputs[0].additional_properties
+    assert len(results) == 1
+    assert results[0].outputs
+    assert any(out.type == "text" and out.text == "pandas 2.1.0" for out in results[0].outputs)
+
+
 def test_parse_chunk_from_openai_reasoning() -> None:
     """Test _parse_chunk_from_openai with reasoning content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
