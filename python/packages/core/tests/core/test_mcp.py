@@ -2504,7 +2504,7 @@ async def test_local_mcp_server_function_execution_error():
 
 
 async def test_mcp_tool_reconnects_after_session_terminated_error():
-    """Session termination errors should reconnect once and retry the tool call."""
+    """Replayable (idempotent) tools reconnect once and retry after session termination."""
 
     class TestServer(MCPTool):
         def __init__(self, **kwargs: Any) -> None:
@@ -2531,6 +2531,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
 
     server = TestServer(name="test_server")
     await server.connect()
+    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
 
     result = await server.call_tool("test_tool", param="test_value")
 
@@ -2538,6 +2539,74 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
     assert server.connect_count == 2
     assert server.sessions[0].call_tool.await_count == 1
     assert server.sessions[1].call_tool.await_count == 1
+
+
+async def test_mcp_tool_call_not_replayed_without_idempotency_hint():
+    """Tools without an idempotency hint raise an unknown-outcome error instead of replaying.
+
+    The connection can drop after the server executed the request, so re-issuing the same
+    tools/call could duplicate a non-idempotent side effect. The default path surfaces the
+    failure and leaves reconnection to the caller.
+    """
+
+    class TestServer(MCPTool):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.connect_count = 0
+
+        async def connect(self, *, reset: bool = False) -> None:
+            self.connect_count += 1
+            self.session = Mock(spec=ClientSession)
+            self.session.call_tool = AsyncMock(
+                side_effect=McpError(types.ErrorData(code=-32000, message="Session terminated"))
+            )
+            self.is_connected = True
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    await server.connect()
+
+    with pytest.raises(ToolExecutionException, match="outcome is unknown") as exc_info:
+        await server.call_tool("test_tool", param="test_value")
+
+    assert isinstance(exc_info.value.__cause__, McpError)
+    assert server.connect_count == 1
+    assert server.session.call_tool.await_count == 1
+
+
+async def test_mcp_regular_tool_call_does_not_duplicate_side_effect_after_disconnect():
+    """A non-idempotent tool whose response is lost mid-call executes at most once."""
+    from anyio.streams.memory import ClosedResourceError
+
+    class TestServer(MCPTool):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.state = 0
+
+        async def connect(self, *, reset: bool = False) -> None:
+            self.session = Mock(spec=ClientSession)
+
+            async def call_tool(*args: Any, **kwargs: Any) -> types.CallToolResult:
+                self.state += 1
+                if self.state == 1:
+                    raise ClosedResourceError
+                return types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+
+            self.session.call_tool = call_tool
+            self.is_connected = True
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    await server.connect()
+
+    with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+        await server.call_tool("test_tool", param="test_value")
+
+    assert server.state == 1
 
 
 async def test_mcp_tool_call_tool_raises_on_is_error():
@@ -3608,6 +3677,10 @@ async def test_mcp_connection_reset_integration():
         original_session = tool.session
         original_exit_stack = tool._exit_stack
         original_call_tool = tool.session.call_tool
+
+        # The query tool is read-only, so a lost response is safe to replay: mark it as such.
+        remote_name = (func.additional_properties or {}).get("_mcp_remote_name") or func.name
+        tool._tool_annotations_by_name[remote_name] = types.ToolAnnotations(readOnlyHint=True)
 
         # Simulate connection failure by making call_tool raise ClosedResourceError once
         call_count = 0
@@ -5895,6 +5968,8 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     This test verifies the fix for issue #2884: the tool tries operations optimistically
     and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
+    The replay only happens because the tool is advertised as idempotent here; tools
+    without that hint raise instead of retrying (issue #9204).
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -5910,6 +5985,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         args=["arg1"],
         load_tools=True,
     )
+    tool._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
 
     # Mock the session
     mock_session = MagicMock()
@@ -6153,6 +6229,7 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
 
     tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
+    tool._tool_annotations_by_name["remote_tool"] = types.ToolAnnotations(idempotentHint=True)
 
     with (
         patch.object(tool, "connect", AsyncMock()) as mock_connect,
