@@ -1057,6 +1057,7 @@ class MCPTool:
         self._progressive_loaded_tool_names: set[str] = set()
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_task_support_by_name: dict[str, str] = {}
+        self._tool_annotations_by_name: dict[str, types.ToolAnnotations | None] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
         self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
             additional_tool_argument_names
@@ -1890,6 +1891,7 @@ class MCPTool:
         ]
         self._tool_call_meta_by_name.clear()
         self._tool_task_support_by_name.clear()
+        self._tool_annotations_by_name.clear()
         self._tool_param_names_by_name.clear()
         self._progressive_loaded_tool_names.clear()
 
@@ -2692,6 +2694,7 @@ class MCPTool:
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name
+        self._tool_annotations_by_name = tool_annotations_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
@@ -2891,15 +2894,24 @@ class MCPTool:
             except ToolExecutionException:
                 raise
             except (ClosedResourceError, McpError) as call_ex:
-                is_session_terminated = (
-                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
-                )
-                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
-                if not is_connection_lost:
+                if not self._is_connection_lost(call_ex):
                     error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)
                     raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
+
+                if not self._is_call_replayable(tool_name):
+                    # The request may have reached the server before the connection dropped,
+                    # so replaying it could execute a non-idempotent operation twice. Surface
+                    # the unknown outcome instead, same policy as the task-submit path.
+                    if span.is_recording():
+                        set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
+                    raise ToolExecutionException(
+                        f"Failed to call tool '{tool_name}' - connection lost and the remote execution "
+                        "outcome is unknown. The call was not retried because the tool does not advertise "
+                        "idempotent or read-only behavior; reconnect and retry explicitly if safe.",
+                        inner_exception=call_ex,
+                    ) from call_ex
 
                 if attempt == 0:
                     # First attempt failed, try reconnecting.
@@ -3400,6 +3412,16 @@ class MCPTool:
         if isinstance(ex, McpError):
             return "session terminated" in ex.error.message.lower()
         return False
+
+    def _is_call_replayable(self, tool_name: str) -> bool:
+        """Return True if the server advertises *tool_name* as safe to retry after connection loss.
+
+        Only tools whose declared annotations carry ``idempotentHint`` or ``readOnlyHint`` may be
+        replayed: anything else may have executed before the connection dropped, and re-issuing
+        the call would duplicate its side effects.
+        """
+        annotations = self._tool_annotations_by_name.get(tool_name)
+        return bool(annotations and (annotations.idempotentHint or annotations.readOnlyHint))
 
     async def _call_prompt_with_runtime_kwargs(
         self,
