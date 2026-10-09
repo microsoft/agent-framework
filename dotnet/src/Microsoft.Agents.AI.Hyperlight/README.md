@@ -25,6 +25,24 @@ Both surfaces support:
 * Snapshot/restore per run so the guest starts from a known clean state
   every invocation.
 
+## Host tool parameter schemas
+
+The `execute_code` description lists each provider-owned tool with its existing
+`AIFunction.JsonSchema`, so the model can see parameter names, requiredness,
+descriptions, enums, and nested shapes and call `call_tool(...)` correctly.
+Tools that do not describe their input are listed by name only.
+
+Two things to keep in mind:
+
+* Parameter names, descriptions, defaults, and enum values are **model-visible**.
+  Do not put credentials, tenant identifiers, or other secrets in them.
+* C# enums serialize as integers by default, so their member names do not reach
+  the schema. Apply `JsonStringEnumConverter` to the enum if the model should see
+  the allowed values.
+
+This does not change `execute_code`'s own input schema, which remains the single
+`code` parameter.
+
 ## Requirements
 
 * The `Hyperlight.HyperlightSandbox.Api` NuGet package, published from the
