@@ -39,6 +39,7 @@ Some additional samples of note include:
 - [Agent Providers](./02-agents/AgentProviders/README.md): Shows how to create an AIAgent instance for a selection of providers.
 - [Agent Telemetry](./02-agents/AgentOpenTelemetry/README.md): Demo which showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
 - [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples): Durable agents and workflows for console applications and Azure Functions.
+- [DevUI with PostgreSQL chat history](./05-end-to-end/DevUIWithPostgresPersistence/README.md): Uses an Aspire-managed PostgreSQL container and a database-backed `ChatHistoryProvider` with the built-in OpenAI endpoints and DevUI.
 
 ## Migration from Semantic Kernel
 
