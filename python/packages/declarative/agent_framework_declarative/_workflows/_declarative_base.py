@@ -46,6 +46,10 @@ from agent_framework import (
 from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
+from ._powerfx_functions import (
+    _skip_powerfx_opaque_token,  # pyright: ignore[reportPrivateUsage]
+    whole_call_args,
+)
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
 from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
 
@@ -66,30 +70,6 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
-
-
-def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
-    """Return the end of an ordinary quoted token or comment, or start if neither."""
-    quote = formula[start]
-    if quote in ('"', "'"):
-        pos = start + 1
-        while pos < len(formula):
-            if formula[pos] == quote:
-                if pos + 1 < len(formula) and formula[pos + 1] == quote:
-                    pos += 2
-                    continue
-                return pos + 1
-            pos += 1
-        return pos
-    if formula.startswith("//", start):
-        pos = start + 2
-        while pos < len(formula) and formula[pos] not in "\r\n":
-            pos += 1
-        return pos
-    if formula.startswith("/*", start):
-        end = formula.find("*/", start + 2)
-        return len(formula) if end == -1 else end + 2
-    return start
 
 
 def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
@@ -721,14 +701,14 @@ class DeclarativeWorkflowState:
 
         Returns None if the formula is not a custom function call.
         """
-        import re
+        formula = formula.strip()
 
         # Concat/Concatenate - string concatenation
         # In standard PowerFx, Concatenate is for strings, Concat is for tables.
         # Copilot Studio uses Concat for strings, so we support both.
-        match = re.match(r"(?:Concat|Concatenate)\((.+)\)$", formula.strip())
-        if match:
-            args_str = match.group(1)
+        args_str = whole_call_args(formula, "Concat", "Concatenate")
+        # Empty arguments fall through so PowerFx reports the arity error.
+        if args_str:
             # Parse comma-separated arguments (handling nested parentheses)
             args = self._parse_function_args(args_str)
             evaluated_args: list[str] = []
@@ -747,24 +727,24 @@ class DeclarativeWorkflowState:
             return "".join(evaluated_args)
 
         # UserMessage(expr) - creates a user message dict
-        match = re.match(r"UserMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "UserMessage")
+        if inner_args:
+            inner_expr = inner_args.strip()
             # Evaluate the inner expression
             text = self.eval(f"={inner_expr}")
             return {"role": "user", "text": str(text) if text else ""}
 
         # AgentMessage(expr) - creates an assistant message dict
-        match = re.match(r"AgentMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "AgentMessage")
+        if inner_args:
+            inner_expr = inner_args.strip()
             text = self.eval(f"={inner_expr}")
             return {"role": "assistant", "text": str(text) if text else ""}
 
         # MessageText(expr) - extracts text from the last message
-        match = re.match(r"MessageText\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "MessageText")
+        if inner_args:
+            inner_expr = inner_args.strip()
             # Reuse the helper method for consistent text extraction
             return self._eval_and_replace_message_text(inner_expr)
 

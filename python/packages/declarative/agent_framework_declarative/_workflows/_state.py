@@ -441,7 +441,7 @@ class WorkflowState:
         Returns:
             The evaluated result
         """
-        from ._powerfx_functions import CUSTOM_FUNCTIONS
+        from ._powerfx_functions import CUSTOM_FUNCTIONS, whole_call_args
 
         formula = formula.strip()
 
@@ -452,15 +452,15 @@ class WorkflowState:
             return not bool(result)
 
         # Handle Not() function
-        if formula.startswith("Not(") and formula.endswith(")"):
-            inner = formula[4:-1].strip()
-            result = self._eval_simple(inner)
+        not_args = whole_call_args(formula, "Not")
+        if not_args is not None:
+            result = self._eval_simple(not_args.strip())
             return not bool(result)
 
         # Handle function calls
         for func_name, func in CUSTOM_FUNCTIONS.items():
-            if formula.startswith(f"{func_name}(") and formula.endswith(")"):
-                args_str = formula[len(func_name) + 1 : -1]
+            args_str = whole_call_args(formula, func_name)
+            if args_str is not None:
                 # Simple argument parsing (doesn't handle nested calls well)
                 args = self._parse_function_args(args_str)
                 evaluated_args = [self._eval_simple(arg) if isinstance(arg, str) else arg for arg in args]

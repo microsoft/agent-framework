@@ -4,6 +4,9 @@
 
 from typing import cast
 
+from agent_framework._workflows._state import State
+
+from agent_framework_declarative._workflows._declarative_base import DeclarativeWorkflowState
 from agent_framework_declarative._workflows._powerfx_functions import (
     CUSTOM_FUNCTIONS,
     assistant_message,
@@ -19,6 +22,7 @@ from agent_framework_declarative._workflows._powerfx_functions import (
     system_message,
     upper,
     user_message,
+    whole_call_args,
 )
 
 
@@ -692,3 +696,138 @@ class TestSearchTableEdgeCases:
         """Test search_table with a boolean False."""
         items = [{"ok": True, "label": "yes"}, {"ok": False, "label": "no"}]
         assert [item["label"] for item in search_table(items, False, "ok")] == ["no"]
+
+
+class TestWholeCallArgs:
+    """Tests for whole_call_args, which bounds a custom-function match to one call."""
+
+    def test_whole_call_returns_inner_text(self):
+        """A formula that is exactly one call yields its argument text."""
+        assert whole_call_args('Concat("a", "b")', "Concat") == '"a", "b"'
+
+    def test_trailing_operator_is_not_claimed(self):
+        """A call followed by more expression belongs to PowerFx, not the handler."""
+        assert whole_call_args('Concat("a") & Lower("B")', "Concat") is None
+        assert whole_call_args('MessageText("hi") & Upper("there")', "MessageText") is None
+
+    def test_trailing_text_after_closing_paren_is_not_claimed(self):
+        """Anything after the call's own closing paren disqualifies the match."""
+        assert whole_call_args('Concat("a") + 1', "Concat") is None
+
+    def test_name_must_start_the_formula(self):
+        """A call nested inside a larger formula is not a whole-formula match."""
+        assert whole_call_args('Lower("B") & Concat("a")', "Concat") is None
+
+    def test_nested_same_name_call_is_balanced(self):
+        """Nested parentheses are tracked, so the outer call still matches."""
+        assert whole_call_args('Concat(Concat("a", "b"), "c")', "Concat") == 'Concat("a", "b"), "c"'
+
+    def test_paren_inside_string_literal_does_not_close_the_call(self):
+        """A ``)`` inside a quoted literal is data, not the call's terminator."""
+        assert whole_call_args('Concat("a)", "b")', "Concat") == '"a)", "b"'
+        assert whole_call_args('Concat("MessageText(Local.S)")', "Concat") == '"MessageText(Local.S)"'
+
+    def test_empty_arguments_match_with_an_empty_string(self):
+        """An argument-less call is a match; emptiness is the caller's decision.
+
+        Returning None here would make a zero-argument call indistinguishable
+        from no call at all, which silently disabled ``Or()``/``And()`` in the
+        fallback dispatcher.
+        """
+        assert whole_call_args("Concat()", "Concat") == ""
+        assert whole_call_args("Or()", "Or") == ""
+
+    def test_unbalanced_parens_fall_through(self):
+        """An unterminated call is not matched."""
+        assert whole_call_args('Concat("a"', "Concat") is None
+
+    def test_first_matching_name_wins(self):
+        """Several candidate names may be offered in one call."""
+        assert whole_call_args('Concatenate("x")', "Concat", "Concatenate") == '"x"'
+        assert whole_call_args('Concat("x")', "Concat", "Concatenate") == '"x"'
+
+    def test_match_is_case_sensitive(self):
+        """PowerFx function names are matched exactly, as before."""
+        assert whole_call_args('concat("a")', "Concat") is None
+
+    def test_paren_inside_a_block_comment_does_not_close_the_call(self):
+        """A ``)`` in a comment is text, so the call is still one whole call."""
+        assert whole_call_args('UserMessage("hi" /* ) */)', "UserMessage") == '"hi" /* ) */'
+
+    def test_paren_inside_a_line_comment_does_not_close_the_call(self):
+        """The same holds for a ``//`` comment inside the argument list."""
+        assert whole_call_args('UserMessage("hi" // )\n)', "UserMessage") == '"hi" // )\n'
+
+    def test_trailing_comment_after_the_call_is_trivia(self):
+        """A comment following the call does not make the formula a larger expression."""
+        assert whole_call_args('Upper("x") // trailing (', "Upper") == '"x"'
+        assert whole_call_args('Upper("x") /* trailing */', "Upper") == '"x"'
+
+    def test_unterminated_block_comment_falls_through(self):
+        """An unclosed comment swallows the rest of the formula, so nothing matches."""
+        assert whole_call_args('Upper("x" /* unterminated', "Upper") is None
+
+    def test_trailing_unterminated_block_comment_falls_through(self):
+        """A complete call followed by an unterminated /* is a larger expression."""
+        assert whole_call_args('Concat("a") /* unterminated', "Concat") is None
+        assert whole_call_args('Upper("x") /* unterminated', "Upper") is None
+
+    def test_escaped_quote_inside_a_literal_is_data(self):
+        """``""`` is an escaped quote, so the literal does not end there."""
+        assert whole_call_args('Concat("a"")", "b")', "Concat") == '"a"")", "b"'
+
+
+class TestEvalCustomFunctionExtent:
+    """A custom-function handler must only claim a formula that is one whole call.
+
+    Regression test for the end-anchored regexes that captured any formula
+    starting with a dialect function name and ending in ``)``, swallowing the
+    trailing operator into the argument list. These assertions need no PowerFx
+    engine: a handled formula returns its value, and an unhandled one returns
+    None so that eval() hands the formula to PowerFx.
+    """
+
+    def _state(self) -> DeclarativeWorkflowState:
+        state = DeclarativeWorkflowState(State())
+        state.initialize({})
+        return state
+
+    def test_whole_concat_call_is_still_handled(self):
+        """The Copilot Studio string alias keeps working for a complete call."""
+        assert self._state()._eval_custom_function('Concat("a", "b")') == "ab"
+        assert self._state()._eval_custom_function('Concatenate("a", "b")') == "ab"
+
+    def test_concat_with_trailing_operator_falls_through(self):
+        """A trailing operator must not be absorbed as a string literal."""
+        assert self._state()._eval_custom_function('Concat("a") & Lower("B")') is None
+        assert self._state()._eval_custom_function('Concatenate("x") & Upper("y")') is None
+
+    def test_message_helpers_with_trailing_operator_fall_through(self):
+        """UserMessage/AgentMessage/MessageText are bounded the same way."""
+        state = self._state()
+        assert state._eval_custom_function('UserMessage("hi") & "x"') is None
+        assert state._eval_custom_function('AgentMessage("hi") & "x"') is None
+        assert state._eval_custom_function('MessageText("hi") & Upper("x")') is None
+
+    def test_quoted_paren_inside_a_whole_call_is_preserved(self):
+        """A literal containing ``)`` does not truncate the call."""
+        assert self._state()._eval_custom_function('Concat("a)", "b")') == "a)b"
+
+    def test_argument_less_call_falls_through(self):
+        """``Concat()`` is left to PowerFx, which reports the arity error."""
+        assert self._state()._eval_custom_function("Concat()") is None
+        assert self._state()._eval_custom_function("MessageText()") is None
+
+    def test_trailing_comment_does_not_disqualify_the_call(self):
+        """A comment after the call is trivia, not a larger expression.
+
+        A comment *inside* the argument list is claimed as well, but how its
+        text is then split and unquoted belongs to the argument heuristic (see
+        issue #9072), not to the extent of the match.
+        """
+        assert self._state()._eval_custom_function('Concat("a", "b") /* done */') == "ab"
+        assert self._state()._eval_custom_function('Concat("a", "b") // done') == "ab"
+
+    def test_trailing_unterminated_comment_falls_through(self):
+        """An unterminated trailing /* is not trivia, so PowerFx handles the formula."""
+        assert self._state()._eval_custom_function('Concat("a") /* unterminated') is None
