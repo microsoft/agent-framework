@@ -25,6 +25,7 @@ more than 25 metadata keys, and several cross package boundaries:
 | Core behavior depends on provider keys | Core treats a function call as hosted whenever `additional_properties["server_label"]` is truthy. That one check controls approval handling, session resumption, skills and file-access auto-approval rules, and continuation error results. The same key is also persisted as the hosted server boundary in harness always-approve rules. Core streaming aggregation falls back to `additional_properties["item_id"]` to correlate code-interpreter fragments. |
 | One concept, inconsistent representations | Function-call `status` is stored as metadata although `Content.status` exists. File names are stored as `filename` although `Content.name` exists. A hosted MCP server's name is `server_name` on MCP call content but `server_label` metadata on the call nested in a hosted approval. |
 | Inconsistent key naming | `openai.responses.shell.output_type`, `openai.local_shell_command_parts`, `__foundry_reasoning_replay_item__`, `openai_content_type`, `computer_action_format`, and AG-UI's underscore-prefixed `_agui_collected_approval_occurrence`. |
+| Core guesses stream merge semantics | Providers know whether an event is an incremental delta or a complete snapshot, but that information is discarded before aggregation. Core therefore appends text unconditionally and uses prefix comparison to guess whether code-interpreter content replaces an earlier value, which corrupts repetitive content such as multiple `import` lines. |
 | Replay depends on non-persisted objects | OpenAI shell replay, Gemini tool-call parts, Hosting Responses output reuse, and a Foundry hosting OAuth fallback read `raw_representation`, which is absent after history is reloaded. |
 
 Each new provider feature adds another key, and consolidating the duplicated Responses conversions is not possible
@@ -48,6 +49,7 @@ Grouping metadata in nested mappings therefore requires changing how core merges
 - Keep function-call occurrence identity unambiguous and separate from provider identifiers.
 - Replay persisted history without `raw_representation`.
 - Base core behavior, especially approval handling, on documented first-class fields rather than provider keys.
+- Preserve a provider's explicit append-versus-replace intent instead of reconstructing it from payload values.
 - Make each provider's metadata explicit and discoverable as a unit, separate from application data.
 - Keep existing histories and pending approvals readable after upgrading.
 - Keep independently versioned packages working together in one process.
@@ -142,6 +144,34 @@ every first-class field this decision relies on:
 - `status` on function calls and reasoning: preserved; the latest non-empty value wins, because status progresses
   during a stream, for example from `in_progress` to `completed`.
 
+PR [#8953](https://github.com/microsoft/agent-framework/pull/8953) already makes text and reasoning coalescing
+linear; this decision standardizes merge meaning rather than adding another performance mechanism.
+
+All content types that core can aggregate get an explicit first-class
+`merge_mode: Literal["append", "replace"] | None` field. This initially covers `text`, `text_reasoning`,
+`function_call`, `usage`, `code_interpreter_tool_call`, and `code_interpreter_tool_result`.
+
+- The mode belongs to the incoming stream fragment. It is not provider metadata and does not participate in
+  identifying which logical item the fragment belongs to. Core first applies the existing type-specific identity
+  and adjacency rules, then applies the fragment's mode.
+- Direct `Content.__add__` and optimized response coalescers honor the same modes. Constructors reject a non-`None`
+  mode on content types that core does not aggregate.
+- `append` uses the content type's existing incremental merge. `replace` treats the incoming semantic payload as a
+  complete snapshot and replaces the accumulated payload for that logical item. Stable identity and correlation
+  fields are still validated, while status and namespaced metadata follow their separate merge rules.
+- Providers set a mode on every mergeable streamed item they produce. Delta events use `append`; complete or
+  `*.done` snapshots use `replace`. Core does not use prefix comparison or another payload heuristic when a mode is
+  present.
+- `None` means legacy behavior, not `append`. This keeps older provider packages working on a newer core: text,
+  reasoning, function calls, and usage retain their current type-specific behavior, and code-interpreter content
+  retains its current prefix inference. Removing that fallback is a separate compatibility decision after supported
+  providers no longer emit unmarked fragments.
+- The field is serialized so individually persisted updates retain their merge semantics. Aggregation consumes it;
+  finalized `ChatResponse` and `AgentResponse` content has `merge_mode=None`, so an operational stream instruction
+  does not become part of persisted logical history.
+- This is one field interpreted by the existing type-specific merge code. It does not introduce merge strategy
+  objects, a registry, or provider callbacks.
+
 ### Metadata placement
 
 ```python
@@ -157,7 +187,7 @@ content.additional_properties == {
 1. **Use first-class fields first.** Existing fields such as `status`, `protected_data`, `name`, `file_id`, and
    `server_name` are used where they apply. Missing constructor parameters for existing fields are added, such as
    `status` on function calls, function results, and reasoning, and `name` on data and URI content. No new fields are
-   added for provider-specific concepts; the one new field, `hosted`, records a framework decision.
+   added for provider-specific concepts; the new `hosted` and `merge_mode` fields record framework behavior.
 2. **Provider data lives in the provider's namespace.** `additional_properties["<namespace>"]` is a mapping owned by
    one integration package and named after it: `openai`, `foundry`, `anthropic`, `gemini`, `bedrock`, `a2a`,
    `ag_ui`, and so on. Data for a wire protocol belongs to the package that owns that protocol's mapping: Foundry chat
@@ -211,11 +241,12 @@ reserved names.
 - Readers accept legacy locations indefinitely. Removing a legacy read is a separate breaking-change decision.
 - **Upgrading is safe; downgrading is not.** New runtimes read every existing history: content written before this
   change, with or without `server_label`, loads through the legacy inference and legacy key reads described above.
-  The break is in the other direction: `hosted` is a new serialized field, and `Content`'s constructor rejects fields
-  it does not know, so runtimes that predate this change fail to load history a new runtime has written once it
-  contains a function call. Downgrades and mixed-version deployments that share history across this boundary are not
-  supported. The implementing change is marked breaking for that reason, and its release notes say that existing
-  histories remain readable after upgrading.
+  The break is in the other direction: `hosted` and `merge_mode` are new serialized fields, and `Content`'s
+  constructor rejects fields it does not know, so runtimes that predate this change fail to load records a new
+  runtime wrote while either field is present. Aggregated logical history clears `merge_mode`, but persisted
+  individual updates can contain it. Downgrades and mixed-version deployments that share records across this
+  boundary are not supported. The implementing change is marked breaking for that reason, and its release notes say
+  that existing histories remain readable after upgrading.
 - For replay-critical keys, writers write both the new and legacy locations until the writing package's next major
   version. This keeps independently versioned packages in one process working, for example an older Hosting
   Responses reading `fc_id`, or older AG-UI, Foundry hosting, and Hosting Responses reading `server_label` from
@@ -240,6 +271,8 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 - Good, because each provider's metadata sits under one explicit key that can be typed as one `TypedDict`, inspected,
   or stripped as a unit, and is visibly separate from application data.
 - Good, because provider-neutral semantics have one documented home instead of competing with application keys.
+- Good, because aggregation uses provider-declared delta or snapshot semantics instead of guessing from payload
+  prefixes.
 - Good, because shared Responses conversion can later rely on one documented set of locations.
 - Good, because persisted histories can be replayed after reload, and what they store is explicit.
 - Bad, because core's merge behavior changes at every merge site, including for application values that are mappings.
@@ -251,8 +284,14 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 - Bad, because `generic` and every namespace name become reserved top-level keys. No collisions exist in this
   repository, but applications outside it could already use those names.
 - Bad, because writers carry duplicated legacy keys until their next major version.
-- Bad, because runtimes that predate `hosted` cannot read histories written after the upgrade, although upgraded
-  runtimes read all existing histories.
+- Bad, because runtimes that predate either new field cannot read records that still contain that field, although
+  upgraded runtimes read all existing records.
+- Bad, because `Content` gains an operational field that is meaningful only before aggregation; clearing it from
+  finalized content keeps that concern from leaking further.
+- Bad, because every provider that emits mergeable stream content must classify its events, and a wrong `replace`
+  marker discards accumulated payload while a wrong `append` marker can duplicate a snapshot.
+- Bad, because unmarked code-interpreter content retains the legacy prefix heuristic during compatibility, so the
+  corruption fixed by explicit modes remains possible with an older provider package.
 - Bad, because a provider adapter that forgets to set `hosted` makes a hosted call look local; only adapter tests
   catch this.
 - Neutral, because existing `Content.id` exceptions remain, although they are now documented and closed.
@@ -273,6 +312,11 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
   cover filling `server_name` from `server_label` and rejecting records where the two differ.
 - Streaming aggregation tests merge function-call and reasoning parts and assert that `hosted`, `server_name`, and
   `status` survive, following the rules above.
+- For every mergeable content type, contract tests split a known payload into different append fragments, optionally
+  follow them with a replace snapshot, and assert exact reconstruction through both `ChatResponse.from_updates()` and
+  streaming `get_final_response()`. Tests include repetitive and prefix-shaped fragments, serialization of
+  unaggregated updates, rejection of invalid modes and unsupported content types, clearing the mode on finalized
+  content, and the legacy unmarked behavior.
 - Harness tests load standing `ToolApprovalRule` state written before the change and confirm it still matches hosted
   calls from the same server, and never matches a local call with the same name and arguments.
 - Every adapter that parses provider-executed calls or approvals asserts that it sets `hosted=True`. Approval tests in
@@ -350,3 +394,5 @@ documented replay data under rule 5. Hosting Responses may keep raw output reuse
 - [Spec 004: Python function-calling loop](../specs/004-python-function-calling-loop.md)
 - [ADR 0039: Preserve model refusals with marked Python text content](0039-python-refusal-content.md)
 - [ADR 0043: Preserve host runtime context through MCP invocation and approval](0043-python-mcp-runtime-context.md)
+- [Issue 8910: Explicit append/replace semantics for streamed content merging](https://github.com/microsoft/agent-framework/issues/8910)
+- [Issue 8903: Streamed code-interpreter code can be corrupted by prefix inference](https://github.com/microsoft/agent-framework/issues/8903)
