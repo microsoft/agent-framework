@@ -11,7 +11,7 @@ from typing import Any, Generic, TypeVar, cast
 from agent_framework import AgentResponse, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs, AgentState
-from mcp import types
+from mcp import MCPError, types
 
 from ._conversion import mcp_from_run, mcp_to_run
 from ._feature_usage import FeatureIndex
@@ -86,11 +86,11 @@ class AgentMCPTool(Generic[AgentT]):
             name for name in (*self.parameters, *self.chat_option_parameters) if name in required_names
         )
 
-    async def list_tools(self) -> list[types.Tool]:
+    async def list_tools(self) -> types.ListToolsResult:
         """Return the native MCP tool definition for the target agent."""
         mark_feature_used(FeatureIndex.HOSTING_MCP)
         target = await self.state.get_target()
-        return [self._tool_for_target(target)]
+        return types.ListToolsResult(tools=[self._tool_for_target(target)])
 
     def _tool_for_target(self, target: AgentT) -> types.Tool:
         """Create the native MCP tool definition for a resolved target."""
@@ -111,7 +111,7 @@ class AgentMCPTool(Generic[AgentT]):
         return types.Tool(
             name=tool_name,
             description=self._description if self._description is not None else target.description or "",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": properties,
                 "required": [self.argument_name, *self.required_parameters],
@@ -135,7 +135,7 @@ class AgentMCPTool(Generic[AgentT]):
         self,
         name: str,
         arguments: Mapping[str, Any] | None,
-    ) -> list[types.ContentBlock]:
+    ) -> types.CallToolResult:
         """Run the target agent for a native MCP ``call_tool`` handler.
 
         Args:
@@ -143,16 +143,16 @@ class AgentMCPTool(Generic[AgentT]):
             arguments: Native MCP tool arguments.
 
         Returns:
-            Native MCP content blocks for the completed tool result.
+            Native MCP ``CallToolResult`` for the completed tool result.
 
         Raises:
-            ValueError: If the tool name or configured session id is invalid.
+            MCPError: If the tool name or configured session id is invalid.
         """
         mark_feature_used(FeatureIndex.HOSTING_MCP)
         target = await self.state.get_target()
         tool = self._tool_for_target(target)
         if name != tool.name:
-            raise ValueError(f"Unknown MCP tool: {name}")
+            raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
 
         run = self.mcp_to_run(arguments)
         if self.session_id_parameter is None:
@@ -164,11 +164,13 @@ class AgentMCPTool(Generic[AgentT]):
                     stream=False,
                 ),
             )
-            return self.mcp_from_run(result)
+            return types.CallToolResult(content=self.mcp_from_run(result))
 
         session_id = arguments.get(self.session_id_parameter) if arguments else None
         if not isinstance(session_id, str) or not session_id:
-            raise ValueError(f"MCP tool argument '{self.session_id_parameter}' must be a non-empty string.")
+            raise MCPError(
+                types.INVALID_PARAMS, f"MCP tool argument '{self.session_id_parameter}' must be a non-empty string."
+            )
         session = await self.state.get_or_create_session(session_id)
         result = cast(
             "AgentResponse[Any]",
@@ -180,4 +182,4 @@ class AgentMCPTool(Generic[AgentT]):
             ),
         )
         await self.state.set_session(session_id, session)
-        return self.mcp_from_run(result)
+        return types.CallToolResult(content=self.mcp_from_run(result))

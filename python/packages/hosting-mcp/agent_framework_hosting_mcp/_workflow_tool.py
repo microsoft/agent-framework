@@ -11,8 +11,8 @@ from typing import Any, Generic, TypeVar, cast
 from agent_framework import AgentResponse, Message, Workflow, WorkflowRunResult
 from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import WorkflowState
-from mcp import types
-from pydantic import TypeAdapter
+from mcp import MCPError, types
+from pydantic import TypeAdapter, ValidationError
 
 from ._conversion import mcp_from_run
 from ._feature_usage import FeatureIndex
@@ -53,11 +53,11 @@ class WorkflowMCPTool(Generic[WorkflowT]):
         self._description = description
         self.argument_name = argument_name
 
-    async def list_tools(self) -> list[types.Tool]:
+    async def list_tools(self) -> types.ListToolsResult:
         """Return the native MCP tool definition for the target workflow."""
         mark_feature_used(FeatureIndex.HOSTING_MCP)
         workflow = await self.state.get_target()
-        return [self._tool_for_workflow(workflow)]
+        return types.ListToolsResult(tools=[self._tool_for_workflow(workflow)])
 
     def _tool_for_workflow(self, workflow: WorkflowT) -> types.Tool:
         tool_name = self._name
@@ -77,7 +77,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
         return types.Tool(
             name=tool_name,
             description=self._description if self._description is not None else workflow.description or "",
-            inputSchema=input_schema,
+            input_schema=input_schema,
         )
 
     def _input_adapter(self, workflow: WorkflowT) -> TypeAdapter[Any]:
@@ -91,11 +91,22 @@ class WorkflowMCPTool(Generic[WorkflowT]):
     def _workflow_input(self, workflow: WorkflowT, arguments: Mapping[str, Any] | None) -> Any:
         input_adapter = self._input_adapter(workflow)
         input_schema = input_adapter.json_schema()
+
         if input_schema.get("type") == "object":
-            return input_adapter.validate_python(dict(arguments or {}))
-        if arguments is None or self.argument_name not in arguments:
-            raise ValueError(f"MCP tool arguments must include '{self.argument_name}'.")
-        return input_adapter.validate_python(arguments[self.argument_name])
+            input_value = dict(arguments or {})
+        else:
+            if arguments is None or self.argument_name not in arguments:
+                raise MCPError(
+                    types.INVALID_PARAMS,
+                    f"MCP tool arguments must include '{self.argument_name}'.",
+                )
+            input_value = arguments[self.argument_name]
+
+        try:
+            return input_adapter.validate_python(input_value)
+        except ValidationError as exc:
+            # We raise MCPError only for validation errors which pertain to the input
+            raise MCPError(types.INVALID_PARAMS, str(exc)) from exc
 
     def mcp_from_run(self, result: WorkflowRunResult) -> list[types.ContentBlock]:
         """Convert completed workflow outputs into native MCP content blocks."""
@@ -124,7 +135,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
         self,
         name: str,
         arguments: Mapping[str, Any] | None,
-    ) -> list[types.ContentBlock]:
+    ) -> types.CallToolResult:
         """Run the target workflow for a native MCP ``call_tool`` handler.
 
         Args:
@@ -141,7 +152,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
         workflow = await self.state.get_target()
         tool = self._tool_for_workflow(workflow)
         if name != tool.name:
-            raise ValueError(f"Unknown MCP tool: {name}")
+            raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
 
         result = await workflow.run(self._workflow_input(workflow, arguments), stream=False)
-        return self.mcp_from_run(result)
+        return types.CallToolResult(content=self.mcp_from_run(result))

@@ -10,7 +10,7 @@ import warnings
 from datetime import timedelta
 from types import MappingProxyType, SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, call
 
 import pytest
 from pydantic import AfterValidator, BaseModel, field_validator
@@ -6141,7 +6141,7 @@ class TestSecureMCPToolProxyURLMode:
     async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
         from unittest.mock import patch
 
-        import httpx
+        import httpx2 as httpx
 
         from agent_framework._mcp import _MCPHeaderScopedClient
         from agent_framework.security import SecureMCPToolProxy
@@ -6215,7 +6215,7 @@ class TestSecureMCPToolProxyURLMode:
                 client.follow_redirects = kwargs.get("follow_redirects", client.follow_redirects)
                 return client
 
-            with patch("httpx.AsyncClient", side_effect=create_client):
+            with patch("httpx2.AsyncClient", side_effect=create_client):
                 proxy = SecureMCPToolProxy(
                     url="https://mcp.example/mcp",
                     headers=configured_headers,
@@ -6258,7 +6258,7 @@ class TestSecureMCPToolProxyURLMode:
 
         from agent_framework.security import SecureMCPToolProxy
 
-        with patch("httpx.AsyncClient") as create_client:
+        with patch("httpx2.AsyncClient") as create_client:
             proxy = SecureMCPToolProxy(url=url, headers={"X-Custom-Credential": "custom-value"})
 
             with pytest.raises(ValueError, match="absolute HTTP.*URL with a host"):
@@ -6303,7 +6303,7 @@ class TestMCPAnnotationMapping:
 
         annotations = None
         if read_only is not None or open_world is not None:
-            annotations = SimpleNamespace(readOnlyHint=read_only, openWorldHint=open_world)
+            annotations = SimpleNamespace(read_only_hint=read_only, open_world_hint=open_world)
 
         integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(
             annotations,
@@ -6345,11 +6345,12 @@ def _make_connected_mcp_tool_for_ifc(
     )
     mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mcp_tool.is_connected = True
-    mcp_tool.session = AsyncMock()
-    mcp_tool.session.list_tools = AsyncMock(  # type: ignore[method-assign]
+    mock_session = AsyncMock()
+    mcp_tool.session = mock_session
+    mock_session.list_tools = AsyncMock(  # type: ignore[method-assign]
         return_value=SimpleNamespace(
             tools=[SimpleNamespace(name="remote_tool", annotations=annotations)],
-            nextCursor=None,
+            next_cursor=None,
         )
     )
     mcp_tool.functions.append(function)
@@ -6362,8 +6363,8 @@ def _make_mcp_tool_definition(name: str, *, open_world: bool = False) -> Any:
     return mcp_types.Tool(
         name=name,
         description=f"{name} description",
-        inputSchema={"type": "object", "properties": {}},
-        annotations=mcp_types.ToolAnnotations(readOnlyHint=False, openWorldHint=open_world),
+        input_schema={"type": "object", "properties": {}},
+        annotations=mcp_types.ToolAnnotations(read_only_hint=False, open_world_hint=open_world),
     )
 
 
@@ -6390,8 +6391,9 @@ def _make_connected_mcp_discovery_tool(
             always_load=always_load,
         )
     mcp_tool.is_connected = True
-    mcp_tool.session = AsyncMock()
-    mcp_tool.session.call_tool = AsyncMock(
+    mock_session = AsyncMock()
+    mcp_tool.session = mock_session
+    mock_session.call_tool = AsyncMock(
         return_value=mcp_types.CallToolResult(
             content=[mcp_types.TextContent(type="text", text="payload")],
             _meta=result_meta or {"ifc": {"integrity": "trusted", "confidentiality": "private"}},
@@ -6775,8 +6777,8 @@ class TestMCPIFCMetaLabels:
     async def test_wrap_mcp_function_reads_refreshed_local_policy_at_invocation(self):
         from agent_framework.security import SecureMCPToolProxy
 
-        trusted_annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
-        untrusted_annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=True)
+        trusted_annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
+        untrusted_annotations = SimpleNamespace(read_only_hint=True, open_world_hint=True)
         server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
         mcp_tool, function = _make_connected_mcp_tool_for_ifc(
             annotations=trusted_annotations,
@@ -6785,10 +6787,10 @@ class TestMCPIFCMetaLabels:
         )
         mcp_tool.session.list_tools.side_effect = [
             SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", annotations=trusted_annotations)], nextCursor=None
+                tools=[SimpleNamespace(name="remote_tool", annotations=trusted_annotations)], next_cursor=None
             ),
             SimpleNamespace(
-                tools=[SimpleNamespace(name="remote_tool", annotations=untrusted_annotations)], nextCursor=None
+                tools=[SimpleNamespace(name="remote_tool", annotations=untrusted_annotations)], next_cursor=None
             ),
         ]
         proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
@@ -6888,7 +6890,7 @@ class TestMCPIFCMetaLabels:
     async def test_apply_mcp_security_labels_configures_result_authority(self, trust_server_ifc: bool):
         from agent_framework.security import apply_mcp_security_labels
 
-        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
         server_meta = {
             "ifc": {"integrity": "trusted", "confidentiality": "public"},
             "_mcp_trust_server_ifc": True,
@@ -6915,10 +6917,36 @@ class TestMCPIFCMetaLabels:
         )
         assert result[0].additional_properties["security_label"] == expected_label
 
+    async def test_apply_mcp_security_labels_uses_high_level_client_connection(self) -> None:
+        from agent_framework._mcp import _ClientMCPConnection
+        from agent_framework.security import apply_mcp_security_labels
+
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
+        mcp_tool, _ = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta={})
+        sdk_client = AsyncMock()
+        mock_session = AsyncMock()
+        sdk_client.session = mock_session
+        sdk_client.list_tools.side_effect = [
+            SimpleNamespace(
+                tools=[SimpleNamespace(name="remote_tool", annotations=annotations)],
+                next_cursor="next-page",
+            ),
+            SimpleNamespace(tools=[], next_cursor=None),
+        ]
+        mcp_tool._connection = _ClientMCPConnection(sdk_client)
+
+        await apply_mcp_security_labels(mcp_tool)
+
+        assert sdk_client.list_tools.await_args_list == [
+            call(cursor=None),
+            call(cursor="next-page"),
+        ]
+        mock_session.list_tools.assert_not_awaited()
+
     async def test_framework_stamped_mcp_label_remains_authoritative_through_tracking(self) -> None:
         from agent_framework.security import apply_mcp_security_labels
 
-        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
         server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
         mcp_tool, function = _make_connected_mcp_tool_for_ifc(
             annotations=annotations,
@@ -6943,7 +6971,7 @@ class TestMCPIFCMetaLabels:
     async def test_apply_mcp_security_labels_reconfigures_existing_wrapper_authority(self):
         from agent_framework.security import apply_mcp_security_labels
 
-        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
         server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
         mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
         await apply_mcp_security_labels(mcp_tool)
@@ -6967,7 +6995,7 @@ class TestMCPIFCMetaLabels:
     async def test_secure_mcp_proxy_configures_result_authority(self, trust_server_ifc: bool):
         from agent_framework.security import SecureMCPToolProxy
 
-        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        annotations = SimpleNamespace(read_only_hint=True, open_world_hint=False)
         server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
         mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
         proxy = (
@@ -7010,9 +7038,7 @@ class TestMCPIFCMetaLabels:
 
         reloaded_initial_tool = _make_mcp_tool_definition("initial_sink", open_world=True)
         mcp_tool.session.list_tools.return_value = mcp_types.ListToolsResult(tools=[reloaded_initial_tool, late_tool])
-        notification = Mock(spec=mcp_types.ServerNotification)
-        notification.root = Mock()
-        notification.root.method = "notifications/tools/list_changed"
+        notification = mcp_types.ToolListChangedNotification()
 
         await mcp_tool.message_handler(notification)
         pending_reloads = list(mcp_tool._pending_reload_tasks)

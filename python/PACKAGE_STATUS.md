@@ -130,10 +130,6 @@ listed below.
 - `agent-framework-core`: experimental harness APIs for background agents, file access, looping,
   memory, and file-backed todo storage under `agent_framework/_harness/`
 
-#### `MCP_LONG_RUNNING_TASKS`
-
-- `agent-framework-core`: `MCPTaskOptions` from `agent_framework/_mcp.py`
-
 #### `MCP_SKILLS`
 
 - `agent-framework-core`: `MCPSkillResource`, `MCPSkill`, and `MCPSkillsSource` from

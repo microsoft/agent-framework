@@ -11,8 +11,9 @@ from contextvars import ContextVar
 from typing import Any, Literal, TypeAlias
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
+from mcp.client.session import ClientSession
 
 from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
@@ -181,7 +182,7 @@ async def test_owned_client_does_not_replay_response_cookie_across_principals(
         load_prompts=False,
         header_provider=lambda _: {"Authorization": principal.get()},
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             response_cookies.clear()
@@ -302,7 +303,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(
         else patch("agent_framework._mcp.streamable_http_client", side_effect=transport)
     )
     try:
-        with transport_patch, patch("httpx.AsyncClient", return_value=client), pytest.raises(error):
+        with transport_patch, patch("httpx2.AsyncClient", return_value=client), pytest.raises(error):
             await tool.connect()
         assert client.event_hooks["request"] == original_hooks
         assert client.is_closed is owned_client
@@ -335,7 +336,7 @@ async def test_owned_client_is_closed_after_successful_session(
         if header_source == "provider"
         else None,
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             await tool.call_tool("record")
@@ -736,7 +737,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         existing_session = tool.session
         existing_functions = list(tool.functions)
         existing_call_meta = dict(tool._tool_call_meta_by_name)
-        existing_task_support = dict(tool._tool_task_support_by_name)
         existing_param_names = {name: set(params) for name, params in tool._tool_param_names_by_name.items()}
 
         async def cancel_reconnect() -> None:
@@ -752,7 +752,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         assert tool.session is existing_session
         assert tool.functions == existing_functions
         assert tool._tool_call_meta_by_name == existing_call_meta
-        assert tool._tool_task_support_by_name == existing_task_support
         assert tool._tool_param_names_by_name == existing_param_names
 
         await tool.call_tool("record", credential="token-b")
@@ -843,7 +842,7 @@ async def test_discovery_failure_cleans_up_resources(
     failure = failure_type("discovery failed")
     try:
         with (
-            patch("httpx.AsyncClient", return_value=client),
+            patch("httpx2.AsyncClient", return_value=client),
             patch.object(tool, discovery_method, new=AsyncMock(side_effect=failure)),
             pytest.raises(failure_type, match="discovery failed") as error,
         ):
@@ -927,12 +926,12 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
         http_client=None if owned_client else create_client(),
         header_provider=lambda _: {"Authorization": "token-a"},
     )
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
 
     try:
-        with patch("httpx.AsyncClient", side_effect=create_client):
+        with patch("httpx2.AsyncClient", side_effect=create_client):
             for _ in range(2):
-                with pytest.raises(McpError, match="discovery failed"):
+                with pytest.raises(MCPError, match="discovery failed"):
                     await tool.connect()
                 assert tool.session is None
                 assert not tool.is_connected
@@ -940,7 +939,6 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
                 assert not tool._prompts_loaded
                 assert tool.functions == []
                 assert tool._tool_call_meta_by_name == {}
-                assert tool._tool_task_support_by_name == {}
                 assert tool._tool_param_names_by_name == {}
                 assert all(not client.event_hooks["request"] for client in clients)
                 assert all(client.is_closed is owned_client for client in clients)
@@ -995,7 +993,7 @@ async def test_cancelled_connect_caller_releases_abandoned_resources(
             async with tool:
                 pytest.fail("Cancelled setup must not enter the context manager")
 
-    with patch("httpx.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
+    with patch("httpx2.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
         caller = asyncio.create_task(enter())
         try:
             await asyncio.wait_for(setup_started.wait(), timeout=5)
@@ -1202,6 +1200,24 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
             await borrowed.close()
 
         await supplied_session.send_ping()
+
+
+async def test_replacing_supplied_session_invalidates_bound_header_identity() -> None:
+    """A recorded header identity is valid only for the session that established it."""
+    original_session = Mock(spec=ClientSession)
+    replacement_session = Mock(spec=ClientSession)
+    tool = MCPStreamableHTTPTool(
+        name="borrowed",
+        url="https://must-not-connect.example/mcp",
+        session=original_session,
+        header_provider=lambda _kwargs: {"Authorization": "A"},
+    )
+    tool._bind_session_headers({"Authorization": "A"})
+
+    tool.session = replacement_session
+
+    with pytest.raises(ToolExecutionException, match="identity is unknown"):
+        await tool._ensure_session_identity({"Authorization": "A"}, {})
 
 
 async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_server: MCPHTTPServer) -> None:
