@@ -7,7 +7,7 @@ This sample shows how to use a Foundry Toolbox by pointing an `McpClient` at the
 - Connecting to a Foundry toolbox's MCP endpoint via Streamable HTTP transport
 - Injecting a fresh Azure AI bearer token (`https://ai.azure.com/.default`) on every MCP request
 - Passing the discovered MCP tools to `AIProjectClient.AsAIAgent(...)`
-- Optional helper to create (or replace) a sample toolbox in the project so the sample is runnable end-to-end
+- Creating a toolbox version with tool search enabled and connecting to that version
 
 ## Prerequisites
 
@@ -21,9 +21,24 @@ $env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.co
 $env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
-The sample creates a toolbox named `research_toolbox` in your Foundry project on
-startup, then connects to its MCP endpoint at
-`{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/research_toolbox/mcp?api-version=v{version}`.
+The sample creates a version of `research_toolbox` on startup, then connects to
+`{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/research_toolbox/versions/{version}/mcp?api-version=v1`.
+Existing versions are not deleted. Review and remove sample versions in your
+Foundry project when you no longer need them.
+
+## Tool search
+
+`ToolSearchToolboxTool` enables the toolbox's `tool_search` and `call_tool`
+meta-tools. The agent searches for relevant capabilities before invoking a
+discovered tool, rather than receiving all underlying tool definitions initially.
+The sample prints the initial MCP tool names; expect those two meta-tools.
+Remove `new ToolSearchToolboxTool()` from the creation helper to compare ordinary
+toolbox discovery.
+
+This demonstrates [Foundry toolbox tool search](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/tool-search),
+not the separate request-scoped deferred-tool feature of the OpenAI Responses API.
+The existing MCP integration handles discovery and invocation without adding an
+Agent Framework tool-search API.
 
 ## Run the sample
 
