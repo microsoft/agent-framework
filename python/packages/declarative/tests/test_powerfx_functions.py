@@ -64,6 +64,16 @@ class TestMessageText:
         msg = {"role": "user", "content": [{"Type": "Text", "Value": "hi"}]}
         assert message_text([msg]) == "hi"
 
+    def test_message_text_accepts_pascalcase_top_level_content(self):
+        """A .NET cross-runtime record keeps PascalCase top-level keys."""
+        msg = {"Role": "user", "Content": [{"Type": "Text", "Value": "hi"}]}
+        assert message_text([msg]) == "hi"
+
+    def test_message_text_accepts_pascalcase_flat_shapes(self):
+        """PascalCase flat Content/Text strings extract like lowercase."""
+        assert message_text([{"Role": "user", "Content": "hi"}]) == "hi"
+        assert message_text([{"Role": "assistant", "Text": "hello"}]) == "hello"
+
     def test_message_text_accepts_contents_list(self):
         """Message-dict shape stores content items under contents."""
         msg = {"role": "assistant", "contents": [{"type": "text", "text": "hi"}]}

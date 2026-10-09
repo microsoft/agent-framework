@@ -50,19 +50,21 @@ def _extract_message_text(message: Any) -> str:
     module's producers), flat ``text`` (DeclarativeWorkflowState's custom
     evaluators), and a structured content list (the .NET record shape).
     Accept all three so a message that crosses eval paths never extracts
-    as empty.
+    as empty. Top-level keys are probed in PascalCase too, because a
+    record serialized by .NET (``{"Role": ..., "Content": ...}``) keeps
+    its capitalized property names.
     """
     if isinstance(message, str):
         return message
     if isinstance(message, dict):
         message_dict = cast(dict[str, Any], message)
-        content: Any = message_dict.get("content")
+        content: Any = message_dict.get("content", message_dict.get("Content"))
         if isinstance(content, str):
             return content
-        text: Any = message_dict.get("text")
+        text: Any = message_dict.get("text", message_dict.get("Text"))
         if isinstance(text, str):
             return text
-        for key in ("content", "contents"):
+        for key in ("content", "contents", "Content", "Contents"):
             items_text = _content_items_text(message_dict.get(key))
             if items_text:
                 return items_text
