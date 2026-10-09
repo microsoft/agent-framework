@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
 import copy
+import gc
 import logging
+import pickle
 import threading
+import weakref
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -709,6 +713,16 @@ def test_tool_decorator_in_class():
     assert test_tool(1, 2) == 3
 
 
+def _pickleable_tool_value(self: Any) -> str:
+    return self.value
+
+
+@dataclass(eq=False)
+class _PickleableToolOwner:
+    value: str = "pong"
+    ping = FunctionTool(name="ping", func=_pickleable_tool_value, input_model={}, max_invocations=1)
+
+
 async def test_method_tool_max_invocations_persists_across_attribute_access() -> None:
     """Method tool invocation limits apply across repeated attribute access."""
     from agent_framework.exceptions import ToolException
@@ -742,6 +756,160 @@ async def test_method_tool_max_invocation_exceptions_persists_across_attribute_a
     assert tools.fail.invocation_exception_count == 1
     with pytest.raises(ToolException, match="maximum exception limit"):
         await tools.fail.invoke(skip_parsing=True)
+
+
+@pytest.mark.parametrize("hashable", [False, True])
+async def test_method_tool_equal_owners_have_independent_limits(hashable: bool) -> None:
+    from agent_framework.exceptions import ToolException
+
+    @dataclass(unsafe_hash=hashable)  # type: ignore[misc]
+    class Tools:
+        value: str = field(compare=False)
+
+        @tool(max_invocations=1)
+        def ping(self) -> str:
+            return self.value
+
+    first, second = Tools("first"), Tools("second")
+    assert first == second
+    assert first.ping is first.ping
+    assert first.ping is not second.ping
+    assert await first.ping.invoke(skip_parsing=True) == "first"
+    assert await second.ping.invoke(skip_parsing=True) == "second"
+    for owner in (first, second):
+        with pytest.raises(ToolException, match="maximum invocation limit"):
+            await owner.ping.invoke(skip_parsing=True)
+
+
+@pytest.mark.parametrize("has_dict", [False, True])
+async def test_method_tool_owner_without_weakref_support(has_dict: bool) -> None:
+    from agent_framework.exceptions import ToolException
+
+    class Tools:
+        __slots__ = ("__dict__",) if has_dict else ()
+
+        @tool(max_invocations=1)
+        def ping(self) -> str:
+            return "pong"
+
+    owner = Tools()
+    with pytest.raises(TypeError):
+        weakref.ref(owner)
+    bound_tool = owner.ping
+    assert await bound_tool.invoke(skip_parsing=True) == "pong"
+    if has_dict:
+        assert owner.ping is bound_tool
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await bound_tool.invoke(skip_parsing=True)
+
+
+def test_method_tool_cache_releases_owner() -> None:
+    owner = _PickleableToolOwner()
+    owner_ref = weakref.ref(owner)
+    assert owner.ping is owner.ping
+
+    del owner
+    gc.collect()
+
+    assert owner_ref() is None
+
+
+def test_method_tool_owner_json_serialization_excludes_bindings() -> None:
+    from agent_framework._serialization import make_json_safe
+
+    class Tools:
+        def __init__(self) -> None:
+            self.value = "pong"
+
+        @tool
+        def ping(self) -> str:
+            return self.value
+
+    owner = Tools()
+    assert owner.ping() == "pong"
+    assert make_json_safe(owner) == {"value": "pong", "_agent_framework_bound_tools": {}}
+
+
+async def test_retained_method_tool_keeps_owner_alive() -> None:
+    owner = _PickleableToolOwner()
+    owner_ref = weakref.ref(owner)
+    bound_tool = owner.ping
+    del owner
+    gc.collect()
+
+    assert owner_ref() is not None
+    assert await bound_tool.invoke(skip_parsing=True) == "pong"
+
+    del bound_tool
+    gc.collect()
+    assert owner_ref() is None
+
+
+@pytest.mark.parametrize("copy_owner", [copy.copy, copy.deepcopy])
+async def test_method_tool_copied_owner_rebinds(copy_owner) -> None:
+    from agent_framework.exceptions import ToolException
+
+    original = _PickleableToolOwner("original")
+    assert await original.ping.invoke(skip_parsing=True) == "original"
+
+    copied = copy_owner(original)
+    copied.value = "copied"
+    assert copied.ping is not original.ping
+    assert copied.ping is copied.ping
+    assert await copied.ping.invoke(skip_parsing=True) == "copied"
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await original.ping.invoke(skip_parsing=True)
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await copied.ping.invoke(skip_parsing=True)
+
+
+@pytest.mark.parametrize("bind_first", [False, True])
+async def test_function_tool_pickle_after_descriptor_access(bind_first: bool) -> None:
+    descriptor = FunctionTool(name="ping", func=_pickleable_tool_value, input_model={}, max_invocations=1)
+    owner = _PickleableToolOwner()
+    if bind_first:
+        assert await descriptor.__get__(owner).invoke(skip_parsing=True) == "pong"
+
+    restored = pickle.loads(pickle.dumps(descriptor))
+
+    assert restored.name == descriptor.name
+    assert await restored.__get__(owner).invoke(skip_parsing=True) == "pong"
+
+
+async def test_bound_function_tool_pickle_preserves_owner_and_count() -> None:
+    from agent_framework.exceptions import ToolException
+
+    descriptor = FunctionTool(name="ping", func=_pickleable_tool_value, input_model={}, max_invocations=2)
+    owner = _PickleableToolOwner("original")
+    bound_tool = descriptor.__get__(owner)
+    assert await bound_tool.invoke(skip_parsing=True) == "original"
+
+    restored = pickle.loads(pickle.dumps(bound_tool))
+    owner.value = "changed"
+
+    assert restored.invocation_count == 1
+    assert await restored.invoke(skip_parsing=True) == "original"
+    assert restored.invocation_count == 2
+    assert bound_tool.invocation_count == 1
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await restored.invoke(skip_parsing=True)
+
+
+async def test_method_tool_pickled_owner_rebuilds_cache() -> None:
+    from agent_framework.exceptions import ToolException
+
+    original = _PickleableToolOwner("original")
+    assert await original.ping.invoke(skip_parsing=True) == "original"
+
+    restored = pickle.loads(pickle.dumps(original))
+    restored.value = "restored"
+
+    assert restored.ping is restored.ping
+    assert await restored.ping.invoke(skip_parsing=True) == "restored"
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await original.ping.invoke(skip_parsing=True)
+    with pytest.raises(ToolException, match="maximum invocation limit"):
+        await restored.ping.invoke(skip_parsing=True)
 
 
 def test_tool_with_literal_type_parameter():
