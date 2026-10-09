@@ -11,8 +11,7 @@ from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, ChatResponseUpdate, Content, FunctionTool
-from agent_framework import _mcp as _core_mcp  # pyright: ignore[reportPrivateUsage]
-from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+from agent_framework._serialization import make_json_safe
 
 
 def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:
@@ -20,7 +19,7 @@ def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:
     return getattr(core_mcp, "_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY", "_mcp_tool_result_host_payload")
 
 
-_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(_core_mcp)
+_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(None)
 _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY = "_agentFrameworkModelContent"
 _AGUI_MCP_TOOL_RESULT_KEY = "_agentFrameworkMcpResult"
 _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY = "_agentFrameworkHostPayload"

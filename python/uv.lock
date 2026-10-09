@@ -675,6 +675,7 @@ dependencies = [
     { name = "azure-ai-agentserver-invocations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agentserver-responses", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "httpx2", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -685,6 +686,7 @@ requires-dist = [
     { name = "azure-ai-agentserver-invocations", specifier = ">=1.1.0,<2" },
     { name = "azure-ai-agentserver-responses", specifier = ">=2.2.0b1,<3" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = ">=2.0.0,<3" },
     { name = "mcp", specifier = ">=2.2.0,<3" },
 ]
 

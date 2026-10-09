@@ -345,10 +345,10 @@ class DefaultMCPToolHandler:
             # Be defensive about MCP errors that may bubble up without being
             # wrapped in ToolExecutionException by custom parsers.
             try:
-                from mcp.shared.exceptions import McpError
+                from mcp.shared.exceptions import MCPError
             except ImportError:  # pragma: no cover - mcp is a hard dep but stay defensive
                 raise
-            if isinstance(exc, McpError):
+            if isinstance(exc, MCPError):
                 message = str(exc) or type(exc).__name__
                 return MCPToolResult(
                     outputs=[Content.from_text(f"Error: {message}")],
@@ -587,7 +587,7 @@ class DefaultMCPToolHandler:
             name=invocation.server_label or "McpClient",
             url=invocation.server_url,
             load_prompts=False,
-            http_client=provided_client,
+            http_client=cast(Any, provided_client),
             header_provider=_header_provider if captured_headers else None,
         )
         try:

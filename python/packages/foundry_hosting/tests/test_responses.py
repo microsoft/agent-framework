@@ -79,8 +79,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseObject,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
@@ -7493,12 +7492,12 @@ def _make_consent_error(
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
-    which catches connection-time ``McpError``s and re-raises them as a
+    which catches connection-time ``MCPError``s and re-raises them as a
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
-    then finds the wrapped ``McpError`` in ``exc.args``.
+    then finds the wrapped ``MCPError`` in ``exc.args``.
 
-    The McpError message uses the structured Foundry MCP gateway format:
+    The MCPError message uses the structured Foundry MCP gateway format:
     a human-readable prefix followed by a JSON document describing each
     failed tool source and its consent URL.
     """
@@ -7517,7 +7516,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(CONSENT_ERROR_CODE, message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -7540,21 +7539,21 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(-32000, "some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare McpError holds the message string, not an McpError
+        # `args` of a bare MCPError holds the message string, not an MCPError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(CONSENT_ERROR_CODE, "no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 

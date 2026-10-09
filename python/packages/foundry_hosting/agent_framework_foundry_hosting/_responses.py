@@ -97,7 +97,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
+from mcp import MCPError
 from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
@@ -574,8 +574,8 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     Returns:
         The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
-    inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
-    if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
+    inner_exception = next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    if inner_exception is not None and inner_exception.code == CONSENT_ERROR_CODE:
         # Parse the error message
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."

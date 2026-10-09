@@ -581,10 +581,9 @@ class TestProviderLifetimes:
 
     @pytest.mark.parametrize("tool_name", ["search", "tools/list"])
     async def test_mcp_error_mapping_cleans_up(self, tool_name: str) -> None:
-        from mcp.shared.exceptions import McpError
-        from mcp.types import ErrorData
+        from mcp.shared.exceptions import MCPError
 
-        error = McpError(ErrorData(code=-32603, message="operation stopped"))
+        error = MCPError(-32603, "operation stopped")
         with (
             _patch_tool(),
             patch.object(FakeTool, "call_tool", new_callable=AsyncMock, side_effect=error),

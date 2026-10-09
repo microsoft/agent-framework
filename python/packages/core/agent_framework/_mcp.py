@@ -164,7 +164,8 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "response_format",
     "_meta",
 })
-_mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+# object is a reference to the owner of the headers, so we keep track which headers belong to which tool
+_mcp_call_headers: contextvars.ContextVar[tuple[object, dict[str, str]]] = contextvars.ContextVar("_mcp_call_headers")
 _mcp_tool_runtime_context: contextvars.ContextVar[tuple[object, Mapping[str, Any]] | None] = contextvars.ContextVar(
     "_mcp_tool_runtime_context", default=None
 )
@@ -524,6 +525,10 @@ class _MCPConnection(Protocol):
         """Set the legacy logging level through this connection."""
         ...
 
+    async def read_resource(self, uri: str) -> types.ReadResourceResult:
+        """Read a resource through this connection."""
+        ...
+
 
 @dataclass(frozen=True)
 class _ClientMCPConnection:
@@ -560,22 +565,24 @@ class _ClientMCPConnection:
         return await self.client.get_prompt(name, arguments=cast("dict[str, str] | None", arguments))
 
     async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
-        """List one tools page without changing existing cache behavior."""
+        """List one tools page while honoring server cache hints."""
         return await self.client.list_tools(
             cursor=params.cursor if params is not None else None,
-            cache_mode="bypass",
         )
 
     async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
-        """List one prompts page without changing existing cache behavior."""
+        """List one prompts page while honoring server cache hints."""
         return await self.client.list_prompts(
             cursor=params.cursor if params is not None else None,
-            cache_mode="bypass",
         )
 
     async def set_logging_level(self, level: Any) -> None:
         """Set the legacy logging level through the underlying session."""
         await self.session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
+
+    async def read_resource(self, uri: str) -> types.ReadResourceResult:
+        """Read a resource through the high-level Client while honoring server cache hints."""
+        return await self.client.read_resource(uri, cache_mode="use")
 
 
 @dataclass(frozen=True)
@@ -620,6 +627,20 @@ class _SessionMCPConnection:
         """Set the legacy logging level directly through the session."""
         await self.session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
 
+    async def read_resource(self, uri: str) -> types.ReadResourceResult:
+        """Read a resource through this connection."""
+        return await self.session.read_resource(uri)
+
+
+def _as_mcp_connection(  # pyright: ignore[reportUnusedFunction]
+    client: Client | ClientSession,
+) -> _MCPConnection:
+    from mcp import Client as MCPClient
+
+    if isinstance(client, MCPClient):
+        return _ClientMCPConnection(client)
+    return _SessionMCPConnection(client)
+
 
 # Default safety limits applied to server-initiated MCP sampling requests
 # (``sampling/createMessage``). MCP servers are untrusted third parties, so the
@@ -631,8 +652,9 @@ class _SessionMCPConnection:
 _DEFAULT_SAMPLING_MAX_TOKENS = 4096
 _DEFAULT_SAMPLING_MAX_REQUESTS = 25
 _MCP_SAMPLING_DEPRECATION_MESSAGE = (
-    "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
-    "2027-07-28. MCP servers should call LLM provider APIs directly."
+    "MCP sampling is deprecated as of MCP specification version 2026-07-28. Under the MCP feature lifecycle, "
+    "it remains supported for at least twelve months before becoming eligible for removal. "
+    "MCP servers should call LLM provider APIs directly."
 )
 
 # A user-supplied gate invoked before each server-initiated sampling request is
@@ -654,6 +676,15 @@ LOG_LEVEL_MAPPING: dict[str, int] = {
     "alert": logging.CRITICAL,
     "emergency": logging.CRITICAL,
 }
+
+
+def _to_mcp_logging_level(level: int) -> types.LoggingLevel | None:
+    """Map a Python logging level to its MCP equivalent."""
+    if level == logging.NOTSET:
+        return None
+    return cast(
+        "types.LoggingLevel | None", next((name for name, value in LOG_LEVEL_MAPPING.items() if value == level), None)
+    )
 
 
 def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
@@ -952,6 +983,11 @@ class MCPTool:
     Note:
         MCPTool cannot be instantiated directly. Use one of the subclasses:
         MCPStdioTool or MCPStreamableHTTPTool.
+
+    Caching:
+        Framework-owned modern connections honor server-provided ``ttlMs`` and ``cacheScope`` hints through the
+        MCP SDK's per-Client response cache. Legacy servers and caller-supplied ``ClientSession`` connections remain
+        uncached under the default zero-TTL policy.
 
     Examples:
         See the subclass documentation for usage examples:
@@ -2088,6 +2124,7 @@ class MCPTool:
         Raises:
             ToolException: If connection or session initialization fails.
         """
+        log_level = _to_mcp_logging_level(logger.level)
         if reset:
             await self._cancel_capability_list_subscription()
             if reset_discovery:
@@ -2117,16 +2154,15 @@ class MCPTool:
                     sampling_capabilities = types.SamplingCapability(
                         tools=types.SamplingToolsCapability(),
                     )
-                client_mode = "legacy" if self.client is not None else "auto"
                 mcp_client = await self._exit_stack.enter_async_context(
                     Client(
                         server=self.get_mcp_client(),
-                        mode=client_mode,
                         read_timeout_seconds=(
                             timedelta(seconds=self.request_timeout).seconds if self.request_timeout else None
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
+                        log_level=log_level,
                         sampling_capabilities=sampling_capabilities,
                         sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                     )
@@ -2206,14 +2242,13 @@ class MCPTool:
                     await self.load_prompts()
                 self._prompts_loaded = True
 
-            if logger.level != logging.NOTSET and self._supports_logging is not False:
-                try:
-                    level_name = cast(
-                        Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
-                    )
-                    await self._require_connection().set_logging_level(level_name)
-                except Exception as exc:
-                    logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+            if log_level is not None:
+                connection = self._require_connection()
+                if connection.session.initialize_result is not None and self._supports_logging is not False:
+                    try:
+                        await connection.set_logging_level(log_level)
+                    except Exception as exc:
+                        logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
         except (Exception, asyncio.CancelledError):
             try:
                 await self._close_on_owner()
@@ -3741,11 +3776,17 @@ class MCPStreamableHTTPTool(MCPTool):
                     if self._header_provider is not None:
                         # The transport may send this request from a task whose context was
                         # captured before call_tool set the ContextVar; fall back to the
-                        # instance-level snapshot of the active call's headers. Both are None
-                        # only when this is an ambient request outside call_tool; an active
-                        # call that legitimately produced no headers yields an empty dict and
-                        # must not trigger the ambient fallback below.
-                        dynamic_headers = _mcp_call_headers.get(None)
+                        # instance-level snapshot of the active call's headers. Context values
+                        # are owner-tagged so a nested tool sharing the client cannot inherit
+                        # another tool's credentials. Both are None only when this is an ambient
+                        # request outside call_tool; an active call that legitimately produced
+                        # no headers yields an empty dict and must not trigger the ambient fallback.
+                        call_header_context = _mcp_call_headers.get(None)
+                        dynamic_headers = (
+                            call_header_context[1]
+                            if call_header_context is not None and call_header_context[0] is self._header_request_owner
+                            else None
+                        )
                         if dynamic_headers is None:
                             dynamic_headers = self._active_call_headers
                     else:
@@ -3964,7 +4005,7 @@ class MCPStreamableHTTPTool(MCPTool):
         headers = self._effective_headers(runtime_kwargs)
         async with self._call_headers_lock:
             await self._ensure_session_identity(headers, runtime_kwargs)
-            token = _mcp_call_headers.set(headers)
+            token = _mcp_call_headers.set((self._header_request_owner, headers))
             self._active_call_headers = headers
             try:
                 return await super()._call_prompt_with_runtime_kwargs(
@@ -4017,7 +4058,7 @@ class MCPStreamableHTTPTool(MCPTool):
             headers = self._effective_headers(header_kwargs)
             async with self._call_headers_lock:
                 await self._ensure_session_identity(headers, header_kwargs)
-                token = _mcp_call_headers.set(headers)
+                token = _mcp_call_headers.set((self._header_request_owner, headers))
                 self._active_call_headers = headers
                 try:
                     return await super().call_tool(tool_name, **kwargs)
