@@ -306,7 +306,7 @@ cmd = "python -m scripts.workspace_poe_tasks check-packages"
 
 [tool.poe.tasks.check]
 help = "Run package syntax, pyright, and tests for -P/--package packages; without -P also include sample checks and markdown code lint, or use -S/--samples for sample-only checks."
-executor = { group = "tool-markdown", locked = true }
+executor = { group = ["tool-runtime", "tool-markdown"], locked = true }
 cmd = "python -m scripts.workspace_poe_tasks check"
 
 [tool.poe.tasks.markdown-code-lint]
