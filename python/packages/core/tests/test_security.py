@@ -13,7 +13,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from pydantic import AfterValidator, BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_serializer, field_validator
 
 from agent_framework import (
     Agent,
@@ -24,6 +24,7 @@ from agent_framework import (
     FunctionMiddleware,
     Message,
     SessionContext,
+    tool,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
@@ -7851,6 +7852,75 @@ class TestVariableArgumentPolicy:
 
         assert result.type == "function_result"
         assert len(received) == 1 and math.isnan(received[0])
+
+    @pytest.mark.parametrize("projection_kind", ["excluded", "transformed"])
+    async def test_security_rejects_lossy_inferred_nested_projection(self, projection_kind: str) -> None:
+        """The policy's normalized view must represent every restored invocation field."""
+        executed: list[BaseModel] = []
+
+        class Customer(BaseModel):
+            name: str
+            detail: str = Field(exclude=projection_kind == "excluded")
+
+            @field_serializer("name")
+            def serialize_name(self, value: str) -> str:
+                return value.upper() if projection_kind == "transformed" else value
+
+        @tool(additional_properties={"accepts_untrusted": True})
+        def read_customer(customer: Customer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        call = Content.from_function_call(
+            call_id="lossy-customer",
+            name=read_customer.name,
+            arguments={"customer": {"name": "Ada", "detail": "regular"}},
+        )
+        with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+            await _auto_invoke_function(
+                call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={read_customer.name: read_customer},
+                middleware_pipeline=FunctionMiddlewarePipeline(
+                    LabelTrackingFunctionMiddleware(), PolicyEnforcementFunctionMiddleware()
+                ),
+            )
+        assert executed == []
+
+    async def test_security_accepts_faithful_inferred_nested_defaults(self) -> None:
+        """Normal native input fields and defaults remain visible and pass policy enforcement."""
+        received: list[BaseModel] = []
+        observed: list[dict[str, Any]] = []
+
+        class Customer(BaseModel):
+            name: str
+            category: str = "regular"
+
+        @tool(additional_properties={"accepts_untrusted": True})
+        def read_customer(customer: Customer) -> str:
+            received.append(customer)
+            return f"{customer.name}:{customer.category}"
+
+        class ObserveArguments(FunctionMiddleware):
+            async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+                observed.append(dict(context.arguments))
+                await call_next()
+
+        call = Content.from_function_call(
+            call_id="faithful-customer", name=read_customer.name, arguments={"customer": {"name": "Ada"}}
+        )
+        result = await _auto_invoke_function(
+            call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={read_customer.name: read_customer},
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                LabelTrackingFunctionMiddleware(), ObserveArguments(), PolicyEnforcementFunctionMiddleware()
+            ),
+        )
+        assert result.type == "function_result"
+        assert len(received) == 1 and isinstance(received[0], Customer)
+        assert received[0].name == "Ada" and received[0].category == "regular"
+        assert observed == [{"customer": {"name": "Ada", "category": "regular"}}]
 
     async def test_security_policy_observes_custom_validator_transform_once(self) -> None:
         """Security middleware inspects the exact normalized value delivered to the tool."""

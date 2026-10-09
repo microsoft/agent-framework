@@ -5514,6 +5514,95 @@ async def test_function_middleware_repairs_raw_arguments_before_validation(
     assert executed_arguments == [3]
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("replace_arguments", [False, True])
+async def test_function_middleware_preserves_nested_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    replace_arguments: bool,
+) -> None:
+    """Middleware keeps normalized mappings while the tool receives validated native values."""
+    validation_count = 0
+    observed_arguments: list[dict[str, Any]] = []
+    executed_arguments: list[BaseModel] = []
+
+    class Customer(BaseModel):
+        name: str
+
+        @field_validator("name")
+        @classmethod
+        def normalize_name(cls, value: str) -> str:
+            nonlocal validation_count
+            validation_count += 1
+            return value.upper()
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            customer = context.arguments["customer"]
+            assert customer == {"name": "ADA"}
+            observed_arguments.append(customer)
+            if replace_arguments:
+                context.arguments = {"customer": {"name": "Grace"}}
+            await call_next()
+
+    @tool
+    async def describe_customer(customer: Customer, ctx: FunctionInvocationContext) -> str:
+        assert isinstance(ctx.arguments, dict)
+        assert ctx.arguments["customer"] == {"name": customer.name}
+        executed_arguments.append(customer)
+        return customer.name
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="nested-customer",
+                        name=describe_customer.name,
+                        arguments='{"customer": {"name": "Ada"}}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    options: ChatOptions = {"tools": [describe_customer]}
+    client_kwargs = {"middleware": [ObserveArgumentsMiddleware()]}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["describe"])],
+            options=options,
+            client_kwargs=client_kwargs,
+            stream=True,
+        ).get_final_response()
+    else:
+        chat_client_base.run_responses = responses  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["describe"])],
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(results) == 1
+    assert results[0].result == ("GRACE" if replace_arguments else "ADA")
+    assert len(observed_arguments) == len(executed_arguments) == 1
+    assert observed_arguments == [{"name": "ADA"}]
+    assert validation_count == (2 if replace_arguments else 1)
+
+
 async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from threading import Lock
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
 import agent_framework
 import agent_framework._telemetry as telemetry
@@ -98,6 +105,50 @@ class CrashingGuard:
         if context["interception_point"] == self.point:
             raise RuntimeError("guard crashed")
         return ALLOW
+
+
+class _HookCustomer(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    _serialization_count: int = PrivateAttr(default=0)
+
+    @field_serializer("name")
+    def serialize_name(self, value: str) -> str:
+        self._serialization_count += 1
+        return value
+
+
+class _ExcludedHookCustomer(_HookCustomer):
+    detail: str = Field(exclude=True)
+
+
+class _TransformedHookCustomer(_HookCustomer):
+    @field_serializer("name")
+    def serialize_name(self, value: str) -> str:
+        self._serialization_count += 1
+        return value.upper()
+
+
+@dataclass
+class _HookCustomerRequest:
+    customer: _HookCustomer
+
+
+class _TemporalHookCustomer(_HookCustomer):
+    created_at: datetime
+    birthday: date = date(2000, 1, 2)
+    appointment: time = time(12, 30)
+    duration: timedelta = timedelta(hours=1)
+
+
+class _ScalarHookCustomer(_HookCustomer):
+    customer_id: UUID
+    balance: Decimal
+
+
+class _LockedHookCustomer(_HookCustomer):
+    _runtime_lock: Any = PrivateAttr(default_factory=Lock)
 
 
 @tool(approval_mode="never_require")
@@ -841,6 +892,307 @@ async def test_pre_model_call_transform_writes_back_into_request(chat_client_bas
     response = await agent.run("raw PII 123-45-6789")
 
     assert response.text == "test response - [masked]"
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("container", ["model", "list", "dataclass", "temporal", "temporal-offset", "scalars"])
+async def test_pre_tool_call_reuses_prepared_nested_serialization(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+    container: str,
+) -> None:
+    """Hooks use the preparation projection while tools retain their native arguments."""
+    executed: list[_HookCustomer] = []
+    arguments: dict[str, Any]
+    expected_args: dict[str, Any]
+
+    if container == "model":
+
+        @tool
+        def describe_customer(customer: _HookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        arguments = {"customer": {"name": "Ada"}}
+        expected_args = {"customer": {"name": "Ada"}}
+    elif container == "list":
+
+        @tool
+        def describe_customers(customers: list[_HookCustomer]) -> str:
+            executed.extend(customers)
+            return customers[0].name
+
+        function = describe_customers
+        arguments = {"customers": [{"name": "Ada"}]}
+        expected_args = {"customers": [{"name": "Ada"}]}
+    elif container == "dataclass":
+
+        @tool
+        def describe_request(request: _HookCustomerRequest) -> str:
+            executed.append(request.customer)
+            return request.customer.name
+
+        function = describe_request
+        arguments = {"request": {"customer": {"name": "Ada"}}}
+        expected_args = {"request": {"customer": {"name": "Ada"}}}
+    elif container == "scalars":
+
+        @tool
+        def describe_scalar_customer(customer: _ScalarHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_scalar_customer
+        arguments = {
+            "customer": {"name": "Ada", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
+        }
+        expected_args = {
+            "customer": {"name": "Ada", "customer_id": "12345678-1234-5678-1234-567812345678", "balance": "1.25"},
+        }
+    else:
+
+        @tool
+        def describe_temporal_customer(customer: _TemporalHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_temporal_customer
+        offset = "Z" if container == "temporal-offset" else ""
+        arguments = {
+            "customer": {
+                "name": "Ada",
+                "created_at": f"2026-10-04T00:00:00{offset}",
+                "birthday": "2000-01-02",
+                "appointment": "12:30:00",
+                "duration": "PT1H",
+            },
+        }
+        expected_args = {
+            "customer": {
+                "name": "Ada",
+                "created_at": "2026-10-04T00:00:00+00:00" if offset else "2026-10-04T00:00:00",
+                "birthday": "2000-01-02",
+                "appointment": "12:30:00",
+                "duration": "1:00:00",
+            },
+        }
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant",
+                [Content.from_function_call("nested-customer", function.name, arguments=arguments)],
+            ),
+        ),
+        final_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[function],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    if streaming:
+        response = await agent.run("describe the customer", stream=True).get_final_response()
+    else:
+        response = await agent.run("describe the customer")
+
+    assert response.text == "Final response"
+    assert len(executed) == 1
+    assert executed[0].name == "Ada"
+    assert executed[0]._serialization_count == 1
+    if isinstance(executed[0], _TemporalHookCustomer):
+        assert isinstance(executed[0].created_at, datetime)
+        assert isinstance(executed[0].birthday, date)
+        assert isinstance(executed[0].appointment, time)
+        assert isinstance(executed[0].duration, timedelta)
+    if isinstance(executed[0], _ScalarHookCustomer):
+        assert isinstance(executed[0].customer_id, UUID)
+        assert isinstance(executed[0].balance, Decimal)
+    assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
+    assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("container", ["model", "list", "dataclass", "locked"])
+@pytest.mark.parametrize("hooks", [False, True])
+async def test_approved_nested_arguments_keep_normalized_middleware_contract(
+    chat_client_base: MockBaseChatClient, streaming: bool, container: str, hooks: bool
+) -> None:
+    """An approved call keeps dictionary middleware arguments and invokes native values once."""
+    executed: list[_HookCustomer] = []
+    arguments: dict[str, Any]
+    expected_args: dict[str, Any]
+    if container == "model":
+
+        @tool(approval_mode="always_require")
+        def describe_customer(customer: _HookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        arguments = {"customer": {"name": "Ada"}}
+        expected_args = {"customer": {"name": "Ada"}}
+    elif container == "list":
+
+        @tool(approval_mode="always_require")
+        def describe_customers(customers: list[_HookCustomer]) -> str:
+            executed.extend(customers)
+            return customers[0].name
+
+        function = describe_customers
+        arguments = {"customers": [{"name": "Ada"}]}
+        expected_args = {"customers": [{"name": "Ada"}]}
+    elif container == "dataclass":
+
+        @tool(approval_mode="always_require")
+        def describe_request(request: _HookCustomerRequest) -> str:
+            executed.append(request.customer)
+            return request.customer.name
+
+        function = describe_request
+        arguments = {"request": {"customer": {"name": "Ada"}}}
+        expected_args = {"request": {"customer": {"name": "Ada"}}}
+    else:
+
+        @tool(approval_mode="always_require")
+        def describe_locked_customer(customer: _LockedHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_locked_customer
+        arguments = {"customer": {"name": "Ada"}}
+        expected_args = {"customer": {"name": "Ada"}}
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            assert type(context.arguments) is dict
+            assert context.arguments == expected_args
+            context.arguments = deepcopy(context.arguments)
+            await call_next()
+            assert context.arguments == expected_args
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant", [Content.from_function_call("approved-customer", function.name, arguments=arguments)]
+            )
+        ),
+        final_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+    guard = AllowGuard()
+    middleware: list[Any] = [ObserveArgumentsMiddleware()]
+    if hooks:
+        middleware.insert(0, create_agent_hooks_middleware([guard]))
+    agent = Agent(client=chat_client_base, tools=[function], middleware=middleware)
+    session = agent.create_session()
+    if streaming:
+        paused = await agent.run("describe the customer", session=session, stream=True).get_final_response()
+    else:
+        paused = await agent.run("describe the customer", session=session)
+    request = next(c for m in paused.messages for c in m.contents if c.type == "function_approval_request")
+    assert executed == []
+    approval = Message("user", [request.to_function_approval_response(approved=True)])
+    if streaming:
+        response = await agent.run([approval], session=session, stream=True).get_final_response()
+    else:
+        response = await agent.run([approval], session=session)
+    assert response.text == "Final response"
+    assert len(executed) == 1
+    assert executed[0].name == "Ada"
+    assert executed[0]._serialization_count == 1
+    if hooks:
+        assert guard.contexts_for("pre_tool_call")[0]["tool_call"]["args"] == expected_args
+        assert guard.contexts_for("post_tool_call")[0]["tool_call"]["args"] == expected_args
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("projection_kind", ["excluded", "transformed"])
+@pytest.mark.parametrize("hooks", [False, pytest.param(True, marks=requires_sdk)])
+async def test_approved_lossy_nested_arguments_do_not_execute(
+    chat_client_base: MockBaseChatClient, streaming: bool, projection_kind: str, hooks: bool
+) -> None:
+    """Approval does not permit restoring fields or values absent from the middleware view."""
+    executed: list[BaseModel] = []
+    if projection_kind == "excluded":
+
+        @tool(approval_mode="always_require")
+        def describe_customer(customer: _ExcludedHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_customer
+        arguments = {"customer": {"name": "Ada", "detail": "regular"}}
+    else:
+
+        @tool(approval_mode="always_require")
+        def describe_transformed_customer(customer: _TransformedHookCustomer) -> str:
+            executed.append(customer)
+            return customer.name
+
+        function = describe_transformed_customer
+        arguments = {"customer": {"name": "Ada"}}
+
+    observed_arguments: list[dict[str, Any]] = []
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            assert type(context.arguments) is dict
+            observed_arguments.append(deepcopy(dict(context.arguments)))
+            await call_next()
+
+    responses = [
+        ChatResponse(
+            messages=Message(
+                "assistant", [Content.from_function_call("lossy-customer", function.name, arguments=arguments)]
+            )
+        ),
+        final_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses
+    middleware: list[Any] = [ObserveArgumentsMiddleware()]
+    if hooks:
+        middleware.insert(0, create_agent_hooks_middleware([AllowGuard()]))
+    agent = Agent(client=chat_client_base, tools=[function], middleware=middleware)
+    session = agent.create_session()
+    if streaming:
+        paused = await agent.run("describe the customer", session=session, stream=True).get_final_response()
+    else:
+        paused = await agent.run("describe the customer", session=session)
+    request = next(c for m in paused.messages for c in m.contents if c.type == "function_approval_request")
+    assert executed == []
+    approval = Message("user", [request.to_function_approval_response(approved=True)])
+    with pytest.raises(MiddlewareFailure, match="differ from the normalized mapping"):
+        if streaming:
+            await agent.run([approval], session=session, stream=True).get_final_response()
+        else:
+            await agent.run([approval], session=session)
+    assert executed == []
+    assert observed_arguments == [{"customer": {"name": "Ada" if projection_kind == "excluded" else "ADA"}}]
 
 
 @requires_sdk
