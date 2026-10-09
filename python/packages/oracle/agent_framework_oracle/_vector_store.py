@@ -131,6 +131,7 @@ class OracleSettings(TypedDict, total=False):
 
 
 _CREDENTIAL_SETTING_NAMES = {"dsn", "user", "password"}
+_ORACLE_SETTING_NAMES = frozenset(OracleSettings.__annotations__)
 _CREATE_POOL_PARAMETER_NAMES = frozenset(signature(oracledb.create_pool_async).parameters)
 
 
@@ -280,7 +281,7 @@ class _Client:
         dsn: str | None = None,
         user: str | None = None,
         password: SecretString | None = None,
-        pool_parameters: OracleSettings | None = None,
+        pool_parameters: Mapping[str, Any] | None = None,
         client: OracleClient | None = None,
     ) -> None:
         if client is not None:
@@ -365,7 +366,7 @@ def _create_client(
     dsn: str | None,
     user: str | None,
     password: str | SecretString | None,
-    pool_parameters: OracleSettings | None,
+    pool_parameters: Mapping[str, Any] | None,
     client: OracleClient | None,
     env_file_path: str | None,
     env_file_encoding: str | None,
@@ -374,7 +375,10 @@ def _create_client(
         if any(value is not None for value in (dsn, user, password, pool_parameters, env_file_path, env_file_encoding)):
             raise ValueError("client cannot be combined with dsn, user, password, pool_parameters, or .env settings.")
         return _Client(client=client)
-    overrides: dict[str, Any] = dict(pool_parameters or {})
+    supplied_pool_parameters = dict(pool_parameters or {})
+    overrides: dict[str, Any] = {
+        name: value for name, value in supplied_pool_parameters.items() if name in _ORACLE_SETTING_NAMES
+    }
     overrides.update({
         name: value for name, value in (("dsn", dsn), ("user", user), ("password", password)) if value is not None
     })
@@ -385,22 +389,20 @@ def _create_client(
         env_file_encoding=env_file_encoding,
         **overrides,
     )
-    pool_parameters = cast(
-        OracleSettings,
-        {
-            name: value
-            for name, value in settings.items()
-            if name not in _CREDENTIAL_SETTING_NAMES and value is not None
-        },
-    )
-    if unsupported := pool_parameters.keys() - _CREATE_POOL_PARAMETER_NAMES:
+    resolved_pool_parameters: dict[str, Any] = {
+        name: value for name, value in settings.items() if name not in _CREDENTIAL_SETTING_NAMES and value is not None
+    }
+    resolved_pool_parameters.update({
+        name: value for name, value in supplied_pool_parameters.items() if name not in _ORACLE_SETTING_NAMES
+    })
+    if unsupported := resolved_pool_parameters.keys() - _CREATE_POOL_PARAMETER_NAMES:
         names = ", ".join(sorted(unsupported))
         raise ValueError(f"Oracle pool setting(s) not supported by the installed python-oracledb version: {names}.")
     return _Client(
         dsn=settings.get("dsn"),
         user=settings.get("user"),
         password=settings.get("password"),
-        pool_parameters=pool_parameters,
+        pool_parameters=resolved_pool_parameters,
     )
 
 
@@ -553,7 +555,7 @@ class OracleCollection(
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
-        pool_parameters: OracleSettings | None = None,
+        pool_parameters: Mapping[str, Any] | None = None,
         client: OracleClient | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -569,9 +571,10 @@ class OracleCollection(
             dsn: Oracle connect string; defaults to ``ORACLE_DSN``.
             user: Oracle database user; defaults to ``ORACLE_USER``.
             password: Database password or AF SecretString; defaults to ``ORACLE_PASSWORD``.
-            pool_parameters: Additional ``create_pool_async`` settings. Named ``dsn``, ``user``, and ``password``
-                arguments take precedence, followed by this mapping, the selected .env file, process environment,
-                and connector pool defaults.
+            pool_parameters: Additional ``create_pool_async`` settings, including options supported by the installed
+                driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
+                take precedence, followed by this mapping, the selected .env file, process environment, and connector
+                pool defaults.
             client: Borrowed async connection or pool in place of connection settings.
             env_file_path: Optional selected .env file; no implicit discovery.
             env_file_encoding: Encoding of the selected .env file.
@@ -972,7 +975,7 @@ class OracleStore(BaseVectorStore):
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
-        pool_parameters: OracleSettings | None = None,
+        pool_parameters: Mapping[str, Any] | None = None,
         client: OracleClient | None = None,
         embedding_generator: EmbeddingClient | None = None,
         env_file_path: str | None = None,
@@ -984,9 +987,10 @@ class OracleStore(BaseVectorStore):
             dsn: Oracle connect string; defaults to ``ORACLE_DSN``.
             user: Oracle database user; defaults to ``ORACLE_USER``.
             password: Database password or AF SecretString; defaults to ``ORACLE_PASSWORD``.
-            pool_parameters: Additional ``create_pool_async`` settings. Named ``dsn``, ``user``, and ``password``
-                arguments take precedence, followed by this mapping, the selected .env file, process environment,
-                and connector pool defaults.
+            pool_parameters: Additional ``create_pool_async`` settings, including options supported by the installed
+                driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
+                take precedence, followed by this mapping, the selected .env file, process environment, and connector
+                pool defaults.
             client: Borrowed async connection or pool in place of connection settings.
             embedding_generator: Default local embedding client for child collections.
             env_file_path: Optional selected .env file; no implicit discovery.

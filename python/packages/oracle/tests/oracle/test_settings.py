@@ -130,6 +130,17 @@ def test_pool_parameter_unsupported_by_installed_driver_fails(monkeypatch):
         OracleStore()
 
 
+def test_unknown_explicit_pool_parameter_fails_without_connecting():
+    with patch.object(module.oracledb, "create_pool_async") as create, pytest.raises(ValueError, match="maxx"):
+        OracleStore(
+            dsn="dsn",
+            user="user",
+            password="password",
+            pool_parameters={"maxx": 8},
+        )
+    create.assert_not_called()
+
+
 @pytest.mark.parametrize("missing", ["dsn", "user", "password"])
 def test_missing_or_empty_credentials_fail_without_connecting(constructor, missing):
     settings = {"dsn": "dsn", "user": "user", "password": "password"}
@@ -225,6 +236,28 @@ async def test_public_pool_parameters_precedence(monkeypatch):
         password="named-password",
         min=1,
         max=4,
+    )
+
+
+async def test_pool_parameters_forward_installed_driver_options_not_in_settings(monkeypatch):
+    future_value = object()
+    monkeypatch.setattr(module, "_CREATE_POOL_PARAMETER_NAMES", module._CREATE_POOL_PARAMETER_NAMES | {"future_option"})
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    store = OracleStore(
+        dsn="dsn",
+        user="user",
+        password="password",
+        pool_parameters={"future_option": future_value},
+    )
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+    create.assert_called_once_with(
+        dsn="dsn",
+        user="user",
+        password="password",
+        min=0,
+        max=4,
+        future_option=future_value,
     )
 
 
