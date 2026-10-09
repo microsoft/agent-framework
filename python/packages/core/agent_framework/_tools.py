@@ -24,7 +24,7 @@ from collections.abc import (
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import partial, wraps
-from time import perf_counter, time_ns
+from time import perf_counter, time, time_ns
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -107,6 +107,7 @@ SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
+_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY: Final[str] = "_parent_service_session_state_keys"
 
 
 def _has_authoritative_approval_session(invocation_session: AgentSession | None) -> bool:
@@ -119,6 +120,10 @@ _APPROVAL_RESPONSES_KEY: Final[str] = "approval_responses"
 _FUNCTION_CALL_ORDER_KEY: Final[str] = "function_call_order"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _PENDING_MIXED_PAUSE_BATCH_KEY: Final[str] = "pending_mixed_pause_batch"
+_DEFERRED_FUNCTION_CALLS_KEY: Final[str] = "deferred_function_calls"
+_DEFERRED_BUDGET_STATE_KEY: Final[str] = "deferred_budget_state"
+_BUDGET_ELAPSED_SECONDS_KEY: Final[str] = "elapsed_seconds"
+_BUDGET_PAUSED_AT_KEY: Final[str] = "paused_at"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
@@ -300,11 +305,18 @@ SKIP_PARSING: Final[_SkipParsingSentinel] = _SkipParsingSentinel()
 def _get_tool_name(tool: Any) -> str | None:
     """Extract a tool name from a tool object or dict tool definition."""
     if isinstance(tool, Mapping):
+        if tool.get("type") == "function":  # type: ignore
+            name = tool.get("name")  # type: ignore
+            if isinstance(name, str):
+                return name
+
         func = tool.get("function", None)  # type: ignore
         if func and isinstance(func, Mapping):
             name = func.get("name")  # type: ignore
             return name if isinstance(name, str) else None
+
         return None
+
     name = getattr(tool, "name", None)
     return name if isinstance(name, str) else None
 
@@ -1795,6 +1807,20 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     - ``include_detailed_errors``: Whether to include exception details in the
       function result returned to the model. Exception text may contain sensitive
       information regardless of its source, so enable this only for a trusted channel.
+    - ``disable_approval_response_binding``: Whether to stop binding inbound local
+      tool-approval responses to the approval requests the framework recorded in the
+      :class:`~agent_framework.AgentSession`. Binding is enabled by default: a local
+      ``function_approval_response`` authorizes execution only when it matches a
+      pending request recorded by the framework in an authoritative session, so an
+      approval replayed or fabricated in caller-supplied message history cannot
+      authorize a tool on its own. Hosted (provider-issued) approvals are provider
+      protocol data and always pass through unchanged. Because the recorded request
+      is the authority, resuming a local approval requires the caller to pass the
+      same ``AgentSession`` back on the next run; a run with no session cannot resume
+      one. Replaying a transcript whose approval already has a terminal result is
+      unaffected: such an approval is settled history and can no longer execute
+      anything, so it is left in place. Set this to ``True`` only when equivalent
+      binding is enforced elsewhere.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
@@ -1828,6 +1854,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
     allow_concurrent_invocation: bool
+    disable_approval_response_binding: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1843,6 +1870,7 @@ def normalize_function_invocation_configuration(
         "additional_tools": [],
         "include_detailed_errors": False,
         "allow_concurrent_invocation": True,
+        "disable_approval_response_binding": False,
     }
     if config:
         normalized.update(config)
@@ -2079,6 +2107,7 @@ async def _auto_invoke_function(
             "middleware",
             "conversation_id",
             _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,
         }
     }
     raw_parent_approval_source_ids = (custom_args or {}).get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
@@ -2086,6 +2115,12 @@ async def _auto_invoke_function(
     parent_approval_source_ids = (
         cast("frozenset[str]", raw_parent_approval_source_ids)
         if isinstance(raw_parent_approval_source_ids, frozenset)
+        else frozenset()
+    )
+    raw_parent_service_keys = (custom_args or {}).get(_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY)
+    parent_service_session_state_keys: frozenset[str] = (
+        cast("frozenset[str]", raw_parent_service_keys)
+        if isinstance(raw_parent_service_keys, frozenset)
         else frozenset()
     )
     if invocation_session is not None:
@@ -2104,6 +2139,7 @@ async def _auto_invoke_function(
                     arguments=args,
                     session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
+                    parent_service_session_state_keys=parent_service_session_state_keys,
                     tools=live_tools,
                 )
                 direct_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
@@ -2143,6 +2179,7 @@ async def _auto_invoke_function(
         arguments=args,
         session=invocation_session,
         kwargs=runtime_kwargs.copy(),
+        parent_service_session_state_keys=parent_service_session_state_keys,
         tools=live_tools,
     )
     middleware_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
@@ -2445,6 +2482,46 @@ async def _try_execute_function_call_groups(
             unknown_call_name = function_name
     if unknown_call_found:
         raise _UnknownFunctionCallError(f'Error: Requested function "{unknown_call_name}" not found.')
+
+    # Each locally executable call gets its own task so context changes made by
+    # one tool cannot leak into another.
+    def create_execution_task(function_call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
+        return contextvars.copy_context().run(
+            asyncio.create_task,
+            _execute_single_function_call(
+                function_call,
+                custom_args=custom_args,
+                config=config,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
+            ),
+        )
+
+    async def execute_local_calls(function_calls_to_execute: Sequence[Content]) -> list[tuple[list[Content], bool]]:
+        execution_results: list[tuple[list[Content], bool]] = []
+        if config.get("allow_concurrent_invocation", True):
+            execution_tasks = [create_execution_task(function_call) for function_call in function_calls_to_execute]
+            try:
+                return list(await asyncio.gather(*execution_tasks))
+            except BaseException:
+                # A loud escape from one call (e.g. MiddlewareFailure aborting the run
+                # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
+                # them so no new tool work starts after the loop is abandoned. Cancellation
+                # is cooperative — a synchronous tool body already running in a worker thread
+                # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
+                # but its result is discarded with the batch and never reaches the transcript,
+                # the model, or history.
+                for task in execution_tasks:
+                    task.cancel()
+                await asyncio.gather(*execution_tasks, return_exceptions=True)
+                raise
+        for function_call in function_calls_to_execute:
+            execution_results.append(await create_execution_task(function_call))
+        return execution_results
+
     if requires_approval:
         # Surface approval and Host-owned pauses in model order. Session-backed
         # executable siblings remain hidden until the approval batch resumes.
@@ -2496,53 +2573,55 @@ async def _try_execute_function_call_groups(
         _store_pending_mixed_pause_batch(approval_session, pause_groups)
         return pause_groups, False
     if has_declaration_only_call:
-        # Declaration-only calls are returned as user input rather than executed locally.
-        # return the declaration only tools to the user, since we cannot execute them.
-        # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
-        declaration_only_calls: list[Content] = []
+        # Host-owned calls pause for caller input, but known local siblings must
+        # still execute. A caller-owned session can defer those siblings until
+        # every Host occurrence is answered; without one they execute now.
+        host_pause_calls: list[Content] = []
+        executable_siblings: list[Content] = []
         for function_call in function_calls:
-            if function_call.type == "function_call":
-                declaration_only_calls.append(_as_user_input_pause(function_call))
-        return [[function_call] for function_call in declaration_only_calls], False
+            if function_call.type != "function_call":
+                continue
+            tool_name = function_call.name
+            if (
+                tool_name is not None
+                and tool_name in tool_map
+                and tool_name not in declaration_only_tool_names
+                and tool_name not in additional_tool_names
+            ):
+                executable_siblings.append(function_call)
+            else:
+                host_pause_calls.append(function_call)
 
-    # Only a fully executable batch reaches this point. Each call gets its own
-    # task so context changes made by one tool cannot leak into another.
-    def create_execution_task(function_call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
-        return contextvars.copy_context().run(
-            asyncio.create_task,
-            _execute_single_function_call(
-                function_call,
-                custom_args=custom_args,
-                config=config,
-                tool_map=tool_map,
-                invocation_session=invocation_session,
-                middleware_pipeline=middleware_pipeline,
-                live_tools=live_tools,
-                host_payload_budget=host_payload_budget,
-            ),
-        )
+        if not executable_siblings:
+            return [[_as_user_input_pause(function_call)] for function_call in host_pause_calls], False
 
-    execution_results: list[tuple[list[Content], bool]] = []
-    if config.get("allow_concurrent_invocation", True):
-        execution_tasks = [create_execution_task(function_call) for function_call in function_calls]
-        try:
-            execution_results = await asyncio.gather(*execution_tasks)
-        except BaseException:
-            # A loud escape from one call (e.g. MiddlewareFailure aborting the run
-            # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-            # them so no new tool work starts after the loop is abandoned. Cancellation
-            # is cooperative — a synchronous tool body already running in a worker thread
-            # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
-            # but its result is discarded with the batch and never reaches the transcript,
-            # the model, or history.
-            for task in execution_tasks:
-                task.cancel()
-            await asyncio.gather(*execution_tasks, return_exceptions=True)
-            raise
-    else:
+        host_pauses = [_as_user_input_pause(function_call) for function_call in host_pause_calls]
+        function_call_order = [
+            {"id": function_call.id, "call_id": function_call.call_id}
+            for function_call in function_calls
+            if function_call.type == "function_call"
+        ]
+        if _has_authoritative_approval_session(approval_session):
+            _store_pending_mixed_pause_batch(
+                approval_session,
+                [[pause] for pause in host_pauses],
+                deferred_function_calls=executable_siblings,
+                function_call_order=function_call_order,
+            )
+            return [[pause] for pause in host_pauses], False
+
+        sibling_results = await execute_local_calls(executable_siblings)
+        results_by_call = dict(zip((id(function_call) for function_call in executable_siblings), sibling_results))
+        mixed_result_groups: list[list[Content]] = []
         for function_call in function_calls:
-            result = await create_execution_task(function_call)
-            execution_results.append(result)
+            if function_call.type != "function_call":
+                continue
+            result = results_by_call.get(id(function_call))
+            mixed_result_groups.append(result[0] if result is not None else [_as_user_input_pause(function_call)])
+        should_terminate = any(terminate for _, terminate in sibling_results)
+        return mixed_result_groups, should_terminate
+
+    execution_results = await execute_local_calls(function_calls)
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
@@ -2957,11 +3036,63 @@ def _bind_approval_response_to_pending_request(
     return rebound
 
 
+def _drop_unrecorded_local_approval_responses(messages: list[Message], settled_response_ids: set[int]) -> bool:
+    """Remove local approval responses that no recorded pending request can authorize.
+
+    The authority for a local approval is the pending request the framework itself
+    recorded when it surfaced that request, which lives in an authoritative
+    ``AgentSession``. Without one there is nothing to bind against, and an approval
+    request that merely appears in caller-supplied history is not proof that the
+    framework ever asked a human to approve it: a caller could otherwise supply a
+    fabricated request together with its own approval and authorize an arbitrary tool
+    call. These responses are therefore dropped rather than honored.
+
+    ``settled_response_ids`` is an allow-list: every response outside it is dropped. A
+    settled response is one the occurrence-aware correlation already superseded or
+    consumed with a terminal result, so it is history rather than a pending
+    authorization. It cannot execute anything, and dropping it would serve no purpose
+    while penalizing every caller that replays a completed conversation. Settlement is
+    decided by the same correlation used to execute approvals, so fabricating a result
+    to reach this exemption also guarantees the call will not run.
+
+    The allow-list must be keyed on individual response objects rather than approval
+    ids, because several responses can share one approval id and only the first is
+    eligible to execute. Dropping by an id-keyed set would leave the duplicates behind
+    for a later collection to promote and honor.
+
+    Hosted (provider-issued) approvals are left untouched because they are provider
+    protocol data that must be forwarded as-is.
+
+    Returns:
+        Whether any response was dropped.
+    """
+    dropped = False
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents: list[Content] = []
+        for content in message.contents:
+            if (
+                content.type == "function_approval_response"
+                and not _is_hosted_tool_approval(content)
+                and id(content) not in settled_response_ids
+            ):
+                dropped = True
+                continue
+            filtered_contents.append(content)
+        if filtered_contents:
+            message.contents = filtered_contents
+            filtered_messages.append(message)
+    if dropped:
+        messages[:] = filtered_messages
+    return dropped
+
+
 def _bind_approval_responses_to_pending_requests(
     messages: list[Message],
     invocation_session: AgentSession | None,
     *,
     consume: bool = True,
+    staged_response_ids: set[int] | None = None,
 ) -> set[int]:
     """Rebind approval responses and remove unissued or duplicate responses."""
     if invocation_session is None:
@@ -2982,6 +3113,8 @@ def _bind_approval_responses_to_pending_requests(
                 consume=consume,
             )
             if rebound is None:
+                if staged_response_ids and id(content) in staged_response_ids:
+                    continue
                 logger.warning(
                     "Ignored an approval response with id %r because it did not match the active approval "
                     "occurrence identity; the pending request was retained for retry.",
@@ -3040,8 +3173,13 @@ def _store_already_approved_approval_requests(
 def _stage_approval_batch_responses(
     invocation_session: AgentSession | None,
     approval_responses: Sequence[Content],
+    *,
+    staged_response_ids: set[int] | None = None,
 ) -> tuple[list[Content], list[dict[str, str | None]], list[Content] | None]:
-    """Accumulate approval decisions and release a batch only when every decision is present."""
+    """Accumulate approval decisions and release a batch only when every decision is present.
+
+    ``staged_response_ids`` records matched source objects for diagnostic-only warning suppression.
+    """
     if not approval_responses:
         return [], [], None
     state = _get_tool_approval_state(invocation_session)
@@ -3087,6 +3225,8 @@ def _stage_approval_batch_responses(
                 continue
             if request_id not in stored_responses:
                 stored_responses[request_id] = rebound
+            if staged_response_ids is not None:
+                staged_response_ids.add(id(response))
             matched = True
 
         if not matched:
@@ -3138,8 +3278,11 @@ def _stage_approval_batch_responses(
 def _store_pending_mixed_pause_batch(
     invocation_session: AgentSession | None,
     pause_groups: Sequence[Sequence[Content]],
+    *,
+    deferred_function_calls: Sequence[Content] = (),
+    function_call_order: Sequence[Mapping[str, str | None]] | None = None,
 ) -> None:
-    """Persist the active ordered approval and Host-owned pause batch."""
+    """Persist the active ordered pause batch and any deferred local siblings."""
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
@@ -3157,8 +3300,13 @@ def _store_pending_mixed_pause_batch(
             kinds.add(kind)
             items.append({"kind": kind, "request": content.to_dict()})
 
-    if kinds == {"approval", "host"}:
-        state[_PENDING_MIXED_PAUSE_BATCH_KEY] = {"items": items}
+    if kinds == {"approval", "host"} or (kinds == {"host"} and deferred_function_calls):
+        batch: dict[str, Any] = {"items": items}
+        if deferred_function_calls:
+            batch[_DEFERRED_FUNCTION_CALLS_KEY] = [function_call.to_dict() for function_call in deferred_function_calls]
+        if function_call_order is not None:
+            batch[_FUNCTION_CALL_ORDER_KEY] = [dict(item) for item in function_call_order]
+        state[_PENDING_MIXED_PAUSE_BATCH_KEY] = batch
     else:
         state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
 
@@ -3335,13 +3483,51 @@ def _stage_pending_mixed_pause_responses(
             if message.contents:
                 filtered_messages.append(message)
         messages[:] = filtered_messages
-    state[_PENDING_MIXED_PAUSE_BATCH_KEY] = {"items": items}
+    updated_batch = dict(cast(Mapping[str, Any], raw_batch))
+    updated_batch["items"] = items
+    state[_PENDING_MIXED_PAUSE_BATCH_KEY] = updated_batch
 
     if incomplete:
         return True, False, set()
 
     messages.append(Message(role="user", contents=ordered_responses))
     return False, True, host_result_ids
+
+
+def _load_deferred_mixed_pause_calls(
+    invocation_session: AgentSession | None,
+) -> tuple[list[Content], list[dict[str, str | None]]]:
+    """Restore ordinary local calls for a completed Host-owned pause batch."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return [], []
+    raw_batch = state.get(_PENDING_MIXED_PAUSE_BATCH_KEY)
+    if not isinstance(raw_batch, Mapping):
+        return [], []
+
+    deferred_function_calls: list[Content] = []
+    raw_deferred_calls = cast(Mapping[str, Any], raw_batch).get(_DEFERRED_FUNCTION_CALLS_KEY)
+    if isinstance(raw_deferred_calls, list):
+        for raw_function_call in cast(list[Any], raw_deferred_calls):
+            function_call = _content_from_state(raw_function_call)
+            if function_call is None or function_call.type != "function_call":
+                continue
+            deferred_function_calls.append(function_call)
+
+    function_call_order: list[dict[str, str | None]] = []
+    raw_order = cast(Mapping[str, Any], raw_batch).get(_FUNCTION_CALL_ORDER_KEY)
+    if isinstance(raw_order, list):
+        for raw_item in cast(list[Any], raw_order):
+            if not isinstance(raw_item, Mapping):
+                continue
+            item = cast(Mapping[str, Any], raw_item)
+            item_id = item.get("id")
+            call_id = item.get("call_id")
+            function_call_order.append({
+                "id": str(item_id) if item_id is not None else None,
+                "call_id": str(call_id) if call_id is not None else None,
+            })
+    return deferred_function_calls, function_call_order
 
 
 def _stateless_mixed_pause_batch_status(
@@ -3580,11 +3766,19 @@ def _collect_approval_responses(
     non_approval_result_ids: set[int] | None = None,
     protected_response_ids: set[int] | None = None,
     protected_result_ids_to_remove: set[int] | None = None,
+    settled_response_ids: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
     Hosted tool approvals (e.g. MCP) are excluded because they must be
     forwarded to the API as-is rather than processed locally.
+
+    When ``settled_response_ids`` is supplied it is populated with the object identity of
+    every approval response this correlation considered settled, meaning superseded by a
+    later request or consumed by a terminal result. Unlike the returned mapping, which
+    keeps one response per approval id, this set covers every individual response object,
+    so callers that need to reason about duplicate approval ids must use it rather than
+    the mapping values.
     """
     approval_responses: list[Content] = []
     pending_by_call_id: dict[str, deque[Content]] = {}
@@ -3689,6 +3883,8 @@ def _collect_approval_responses(
         if id(content) in resolved_response_ids or content.id is None:
             continue
         collected_responses.setdefault(content.id, content)
+    if settled_response_ids is not None:
+        settled_response_ids.update(resolved_response_ids)
     return collected_responses
 
 
@@ -4180,22 +4376,71 @@ def _disable_tools_at_function_call_limit(
     return True
 
 
-def _clear_budget_state_from_session(invocation_session: AgentSession | None) -> None:
-    """Remove the per-invocation budget state from session.state once a run fully completes.
+def _portable_budget_snapshot(budget_state: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert a process-local function budget into durable elapsed state."""
+    snapshot = copy.deepcopy(dict(budget_state))
+    raw_start_time = snapshot.pop("start_time", perf_counter())
+    start_time = float(raw_start_time) if isinstance(raw_start_time, int | float) else perf_counter()
+    snapshot[_BUDGET_ELAPSED_SECONDS_KEY] = max(0.0, perf_counter() - start_time)
+    snapshot[_BUDGET_PAUSED_AT_KEY] = time()
+    return snapshot
 
-    The budget key is left in session.state across approval round-trips so that
-    cumulative elapsed time is measured correctly.  It must be removed on all
-    terminal exits that are *not* an approval pause (i.e. when no approval
-    requests are pending), so that a subsequent independent invocation starts
-    with a clean slate.
-    """
+
+def _restore_session_budget_state(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+) -> None:
+    """Restore a process-local budget clock from durable session state."""
+    state = _get_tool_approval_state(invocation_session, create=False)
     if invocation_session is None:
         return
-    # Only remove the budget if there are no approval requests still pending.
+    raw_snapshot: Any = None
+    if state is not None:
+        raw_batch = state.get(_PENDING_MIXED_PAUSE_BATCH_KEY)
+        if isinstance(raw_batch, Mapping):
+            raw_snapshot = cast(Mapping[str, Any], raw_batch).get(_DEFERRED_BUDGET_STATE_KEY)
+    if not isinstance(raw_snapshot, Mapping):
+        root_snapshot = invocation_session.state.get(_FUNCTION_INVOCATION_BUDGET_STATE_KEY)
+        if isinstance(root_snapshot, Mapping):
+            typed_root_snapshot = cast(Mapping[str, Any], root_snapshot)
+            if _BUDGET_ELAPSED_SECONDS_KEY in typed_root_snapshot or _BUDGET_PAUSED_AT_KEY in typed_root_snapshot:
+                raw_snapshot = typed_root_snapshot
+    if not isinstance(raw_snapshot, Mapping):
+        return
+
+    snapshot = copy.deepcopy(dict(cast(Mapping[str, Any], raw_snapshot)))
+    if _BUDGET_ELAPSED_SECONDS_KEY not in snapshot and _BUDGET_PAUSED_AT_KEY not in snapshot:
+        return
+    raw_elapsed = snapshot.pop(_BUDGET_ELAPSED_SECONDS_KEY, 0.0)
+    raw_paused_at = snapshot.pop(_BUDGET_PAUSED_AT_KEY, None)
+    elapsed = float(raw_elapsed) if isinstance(raw_elapsed, int | float) else 0.0
+    paused_at = float(raw_paused_at) if isinstance(raw_paused_at, int | float) else time()
+    elapsed += max(0.0, time() - paused_at)
+    budget_state.clear()
+    budget_state.update(snapshot)
+    budget_state["start_time"] = perf_counter() - max(0.0, elapsed)
+
+
+def _clear_budget_state_from_session(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+) -> None:
+    """Persist a pending Host budget portably, otherwise clear completed state."""
+    if invocation_session is None:
+        return
     tool_state = cast("dict[str, Any]", invocation_session.state.get(_TOOL_APPROVAL_STATE_KEY))
     if isinstance(tool_state, dict):
         pending = tool_state.get(_PENDING_APPROVAL_REQUESTS_KEY)
         if pending:
+            return
+        pending_pause_batch = tool_state.get(_PENDING_MIXED_PAUSE_BATCH_KEY)
+        if isinstance(pending_pause_batch, Mapping) and cast(Mapping[str, Any], pending_pause_batch).get(
+            _DEFERRED_FUNCTION_CALLS_KEY
+        ):
+            updated_batch = dict(cast(Mapping[str, Any], pending_pause_batch))
+            updated_batch[_DEFERRED_BUDGET_STATE_KEY] = _portable_budget_snapshot(budget_state)
+            tool_state[_PENDING_MIXED_PAUSE_BATCH_KEY] = updated_batch
+            invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
             return
     invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
 
@@ -4453,6 +4698,152 @@ def _handle_function_call_results(
     )
 
 
+def _merge_deferred_mixed_pause_results(
+    prepared_messages: list[Message],
+    *,
+    host_result_ids: set[int],
+    deferred_function_calls: Sequence[Content],
+    result_groups: Sequence[Sequence[Content]],
+    function_call_order: Sequence[Mapping[str, str | None]],
+) -> None:
+    """Append Host and local results in the original model call order."""
+    host_results = [
+        content for message in prepared_messages for content in message.contents if id(content) in host_result_ids
+    ]
+    host_by_occurrence = {content.id: content for content in host_results if content.id is not None}
+    host_by_call: dict[str, deque[Content]] = {}
+    for content in host_results:
+        if content.call_id is not None:
+            host_by_call.setdefault(content.call_id, deque()).append(content)
+
+    result_groups_by_occurrence: dict[str, list[Content]] = {}
+    result_groups_by_call: dict[str, deque[list[Content]]] = {}
+    for function_call, result_group in zip(deferred_function_calls, result_groups):
+        copied_group = list(result_group)
+        if function_call.id is not None:
+            result_groups_by_occurrence[function_call.id] = copied_group
+        if function_call.call_id is not None:
+            result_groups_by_call.setdefault(function_call.call_id, deque()).append(copied_group)
+
+    ordered_contents: list[Content] = []
+    used_host_results: set[int] = set()
+    for order_item in function_call_order:
+        occurrence_id = order_item.get("id")
+        call_id = order_item.get("call_id")
+        if occurrence_id is not None and occurrence_id in result_groups_by_occurrence:
+            ordered_contents.extend(result_groups_by_occurrence.pop(occurrence_id))
+            continue
+        if occurrence_id is not None and (host_result := host_by_occurrence.get(occurrence_id)) is not None:
+            ordered_contents.append(host_result)
+            used_host_results.add(id(host_result))
+            continue
+        if call_id is not None and (call_groups := result_groups_by_call.get(call_id)):
+            ordered_contents.extend(call_groups.popleft())
+            continue
+        if call_id is not None and (call_results := host_by_call.get(call_id)):
+            host_result = call_results.popleft()
+            if id(host_result) not in used_host_results:
+                ordered_contents.append(host_result)
+                used_host_results.add(id(host_result))
+
+    for result_group in result_groups_by_occurrence.values():
+        ordered_contents.extend(result_group)
+    ordered_contents.extend(content for content in host_results if id(content) not in used_host_results)
+
+    for message in prepared_messages:
+        message.contents = [content for content in message.contents if id(content) not in host_result_ids]
+    prepared_messages[:] = [message for message in prepared_messages if message.contents]
+    model_messages, _ = _messages_and_updates_for_terminal_contents(ordered_contents)
+    prepared_messages.extend(model_messages)
+
+
+async def _resolve_deferred_mixed_pause_calls(
+    *,
+    prepared_messages: list[Message],
+    options: dict[str, Any] | None,
+    errors_in_a_row: int,
+    max_errors: int,
+    budget_state: dict[str, Any],
+    execute_function_calls: _FunctionCallExecutor,
+    invocation_session: AgentSession | None,
+    host_result_ids: set[int],
+    deferred_function_calls: Sequence[Content],
+    function_call_order: Sequence[Mapping[str, str | None]],
+    settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None,
+) -> _FunctionProcessingResult:
+    """Reclassify and execute ordinary calls released by a Host-owned pause batch."""
+    from ._middleware import MiddlewareFailure
+    from ._types import Content
+
+    if options and options.get("tool_choice") == "none":
+        result_groups = [
+            [
+                Content.from_function_result(
+                    call_id=function_call.call_id,  # type: ignore[arg-type]
+                    result="Error: Function invocation limit reached before the deferred tool could run.",
+                    exception="FunctionInvocationLimit",
+                    additional_properties=function_call.additional_properties,
+                )
+            ]
+            for function_call in deferred_function_calls
+        ]
+        should_terminate = False
+        executed_function_count = 0
+        had_errors = True
+    else:
+        try:
+            execution = await execute_function_calls(
+                function_calls=list(deferred_function_calls),
+                options=options,
+            )
+        except MiddlewareFailure:
+            if settle_dangling_calls is not None:
+                await settle_dangling_calls(deferred_function_calls)
+            raise
+        result_groups = execution.result_groups
+        should_terminate = execution.should_terminate
+        executed_function_count = execution.executed_call_count
+        had_errors = execution.had_errors
+
+    _merge_deferred_mixed_pause_results(
+        prepared_messages,
+        host_result_ids=host_result_ids,
+        deferred_function_calls=deferred_function_calls,
+        result_groups=result_groups,
+        function_call_order=function_call_order,
+    )
+
+    terminal_contents = [content for result_group in result_groups for content in result_group]
+    pending_requests = [content for content in terminal_contents if content.type == "function_approval_request"]
+    if pending_requests:
+        _store_pending_approval_requests(invocation_session, pending_requests)
+        if invocation_session is not None:
+            invocation_session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = _portable_budget_snapshot(budget_state)
+
+    errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
+        errors_in_a_row,
+        had_errors=had_errors,
+        max_errors=max_errors,
+    )
+    requires_user_input = any(
+        content.type in {"function_approval_request", "function_call"} or content.user_input_request
+        for content in terminal_contents
+    )
+    response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(terminal_contents)
+    action: Literal["return", "continue", "stop"] = "continue"
+    if should_terminate or requires_user_input:
+        action = "return"
+    elif reached_error_limit:
+        action = "stop"
+    return _FunctionProcessingResult(
+        errors_in_a_row=errors_in_a_row,
+        action=action,
+        function_call_count=executed_function_count,
+        response_messages=response_messages,
+        streaming_updates=streaming_updates,
+    )
+
+
 async def _resolve_approval_responses(
     *,
     prepared_messages: list[Message],
@@ -4460,8 +4851,10 @@ async def _resolve_approval_responses(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
+    budget_state: dict[str, Any] | None = None,
     invocation_session: AgentSession | None = None,
     approval_session_is_authoritative: bool = True,
+    disable_approval_response_binding: bool = False,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
@@ -4477,6 +4870,8 @@ async def _resolve_approval_responses(
 
     approval_session = invocation_session if approval_session_is_authoritative else None
     completed_mixed_batch = False
+    deferred_function_calls: list[Content] = []
+    deferred_function_call_order: list[dict[str, str | None]] = []
     if _has_authoritative_approval_session(approval_session):
         incomplete_mixed_batch, completed_mixed_batch, host_result_ids = _stage_pending_mixed_pause_responses(
             prepared_messages,
@@ -4484,19 +4879,63 @@ async def _resolve_approval_responses(
         )
         if incomplete_mixed_batch:
             return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
+        if completed_mixed_batch:
+            deferred_function_calls, deferred_function_call_order = _load_deferred_mixed_pause_calls(approval_session)
     else:
         partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+        if not disable_approval_response_binding:
+            # Runs before the partial-batch check below so untrusted inbound history is filtered
+            # rather than raising. Settled occurrences are identified by the same correlation used
+            # to execute approvals, so replaying a completed conversation is unaffected and only
+            # responses that could still authorize an execution are removed.
+            settled_response_ids: set[int] = set()
+            _collect_approval_responses(
+                prepared_messages,
+                non_approval_result_ids=host_result_ids,
+                settled_response_ids=settled_response_ids,
+            )
+            if _drop_unrecorded_local_approval_responses(prepared_messages, settled_response_ids):
+                logger.warning(
+                    "Ignored one or more local tool-approval responses because this run has no authoritative "
+                    "AgentSession holding the matching approval request. Pass the same AgentSession back on the "
+                    "run that resumes an approval, or set the 'disable_approval_response_binding' function "
+                    "invocation configuration option to restore the previous unbound behavior."
+                )
+                # Dropping responses changes which calls in the batch are still awaiting an answer,
+                # so the batch must be reclassified before deciding whether it is incomplete.
+                partial_mixed_batch, host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
         if partial_mixed_batch:
             raise RuntimeError(
                 "A mixed function-call batch requires responses for every approval and Host-owned request."
             )
 
+    if completed_mixed_batch:
+        state = _get_tool_approval_state(approval_session, create=False)
+        if state is not None:
+            state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
+        if deferred_function_calls:
+            return await _resolve_deferred_mixed_pause_calls(
+                prepared_messages=prepared_messages,
+                options=options,
+                errors_in_a_row=errors_in_a_row,
+                max_errors=max_errors,
+                budget_state=budget_state if budget_state is not None else {},
+                execute_function_calls=execute_function_calls,
+                invocation_session=approval_session,
+                host_result_ids=host_result_ids,
+                deferred_function_calls=deferred_function_calls,
+                function_call_order=deferred_function_call_order,
+                settle_dangling_calls=settle_dangling_calls,
+            )
+
     pending_responses_before_binding = list(
         _collect_approval_responses(prepared_messages, non_approval_result_ids=host_result_ids).values()
     )
+    staged_response_ids: set[int] = set()
     staged_responses, function_call_order, waiting_requests = _stage_approval_batch_responses(
         approval_session,
         pending_responses_before_binding,
+        staged_response_ids=staged_response_ids,
     )
     if waiting_requests is not None:
         response_messages, streaming_updates = _messages_and_updates_for_terminal_contents(waiting_requests)
@@ -4511,18 +4950,15 @@ async def _resolve_approval_responses(
         prepared_messages,
         approval_session,
         consume=False,
+        staged_response_ids=staged_response_ids,
     )
     active_pending_ids = (
         set(_load_pending_approval_requests(approval_session))
         if _has_authoritative_approval_session(approval_session)
         else None
     )
-    if completed_mixed_batch:
-        state = _get_tool_approval_state(approval_session, create=False)
-        if state is not None:
-            state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
 
-    # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
+    # 1. Restore safe siblings hidden with a prior approval batch.
     if staged_responses:
         prepared_messages.append(Message(role="user", contents=staged_responses))
     if not function_call_order and approval_session is None and not host_result_ids:
@@ -4746,7 +5182,12 @@ async def _process_model_function_calls(
         had_errors=execution.had_errors,
         max_errors=max_errors,
     )
-    if execution.should_terminate:
+    has_pending_computer_call = any(
+        content.type == "computer_tool_call" and content.user_input_request
+        for message in response.messages
+        for content in message.contents
+    )
+    if execution.should_terminate or has_pending_computer_call:
         processing_result.action = "return"
     if processing_result.action == "return":
         returned_approval_requests = [
@@ -4968,9 +5409,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             options=options,
             errors_in_a_row=errors_in_a_row,
             max_errors=max_errors,
+            budget_state=budget_state,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
+            disable_approval_response_binding=self.function_invocation_configuration.get(
+                "disable_approval_response_binding", False
+            ),
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -4984,7 +5429,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if approval_processing.action == "return":
             response = ChatResponse(messages=list(function_call_messages))
             response.usage_details = aggregated_usage
-            _clear_budget_state_from_session(invocation_session)
+            _clear_budget_state_from_session(invocation_session, budget_state)
             return _clear_internal_conversation_id(response)
 
         if options.get("tool_choice") != "none":
@@ -5075,7 +5520,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             if function_processing.action == "return":
                 response.usage_details = aggregated_usage
                 _prepend_function_call_messages(response, function_call_messages[:terminal_prefix_length])
-                _clear_budget_state_from_session(invocation_session)
+                _clear_budget_state_from_session(invocation_session, budget_state)
                 return _clear_internal_conversation_id(response)
             _apply_batch_limit_decision(
                 function_processing.action,
@@ -5127,7 +5572,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         response.usage_details = aggregated_usage
         _prepend_function_call_messages(response, function_call_messages)
-        _clear_budget_state_from_session(invocation_session)
+        _clear_budget_state_from_session(invocation_session, budget_state)
         return _clear_internal_conversation_id(response)
 
     async def _stream_response_with_function_invocation(
@@ -5186,9 +5631,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             options=options,
             errors_in_a_row=errors_in_a_row,
             max_errors=max_errors,
+            budget_state=budget_state,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
             approval_session_is_authoritative=approval_session_is_authoritative,
+            disable_approval_response_binding=self.function_invocation_configuration.get(
+                "disable_approval_response_binding", False
+            ),
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
@@ -5201,6 +5650,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
+            _clear_budget_state_from_session(invocation_session, budget_state)
             return
 
         if options.get("tool_choice") != "none":
@@ -5235,64 +5685,65 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
-            async for update in _iterate_provider_stream(inner_stream, on_invalidated):
-                for content in update.contents:
-                    if content.type != "function_call":
-                        continue
-                    if not _is_actionable_function_call(content):
-                        continue
-                    had_occurrence_id = content.id is not None
-                    provider_call_id = content.call_id
-                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
-                    if (
-                        identity is not None
-                        and provider_call_id is not None
-                        and content.id is None
-                        and content.name
-                        and (
-                            streamed_names_by_call_id.get(provider_call_id) != content.name
-                            or isinstance(content.arguments, Mapping)
-                        )
-                    ):
-                        identity = None
-                    if identity is None and not provider_call_id and not content.name:
-                        identity = last_streamed_identity
-
-                    if identity is None:
-                        occurrence_id = content.id or _generate_function_call_occurrence_id()
-                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
-                    else:
-                        occurrence_id, effective_call_id = identity
-                    if content.id is not None:
-                        occurrence_id = content.id
-                    if provider_call_id:
-                        effective_call_id = provider_call_id
-
-                    content.id = occurrence_id
-                    if not content.call_id and not had_occurrence_id:
-                        content.call_id = effective_call_id
-                        if identity is None and occurrence_id not in warned_empty_call_ids:
-                            warnings.warn(
-                                "An actionable function_call had an empty call_id. Agent Framework used its generated "
-                                "Content.id for local correlation. Providers should supply and preserve their service "
-                                "call_id; this fallback will be removed in a future release.",
-                                FutureWarning,
-                                stacklevel=3,
+            async with inner_stream:
+                async for update in _iterate_provider_stream(inner_stream, on_invalidated):
+                    for content in update.contents:
+                        if content.type != "function_call":
+                            continue
+                        if not _is_actionable_function_call(content):
+                            continue
+                        had_occurrence_id = content.id is not None
+                        provider_call_id = content.call_id
+                        identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                        if (
+                            identity is not None
+                            and provider_call_id is not None
+                            and content.id is None
+                            and content.name
+                            and (
+                                streamed_names_by_call_id.get(provider_call_id) != content.name
+                                or isinstance(content.arguments, Mapping)
                             )
-                            warned_empty_call_ids.add(occurrence_id)
-                    identity = (occurrence_id, effective_call_id)
-                    if effective_call_id:
-                        streamed_identities_by_call_id[effective_call_id] = identity
-                        if content.name:
-                            streamed_names_by_call_id[effective_call_id] = content.name
-                    last_streamed_identity = identity
-                if drop_unexecutable_calls:
-                    update = _drop_unexecutable_tool_contents_from_update(update)
-                    if update is None:
-                        continue
-                yield update
+                        ):
+                            identity = None
+                        if identity is None and not provider_call_id and not content.name:
+                            identity = last_streamed_identity
 
-            response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
+                        if identity is None:
+                            occurrence_id = content.id or _generate_function_call_occurrence_id()
+                            effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
+                        else:
+                            occurrence_id, effective_call_id = identity
+                        if content.id is not None:
+                            occurrence_id = content.id
+                        if provider_call_id:
+                            effective_call_id = provider_call_id
+
+                        content.id = occurrence_id
+                        if not content.call_id and not had_occurrence_id:
+                            content.call_id = effective_call_id
+                            if identity is None and occurrence_id not in warned_empty_call_ids:
+                                warnings.warn(
+                                    "An actionable function_call had an empty call_id. Agent Framework used its "
+                                    "generated Content.id for local correlation. Providers should supply and preserve "
+                                    "their service call_id; this fallback will be removed in a future release.",
+                                    FutureWarning,
+                                    stacklevel=3,
+                                )
+                                warned_empty_call_ids.add(occurrence_id)
+                        identity = (occurrence_id, effective_call_id)
+                        if effective_call_id:
+                            streamed_identities_by_call_id[effective_call_id] = identity
+                            if content.name:
+                                streamed_names_by_call_id[effective_call_id] = content.name
+                        last_streamed_identity = identity
+                    if drop_unexecutable_calls:
+                        update = _drop_unexecutable_tool_contents_from_update(update)
+                        if update is None:
+                            continue
+                    yield update
+
+                response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -5310,7 +5761,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ):
                 if fallback_added:
                     yield _function_invocation_limit_fallback_update()
-                _clear_budget_state_from_session(invocation_session)
+                _clear_budget_state_from_session(invocation_session, budget_state)
                 return
 
             try:
@@ -5354,6 +5805,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
                 # "return" action: model produced a terminal response.
+                _clear_budget_state_from_session(invocation_session, budget_state)
                 return
             _apply_batch_limit_decision(
                 function_processing.action,
@@ -5387,12 +5839,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
-            update = _drop_unexecutable_tool_contents_from_update(update)
-            if update is None:
-                continue
-            yield update
-        final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
+        async with final_inner_stream:
+            async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
+                update = _drop_unexecutable_tool_contents_from_update(update)
+                if update is None:
+                    continue
+                yield update
+            final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,
@@ -5402,7 +5855,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if fallback_added:
             yield _function_invocation_limit_fallback_update()
-        _clear_budget_state_from_session(invocation_session)
+        _clear_budget_state_from_session(invocation_session, budget_state)
 
     @overload
     def get_response(
@@ -5497,19 +5950,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any] = (
             cast(dict[str, Any], raw_budget_state) if isinstance(raw_budget_state, dict) else {}
         )
-        # Record the start time once for the full logical run (including approval round-trips).
-        # setdefault preserves the original timestamp across approval re-entries so that
-        # max_duration_seconds measures cumulative elapsed time, not just the current segment.
-        budget_state.setdefault("start_time", perf_counter())
-        raw_host_payload_budget = budget_state.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY)
-        host_payload_budget_state = (
-            cast(dict[str, Any], raw_host_payload_budget) if isinstance(raw_host_payload_budget, dict) else {}
-        )
-        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget_state
-        host_payload_budget = _FunctionResultPayloadBudget(host_payload_budget_state)
-        max_errors = self.function_invocation_configuration.get(
-            "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
-        )
 
         additional_function_arguments = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
@@ -5526,6 +5966,22 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if invocation_session is None and requires_session_state:
             invocation_session = _AgentSession()
             approval_session_is_authoritative = False
+        if approval_session_is_authoritative:
+            _restore_session_budget_state(invocation_session, budget_state)
+
+        # Record the process-local start time once for this logical run segment.
+        # Durable Host pauses persist elapsed state separately because perf_counter
+        # origins are not portable across processes.
+        budget_state.setdefault("start_time", perf_counter())
+        raw_host_payload_budget = budget_state.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY)
+        host_payload_budget_state = (
+            cast(dict[str, Any], raw_host_payload_budget) if isinstance(raw_host_payload_budget, dict) else {}
+        )
+        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget_state
+        host_payload_budget = _FunctionResultPayloadBudget(host_payload_budget_state)
+        max_errors = self.function_invocation_configuration.get(
+            "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
+        )
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(

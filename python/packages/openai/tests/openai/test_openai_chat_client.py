@@ -1,14 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
 import os
-from collections.abc import AsyncGenerator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
-from typing import Annotated, Any, cast
+from types import SimpleNamespace
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +30,7 @@ from agent_framework import (
     SupportsImageGenerationTool,
     SupportsMCPTool,
     SupportsWebSearchTool,
+    WorkflowBuilder,
     tool,
 )
 from agent_framework._sessions import (
@@ -36,6 +39,7 @@ from agent_framework._sessions import (
     SessionContext,
     _filter_approval_control_messages,
 )
+from agent_framework._types import _get_operation_state
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
@@ -43,7 +47,16 @@ from agent_framework.exceptions import (
     SettingNotFoundError,
 )
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
-from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
+from openai.types.responses import (
+    ResponseComputerToolCall,
+    ResponseComputerToolCallOutputItem,
+    ResponseContentPartDoneEvent,
+    ResponseErrorEvent,
+    ResponseFunctionShellToolCall,
+    ResponseFunctionShellToolCallOutput,
+    ResponseOutputItemDoneEvent,
+    ResponseOutputTextAnnotationAddedEvent,
+)
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -202,6 +215,12 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
     assert openai_responses_client.model == openai_unit_test_env["OPENAI_MODEL"]
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
+
+
+def test_service_url() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key", base_url="http://localhost:1234/v1")
+
+    assert client.service_url() == "http://localhost:1234/v1/"
 
 
 def test_init_uses_explicit_parameters() -> None:
@@ -2255,6 +2274,177 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
 
 
+@pytest.mark.parametrize(
+    ("properties", "expected_local", "expected_shell"),
+    [
+        pytest.param(
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "truncated": False, "timed_out": False},
+            {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False},
+            [{"stdout": "ok", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+            id="success",
+        ),
+        pytest.param(
+            {
+                "stdout": "",
+                "stderr": "command failed",
+                "exit_code": 3,
+                "truncated": False,
+                "timed_out": False,
+            },
+            {"stdout": "", "stderr": "command failed", "exit_code": 3, "timed_out": False},
+            [{"stdout": "", "stderr": "command failed", "outcome": {"type": "exit", "exit_code": 3}}],
+            id="nonzero-exit",
+        ),
+        pytest.param(
+            {
+                "stdout": "partial",
+                "stderr": "timeout details",
+                "exit_code": 124,
+                "truncated": False,
+                "timed_out": True,
+            },
+            {"stdout": "partial", "stderr": "timeout details", "exit_code": 124, "timed_out": True},
+            [{"stdout": "partial", "stderr": "timeout details", "outcome": {"type": "timeout"}}],
+            id="timeout",
+        ),
+        pytest.param(
+            {
+                "stdout": "partial output",
+                "stderr": "",
+                "exit_code": 0,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "partial output\n[output truncated]",
+                "stderr": "",
+                "exit_code": 0,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "partial output\n[output truncated]",
+                    "stderr": "",
+                    "outcome": {"type": "exit", "exit_code": 0},
+                }
+            ],
+            id="truncated-stdout",
+        ),
+        pytest.param(
+            {
+                "stdout": "",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "truncated": True,
+                "timed_out": False,
+            },
+            {
+                "stdout": "[output truncated]",
+                "stderr": "partial error",
+                "exit_code": 1,
+                "timed_out": False,
+            },
+            [
+                {
+                    "stdout": "[output truncated]",
+                    "stderr": "partial error",
+                    "outcome": {"type": "exit", "exit_code": 1},
+                }
+            ],
+            id="truncated-empty-stdout",
+        ),
+    ],
+)
+def test_shell_output_payloads_use_structured_function_result_items(
+    properties: dict[str, Any],
+    expected_local: dict[str, Any],
+    expected_shell: list[dict[str, Any]],
+) -> None:
+    display_text = "model-facing shell result"
+    content = Content.from_function_result(
+        call_id="call-structured",
+        result=[Content.from_text(display_text, additional_properties=properties)],
+    )
+    round_tripped = Content.from_dict(content.to_dict())
+
+    assert round_tripped.result == display_text
+    assert round_tripped.items is not None
+    assert round_tripped.items[0].additional_properties == properties
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(round_tripped)) == expected_local
+    assert OpenAIChatClient._to_shell_call_output_payload(round_tripped) == expected_shell
+
+
+def test_shell_output_payloads_accept_native_shell_command_output() -> None:
+    content = Content.from_function_result(
+        call_id="call-native",
+        result=[
+            Content.from_shell_command_output(
+                stdout="native output",
+                stderr="native error",
+                exit_code=9,
+                timed_out=False,
+            )
+        ],
+    )
+
+    assert json.loads(OpenAIChatClient._to_local_shell_output_payload(content)) == {
+        "stdout": "native output",
+        "stderr": "native error",
+        "timed_out": False,
+        "exit_code": 9,
+    }
+    assert OpenAIChatClient._to_shell_call_output_payload(content) == [
+        {
+            "stdout": "native output",
+            "stderr": "native error",
+            "outcome": {"type": "exit", "exit_code": 9},
+        }
+    ]
+
+
+def test_prepare_messages_uses_structured_local_shell_result() -> None:
+    from agent_framework_openai._chat_client import (
+        OPENAI_SHELL_OUTPUT_TYPE_KEY,
+        OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    shell_result = Content.from_function_result(
+        call_id="shell-call-1",
+        result=[
+            Content.from_text(
+                "stderr: command failed\nexit_code: 3",
+                additional_properties={
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "exit_code": 3,
+                    "timed_out": False,
+                },
+            )
+        ],
+        additional_properties={OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL},
+    )
+
+    prepared = client._prepare_message_for_openai(
+        Message(role="tool", contents=[shell_result]),
+        request_uses_service_side_storage=False,
+    )
+
+    assert prepared == [
+        {
+            "call_id": "shell-call-1",
+            "type": "shell_call_output",
+            "output": [
+                {
+                    "stdout": "",
+                    "stderr": "command failed",
+                    "outcome": {"type": "exit", "exit_code": 3},
+                }
+            ],
+        }
+    ]
+
+
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
     """Regression: the prepared shell tool must be a subscriptable dict.
 
@@ -2463,9 +2653,12 @@ async def test_local_shell_tool_requires_approval_before_function_loop_execution
     with patch.object(
         client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
     ) as mock_create:
+        # The approval round trip is resumed on the session that issued the request.
+        session = AgentSession(session_id="local-shell-approval")
         response = await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
             options={"tools": [local_shell_tool]},
+            client_kwargs={"session": session},
         )
 
         assert executed_commands == []
@@ -2477,6 +2670,7 @@ async def test_local_shell_tool_requires_approval_before_function_loop_execution
         await client.get_response(
             messages=[Message(role="user", contents=[approval_response])],
             options={"tools": [local_shell_tool]},
+            client_kwargs={"session": session},
         )
 
         assert executed_commands == ["python --version"]
@@ -2817,11 +3011,14 @@ def test_response_content_creation_with_shell_call_remains_hosted_with_local_too
     mock_action.timeout_ms = 60000
     mock_action.max_output_length = 4096
 
+    mock_environment = MagicMock()
+    mock_environment.type = "container_reference"
+
     mock_shell_call = MagicMock()
     mock_shell_call.type = "shell_call"
     mock_shell_call.call_id = "shell-call-1"
     mock_shell_call.action = mock_action
-    mock_shell_call.environment = None
+    mock_shell_call.environment = mock_environment
     mock_shell_call.status = "completed"
 
     mock_response.output = [mock_shell_call]
@@ -2836,6 +3033,89 @@ def test_response_content_creation_with_shell_call_remains_hosted_with_local_too
     assert call_content.timeout_ms == 60000
     assert call_content.max_output_length == 4096
     assert call_content.status == "completed"
+
+
+def test_foundry_shell_call_without_environment_uses_registered_local_executor() -> None:
+    """An unmarked shell call executes locally when a local shell executor is registered."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.id = "shell-item-1"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.environment = None
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "ls -la\npwd"}
+    assert call_content.informational_only is False
+
+
+def test_foundry_shell_call_without_environment_without_local_executor_remains_hosted() -> None:
+    """An unmarked shell call remains hosted informational content when no local executor is registered."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.id = "shell-item-1"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.environment = None
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.commands == ["ls -la", "pwd"]
 
 
 def test_response_content_creation_with_shell_call_output() -> None:
@@ -3391,6 +3671,459 @@ def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     assert result_content.output is not None
 
 
+def test_get_computer_tool_uses_non_preview_type() -> None:
+    assert OpenAIChatClient.get_computer_tool() == {"type": "computer"}
+
+
+def test_parse_computer_call_preserves_batched_actions_ids_and_safety_checks() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_item_1",
+        "call_id": "call_1",
+        "actions": [
+            {"type": "click", "button": "left", "x": 12, "y": 34},
+            {"type": "keypress", "keys": ["CTRL", "A"]},
+        ],
+        "pending_safety_checks": [{"id": "check_1", "code": "malicious_instructions", "message": "Review."}],
+        "status": "completed",
+    })
+    response = MagicMock(
+        output=[item],
+        output_parsed=None,
+        id="resp_1",
+        status="completed",
+        model="test-model",
+        metadata={},
+        usage=None,
+        created_at=1,
+    )
+
+    parsed = client._parse_response_from_openai(response, options={})
+    call = parsed.messages[0].contents[0]
+    assert parsed.finish_reason == "tool_calls"
+    assert call.type == "computer_tool_call"
+    assert call.id == "cu_item_1"
+    assert call.call_id == "call_1"
+    assert call.actions is not None
+    assert [action["type"] for action in call.actions] == ["click", "keypress"]
+    assert call.pending_safety_checks == [{"id": "check_1", "code": "malicious_instructions", "message": "Review."}]
+    assert call.user_input_request is True
+    assert "pending_safety_checks" not in call.additional_properties
+
+
+def test_parse_completed_computer_pair_keeps_audit_items_without_requesting_input() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "call_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    result = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": {"type": "computer_screenshot", "file_id": "file_1"},
+        "status": "completed",
+    })
+    unmatched = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_2",
+        "call_id": "call_2",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    response = MagicMock(
+        output=[call, result, unmatched],
+        output_parsed=None,
+        id="resp_1",
+        status="completed",
+        model="test-model",
+        metadata={},
+        usage=None,
+        created_at=1,
+    )
+
+    parsed = client._parse_response_from_openai(response, options={})
+
+    completed_call, completed_result, pending_call = parsed.messages[0].contents
+    assert (completed_call.type, completed_result.type, pending_call.type) == (
+        "computer_tool_call",
+        "computer_tool_result",
+        "computer_tool_call",
+    )
+    assert completed_call.informational_only is True
+    assert completed_call.user_input_request is False
+    assert completed_result.call_id == completed_call.call_id
+    assert [(item.id, item.call_id) for item in parsed.messages[0].contents if item.user_input_request] == [
+        ("cu_2", "call_2")
+    ]
+    restored = Content.from_dict(completed_call.to_dict())
+    assert restored.informational_only is True
+    assert restored.user_input_request is False
+
+
+def test_preview_computer_action_normalizes_to_ordered_actions() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_preview",
+        "call_id": "call_preview",
+        "action": {"type": "screenshot"},
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    call = client._parse_computer_tool_call_content(item)
+
+    assert call.actions == [{"type": "screenshot"}]
+    assert client._prepare_content_for_openai("assistant", call) == {
+        "type": "computer_call",
+        "id": "cu_preview",
+        "call_id": "call_preview",
+        "action": {"type": "screenshot"},
+        "status": "completed",
+        "pending_safety_checks": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("screenshot_output", "expected_type"),
+    [
+        ({"type": "computer_screenshot", "image_url": "data:image/png;base64,YWJj"}, "data"),
+        ({"type": "computer_screenshot", "image_url": "https://example.com/s.png"}, "uri"),
+        ({"type": "computer_screenshot", "file_id": "file_1"}, "hosted_file"),
+    ],
+)
+def test_parse_computer_output_preserves_content_and_explicit_acknowledgments(
+    screenshot_output: dict[str, str], expected_type: str
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": screenshot_output,
+        "acknowledged_safety_checks": [{"id": "check_1"}],
+        "status": "completed",
+    })
+    result = client._parse_computer_tool_result_content(item)
+
+    assert result.type == "computer_tool_result"
+    assert result.id == "cco_1"
+    assert result.call_id == "call_1"
+    assert isinstance(result.screenshot, Content)
+    assert result.screenshot.type == expected_type
+    assert result.acknowledged_safety_checks == [{"id": "check_1"}]
+    assert "acknowledged_safety_checks" not in result.additional_properties
+    assert client._prepare_content_for_openai("tool", result) == {
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "status": "completed",
+        "output": screenshot_output,
+        "acknowledged_safety_checks": [{"id": "check_1"}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("output", "error"),
+    [
+        (None, "must contain a computer screenshot"),
+        ({"type": "text"}, "must contain a computer screenshot"),
+        ({"type": "computer_screenshot"}, "missing its image URL or file ID"),
+    ],
+)
+def test_parse_computer_output_rejects_missing_screenshot(output: dict[str, str] | None, error: str) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = SimpleNamespace(type="computer_call_output", call_id="call_1", output=output)
+
+    with pytest.raises(ChatClientInvalidRequestException, match=error):
+        client._parse_computer_tool_result_content(item)
+
+
+def test_streamed_computer_call_and_screenshot_emit_only_once_on_done() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    added = MagicMock(type="response.output_item.added")
+    added.item = SimpleNamespace(type="computer_call", id="cu_1", call_id="call_1", actions=None)
+    done = MagicMock(type="response.output_item.done")
+    done.item = SimpleNamespace(
+        type="computer_call",
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "move", "x": 1, "y": 2}, {"type": "click", "x": 1, "y": 2}],
+        pending_safety_checks=[],
+        status="completed",
+    )
+    output_added = MagicMock(type="response.output_item.added")
+    output_added.item = SimpleNamespace(
+        type="computer_call_output",
+        id="cco_1",
+        call_id="call_1",
+        output={"type": "computer_screenshot", "file_id": "file_1"},
+    )
+    output_done = MagicMock(type="response.output_item.done")
+    output_done.item = output_added.item
+
+    updates = [
+        client._parse_chunk_from_openai(event, options={}, function_call_ids={})
+        for event in (added, done, output_added, output_done)
+    ]
+    assert [content.type for update in updates for content in update.contents] == [
+        "computer_tool_call",
+        "computer_tool_result",
+    ]
+    assert updates[1].contents[0].actions is not None
+    assert updates[1].contents[0].actions[1]["type"] == "click"
+    assert updates[3].contents[0].screenshot is not None
+    assert updates[3].contents[0].screenshot.file_id == "file_1"
+    final = client._finalize_response_updates(updates)
+    assert [item.type for item in final.messages[0].contents] == ["computer_tool_call", "computer_tool_result"]
+    assert not any(item.user_input_request for msg in final.messages for item in msg.contents)
+    assert updates[1].contents[0].informational_only is True
+    assert updates[1].contents[0].user_input_request is False
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_completed_computer_pair_does_not_pause_workflow(monkeypatch: pytest.MonkeyPatch, stream: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "call_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    output = ResponseComputerToolCallOutputItem.model_validate({
+        "type": "computer_call_output",
+        "id": "cco_1",
+        "call_id": "call_1",
+        "output": {"type": "computer_screenshot", "file_id": "file_1"},
+        "status": "completed",
+    })
+
+    def inner_get_response(
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                for item in (call, output):
+                    event = MagicMock(type="response.output_item.done", item=item)
+                    yield client._parse_chunk_from_openai(event, options={}, function_call_ids={})
+
+            return client._build_response_stream(updates())
+
+        async def response() -> ChatResponse:
+            raw = MagicMock(
+                output=[call, output],
+                output_parsed=None,
+                id="response-1",
+                status="completed",
+                model="test-model",
+                metadata={},
+                usage=None,
+                created_at=1,
+            )
+            return client._parse_response_from_openai(raw, options=dict(options))
+
+        return response()
+
+    monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
+    workflow = WorkflowBuilder(
+        start_executor=Agent(client=client, name="ComputerAgent", default_options=OpenAIChatOptions(store=False))
+    ).build()
+    if stream:
+        events = [event async for event in workflow.run("Use the computer", stream=True)]
+        outputs = [event.data for event in events if event.type == "output"]
+        assert not any(event.type == "request_info" for event in events)
+        contents = [content for update in outputs for content in update.contents]
+    else:
+        result = await workflow.run("Use the computer")
+        assert not result.get_request_info_events()
+        contents = [
+            content
+            for output_response in result.get_outputs()
+            for msg in output_response.messages
+            for content in msg.contents
+        ]
+
+    assert [(content.type, content.call_id) for content in contents] == [
+        ("computer_tool_call", "call_1"),
+        ("computer_tool_result", "call_1"),
+    ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("function_first", [False, True])
+async def test_openai_mixed_computer_and_function_waits_for_screenshot(
+    monkeypatch: pytest.MonkeyPatch, stream: bool, function_first: bool
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    computer = ResponseComputerToolCall.model_validate({
+        "type": "computer_call",
+        "id": "cu_1",
+        "call_id": "computer_1",
+        "actions": [{"type": "screenshot"}],
+        "pending_safety_checks": [],
+        "status": "completed",
+    })
+    function = SimpleNamespace(
+        type="function_call", id="fc_1", call_id="function_1", name="local_compute", arguments="{}", status="completed"
+    )
+    provider_messages: list[list[Message]] = []
+    executions: list[int] = []
+
+    @tool
+    def local_compute() -> str:
+        """Return a local tool result."""
+        executions.append(1)
+        return "local result"
+
+    def inner_get_response(
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        provider_messages.append([Message(role=msg.role, contents=list(msg.contents)) for msg in messages])
+        if len(provider_messages) == 1:
+            if stream:
+
+                async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                    function_added = MagicMock(type="response.output_item.added", item=function, output_index=1)
+                    function_delta = MagicMock(
+                        type="response.function_call_arguments.delta",
+                        output_index=1,
+                        item_id="fc_1",
+                        delta="{}",
+                    )
+                    computer_done = MagicMock(type="response.output_item.done", item=computer)
+                    events = (
+                        (function_added, function_delta, computer_done)
+                        if function_first
+                        else (computer_done, function_added, function_delta)
+                    )
+                    function_ids: dict[int, tuple[str, str]] = {}
+                    for event in events:
+                        yield client._parse_chunk_from_openai(event, options={}, function_call_ids=function_ids)
+
+                return client._build_response_stream(updates())
+
+            async def response() -> ChatResponse:
+                raw = MagicMock(
+                    output=[function, computer] if function_first else [computer, function],
+                    output_parsed=None,
+                    id="response-1",
+                    status="completed",
+                    model="test-model",
+                    metadata={},
+                    usage=None,
+                    created_at=1,
+                )
+                return client._parse_response_from_openai(raw, options=dict(options))
+
+            return response()
+
+        if stream:
+
+            async def done_updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+            return client._build_response_stream(done_updates())
+
+        async def done_response() -> ChatResponse:
+            return ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Done.")]))
+
+        return done_response()
+
+    monkeypatch.setattr(client, "_inner_get_response", inner_get_response)
+    workflow = WorkflowBuilder(
+        start_executor=Agent(
+            client=client, name="ComputerAgent", tools=[local_compute], default_options=OpenAIChatOptions(store=False)
+        )
+    ).build()
+    if stream:
+        initial = [event async for event in workflow.run("Use both", stream=True)]
+        requests = [event for event in initial if event.type == "request_info"]
+    else:
+        requests = (await workflow.run("Use both")).get_request_info_events()
+
+    [request] = requests
+    assert request.data.call_id == "computer_1"
+    assert len(executions) == len(provider_messages) == 1
+
+    screenshot = Content.from_computer_tool_result(
+        call_id="computer_1", screenshot=Content.from_data(b"png", "image/png")
+    )
+    if stream:
+        resumed = [event async for event in workflow.run(responses={request.request_id: screenshot}, stream=True)]
+        assert not any(event.type == "request_info" for event in resumed)
+    else:
+        assert (await workflow.run(responses={request.request_id: screenshot})).get_outputs()
+    assert len(executions) == 1
+    assert len(provider_messages) == 2
+    prepared = client._prepare_messages_for_openai(provider_messages[-1], request_uses_service_side_storage=False)
+    assert [item["type"] for item in prepared if item["type"] in ("computer_call_output", "function_call_output")] == (
+        ["function_call_output", "computer_call_output"]
+        if function_first
+        else ["computer_call_output", "function_call_output"]
+    )
+
+
+def test_computer_stateless_replay_and_service_continuation() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = Content.from_computer_tool_call(
+        id="cu_1",
+        call_id="call_1",
+        actions=[{"type": "move", "x": 2, "y": 3}, {"type": "click", "x": 2, "y": 3}],
+        pending_safety_checks=[{"id": "check_1"}],
+    )
+    result = Content.from_computer_tool_result(
+        call_id="call_1",
+        screenshot=Content.from_data(b"screenshot", "image/png"),
+        acknowledged_safety_checks=[{"id": "check_1"}],
+    )
+    messages = [
+        Message(role="assistant", contents=[call]),
+        Message(role="tool", contents=[result]),
+    ]
+    stateless = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
+    continuation = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
+
+    assert [item["type"] for item in stateless] == ["computer_call", "computer_call_output"]
+    assert stateless[0]["id"] != stateless[0]["call_id"]
+    assert stateless[0]["actions"] == call.actions
+    assert stateless[0]["pending_safety_checks"] == [{"id": "check_1"}]
+    assert stateless[1]["call_id"] == "call_1"
+    assert result.screenshot is not None
+    assert stateless[1]["output"]["image_url"] == result.screenshot.uri
+    assert stateless[1]["acknowledged_safety_checks"] == [{"id": "check_1"}]
+    assert continuation == [stateless[1]]
+
+
+@pytest.mark.parametrize("request_uses_service_side_storage", [False, True])
+def test_computer_result_without_screenshot_is_rejected_by_openai(request_uses_service_side_storage: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    call = Content.from_computer_tool_call(id="cu_1", call_id="call_1", actions=[{"type": "screenshot"}])
+    result = Content.from_computer_tool_result(call_id="call_1")
+    messages = [Message(role="assistant", contents=[call]), Message(role="tool", contents=[result])]
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_messages_for_openai(
+            messages, request_uses_service_side_storage=request_uses_service_side_storage
+        )
+
+
 def test_parse_chunk_from_openai_with_web_search_call_added() -> None:
     """Test that response.output_item.added for web_search_call emits search tool call content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3760,6 +4493,45 @@ def test_parse_chunk_from_openai_local_environment_shell_call_done_emits_command
     mock_item.call_id = "local-shell-call-1"
     mock_item.action = mock_action
     mock_item.environment = mock_environment
+    mock_item.status = "completed"
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(
+        mock_event, options={"tools": [local_shell_tool]}, function_call_ids=function_call_ids
+    )
+
+    assert len(update.contents) == 1
+    call_content = update.contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "local-shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "python --version"}
+    assert call_content.additional_properties["openai.responses.shell.output_type"] == "shell_call_output"
+
+
+def test_parse_chunk_from_openai_shell_call_without_environment_emits_command() -> None:
+    """An unmarked completed shell call emits an executable function call when local executor is registered."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_action = MagicMock()
+    mock_action.commands = ["python --version"]
+    mock_action.timeout_ms = 30000
+
+    mock_item = MagicMock()
+    mock_item.type = "shell_call"
+    mock_item.id = "local-shell-item-1"
+    mock_item.call_id = "local-shell-call-1"
+    mock_item.action = mock_action
+    mock_item.environment = None
     mock_item.status = "completed"
 
     mock_event = MagicMock()
@@ -6219,6 +6991,302 @@ def test_streaming_response_in_progress_type() -> None:
     assert response.conversation_id == "conv_5678"
 
 
+def _make_completed_text_event(
+    annotations: Sequence[dict[str, Any]],
+    *,
+    event_type: Literal["response.content_part.done", "response.output_item.done"] = "response.content_part.done",
+    item_id: str = "msg_citations",
+    content_index: int = 0,
+    text: str = "The answer is in the document.",
+) -> ResponseContentPartDoneEvent | ResponseOutputItemDoneEvent:
+    part = {"type": "output_text", "text": text, "annotations": list(annotations)}
+    if event_type == "response.content_part.done":
+        return ResponseContentPartDoneEvent.model_validate({
+            "type": event_type,
+            "item_id": item_id,
+            "output_index": 0,
+            "content_index": content_index,
+            "sequence_number": 2,
+            "part": part,
+        })
+    return ResponseOutputItemDoneEvent.model_validate({
+        "type": event_type,
+        "output_index": 0,
+        "sequence_number": 3,
+        "item": {
+            "type": "message",
+            "id": item_id,
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+                *({"type": "output_text", "text": "", "annotations": []} for _ in range(content_index)),
+                part,
+            ],
+        },
+    })
+
+
+@pytest.mark.parametrize("event_type", ["response.content_part.done", "response.output_item.done"])
+@pytest.mark.parametrize(
+    ("provider_annotation", "expected"),
+    [
+        param(
+            {
+                "type": "url_citation",
+                "url": "https://example.sharepoint.com/sites/docs/document.pdf",
+                "title": "Document",
+                "start_index": 21,
+                "end_index": 29,
+            },
+            {
+                "url": "https://example.sharepoint.com/sites/docs/document.pdf",
+                "title": "Document",
+                "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            },
+            id="sharepoint-url",
+        ),
+        param(
+            {"type": "file_citation", "file_id": "file-123", "filename": "document.pdf", "index": 21},
+            {"file_id": "file-123", "url": "document.pdf"},
+            id="file-citation",
+        ),
+        param(
+            {"type": "file_path", "file_id": "file-123", "index": 21},
+            {"file_id": "file-123"},
+            id="file-path",
+        ),
+        param(
+            {
+                "type": "container_file_citation",
+                "file_id": "file-123",
+                "container_id": "container-123",
+                "filename": "document.pdf",
+                "start_index": 21,
+                "end_index": 29,
+            },
+            {
+                "file_id": "file-123",
+                "url": "document.pdf",
+                "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            },
+            id="container-file",
+        ),
+    ],
+)
+def test_streaming_completed_text_preserves_annotations_without_replaying_text(
+    event_type: Literal["response.content_part.done", "response.output_item.done"],
+    provider_annotation: dict[str, Any],
+    expected: dict[str, Any],
+) -> None:
+    """Completed text carries citations even when annotation-added events are absent."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    event = _make_completed_text_event([provider_annotation], event_type=event_type)
+
+    update = client._parse_chunk_from_openai(event, {}, {})
+
+    assert len(update.contents) == 1
+    content = update.contents[0]
+    assert content.type == "text"
+    assert content.text == ""
+    assert content.annotations is not None
+    assert len(content.annotations) == 1
+    annotation = content.annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert all(annotation.get(key) == value for key, value in expected.items())
+    assert annotation["raw_representation"].type == provider_annotation["type"]
+    assert content.raw_representation is event
+
+
+@pytest.mark.parametrize("mode", ["create", "retrieve", "structured"])
+async def test_streaming_completed_annotations_are_deduplicated_per_occurrence(mode: str) -> None:
+    """Added, completed-part, and completed-item events emit each citation once."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first = {
+        "type": "url_citation",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "title": "Document",
+        "start_index": 0,
+        "end_index": 3,
+    }
+    second = {**first, "start_index": 21, "end_index": 29}
+    text = '{"location": "Seattle", "weather": "Clear"}' if mode == "structured" else "The answer is in the document."
+    text_event = ResponseTextDeltaEvent.model_validate({
+        "type": "response.output_text.delta",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 0,
+        "delta": text,
+        "logprobs": [],
+    })
+    added_event = ResponseOutputTextAnnotationAddedEvent.model_validate({
+        "type": "response.output_text.annotation.added",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 1,
+        "annotation_index": 0,
+        "annotation": first,
+    })
+    done_event = _make_completed_text_event([first, second], text=text)
+    item_done_event = _make_completed_text_event([first, second], event_type="response.output_item.done", text=text)
+    options: OpenAIChatOptions[OutputStruct] = {}
+    if mode == "retrieve":
+        options["continuation_token"] = {"response_id": "resp_citations"}
+    elif mode == "structured":
+        options["response_format"] = OutputStruct
+    original_options = dict(options)
+    events = [text_event, added_event, done_event, item_done_event, done_event]
+    method = "stream" if mode == "structured" else mode
+
+    with patch.object(
+        client.client.responses,
+        method,
+        new_callable=MagicMock if mode == "structured" else AsyncMock,
+        return_value=_FakeAsyncEventStream(events),
+    ) as create:
+        stream = client.get_response(
+            [Message(role="user", contents=["Find the document."])], stream=True, options=options
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+
+    assert response.text == text_event.delta
+    assert len(response.messages) == 1
+    assert len(response.messages[0].contents) == 1
+    annotations = response.messages[0].contents[0].annotations
+    assert annotations is not None
+    assert len(annotations) == 2
+    assert [annotation["annotated_regions"][0]["start_index"] for annotation in annotations] == [0, 21]
+    assert sum(len(content.annotations or []) for update in updates for content in update.contents) == 2
+    assert options == original_options
+    assert not any(key.startswith("__agent_framework") for key in create.call_args.kwargs)
+    if mode == "structured":
+        assert isinstance(response.value, OutputStruct)
+        assert response.value.location == "Seattle"
+
+
+@pytest.mark.parametrize("with_added_event", [False, True])
+async def test_completed_sharepoint_citations_reach_agui_stream(with_added_event: bool) -> None:
+    """Responses completion citations survive the client, Agent, and AG-UI transport."""
+    pytest.importorskip("agent_framework_ag_ui")
+    from ag_ui.core import CustomEvent, TextMessageContentEvent
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    annotation = {
+        "type": "url_citation",
+        "title": "Document",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "start_index": 21,
+        "end_index": 29,
+    }
+    text_event = ResponseTextDeltaEvent.model_validate({
+        "type": "response.output_text.delta",
+        "item_id": "msg_citations",
+        "output_index": 0,
+        "content_index": 0,
+        "sequence_number": 0,
+        "delta": "The answer is in the document.",
+        "logprobs": [],
+    })
+    sdk_events: list[object] = [text_event]
+    if with_added_event:
+        sdk_events.append(
+            ResponseOutputTextAnnotationAddedEvent.model_validate({
+                "type": "response.output_text.annotation.added",
+                "item_id": "msg_citations",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+                "annotation_index": 0,
+                "annotation": annotation,
+            })
+        )
+    sdk_events.extend([
+        _make_completed_text_event([annotation]),
+        _make_completed_text_event([annotation], event_type="response.output_item.done"),
+    ])
+    agent = AgentFrameworkAgent(agent=client.as_agent(name="grounded-assistant"))
+
+    with patch.object(
+        client.client.responses, "create", new_callable=AsyncMock, return_value=_FakeAsyncEventStream(sdk_events)
+    ):
+        events = [
+            event
+            async for event in agent.run({
+                "thread_id": "thread-citations",
+                "run_id": "run-citations",
+                "messages": [{"role": "user", "content": "Find the document."}],
+            })
+        ]
+
+    citation_events = [event for event in events if isinstance(event, CustomEvent) and event.name == "annotations"]
+    assert len(citation_events) == 1
+    text_events = [event for event in events if isinstance(event, TextMessageContentEvent)]
+    assert "".join(event.delta for event in text_events) == text_event.delta
+    payload = json.loads(citation_events[0].model_dump_json(by_alias=True))
+    assert payload["value"]["messageId"] == text_events[0].message_id
+    assert payload["value"]["annotations"] == [
+        {
+            "type": "citation",
+            "title": annotation["title"],
+            "url": annotation["url"],
+            "annotated_regions": [{"type": "text_span", "start_index": 21, "end_index": 29}],
+            "additional_properties": {"annotation_index": 0},
+        }
+    ]
+    assert events.index(citation_events[0]) < next(
+        index for index, event in enumerate(events) if event.type == "RUN_FINISHED"
+    )
+
+
+async def test_streaming_completed_annotations_do_not_share_state_between_requests() -> None:
+    """A shared client preserves identical citations in concurrent independent runs."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    annotation = {"type": "file_citation", "file_id": "file-123", "filename": "document.pdf", "index": 0}
+    events = [
+        _make_completed_text_event([annotation, annotation]),
+        _make_completed_text_event([annotation], content_index=1),
+        _make_completed_text_event([annotation], item_id="msg_other"),
+    ]
+
+    class InterleavedEventStream(_FakeAsyncEventStream):
+        async def __anext__(self) -> object:
+            await asyncio.sleep(0)
+            return await super().__anext__()
+
+    async def get_response() -> ChatResponse:
+        return await client.get_response(
+            [Message(role="user", contents=["Find the document."])], stream=True
+        ).get_final_response()
+
+    with patch.object(
+        client.client.responses,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=[InterleavedEventStream(events), InterleavedEventStream(events)],
+    ):
+        responses = await asyncio.gather(get_response(), get_response())
+
+    for response in responses:
+        assert len(response.messages) == 1
+        assert len(response.messages[0].contents) == 1
+        annotations = response.messages[0].contents[0].annotations
+        assert annotations is not None
+        assert len(annotations) == 4
+
+
+def test_streaming_completed_text_without_annotations_emits_no_content() -> None:
+    """Completed text must not duplicate text that was already streamed."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    update = client._parse_chunk_from_openai(_make_completed_text_event([]), {}, {})
+
+    assert update.contents == []
+
+
 def test_streaming_annotation_added_with_file_path() -> None:
     """Streaming `file_path` should attach as a text annotation, matching non-streaming."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -6956,6 +8024,32 @@ def test_prepare_content_for_openai_audio_content() -> None:
     result = client._prepare_content_for_openai("user", mp3_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 audio content with the registered media type
+    mpeg_content = Content.from_uri(uri="data:audio/mpeg;base64,ghi789", media_type="audio/mpeg")
+    result = client._prepare_content_for_openai("user", mpeg_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "data:audio/mpeg;base64,ghi789"
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 aliases with media type parameters and mixed case
+    parameterized_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,jkl012",
+        media_type="Audio/MPEG; codecs=mpeg-3",
+    )
+    result = client._prepare_content_for_openai("user", parameterized_content)
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
+
+def test_prepare_content_for_openai_non_mp3_mpeg_audio_is_unsupported() -> None:
+    """Test _prepare_content_for_openai omits MPEG audio that is not MP3."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    for media_type in ("audio/mpegurl", "audio/mpeg4-generic"):
+        content = Content.from_uri(uri=f"data:{media_type};base64,abc123", media_type=media_type)
+
+        assert client._prepare_content_for_openai("user", content) == {}
 
 
 def test_prepare_content_for_openai_unsupported_content() -> None:
@@ -8519,6 +9613,81 @@ def test_streaming_response_in_progress_sets_continuation_token() -> None:
     assert _response_id_from_token(update.continuation_token) == "resp_stream_123"
 
 
+def test_streaming_tokenless_intermediate_update_preserves_continuation_token() -> None:
+    """Tokenless Responses API events should not erase an active background token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_123"
+    in_progress_event.response.conversation = None
+
+    text_delta_event = MagicMock()
+    text_delta_event.type = "response.output_text.delta"
+    text_delta_event.delta = "working"
+    text_delta_event.logprobs = None
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(text_delta_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is not None
+    assert _response_id_from_token(response.continuation_token) == "resp_stream_123"
+
+
+def test_streaming_error_event_raises_chat_client_exception() -> None:
+    """Responses API error events should surface their provider details."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param="input",
+        sequence_number=2,
+        type="error",
+    )
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
+
+    assert "OpenAI streaming error: server_error: The response stream failed. (parameter: input)" in str(exc_info.value)
+
+
+async def test_resumed_stream_error_clears_continuation_token() -> None:
+    """A failed resumed stream should clear its caller-owned continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_error"
+    in_progress_event.response.conversation = None
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param=None,
+        sequence_number=2,
+        type="error",
+    )
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([in_progress_event, error_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_stream_error"}}
+    updates: list[ChatResponseUpdate] = []
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(ChatClientException, match="OpenAI streaming error: server_error"),
+    ):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
+            updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].continuation_token == {"response_id": "resp_stream_error"}
+    assert "continuation_token" not in options
+
+
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
     """Test that response.created with in_progress status sets continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -8537,6 +9706,54 @@ def test_streaming_response_created_with_in_progress_status_sets_continuation_to
 
     assert update.continuation_token is not None
     assert _response_id_from_token(update.continuation_token) == "resp_created_123"
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "incomplete", "cancelled"])
+def test_streaming_response_created_with_terminal_status_clears_continuation_token(status: str) -> None:
+    """A terminal status embedded in response.created should terminate the operation."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_created_terminal"
+    in_progress_event.response.conversation = None
+
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_terminal"
+    created_event.response.conversation = None
+    created_event.response.status = status
+
+    updates = [
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(created_event, options={}, function_call_ids={}),
+    ]
+
+    assert _get_operation_state(updates[-1]) == "terminal"
+    assert ChatResponse.from_updates(updates).continuation_token is None
+
+
+async def test_resumed_stream_terminal_created_event_clears_continuation_token() -> None:
+    """A terminal response.created event should clear the resumed stream token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_cancelled"
+    created_event.response.conversation = None
+    created_event.response.status = "cancelled"
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([created_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_created_cancelled"}}
+
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        response = await stream.get_final_response()
+
+    assert response.continuation_token is None
+    assert "continuation_token" not in options
 
 
 def test_streaming_response_completed_no_continuation_token() -> None:
@@ -8665,6 +9882,47 @@ def test_streaming_terminal_response_sets_finish_reason(
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
 
     assert update.finish_reason == expected_finish_reason
+    assert _get_operation_state(update) == "terminal"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "incomplete_reason"),
+    [
+        ("response.failed", "failed", None),
+        ("response.incomplete", "incomplete", "other"),
+    ],
+)
+def test_streaming_terminal_response_clears_aggregated_continuation_token(
+    event_type: str,
+    status: str,
+    incomplete_reason: str | None,
+) -> None:
+    """Terminal Responses API events should clear an earlier continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_terminal"
+    in_progress_event.response.conversation = None
+
+    terminal_event = MagicMock()
+    terminal_event.type = event_type
+    terminal_event.response.id = "resp_terminal"
+    terminal_event.response.conversation = None
+    terminal_event.response.model = "test-model"
+    terminal_event.response.created_at = 1000000000
+    terminal_event.response.usage = None
+    terminal_event.response.status = status
+    terminal_event.response.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    )
+    terminal_event.response.output = []
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(terminal_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is None
 
 
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:

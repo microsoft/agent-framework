@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 import uuid
+from collections import deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -31,6 +32,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    validate_tool_mode,
 )
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
@@ -96,7 +98,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
             (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
-        tool_choice: Ollama only supports auto tool choice.
+        tool_choice: Only ``auto`` and ``none`` are supported (``none`` omits the tools).
+            ``required`` and ``allowed_tools`` raise ``ChatClientInvalidRequestException``.
         allow_multiple_tool_calls: Not configurable.
         user: Not supported.
         store: Not supported.
@@ -215,9 +218,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     """For thinking models: whether the model should think before responding."""
 
     # ChatOptions fields not supported in Ollama
-    tool_choice: None  # type: ignore[misc]
-    """Not supported. Ollama only supports auto tool choice."""
-
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Not configurable in Ollama."""
 
@@ -348,6 +348,15 @@ class OllamaChatClient(
         self.middleware = list(self.chat_middleware)
 
     @override
+    def service_url(self) -> str:
+        """Get the URL of the Ollama service.
+
+        Returns:
+            The Ollama server URL, used for the ``server.address`` telemetry attribute.
+        """
+        return self.host
+
+    @override
     def _inner_get_response(
         self,
         *,
@@ -371,8 +380,15 @@ class OllamaChatClient(
                 except Exception as ex:
                     raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-                async for part in response_object:
-                    yield self._parse_streaming_response_from_ollama(part)
+                # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                # instead of leaving the response open until the generator is garbage collected.
+                try:
+                    async for part in response_object:
+                        yield self._parse_streaming_response_from_ollama(part)
+                finally:
+                    aclose = getattr(response_object, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -406,7 +422,7 @@ class OllamaChatClient(
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Keys to exclude from processing
-        exclude_keys = {"instructions", "tool_choice"}
+        exclude_keys = {"instructions", "tool_choice", "tools"}
 
         # Build run_options and model_options separately
         run_options: dict[str, Any] = {}
@@ -419,6 +435,9 @@ class OllamaChatClient(
             if key in OLLAMA_MODEL_OPTIONS:
                 # Apply model option translations (e.g., max_tokens -> num_predict)
                 translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
+                if key == "stop" and isinstance(value, str):
+                    # ChatOptions allows a single stop string; Ollama takes a list.
+                    value = [value]
                 model_options[translated_key] = value
             else:
                 # Apply top-level translations (e.g., response_format -> format)
@@ -449,14 +468,39 @@ class OllamaChatClient(
             run_options["model"] = self.model
 
         # tools
+        # Ollama has no tool_choice parameter. Only "auto" (send the tools) and "none" (don't send them)
+        # can be honored, so anything else is rejected instead of silently behaving like "auto".
+        tool_mode = validate_tool_mode(options.get("tool_choice"))
+        if tool_mode is not None:
+            if tool_mode.get("mode") == "required":
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice mode 'required'. Use 'auto' or 'none'."
+                )
+            if "allowed_tools" in tool_mode:
+                raise ChatClientInvalidRequestException(
+                    "Ollama does not support tool_choice 'allowed_tools'. Pass only the tools you want to allow."
+                )
         tools = options.get("tools")
-        if tools is not None and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+        tools_disabled = tool_mode is not None and tool_mode.get("mode") == "none"
+        if tools is not None and not tools_disabled and (prepared_tools := self._prepare_tools_for_ollama(tools)):
             run_options["tools"] = prepared_tools
 
         return run_options
 
     def _prepare_messages_for_ollama(self, messages: Sequence[Message]) -> list[OllamaMessage]:
-        ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
+        # Function results don't carry the tool name, but Ollama expects it on tool messages.
+        # Walk the messages in order and give each result the name of the earliest unanswered
+        # call with the same call_id, so a call_id reused later still maps correctly.
+        pending_calls: dict[str, deque[str]] = {}
+        ollama_messages: list[list[OllamaMessage]] = []
+        for msg in messages:
+            if msg.role == "tool":
+                ollama_messages.append(self._format_tool_message(msg, pending_calls))
+                continue
+            for content in msg.contents:
+                if content.type == "function_call" and content.call_id and content.name:
+                    pending_calls.setdefault(content.call_id, deque()).append(content.name)
+            ollama_messages.append(self._prepare_message_for_ollama(msg))
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
@@ -484,7 +528,8 @@ class OllamaChatClient(
         user_message = OllamaMessage(role="user", content=message.text)
         data_contents = [c for c in message.contents if c.type == "data"]
         if data_contents:
-            if not any(c.has_top_level_media_type("image") for c in data_contents):
+            # Every data item is sent in `images`, so reject the message if any of them is not an image.
+            if not all(c.has_top_level_media_type("image") for c in data_contents):
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
@@ -515,7 +560,9 @@ class OllamaChatClient(
             ]
         return [assistant_message]
 
-    def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
+    def _format_tool_message(
+        self, message: Message, pending_calls: dict[str, deque[str]] | None = None
+    ) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
         messages: list[OllamaMessage] = []
         for item in message.contents:
@@ -532,8 +579,11 @@ class OllamaChatClient(
                 else:
                     tool_text = str(item.result) if item.result is not None else ""
 
-                # Get the tool name directly from the content item.
-                tool_name = getattr(item, "name", "") or ""
+                tool_name = getattr(item, "name", None) or ""
+                pending = (pending_calls or {}).get(item.call_id or "")
+                if pending:
+                    queued_name = pending.popleft()
+                    tool_name = tool_name or queued_name
                 messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 

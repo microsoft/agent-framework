@@ -64,8 +64,13 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async ValueTask InitializeAsync() =>
+    public async ValueTask InitializeAsync()
+    {
+        // Skipping here covers every conformance test in this project, because each test initializes this fixture first.
+        Assert.SkipWhen(!string.IsNullOrEmpty(TestSkipReasons.OpenAIIntegrationTests), TestSkipReasons.OpenAIIntegrationTests ?? string.Empty);
+
         this._agent = await this.CreateChatClientAgentAsync();
+    }
 
     public ValueTask DisposeAsync()
     {

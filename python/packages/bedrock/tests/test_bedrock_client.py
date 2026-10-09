@@ -15,8 +15,12 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient, BedrockEmbeddingClient
-from agent_framework_bedrock._chat_client import BedrockSettings
+from agent_framework_bedrock import (
+    BedrockChatClient,
+    BedrockChatOptions,
+    BedrockEmbeddingClient,
+    BedrockSettings,
+)
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
 
@@ -146,6 +150,214 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
     assert response.usage_details and response.usage_details["output_token_count"] == 18
     assert response.model == "us.openai.gpt-6-sol"
     assert stub.stream.closed
+
+
+def test_process_converse_response_parses_reasoning_content() -> None:
+    client = _make_client()
+
+    response = client._process_converse_response({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"reasoningText": {"text": "Need the weather tool.", "signature": "sig-1"}}},
+                    {"toolUse": {"toolUseId": "call-1", "name": "get_weather", "input": {"city": "Paris"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    })
+
+    reasoning, function_call = response.messages[0].contents
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text == "Need the weather tool."
+    assert reasoning.protected_data == "sig-1"
+    assert function_call.type == "function_call"
+
+
+async def test_stream_merges_reasoning_text_and_signature() -> None:
+    stub = _StubBedrockStreamRuntime([
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Let me "}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "think."}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}, "contentBlockIndex": 1}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-sonnet-4",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hi")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    reasoning = [content for content in response.messages[0].contents if content.type == "text_reasoning"]
+    assert len(reasoning) == 1
+    assert reasoning[0].text == "Let me think."
+    assert reasoning[0].protected_data == "sig-1"
+    assert response.text == "Done."
+
+
+def test_prepare_bedrock_messages_sends_reasoning_back_with_tool_use() -> None:
+    """Extended thinking with tool use fails unless the signed reasoning is replayed before the toolUse block."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="Weather in Paris?")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(text="Need the weather tool.", protected_data="sig-1"),
+                Content.from_function_call(call_id="call-1", name="get_weather", arguments={"city": "Paris"}),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="88F")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert conversation[1]["content"][0] == {
+        "reasoningContent": {"reasoningText": {"text": "Need the weather tool.", "signature": "sig-1"}}
+    }
+    assert "toolUse" in conversation[1]["content"][1]
+
+
+def test_prepare_bedrock_messages_skips_reasoning_outside_assistant_messages() -> None:
+    client = _make_client()
+    messages = [
+        Message(
+            role="user",
+            contents=[Content.from_text(text="hi"), Content.from_text_reasoning(text="not from the model")],
+        )
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert conversation[0]["content"] == [{"text": "hi"}]
+
+
+async def test_stream_keeps_consecutive_reasoning_blocks_separate() -> None:
+    """Each streamed reasoning block must keep its own text and signature when replayed."""
+    stub = _StubBedrockStreamRuntime([
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "First "}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thought."}}, "contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 0}},
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Second thought."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-2"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {
+            "contentBlockStart": {
+                "start": {"toolUse": {"toolUseId": "call-1", "name": "get_weather"}},
+                "contentBlockIndex": 2,
+            }
+        },
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"city": "Paris"}'}}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-sonnet-4",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="Weather in Paris?")])],
+        options={},
+        stream=True,
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    reasoning = [content for content in response.messages[0].contents if content.type == "text_reasoning"]
+    assert [(content.text, content.protected_data) for content in reasoning] == [
+        ("First thought.", "sig-1"),
+        ("Second thought.", "sig-2"),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][:2] == [
+        {"reasoningContent": {"reasoningText": {"text": "First thought.", "signature": "sig-1"}}},
+        {"reasoningContent": {"reasoningText": {"text": "Second thought.", "signature": "sig-2"}}},
+    ]
+    assert "toolUse" in conversation[0]["content"][2]
+
+
+def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    client = _make_client()
+    redacted = b"\x00\x01encrypted-reasoning\xff"
+
+    response = client._process_converse_response({
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"reasoningContent": {"redactedContent": redacted}},
+                    {"toolUse": {"toolUseId": "call-1", "name": "get_weather", "input": {"city": "Paris"}}},
+                ],
+            }
+        },
+        "stopReason": "tool_use",
+    })
+
+    reasoning = response.messages[0].contents[0]
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text is None
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
+    assert "toolUse" in conversation[0]["content"][1]
+
+
+async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
+    stub = _StubBedrockStreamRuntime([
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"\x00\x01part"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {
+            "contentBlockDelta": {
+                "delta": {"reasoningContent": {"redactedContent": b"-two\xff"}},
+                "contentBlockIndex": 0,
+            }
+        },
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Visible."}}, "contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "sig-1"}}, "contentBlockIndex": 1}},
+        {"contentBlockStop": {"contentBlockIndex": 1}},
+        {"contentBlockDelta": {"delta": {"text": "Done."}, "contentBlockIndex": 2}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    client = BedrockChatClient(
+        model="anthropic.claude-3-7-sonnet",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    stream = client._inner_get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hi")])], options={}, stream=True
+    )
+    assert isinstance(stream, ResponseStream)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    _, conversation = client._prepare_bedrock_messages(response.messages)
+    assert conversation[0]["content"] == [
+        {"reasoningContent": {"redactedContent": b"\x00\x01part-two\xff"}},
+        {"reasoningContent": {"reasoningText": {"text": "Visible.", "signature": "sig-1"}}},
+        {"text": "Done."},
+    ]
 
 
 def test_build_request_requires_non_system_messages() -> None:
@@ -453,6 +665,88 @@ def test_prepare_options_adds_instructions_and_sampling_settings() -> None:
         "topP": 0.9,
         "stopSequences": ["DONE"],
     }
+
+
+def test_prepare_options_single_stop_string_becomes_list() -> None:
+    """stopSequences only accepts a list, so a single stop string is wrapped."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(messages, {"stop": "DONE"})
+
+    assert request["inferenceConfig"]["stopSequences"] == ["DONE"]
+
+
+async def test_get_response_forwards_bedrock_specific_options() -> None:
+    """Bedrock-specific options should reach the Converse request as top-level fields."""
+    stub = _StubBedrockRuntime()
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    bedrock_options: BedrockChatOptions = {
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"},
+        "performanceConfig": {"latency": "optimized"},
+        "requestMetadata": {"tenant": "contoso"},
+        "promptVariables": {"topic": {"text": "hash maps"}},
+    }
+
+    await client.get_response(
+        [Message(role="user", contents=[Content.from_text(text="hello")])], options=bedrock_options
+    )
+
+    payload = stub.calls[0]
+    assert {key: payload.get(key) for key in bedrock_options} == bedrock_options
+
+
+async def test_guardrail_stream_processing_mode_is_sent_only_to_converse_stream() -> None:
+    """ConverseStream accepts streamProcessingMode and Converse rejects it, so only the Converse request drops it."""
+    stub = _StubBedrockStreamRuntime([{"messageStop": {"stopReason": "end_turn"}}])
+    client = BedrockChatClient(
+        model="us.openai.gpt-6-sol",
+        region="us-east-1",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+    options: BedrockChatOptions = {
+        "guardrailConfig": {"guardrailIdentifier": "gr-123", "guardrailVersion": "1", "streamProcessingMode": "async"}
+    }
+
+    await client.get_response(messages, options=options)
+    stream = client._inner_get_response(messages=messages, options=options, stream=True)
+    assert isinstance(stream, ResponseStream)
+    _ = [update async for update in stream]
+
+    assert stub.calls[0]["guardrailConfig"] == {"guardrailIdentifier": "gr-123", "guardrailVersion": "1"}
+    assert stub.calls[1]["guardrailConfig"] == options["guardrailConfig"]
+    assert options["guardrailConfig"]["streamProcessingMode"] == "async"
+
+
+def test_prepare_options_prompt_management_arn_omits_fields_converse_rejects(caplog: pytest.LogCaptureFixture) -> None:
+    """Converse rejects inferenceConfig, system, toolConfig and additionalModelRequestFields with a prompt ARN."""
+    client = _make_client()
+    client.model = "arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT1234:1"
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+    variables: BedrockChatOptions = {"promptVariables": {"topic": {"text": "hash maps"}}}
+
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, variables)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert not caplog.records  # the client's default maxTokens is dropped without a warning
+
+    caller_set: BedrockChatOptions = {
+        **variables,
+        "instructions": "Be brief.",
+        "temperature": 0.2,
+        "tools": [{"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}}],
+        "additionalModelRequestFields": {"reasoning": {"effort": "low"}},
+    }
+    with caplog.at_level("WARNING", logger="agent_framework.bedrock"):
+        request = client._prepare_options(messages, caller_set)
+    assert set(request) == {"modelId", "messages", "promptVariables"}
+    assert "inferenceConfig, system, toolConfig, additionalModelRequestFields" in caplog.text
 
 
 def test_prepare_options_unsupported_tool_mode_raises(monkeypatch: pytest.MonkeyPatch) -> None:

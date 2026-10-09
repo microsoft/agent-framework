@@ -30,7 +30,7 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
-from ._event_converters import AGUIEventConverter
+from ._event_converters import AGUIEventConverter, _finalize_agui_response
 from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
@@ -430,17 +430,19 @@ class AGUIChatClient(
                     options=options,
                     **kwargs,
                 ),
-                finalizer=ChatResponse.from_updates,
+                finalizer=_finalize_agui_response,
             )
 
         async def _get_response() -> ChatResponse:
-            return await ChatResponse.from_update_generator(
-                self._streaming_impl(
+            updates = [
+                update
+                async for update in self._streaming_impl(
                     messages=messages,
                     options=options,
                     **kwargs,
                 )
-            )
+            ]
+            return _finalize_agui_response(updates)
 
         return _get_response()
 
@@ -501,7 +503,7 @@ class AGUIChatClient(
 
         available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
-        async for event in self._http_service.post_run(
+        events = self._http_service.post_run(
             thread_id=thread_id,
             run_id=run_id,
             messages=agui_messages,
@@ -509,29 +511,47 @@ class AGUIChatClient(
             tools=agui_tools,
             available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
             resume=_serialize_resume(options.get("resume")),
-        ):
-            logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
-            update = converter.convert_event(event)
-            if update is not None:
-                logger.debug(
-                    "[AGUIChatClient] Converted update",
-                    extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
-                )
-                # Distinguish client vs server tools
-                for i, content in enumerate(update.contents):
-                    if content.type == "function_call":
-                        logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
-                        )
-                        if content.name in client_tool_set:
-                            # Client tool - let function invocation execute it
-                            if not content.additional_properties:
-                                content.additional_properties = {}
-                            content.additional_properties["agui_thread_id"] = thread_id
-                        else:
-                            # Server tool - wrap so function invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
-                            self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
-                            update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
+        )
+        body_failed = False
+        try:
+            async for event in events:
+                logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+                update = converter.convert_event(event)
+                if update is not None:
+                    logger.debug(
+                        "[AGUIChatClient] Converted update",
+                        extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
+                    )
+                    # Distinguish client vs server tools
+                    for i, content in enumerate(update.contents):
+                        if content.type == "function_call":
+                            logger.debug(
+                                f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
+                            )
+                            if content.name in client_tool_set:
+                                # Client tool - let function invocation execute it
+                                if not content.additional_properties:
+                                    content.additional_properties = {}
+                                content.additional_properties["agui_thread_id"] = thread_id
+                            else:
+                                # Server tool - wrap so function invocation ignores it
+                                logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
+                                self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
+                                update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
-                yield update
+                    yield update
+        except GeneratorExit:
+            # An explicit close() has no body failure to take precedence over cleanup.
+            raise
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    if not body_failed:
+                        raise
+                    logger.warning("AG-UI event cleanup failed while handling an existing exception.", exc_info=True)

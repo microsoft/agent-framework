@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -14,6 +15,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 
@@ -51,14 +53,24 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     private readonly ILogger<FoundryToolboxService> _logger;
 
     private readonly Dictionary<string, CachedToolbox> _toolboxes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, CachedToolbox>> _requestToolboxes =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, IReadOnlyList<McpConsentInfo>>> _requestConsents =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _requestOpenLocks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IReadOnlyList<McpConsentInfo>> _pendingConsents = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _deferredToolboxNames = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemaphoreSlim _lazyOpenLock = new(1, 1);
 
     private string? _resolvedEndpoint;
     private string? _featuresHeader;
     private string _agentName = "hosted-agent";
     private string _agentVersion = "1.0.0";
+
+    /// <summary>
+    /// Gets the consent link policy built from <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// The response handler applies it before surfacing any consent link from these toolboxes.
+    /// </summary>
+    internal OAuthConsentLinkPolicy ConsentLinkPolicy { get; }
 
     /// <summary>
     /// Gets the cached list of <see cref="AITool"/> instances discovered from all
@@ -117,6 +129,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         this._options = options.Value;
         this._credential = credential;
         this._logger = logger ?? NullLogger<FoundryToolboxService>.Instance;
+        this.ConsentLinkPolicy = new OAuthConsentLinkPolicy(this._options.AllowedOAuthConsentOrigins);
     }
 
     /// <summary>
@@ -256,7 +269,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// Retries enumeration for any pre-registered toolbox that was awaiting user OAuth consent at
     /// startup. Call this at the start of request handling: once the user has completed consent
     /// out of band, the proxy holds a valid token and <c>tools/list</c> now succeeds, so the
-    /// toolbox's tools become available and are appended to <see cref="Tools"/>.
+    /// toolbox's tools become available within the current response scope.
     /// </summary>
     /// <param name="cancellationToken">The request cancellation token.</param>
     /// <returns>
@@ -267,40 +280,41 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// </returns>
     internal async ValueTask<IReadOnlyList<McpConsentInfo>> ResolvePendingConsentsAsync(CancellationToken cancellationToken)
     {
-        // Fast path: nothing awaiting consent.
-        if (this.ConsentRequiredToolboxNames.Count == 0)
+        var requestConsents = this.GetCurrentRequestConsents();
+
+        // Fast path: nothing awaiting consent from startup or the deferred retry in this request.
+        if (this.ConsentRequiredToolboxNames.Count == 0 && requestConsents.Count == 0)
         {
             return [];
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (this._pendingConsents.Count == 0)
-            {
-                return [];
-            }
-
-            var stillPending = new List<McpConsentInfo>();
-            var resolvedTools = new List<AITool>();
+            var stillPending = new List<McpConsentInfo>(requestConsents);
 
             foreach (var toolboxName in new List<string>(this._pendingConsents.Keys))
             {
+                if (this.HasCurrentRequestResolution(toolboxName))
+                {
+                    continue;
+                }
+
                 try
                 {
                     var result = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
                     if (result.Consents is { } consents)
                     {
-                        // Still gated: refresh the consent info (the URL may rotate) and surface it.
-                        this._pendingConsents[toolboxName] = consents;
+                        // Consent URLs can be user-specific. Keep the refreshed result inside this
+                        // request instead of replacing the startup snapshot shared by the singleton.
+                        this.CacheRequestConsents(toolboxName, consents);
                         stillPending.AddRange(consents);
                         continue;
                     }
 
                     var cached = result.Cached!;
-                    this._toolboxes[toolboxName] = cached;
-                    resolvedTools.AddRange(cached.Tools);
-                    this._pendingConsents.Remove(toolboxName);
+                    this.CacheRequestToolbox(toolboxName, cached);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -316,18 +330,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 }
             }
 
-            if (resolvedTools.Count > 0)
-            {
-                this.Tools = [.. this.Tools, .. resolvedTools];
-            }
-
-            this.RecomputeStatus();
-
             return stillPending;
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
         }
     }
 
@@ -337,9 +344,9 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// request handling, before <see cref="ResolvePendingConsentsAsync"/>: the request's egress carries
     /// the platform-injected per-user isolation key, so a toolbox that needs a delegated user identity
     /// (for example a Microsoft Graph / Agent365 connection) can now enumerate as that user. On success
-    /// the toolbox's tools are appended to <see cref="Tools"/>; if the proxy now reports the source needs
-    /// user OAuth consent, the toolbox is moved to the pending-consent set so the caller surfaces the
-    /// consent prompt; if it still fails, it stays deferred and is retried on a later request.
+    /// the toolbox's tools are retained only for the current response; if the proxy reports the source needs
+    /// user OAuth consent, that consent is also retained only for the current response; if it still fails,
+    /// the toolbox stays deferred and is retried on a later request.
     /// </summary>
     /// <param name="cancellationToken">The request cancellation token.</param>
     internal async ValueTask RetryDeferredToolboxesAsync(CancellationToken cancellationToken)
@@ -350,7 +357,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             return;
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (this._deferredToolboxNames.Count == 0)
@@ -358,27 +366,26 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 return;
             }
 
-            var resolvedTools = new List<AITool>();
-
             foreach (var toolboxName in new List<string>(this._deferredToolboxNames))
             {
+                if (this.HasCurrentRequestResolution(toolboxName))
+                {
+                    continue;
+                }
+
                 try
                 {
                     var result = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
                     if (result.Consents is { } consents)
                     {
-                        // With the per-user context now present, the proxy reports the tool source
-                        // needs user OAuth consent. Move it to the pending-consent set (the handler
-                        // surfaces the prompt) and drop it from the deferred set.
-                        this._pendingConsents[toolboxName] = consents;
-                        this._deferredToolboxNames.Remove(toolboxName);
+                        // Consent state belongs to this request. A different request must enumerate
+                        // independently because its caller context can produce a different result.
+                        this.CacheRequestConsents(toolboxName, consents);
                         continue;
                     }
 
                     var cached = result.Cached!;
-                    this._toolboxes[toolboxName] = cached;
-                    resolvedTools.AddRange(cached.Tools);
-                    this._deferredToolboxNames.Remove(toolboxName);
+                    this.CacheRequestToolbox(toolboxName, cached);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -392,23 +399,16 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                     }
                 }
             }
-
-            if (resolvedTools.Count > 0)
-            {
-                this.Tools = [.. this.Tools, .. resolvedTools];
-            }
-
-            this.RecomputeStatus();
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
         }
     }
 
     /// <summary>
-    /// Resolves the tools for a per-request toolbox marker. Returns cached tools when the
-    /// toolbox has already been opened; otherwise honors
+    /// Resolves the tools for a per-request toolbox marker. Returns startup-cached tools or tools
+    /// already opened in the current response; otherwise honors
     /// <see cref="FoundryToolboxOptions.StrictMode"/> to either reject or lazily open it.
     /// </summary>
     /// <param name="toolboxName">The Foundry toolbox name from the marker.</param>
@@ -443,6 +443,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             return new ToolboxResolution(cached.Tools, []);
         }
 
+        if (this.TryGetCurrentRequestToolbox(toolboxName, out cached))
+        {
+            return new ToolboxResolution(cached.Tools, []);
+        }
+
         if (this._options.StrictMode && !this._options.ToolboxNames.Contains(toolboxName, StringComparer.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
@@ -456,11 +461,17 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 $"Cannot resolve toolbox '{toolboxName}': FOUNDRY_PROJECT_ENDPOINT is not set.");
         }
 
-        await this._lazyOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var requestOpenLock = this.GetCurrentRequestOpenLock();
+        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Double-check after acquiring the lock to avoid duplicate opens under concurrency.
             if (this._toolboxes.TryGetValue(toolboxName, out cached))
+            {
+                return new ToolboxResolution(cached.Tools, []);
+            }
+
+            if (this.TryGetCurrentRequestToolbox(toolboxName, out cached))
             {
                 return new ToolboxResolution(cached.Tools, []);
             }
@@ -477,12 +488,210 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
 
             cached = result.Cached!;
-            this._toolboxes[toolboxName] = cached;
+            this.CacheRequestToolbox(toolboxName, cached);
             return new ToolboxResolution(cached.Tools, []);
         }
         finally
         {
-            this._lazyOpenLock.Release();
+            requestOpenLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Creates an async-disposable owner for toolbox clients opened while handling one response.
+    /// </summary>
+    internal RequestToolboxScope CreateRequestScope()
+    {
+        // Do not derive this key from a platform identifier. Concurrent recovery or duplicate
+        // delivery can reuse externally meaningful ids, but active response caches must never alias.
+        return RequestToolboxScope.Create(this, Guid.NewGuid().ToString("N"));
+    }
+
+    /// <summary>
+    /// Gets tools opened inside the current response scope by deferred or consent retries.
+    /// </summary>
+    internal IReadOnlyList<AITool> GetCurrentRequestTools()
+    {
+        var scopeId = GetCurrentRequestScopeId();
+        if (scopeId is null || !this._requestToolboxes.TryGetValue(scopeId, out var toolboxes))
+        {
+            return [];
+        }
+
+        return [.. toolboxes.Values.SelectMany(static cached => cached.Tools)];
+    }
+
+    private static string? GetCurrentRequestScopeId() =>
+        HostedCallContext.ToolboxCacheScopeId ?? HostedCallContext.CallId;
+
+    private SemaphoreSlim GetCurrentRequestOpenLock()
+    {
+        var scopeId = GetCurrentRequestScopeId()
+            ?? throw new InvalidOperationException(
+                "A response-scoped toolbox cache identifier is required before resolving a toolbox during request handling.");
+        return this._requestOpenLocks.GetOrAdd(scopeId, static _ => new SemaphoreSlim(1, 1));
+    }
+
+    private bool HasCurrentRequestResolution(string toolboxName) =>
+        this.TryGetCurrentRequestToolbox(toolboxName, out _)
+        || this.TryGetCurrentRequestConsents(toolboxName, out _);
+
+    private bool TryGetCurrentRequestToolbox(
+        string toolboxName,
+        [NotNullWhen(true)] out CachedToolbox? cached)
+    {
+        var scopeId = GetCurrentRequestScopeId();
+        if (scopeId is not null
+            && this._requestToolboxes.TryGetValue(scopeId, out var toolboxes)
+            && toolboxes.TryGetValue(toolboxName, out cached))
+        {
+            return true;
+        }
+
+        cached = null;
+        return false;
+    }
+
+    private bool TryGetCurrentRequestConsents(
+        string toolboxName,
+        [NotNullWhen(true)] out IReadOnlyList<McpConsentInfo>? consents)
+    {
+        var scopeId = GetCurrentRequestScopeId();
+        if (scopeId is not null
+            && this._requestConsents.TryGetValue(scopeId, out var toolboxConsents)
+            && toolboxConsents.TryGetValue(toolboxName, out consents))
+        {
+            return true;
+        }
+
+        consents = null;
+        return false;
+    }
+
+    private IReadOnlyList<McpConsentInfo> GetCurrentRequestConsents()
+    {
+        var scopeId = GetCurrentRequestScopeId();
+        if (scopeId is null || !this._requestConsents.TryGetValue(scopeId, out var toolboxConsents))
+        {
+            return [];
+        }
+
+        return [.. toolboxConsents.Values.SelectMany(static consents => consents)];
+    }
+
+    private void CacheRequestToolbox(string toolboxName, CachedToolbox cached)
+    {
+        var scopeId = GetCurrentRequestScopeId()
+            ?? throw new InvalidOperationException(
+                "A response-scoped toolbox cache identifier is required before opening a toolbox during request handling.");
+        var toolboxes = this._requestToolboxes.GetOrAdd(
+            scopeId,
+            static _ => new ConcurrentDictionary<string, CachedToolbox>(StringComparer.OrdinalIgnoreCase));
+        toolboxes[toolboxName] = cached;
+
+        if (this._requestConsents.TryGetValue(scopeId, out var toolboxConsents))
+        {
+            toolboxConsents.TryRemove(toolboxName, out _);
+        }
+    }
+
+    private void CacheRequestConsents(string toolboxName, IReadOnlyList<McpConsentInfo> consents)
+    {
+        var scopeId = GetCurrentRequestScopeId()
+            ?? throw new InvalidOperationException(
+                "A response-scoped toolbox cache identifier is required before resolving toolbox consent during request handling.");
+        var toolboxConsents = this._requestConsents.GetOrAdd(
+            scopeId,
+            static _ => new ConcurrentDictionary<string, IReadOnlyList<McpConsentInfo>>(StringComparer.OrdinalIgnoreCase));
+        toolboxConsents[toolboxName] = consents;
+    }
+
+    private async ValueTask ReleaseRequestScopeWithoutThrowAsync(string scopeId)
+    {
+        _ = await this.ReleaseRequestScopeAsync(scopeId).ConfigureAwait(false);
+    }
+
+    private async ValueTask<IReadOnlyList<Exception>> ReleaseRequestScopeAsync(string scopeId)
+    {
+        List<Exception> failures = [];
+        this._requestConsents.TryRemove(scopeId, out _);
+
+        if (this._requestToolboxes.TryRemove(scopeId, out var toolboxes))
+        {
+            foreach (var (toolboxName, cached) in toolboxes)
+            {
+                await this.DisposeCachedToolboxAsync(
+                    cached,
+                    toolboxName,
+                    $"response scope '{scopeId}'",
+                    failures).ConfigureAwait(false);
+            }
+        }
+
+        if (this._requestOpenLocks.TryRemove(scopeId, out var requestOpenLock))
+        {
+            try
+            {
+                requestOpenLock.Dispose();
+            }
+            catch (Exception ex)
+            {
+                this.RecordDisposalFailure(
+                    ex,
+                    resource: "request open lock",
+                    toolboxName: null,
+                    owner: $"response scope '{scopeId}'",
+                    failures);
+            }
+        }
+
+        return failures;
+    }
+
+    private async ValueTask DisposeCachedToolboxAsync(
+        CachedToolbox cached,
+        string toolboxName,
+        string owner,
+        List<Exception> failures)
+    {
+        if (cached.Client is not null)
+        {
+            try
+            {
+                await cached.Client.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                this.RecordDisposalFailure(ex, "MCP client", toolboxName, owner, failures);
+            }
+        }
+
+        try
+        {
+            cached.HttpClient.Dispose();
+        }
+        catch (Exception ex)
+        {
+            this.RecordDisposalFailure(ex, "HTTP client", toolboxName, owner, failures);
+        }
+    }
+
+    private void RecordDisposalFailure(
+        Exception exception,
+        string resource,
+        string? toolboxName,
+        string owner,
+        List<Exception> failures)
+    {
+        failures.Add(exception);
+        if (this._logger.IsEnabled(LogLevel.Warning))
+        {
+            this._logger.LogWarning(
+                exception,
+                "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.",
+                resource,
+                toolboxName ?? "(none)",
+                owner);
         }
     }
 
@@ -547,6 +756,47 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             "Toolbox names must resolve to a single path segment and must not alter the request target.");
     }
 
+    internal static HttpClientHandler CreateToolboxPrimaryHttpMessageHandler() =>
+        new()
+        {
+            UseCookies = false,
+            AllowAutoRedirect = false,
+            CheckCertificateRevocationList = true
+        };
+
+    internal static HttpMessageHandler CreateToolboxHttpMessageHandler(
+        Uri endpoint,
+        TokenCredential credential,
+        string? featuresHeader,
+        HttpMessageHandler? primaryHandler = null)
+    {
+        _ = Throw.IfNull(endpoint);
+        _ = Throw.IfNull(credential);
+
+        primaryHandler ??= CreateToolboxPrimaryHttpMessageHandler();
+        var originPinningHandler = new OriginPinningHandler(endpoint)
+        {
+            InnerHandler = primaryHandler
+        };
+
+        // The bearer handler must run before the pinning handler so any credential it adds
+        // is removed before network dispatch if a future transport creates a foreign request.
+        return new FoundryToolboxBearerTokenHandler(credential, featuresHeader, endpoint)
+        {
+            InnerHandler = originPinningHandler
+        };
+    }
+
+    internal static HttpClientTransportOptions CreateToolboxTransportOptions(Uri endpoint, string toolboxName) =>
+        new()
+        {
+            Endpoint = endpoint,
+            Name = toolboxName,
+            // Streamable HTTP does not accept the server-selected message endpoint used by
+            // the legacy SSE transport, so requests remain bound to the configured origin.
+            TransportMode = HttpTransportMode.StreamableHttp,
+        };
+
     private async Task<ToolboxOpenResult> OpenToolboxAsync(
         string toolboxName,
         string? version,
@@ -576,19 +826,10 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         // Build the endpoint URI before allocating the HttpClient so a malformed URL cannot leak it.
         var endpoint = new Uri(proxyUrl);
 
-        var handler = new FoundryToolboxBearerTokenHandler(this._credential, this._featuresHeader)
-        {
-            InnerHandler = new HttpClientHandler()
-        };
+        var httpClient = new HttpClient(
+            CreateToolboxHttpMessageHandler(endpoint, this._credential, this._featuresHeader));
 
-        var httpClient = new HttpClient(handler);
-
-        var transportOptions = new HttpClientTransportOptions
-        {
-            Endpoint = endpoint,
-            Name = toolboxName,
-        };
-
+        var transportOptions = CreateToolboxTransportOptions(endpoint, toolboxName);
         var transport = new HttpClientTransport(transportOptions, httpClient);
 
         var clientOptions = new McpClientOptions
@@ -600,8 +841,9 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
         };
 
-        // McpClient.CreateAsync performs discovery-first negotiation with down-level fallback and
-        // can throw for an unreachable proxy (the deferred-toolbox case, retried per request).
+        // McpClient.CreateAsync performs the Streamable HTTP initialize handshake (the transport is
+        // pinned, so there is no fallback to another transport) and can throw for an unreachable
+        // proxy (the deferred-toolbox case, retried per request).
         // Keep it inside the try so the HttpClient is always disposed on failure rather than
         // leaking a socket on every retry.
         McpClient? client = null;
@@ -665,18 +907,57 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
-        foreach (var cached in this._toolboxes.Values)
+        List<Exception> failures = [];
+        foreach (var (toolboxName, cached) in this._toolboxes)
         {
-            if (cached.Client is not null)
-            {
-                await cached.Client.DisposeAsync().ConfigureAwait(false);
-            }
-
-            cached.HttpClient.Dispose();
+            await this.DisposeCachedToolboxAsync(
+                cached,
+                toolboxName,
+                "service startup cache",
+                failures).ConfigureAwait(false);
         }
 
         this._toolboxes.Clear();
-        this._lazyOpenLock.Dispose();
+        var requestScopeIds = this._requestToolboxes.Keys
+            .Concat(this._requestConsents.Keys)
+            .Concat(this._requestOpenLocks.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        foreach (var scopeId in requestScopeIds)
+        {
+            failures.AddRange(await this.ReleaseRequestScopeAsync(scopeId).ConfigureAwait(false));
+        }
+
+        this._requestConsents.Clear();
+        this._requestOpenLocks.Clear();
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException("One or more Foundry toolbox resources failed to dispose.", failures);
+        }
+    }
+
+    internal sealed class RequestToolboxScope : IAsyncDisposable
+    {
+        private readonly FoundryToolboxService? _owner;
+        private int _disposed;
+
+        private RequestToolboxScope(FoundryToolboxService? owner, string id)
+        {
+            this._owner = owner;
+            this.Id = id;
+        }
+
+        internal string Id { get; }
+
+        internal static RequestToolboxScope Create(FoundryToolboxService owner, string id) => new(owner, id);
+
+        internal static RequestToolboxScope CreateInactive() => new(owner: null, Guid.NewGuid().ToString("N"));
+
+        public ValueTask DisposeAsync() =>
+            Interlocked.Exchange(ref this._disposed, 1) == 0 && this._owner is not null
+                ? this._owner.ReleaseRequestScopeWithoutThrowAsync(this.Id)
+                : ValueTask.CompletedTask;
     }
 
     internal sealed record CachedToolbox(McpClient? Client, HttpClient HttpClient, IReadOnlyList<AITool> Tools);

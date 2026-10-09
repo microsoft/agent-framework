@@ -108,6 +108,10 @@ public static class FoundryAgentSessionExtensions
             {
                 _ = Throw.IfNull(session);
                 _ = Throw.IfNullOrWhitespace(value);
+                HttpHeaderValidation.ValidateNoProhibitedCharacters(
+                    value,
+                    "userIdentity",
+                    "User identity must not contain NUL, carriage-return, or line-feed characters.");
                 session.StateBag.SetValue(FoundryHostedAgentUserIdentityKey, value);
             }
         }

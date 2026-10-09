@@ -4,9 +4,22 @@ This package contains the Microsoft Foundry integrations for Microsoft Agent Fra
 
 ## SDK compatibility
 
-This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later require
+This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later require
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
+
+## Tool ownership for preconfigured Foundry agents
+
+`FoundryAgent` connects to a PromptAgent or HostedAgent whose instructions, tool declarations, and tool-selection
+behavior are configured in Microsoft Foundry. The `tools=` argument supplies only the local Python implementations
+for function declarations already present on that remote agent; it does not replace or restrict the remote tool
+inventory.
+
+Per-run `tool_choice` restrictions and `allow_multiple_tool_calls` values cannot be sent with an agent reference and
+are ignored with a warning. The framework's unrestricted `tool_choice="auto"` default is omitted silently. Configure
+tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary per request.
+`FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do not change tools
+that execute inside the remote Foundry agent.
 
 ## Tracing an existing Foundry agent
 
@@ -82,6 +95,10 @@ entry points for existing traces, response IDs, and registered targets.
 
 ## Concurrent reuse
 
+When a Foundry agent is used through `as_tool(propagate_session=True)`, application-owned state propagates
+between the parent and child, but service-owned session handles do not. Each delegated invocation has its own
+service session. This also applies to an `Agent` configured with a `RawFoundryAgentChatClient`.
+
 A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
 non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
 `AgentSession` for each concurrent run and by passing separate messages and options.
@@ -151,9 +168,41 @@ agent = Agent(
 )
 ```
 
-Generally available factories: `get_code_interpreter_tool`,
+Non-preview factories: `get_computer_tool`, `get_code_interpreter_tool`,
 `get_file_search_tool`, `get_web_search_tool`,
 `get_image_generation_tool`, `get_mcp_tool`.
+
+`get_computer_tool()` returns the Foundry SDK's `ComputerTool` (available in
+`azure-ai-projects>=2.3.0`). The package still supports 2.2.x for other tools:
+only calling this factory on an older SDK raises `ImportError` with upgrade guidance.
+`get_computer_use_tool(...)` remains available for the separate preview API.
+The OpenAI Responses client also exposes `OpenAIChatClient.get_computer_tool()`.
+The new `ComputerSafetyCheck` type and `Content.from_computer_tool_call` /
+`Content.from_computer_tool_result` constructors are experimental Agent Framework APIs,
+even though Foundry's `ComputerTool` is a non-preview SDK model.
+
+Computer calls arrive as `Content` with `type="computer_tool_call"`, a
+provider item `id`, a distinct `call_id`, ordered `actions`, and optional
+`pending_safety_checks`. Unanswered calls require application input: inspect
+`AgentResponse.user_input_requests` (or `ChatResponse.messages[*].contents`),
+show the actions and warnings to the user, and execute actions only after
+approval. To continue, return `Content.from_computer_tool_result(call_id=...,
+screenshot=Content.from_data(image_bytes, "image/png"))` in a tool message;
+`Content.from_uri(...)` and `Content.from_hosted_file(...)` also work for
+screenshots. Shared `Content` allows a result without a screenshot for other
+providers, but OpenAI and Foundry Responses require one. If checks were pending,
+explicitly pass *only* those the
+application has confirmed as `acknowledged_safety_checks=[{"id": "..."}]`.
+The framework never acknowledges warnings on your behalf. Calls and results
+can be persisted as `Content.to_dict()` and restored with `Content.from_dict()`.
+A call already paired with a completed screenshot result stays in the transcript
+for audit (`informational_only=True`), but does not appear in
+`AgentResponse.user_input_requests`. When a workflow pauses on a computer call
+alongside locally executable functions, it sends their completed results with
+the screenshot in the original call order after the application responds. If
+any computer request in a workflow batch is cancelled, the remaining requests
+in that agent's batch are cancelled too; the terminal output retains already
+resolved results, and the next turn starts with a fresh agent session.
 
 > **Choosing a web grounding tool.** `get_web_search_tool` is the recommended
 > default — it requires no separate Bing resource and works with Azure OpenAI

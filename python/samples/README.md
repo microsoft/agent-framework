@@ -6,25 +6,44 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | Folder | Description |
 |--------|-------------|
-| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → graph workflows |
-| [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
+| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → workflows → harness → hosting |
+| [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations, security |
 | [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
 | [`04-hosting/`](./04-hosting/) | Deployment: A2A, self-hosted protocol helpers, and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos, including the [AG-UI single-agent demo](./05-end-to-end/ag_ui_single_agent/) using `FoundryChatClient` |
+
+For published integrations maintained outside the Agent Framework team, see
+[Community projects](./community-projects.md).
 
 ## Getting Started
 
 Start with `01-get-started/` and work through the numbered files:
 
-1. **[01_hello_agent.py](./01-get-started/01_hello_agent.py)** — Create and run your first agent
-2. **[02_add_tools.py](./01-get-started/02_add_tools.py)** — Add function tools with `@tool`
-3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentSession`
-4. **[04_memory.py](./01-get-started/04_memory.py)** — Agent memory with `ContextProvider`
-5. **[05_functional_workflow_with_agents.py](./01-get-started/05_functional_workflow_with_agents.py)** — Call agents inside a functional workflow
-6. **[06_functional_workflow_basics.py](./01-get-started/06_functional_workflow_basics.py)** — Write a workflow as a plain async function
-7. **[07_first_graph_workflow.py](./01-get-started/07_first_graph_workflow.py)** — Build a workflow with executors and edges
+| Step | Sample | What it demonstrates |
+| --- | --- | --- |
+| 1 | [01_hello_agent.py](./01-get-started/01_hello_agent.py) | Create and run your first agent |
+| 2 | [02_add_tools.py](./01-get-started/02_add_tools.py) | Add function tools with `@tool` |
+| 3 | [03_multi_turn.py](./01-get-started/03_multi_turn.py) | Multi-turn conversations with `AgentSession` |
+| 4 | [04_memory.py](./01-get-started/04_memory.py) | Agent memory with `ContextProvider` |
+| 5a | [05a_functional_workflow_basics.py](./01-get-started/05a_functional_workflow_basics.py) | Write a workflow as a plain async function |
+| 5b | [05b_functional_workflow_with_agents.py](./01-get-started/05b_functional_workflow_with_agents.py) | Call agents inside a functional workflow |
+| 5c | [05c_first_graph_workflow.py](./01-get-started/05c_first_graph_workflow.py) | Build a workflow with function executors and edges |
+| 6 | [06_agent_harness.py](./01-get-started/06_agent_harness.py) | Add planning, todo tracking, and compaction |
+| 7 | [07_hosting.py](./01-get-started/07_hosting.py) | Serve an agent with `ResponsesHostServer` |
 
 Durable Task and Azure Functions samples have moved to the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
+
+## Production Security & Prompt Injection Defense
+
+While getting-started tutorials demonstrate core mechanics with minimal boilerplate, real-world agents processing external or untrusted data (emails, web content, user-uploaded files, external APIs) require security controls against indirect prompt injection and data exfiltration.
+
+For the official security guidance, see [Agent Safety](https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety) on Microsoft Learn. The production security patterns in [`02-agents/security/`](./02-agents/security/) implement these practices end to end:
+
+1. **Prompt Injection Defense**: [`email_security_example.py`](./02-agents/security/email_security_example.py) shows `SecureAgentConfig`, quarantined processing with `quarantined_llm`, and approval gating for privileged tools.
+2. **Data Confidentiality & Exfiltration Prevention**: [`repo_confidentiality_example.py`](./02-agents/security/repo_confidentiality_example.py) demonstrates information flow tracking and preventing sensitive data exfiltration to public destinations.
+3. **MCP Tool Protection**: [`github_mcp_example.py`](./02-agents/security/github_mcp_example.py) demonstrates `SecureMCPToolProxy` wrapping remote MCP endpoints with local policy enforcement.
+4. **Principal-Bound Identity**: [`user_identity_security_example.py`](./02-agents/security/user_identity_security_example.py) shows principal binding and tenant isolation.
+5. **Architecture Reference**: Consult the [FIDES Developer Guide](./02-agents/security/FIDES_DEVELOPER_GUIDE.md) for full details on security middleware, labels, and auto-hiding behavior.
 
 ## Prerequisites
 
@@ -144,6 +163,13 @@ variable.
 | `agent-framework-foundry` | `FoundryChatClient` | `FOUNDRY_MODEL` | `gpt-4o` |
 | `agent-framework-foundry` | `FoundryAgent` | `FOUNDRY_AGENT_NAME` | `travel-planner` |
 | `agent-framework-foundry` | `FoundryAgent` | `FOUNDRY_AGENT_VERSION` | `v1` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_API_KEY` | `your-api-key` |
+| `agent-framework-gemini` | `GeminiChatClient` | `GOOGLE_MODEL` | `gemini-2.5-flash-lite` |
+| `agent-framework-gemini` | `GeminiEmbeddingClient` | `GOOGLE_EMBEDDING_MODEL` | `gemini-embedding-2` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_ENTERPRISE` | `true` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_GENAI_USE_VERTEXAI` | `true` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_PROJECT` | `your-project-id` |
+| `agent-framework-gemini` | `GeminiChatClient / GeminiEmbeddingClient` | `GOOGLE_CLOUD_LOCATION` | `global` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_CLI_PATH` | `copilot` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_MODEL` | `gpt-5` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_TIMEOUT` | `60` |

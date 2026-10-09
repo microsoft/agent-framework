@@ -49,6 +49,7 @@ Status is grouped into these buckets:
 | `agent-framework-monty` | `python/packages/monty` | `beta` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
+| `agent-framework-oracle` | `python/packages/oracle` | `alpha` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
 | `agent-framework-postgres` | `python/packages/postgres` | `alpha` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
@@ -56,6 +57,7 @@ Status is grouped into these buckets:
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
 | `agent-framework-sql-server` | `python/packages/sql-server` | `alpha` |
 | `agent-framework-tools` | `python/packages/tools` | `beta` |
+| `agent-framework-typesafe` | `python/packages/typesafe` | `alpha` |
 
 ## Deprecated / removed packages
 

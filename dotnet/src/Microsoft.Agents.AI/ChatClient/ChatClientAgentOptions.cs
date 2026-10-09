@@ -210,6 +210,15 @@ public sealed class ChatClientAgentOptions
     /// to handle approval requests for tools that truly require human approval.
     /// </para>
     /// <para>
+    /// A stored decision is re-checked against the tools available to the request that would act on it, and is
+    /// only reused while the tool it refers to still does not require approval. If that tool has since become an
+    /// <see cref="ApprovalRequiredAIFunction"/>, or is no longer available, the stored decision is discarded and
+    /// the pending call is rejected rather than executed. The model is normally able to recover from this by
+    /// issuing the call again, at which point it is surfaced to the caller for approval in the ordinary way.
+    /// Callers that vary their tool set between requests should therefore expect an occasional extra round-trip,
+    /// and an approval request for a call they had not been asked about before.
+    /// </para>
+    /// <para>
     /// Set this property to <see langword="true"/> to disable this behavior, in which case all tool calls in a
     /// response containing an approval-required tool are surfaced as approval requests.
     /// </para>

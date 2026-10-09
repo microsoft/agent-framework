@@ -19,11 +19,11 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`function_based_middleware.py`](./function_based_middleware.py) | Shows function-based agent and function middleware. |
 | [`middleware_termination.py`](./middleware_termination.py) | Demonstrates stopping a middleware pipeline early. |
 | [`message_injection_middleware.py`](./message_injection_middleware.py) | Demonstrates `MessageInjectionMiddleware` with a real Foundry chat client: enqueueing a follow-up message into the active session while a long-running async tool is awaiting. |
-| [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware can replace regular and streaming results, then post-process the final response. |
+| [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware registers result transforms and buffered re-derivation on its context before execution, then post-processes regular and streaming responses. |
 | [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating arguments with runtime context data. |
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
 | [`shared_state_middleware.py`](./shared_state_middleware.py) | Demonstrates sharing mutable state across middleware invocations. |
-| [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that tracks per-call usage in non-streaming and streaming tool-loop runs. |
+| [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that registers stream transforms on `ChatContext` before execution to track per-call usage in non-streaming and streaming tool-loop runs. |
 
 ## Running the usage tracking sample
 

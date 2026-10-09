@@ -285,7 +285,12 @@ class AgentContext:
             Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[AgentResponse], AgentResponse | Awaitable[AgentResponse]]]
+        stream_result_hooks: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ]
         | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
@@ -327,11 +332,69 @@ class AgentContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[AgentResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[AgentResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[AgentResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: (
+            Callable[[AgentResponse[Any]], Sequence[AgentResponseUpdate]] | None
+        ) = None
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
         # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
         # covering this pipeline's run. The final handler offers it for adoption by
         # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
         # gate binds to that run's identity and never to middleware-initiated runs.
         self._run_persistence_gate: _RunPersistenceGate | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]]:
+        """Transforms applied to agent updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[AgentResponseUpdate], AgentResponseUpdate | Awaitable[AgentResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [AgentResponse[Any]],
+            AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized agent response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [AgentResponse[Any]],
+                AgentResponse[Any] | Awaitable[AgentResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
 
     def _resolve_run_start_tools(self) -> list[ToolTypes]:
         """Resolve the run-start tool list for this invocation, normalized.
@@ -394,6 +457,10 @@ class FunctionInvocationContext:
                 bare ``Content`` of type ``function_approval_request``, which the
                 invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        parent_service_session_state_keys: Provider-owned keys in ``session.state`` declared by the invoking
+                parent agent and its client. The automatic function-calling loop supplies this value. Custom loops
+                that directly invoke an agent tool with session propagation must provide it explicitly, including
+                an empty collection when the parent declares no such keys.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
                 function-calling loop (for example via ``FunctionTool.invoke`` directly).
@@ -441,6 +508,7 @@ class FunctionInvocationContext:
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
         tools: list[ToolTypes] | None = None,
+        parent_service_session_state_keys: Collection[str] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -457,6 +525,8 @@ class FunctionInvocationContext:
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
                 appending or removing tools changes the model's available tools.
+            parent_service_session_state_keys: Provider-owned keys declared by the invoking parent agent and client,
+                or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
         self.arguments = arguments
@@ -464,6 +534,9 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.parent_service_session_state_keys: frozenset[str] | None = (
+            frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
+        )
         self.tools = tools
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
@@ -618,7 +691,13 @@ class ChatContext:
             Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]
         ]
         | None = None,
-        stream_result_hooks: Sequence[Callable[[ChatResponse], ChatResponse | Awaitable[ChatResponse]]] | None = None,
+        stream_result_hooks: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ]
+        | None = None,
         stream_cleanup_hooks: Sequence[Callable[[], Awaitable[None] | None]] | None = None,
     ) -> None:
         """Initialize the ChatContext.
@@ -651,8 +730,66 @@ class ChatContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        self.stream_update_gates_before: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_update_gates_after: list[Callable[[ChatResponseUpdate], object]] = []
+        self.stream_result_gates_before: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_result_gates_after: list[Callable[[ChatResponse[Any]], object]] = []
+        self.stream_buffer_updates = False
+        self.stream_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = None
+        self.stream_consumption_context_manager_factories: list[Callable[[], Any]] = []
+        self._stream_terminal_result_transforms: list[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ] = []
+        self._stream_terminal_result_gates: list[Callable[[ChatResponse[Any]], object]] = []
+        self._stream_terminal_result_to_updates: Callable[[ChatResponse[Any]], Sequence[ChatResponseUpdate]] | None = (
+            None
+        )
+        self._stream_terminal_result_is_authoritative = False
+        self._stream_release_hooks: list[Callable[[], Awaitable[None] | None]] = []
+        self._stream_release_error_hooks: list[Callable[[BaseException], Awaitable[None] | None]] = []
         self._message_replacements: list[tuple[Message, tuple[Message, ...]]] = []
         self._fallback_reconciliation_messages: list[Message] | None = None
+
+    @property
+    def stream_update_transforms(
+        self,
+    ) -> list[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]]:
+        """Transforms applied to chat updates after the middleware chain unwinds."""
+        return self.stream_transform_hooks
+
+    @stream_update_transforms.setter
+    def stream_update_transforms(
+        self,
+        transforms: Sequence[Callable[[ChatResponseUpdate], ChatResponseUpdate | Awaitable[ChatResponseUpdate]]],
+    ) -> None:
+        self.stream_transform_hooks = list(transforms)
+
+    @property
+    def stream_result_transforms(
+        self,
+    ) -> list[
+        Callable[
+            [ChatResponse[Any]],
+            ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+        ]
+    ]:
+        """Transforms applied to the finalized chat response after middleware unwinds."""
+        return self.stream_result_hooks
+
+    @stream_result_transforms.setter
+    def stream_result_transforms(
+        self,
+        transforms: Sequence[
+            Callable[
+                [ChatResponse[Any]],
+                ChatResponse[Any] | Awaitable[ChatResponse[Any] | None] | None,
+            ]
+        ],
+    ) -> None:
+        self.stream_result_hooks = list(transforms)
 
     def record_message_replacement(
         self,
@@ -1221,6 +1358,26 @@ class BaseMiddlewarePipeline(ABC):
             )
 
 
+def _warn_unbuffered_result_gates(stream: ResponseStream[Any, Any]) -> None:
+    """Warn when result gates are registered on a stream that releases updates unbuffered.
+
+    A result gate runs at finalization, so on an unbuffered stream the consumer has already
+    received every update by the time the gate raises: the gate fails open. Buffering holds
+    the updates until the gates pass. The check reads the final stream state, so gates and
+    buffering a middleware configured directly on the stream are reflected too.
+    """
+    if not stream._stream_updates:  # pyright: ignore[reportPrivateUsage]
+        return
+    if not (stream._result_gates_before or stream._result_gates_after):  # pyright: ignore[reportPrivateUsage]
+        return
+    logger.warning(
+        "Result gates are registered on a streamed run that releases updates unbuffered; "
+        "updates reach the consumer before the gates run, so a gate that raises cannot hold "
+        "the answer back. Enable buffering (stream_buffer_updates=True or buffer_updates()) "
+        "to make the gates blocking."
+    )
+
+
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain.
 
@@ -1299,12 +1456,39 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 
@@ -1483,12 +1667,39 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             await first_handler()
 
         if context.result and isinstance(context.result, ResponseStream):
-            for hook in context.stream_transform_hooks:
+            if context.stream_buffer_updates:
+                context.result.buffer_updates(result_to_updates=context.stream_result_to_updates)
+            for factory in context.stream_consumption_context_manager_factories:
+                context.result.with_consumption_context_manager(factory)
+            for hook in reversed(context.stream_update_transforms):
                 context.result.with_transform_hook(hook)
-            for result_hook in context.stream_result_hooks:
+            for result_hook in reversed(context.stream_result_transforms):
                 context.result.with_result_hook(result_hook)
+            for gate in reversed(context.stream_update_gates_before):
+                context.result.with_update_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_update_gates_after):
+                context.result.with_update_gate(gate, phase="after_transform")
+            for gate in reversed(context.stream_result_gates_before):
+                context.result.with_result_gate(gate, phase="before_transform")
+            for gate in reversed(context.stream_result_gates_after):
+                context.result.with_result_gate(gate, phase="after_transform")
+            for transform in context._stream_terminal_result_transforms:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_transform(transform)  # pyright: ignore[reportPrivateUsage]
+            for gate in context._stream_terminal_result_gates:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_gate(gate)  # pyright: ignore[reportPrivateUsage]
+            if context._stream_terminal_result_to_updates is not None:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_terminal_result_to_updates(  # pyright: ignore[reportPrivateUsage]
+                    context._stream_terminal_result_to_updates  # pyright: ignore[reportPrivateUsage]
+                )
+            if context._stream_terminal_result_is_authoritative:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_authoritative_terminal_result()  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_hook(hook)  # pyright: ignore[reportPrivateUsage]
+            for hook in context._stream_release_error_hooks:  # pyright: ignore[reportPrivateUsage]
+                context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 
@@ -1941,9 +2152,19 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
         # Must have at least 2 parameters (context and call_next)
         if len(params) >= 2:
-            first_param = params[0]
-            if hasattr(first_param.annotation, "__name__"):
-                annotation_name = first_param.annotation.__name__
+            annotation = params[0].annotation
+            # Postponed (``from __future__ import annotations``) or quoted annotations are
+            # strings; match them by class name without evaluating them.
+            annotation_name: str | None
+            if isinstance(annotation, str):
+                annotation = annotation.strip()
+                # A quoted annotation under postponed evaluation keeps its quotes, e.g. "'ChatContext'".
+                if len(annotation) >= 2 and annotation[0] == annotation[-1] and annotation[0] in "'\"":
+                    annotation = annotation[1:-1].strip()
+                annotation_name = annotation.rsplit(".", 1)[-1].strip()
+            else:
+                annotation_name = getattr(annotation, "__name__", None)
+            if annotation_name is not None:
                 if annotation_name == "AgentContext":
                     param_type = MiddlewareType.AGENT
                 elif annotation_name == "FunctionInvocationContext":

@@ -24,7 +24,7 @@ public class FoundryAIToolTests
             serverLabel: "github",
             serverUri: new Uri("https://api.githubcopilot.com/mcp"),
             projectConnectionId: ConnectionId,
-            toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+            toolCallApprovalPolicy: new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.AlwaysRequireApproval));
 
         // Assert
         var mcpTool = Assert.IsType<McpTool>(tool.GetService(typeof(McpTool)));
