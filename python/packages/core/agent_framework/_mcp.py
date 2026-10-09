@@ -729,26 +729,32 @@ def _canonicalize_schema(schema: Any) -> Any:
     """
     if isinstance(schema, dict):
         result: dict[str, Any] = {}
-        for key, value in schema.items():
-            if key in {"properties", "patternProperties", "$defs", "definitions"} and isinstance(value, dict):
+        schema_dict = cast(dict[str, Any], schema)
+        for key, val in schema_dict.items():
+            if key in {"properties", "patternProperties", "$defs", "definitions"} and isinstance(val, dict):
                 # Sort mapping keys deterministically, recursively canonicalizing each subschema
-                result[key] = {k: _canonicalize_schema(v) for k, v in sorted(value.items())}
+                sub_dict = cast(dict[str, Any], val)
+                sorted_items: list[tuple[str, Any]] = sorted(sub_dict.items(), key=lambda pair: pair[0])
+                result[key] = {k: _canonicalize_schema(v) for k, v in sorted_items}
             elif key == "items":
-                if isinstance(value, dict):
-                    result[key] = _canonicalize_schema(value)
-                elif isinstance(value, list):
-                    result[key] = [_canonicalize_schema(item) for item in value]
+                if isinstance(val, dict):
+                    result[key] = _canonicalize_schema(val)
+                elif isinstance(val, list):
+                    items_list = cast(list[Any], val)
+                    result[key] = [_canonicalize_schema(item) for item in items_list]
                 else:
-                    result[key] = value
-            elif key in {"allOf", "anyOf", "oneOf"} and isinstance(value, list):
-                result[key] = [_canonicalize_schema(sub) for sub in value]
-            elif isinstance(value, (dict, list)):
-                result[key] = _canonicalize_schema(value)
+                    result[key] = val
+            elif key in {"allOf", "anyOf", "oneOf"} and isinstance(val, list):
+                branches_list = cast(list[Any], val)
+                result[key] = [_canonicalize_schema(sub) for sub in branches_list]
+            elif isinstance(val, (dict, list)):
+                result[key] = _canonicalize_schema(val)
             else:
-                result[key] = value
+                result[key] = val
         return result
     if isinstance(schema, list):
-        return [_canonicalize_schema(item) for item in schema]
+        schema_list = cast(list[Any], schema)
+        return [_canonicalize_schema(item) for item in schema_list]
     return schema
 
 
