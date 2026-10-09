@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from typing import Any, Literal, TypeAlias
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 from mcp.client.session import ClientSession
 
@@ -182,7 +182,7 @@ async def test_owned_client_does_not_replay_response_cookie_across_principals(
         load_prompts=False,
         header_provider=lambda _: {"Authorization": principal.get()},
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             response_cookies.clear()
@@ -303,7 +303,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(
         else patch("agent_framework._mcp.streamable_http_client", side_effect=transport)
     )
     try:
-        with transport_patch, patch("httpx.AsyncClient", return_value=client), pytest.raises(error):
+        with transport_patch, patch("httpx2.AsyncClient", return_value=client), pytest.raises(error):
             await tool.connect()
         assert client.event_hooks["request"] == original_hooks
         assert client.is_closed is owned_client
@@ -336,7 +336,7 @@ async def test_owned_client_is_closed_after_successful_session(
         if header_source == "provider"
         else None,
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             await tool.call_tool("record")
@@ -842,7 +842,7 @@ async def test_discovery_failure_cleans_up_resources(
     failure = failure_type("discovery failed")
     try:
         with (
-            patch("httpx.AsyncClient", return_value=client),
+            patch("httpx2.AsyncClient", return_value=client),
             patch.object(tool, discovery_method, new=AsyncMock(side_effect=failure)),
             pytest.raises(failure_type, match="discovery failed") as error,
         ):
@@ -926,12 +926,12 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
         http_client=None if owned_client else create_client(),
         header_provider=lambda _: {"Authorization": "token-a"},
     )
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
 
     try:
-        with patch("httpx.AsyncClient", side_effect=create_client):
+        with patch("httpx2.AsyncClient", side_effect=create_client):
             for _ in range(2):
-                with pytest.raises(McpError, match="discovery failed"):
+                with pytest.raises(MCPError, match="discovery failed"):
                     await tool.connect()
                 assert tool.session is None
                 assert not tool.is_connected
@@ -993,7 +993,7 @@ async def test_cancelled_connect_caller_releases_abandoned_resources(
             async with tool:
                 pytest.fail("Cancelled setup must not enter the context manager")
 
-    with patch("httpx.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
+    with patch("httpx2.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
         caller = asyncio.create_task(enter())
         try:
             await asyncio.wait_for(setup_started.wait(), timeout=5)

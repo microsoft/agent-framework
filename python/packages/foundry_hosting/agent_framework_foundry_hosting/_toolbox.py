@@ -12,7 +12,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     CachingSkillsSource,
     DeduplicatingSkillsSource,
@@ -361,7 +361,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         """Read a Toolbox resource under the current platform-header identity."""
         headers = self._effective_resource_headers()
         async with self._call_headers_lock:
-            await self._ensure_session_identity(headers, {})
+            connection = self._require_connection()
+            if headers or connection.is_framework_owned:
+                await self._ensure_session_identity(headers, {})
             session = self.session
             if session is None:
                 raise RuntimeError(
@@ -371,7 +373,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 )
             self._active_call_headers = headers
             try:
-                return await session.read_resource(uri)
+                return await session.read_resource(cast(str, uri))
             finally:
                 self._active_call_headers = None
 

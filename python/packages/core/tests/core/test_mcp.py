@@ -960,10 +960,10 @@ async def test_load_prompts_failed_pagination_keeps_previous_catalog() -> None:
     tool.session.list_prompts = AsyncMock(
         side_effect=[
             types.ListPromptsResult(prompts=[types.Prompt(name="first")], nextCursor="second"),
-            McpError(types.ErrorData(code=-32603, message="boom")),
+            MCPError(-32603, "boom"),
         ]
     )
-    with pytest.raises(McpError):
+    with pytest.raises(MCPError):
         await tool.load_prompts()
 
     assert tool._functions == original_functions

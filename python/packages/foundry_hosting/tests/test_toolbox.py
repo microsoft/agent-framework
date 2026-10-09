@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
 from agent_framework.exceptions import ToolException, ToolExecutionException
@@ -667,6 +667,42 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     new_session.read_resource.assert_awaited_once_with(second_uri)
     # No archive options set -> MCPSkillsSource is constructed with defaults.
     assert captured_kwargs == {}
+
+
+async def test_skills_source_keeps_identity_adapter_when_high_level_client_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/tb/mcp",
+    )
+    sentinel_client = object()
+    sentinel_session = object()
+    current = {"connection": SimpleNamespace(client=sentinel_client, session=sentinel_session)}
+    monkeypatch.setattr(toolbox, "_require_connection", lambda: current["connection"])
+
+    captured: dict[str, Callable[[], object]] = {}
+
+    class _StubSkillsSource:
+        def __init__(self, *, session_provider: Callable[[], object]) -> None:
+            captured["session_provider"] = session_provider
+
+        async def get_skills(self, context: SkillsSourceContext) -> list[str]:
+            return ["skill-a"]
+
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox.MCPSkillsSource", _StubSkillsSource)
+
+    result = await _FoundryToolboxSkillsSource(toolbox).get_skills(_source_context())
+
+    assert result == ["skill-a"]
+    provider = captured["session_provider"]
+    resource_session = provider()
+    assert resource_session is not sentinel_client
+    assert provider() is resource_session
+
+    replacement_client = object()
+    current["connection"] = SimpleNamespace(client=replacement_client, session=object())
+    assert provider() is resource_session
 
 
 async def test_skills_source_forwards_archive_options(monkeypatch: pytest.MonkeyPatch) -> None:
