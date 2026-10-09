@@ -657,13 +657,13 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     resource_session = provider()
     assert provider() is resource_session
     first_uri = AnyUrl("skill://first")
-    await resource_session.read_resource(first_uri)
+    await resource_session.read_resource(cast(str, first_uri))
     sentinel_session.read_resource.assert_awaited_once_with(first_uri)
 
     new_session = AsyncMock()
     toolbox.session = new_session  # type: ignore
     second_uri = AnyUrl("skill://second")
-    await resource_session.read_resource(second_uri)
+    await resource_session.read_resource(cast(str, second_uri))
     new_session.read_resource.assert_awaited_once_with(second_uri)
     # No archive options set -> MCPSkillsSource is constructed with defaults.
     assert captured_kwargs == {}
@@ -745,7 +745,7 @@ async def test_skills_source_requires_connection_via_provider() -> None:
     # actually closed, the read still surfaces the same clear error.
     toolbox.session = None
     with pytest.raises(RuntimeError, match="not connected"):
-        await resource_session.read_resource(AnyUrl("skill://closed"))
+        await resource_session.read_resource(cast(str, AnyUrl("skill://closed")))
 
 
 class _FakeSkill:
