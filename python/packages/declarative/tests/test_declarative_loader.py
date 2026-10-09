@@ -3,6 +3,7 @@
 import builtins
 import sys
 import threading
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -642,6 +643,38 @@ instructions: You are a helpful assistant.
 
         assert agent.default_options.get("temperature") == 0.7
         assert agent.default_options.get("top_p") == 0.9
+
+    @pytest.mark.parametrize("use_async", [False, True])
+    @pytest.mark.parametrize("tool_choice", ["auto", "required", "none", None])
+    async def test_create_agent_from_dict_preserves_reused_model_options(
+        self, tool_choice: str | None, use_async: bool
+    ) -> None:
+        """Reusing a definition preserves caller options and each agent's tool choice."""
+        from agent_framework_declarative import AgentFactory
+
+        additional_properties: dict[str, Any] = {"custom_option": {"nested": ["value"]}}
+        if tool_choice is not None:
+            additional_properties["chatToolMode"] = tool_choice
+        agent_def: dict[str, Any] = {
+            "kind": "Prompt",
+            "name": "ReusableAgent",
+            "model": {"options": {"additionalProperties": additional_properties}},
+        }
+        original = deepcopy(agent_def)
+        mock_client = MagicMock()
+        mock_client.model = "test-model"
+        factory = AgentFactory(client=mock_client)
+
+        for _ in range(2):
+            if use_async:
+                agent = await factory.create_agent_from_dict_async(agent_def)
+            else:
+                agent = factory.create_agent_from_dict(agent_def)
+
+            assert agent.default_options["tool_choice"] == (tool_choice or "auto")
+            assert agent.default_options["additional_chat_options"] == {"custom_option": {"nested": ["value"]}}
+
+        assert agent_def == original
 
 
 class TestAgentFactorySafeMode:
