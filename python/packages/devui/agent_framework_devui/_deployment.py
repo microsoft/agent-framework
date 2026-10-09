@@ -17,6 +17,15 @@ from .models._discovery_models import Deployment, DeploymentConfig, DeploymentEv
 
 logger = logging.getLogger(__name__)
 
+_REDACTED_MARKER = "[REDACTED]"
+
+
+def _redact_auth_token(text: str, auth_token: str) -> str:
+    """Redact exact matches of the current deployment token."""
+    if not auth_token:
+        return text
+    return text.replace(auth_token, _REDACTED_MARKER)
+
 
 class DeploymentManager:
     """Manages entity deployments to Azure Container Apps."""
@@ -384,7 +393,7 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                 "8080",
             ]
 
-        logger.info(f"Running: {' '.join(cmd)}")
+        logger.info("Running: %s", _redact_auth_token(" ".join(cmd), auth_token))
 
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -402,7 +411,7 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                 if not line:
                     break
 
-                line_text = line.decode().strip()
+                line_text = _redact_auth_token(line.decode().strip(), auth_token)
                 if line_text:
                     output_lines.append(line_text)
 
