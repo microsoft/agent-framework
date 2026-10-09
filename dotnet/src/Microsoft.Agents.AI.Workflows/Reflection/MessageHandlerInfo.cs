@@ -117,10 +117,10 @@ internal readonly struct MessageHandlerInfo
 
                 return CallResult.ReturnResult(result);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException exception)
             {
                 // If the operation was canceled, return a canceled CallResult.
-                return CallResult.Cancelled(wasVoid: expectingVoid);
+                return CallResult.Cancelled(wasVoid: expectingVoid, exception);
             }
             catch (Exception ex)
             {
@@ -143,7 +143,7 @@ internal readonly struct MessageHandlerInfo
 
         object? InvokeHandler(object message, IWorkflowContext workflowContext, CancellationToken cancellationToken)
         {
-            return handlerMethod.Invoke(executor, [message, workflowContext, cancellationToken]);
+            return handlerMethod.ReflectionInvoke(executor, [message, workflowContext, cancellationToken]);
         }
     }
 }
