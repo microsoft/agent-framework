@@ -156,6 +156,7 @@ logger = logging.getLogger("agent_framework.openai")
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
 _TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
 
 
@@ -2520,6 +2521,59 @@ class RawOpenAIChatClient(
             ),
         ]
 
+    def _code_interpreter_item_to_contents(self, item: Any, *, mark_code_as_snapshot: bool) -> list[Content]:
+        """Convert a ``code_interpreter_call`` output item into framework ``Content`` objects.
+
+        Used by the non-streaming parser and by both the streaming ``response.output_item.added``
+        and ``response.output_item.done`` handlers. ``outputs`` (logs/images) are only ever
+        populated on the completed item - at ``added`` the call has not run yet - so there is
+        nothing to mark there; callers pass ``mark_code_as_snapshot=True`` only for a completed
+        item's code, so the streaming merge layer replaces (rather than concatenates onto) any
+        `.delta`/`.done` code chunks already accumulated for this call instead of duplicating them.
+        """
+        call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
+        outputs: list[Content] = []
+        if item_outputs := getattr(item, "outputs", None):
+            for code_output in item_outputs:
+                if getattr(code_output, "type", None) == "logs":
+                    outputs.append(
+                        Content.from_text(
+                            text=code_output.logs,
+                            raw_representation=code_output,
+                        )
+                    )
+                elif getattr(code_output, "type", None) == "image":
+                    outputs.append(
+                        Content.from_uri(
+                            uri=code_output.url,
+                            raw_representation=code_output,
+                            media_type="image",
+                        )
+                    )
+        contents: list[Content] = []
+        if code := getattr(item, "code", None):
+            contents.append(
+                Content.from_code_interpreter_tool_call(
+                    call_id=call_id,
+                    inputs=[
+                        Content.from_text(
+                            text=code,
+                            raw_representation=item,
+                            additional_properties={_CONTENT_ITEM_SNAPSHOT_KEY: True} if mark_code_as_snapshot else None,
+                        )
+                    ],
+                    raw_representation=item,
+                )
+            )
+        contents.append(
+            Content.from_code_interpreter_tool_result(
+                call_id=call_id,
+                outputs=outputs,
+                raw_representation=item,
+            )
+        )
+        return contents
+
     def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
 
@@ -3441,40 +3495,9 @@ class RawOpenAIChatClient(
                             )
                         )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
-                    call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list[Content] = []
-                    if item_outputs := getattr(item, "outputs", None):
-                        for code_output in item_outputs:
-                            if getattr(code_output, "type", None) == "logs":
-                                outputs.append(
-                                    Content.from_text(
-                                        text=code_output.logs,
-                                        raw_representation=code_output,
-                                    )
-                                )
-                            elif getattr(code_output, "type", None) == "image":
-                                outputs.append(
-                                    Content.from_uri(
-                                        uri=code_output.url,
-                                        raw_representation=code_output,
-                                        media_type="image",
-                                    )
-                                )
-                    if code := getattr(item, "code", None):
-                        contents.append(
-                            Content.from_code_interpreter_tool_call(
-                                call_id=call_id,
-                                inputs=[Content.from_text(text=code, raw_representation=item)],
-                                raw_representation=item,
-                            )
-                        )
-                    contents.append(
-                        Content.from_code_interpreter_tool_result(
-                            call_id=call_id,
-                            outputs=outputs,
-                            raw_representation=item,
-                        )
-                    )
+                    # Non-streaming: the whole item is already complete, so there is nothing to
+                    # merge against and no need to tag the code as a snapshot.
+                    contents.extend(self._code_interpreter_item_to_contents(item, mark_code_as_snapshot=False))
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         Content.from_function_call(
@@ -3887,7 +3910,11 @@ class RawOpenAIChatClient(
                             Content.from_text(
                                 text=event.code,
                                 raw_representation=event,
-                                additional_properties=ci_additional_properties,
+                                # The done event repeats the complete code generated so far
+                                # rather than a further delta, so it must replace (not be
+                                # concatenated onto) any `.delta` events already accumulated
+                                # for this call.
+                                additional_properties={**ci_additional_properties, _CONTENT_ITEM_SNAPSHOT_KEY: True},
                             )
                         ],
                         raw_representation=event,
@@ -3967,44 +3994,10 @@ class RawOpenAIChatClient(
                         )
                         # Result deferred to response.output_item.done
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
-                        call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
-                        outputs: list[Content] = []
-                        if hasattr(event_item, "outputs") and event_item.outputs:
-                            for code_output in event_item.outputs:
-                                if getattr(code_output, "type", None) == "logs":
-                                    outputs.append(
-                                        Content.from_text(
-                                            text=cast(Any, code_output).logs,
-                                            raw_representation=code_output,
-                                        )
-                                    )
-                                elif getattr(code_output, "type", None) == "image":
-                                    outputs.append(
-                                        Content.from_uri(
-                                            uri=cast(Any, code_output).url,
-                                            raw_representation=code_output,
-                                            media_type="image",
-                                        )
-                                    )
-                        if hasattr(event_item, "code") and event_item.code:
-                            contents.append(
-                                Content.from_code_interpreter_tool_call(
-                                    call_id=call_id,
-                                    inputs=[
-                                        Content.from_text(
-                                            text=event_item.code,
-                                            raw_representation=event_item,
-                                        )
-                                    ],
-                                    raw_representation=event_item,
-                                )
-                            )
-                        contents.append(
-                            Content.from_code_interpreter_tool_result(
-                                call_id=call_id,
-                                outputs=outputs,
-                                raw_representation=event_item,
-                            )
+                        # The call has not run yet at `added` time, so any code seen here is an
+                        # opening fragment deltas build on, not a complete value to snapshot.
+                        contents.extend(
+                            self._code_interpreter_item_to_contents(event_item, mark_code_as_snapshot=False)
                         )
                     case (
                         "shell_call"
@@ -4202,6 +4195,12 @@ class RawOpenAIChatClient(
                         seen_function_call_output_ids, done_item
                     ):
                         contents.append(self._parse_function_call_output_content(output_item, done_call_id))
+                elif getattr(done_item, "type", None) == "code_interpreter_call":
+                    # The completed item is the only place `outputs` (logs/images) are ever
+                    # delivered during streaming - there is no incremental outputs event - and
+                    # its `code` is the authoritative final value, so it is tagged as a snapshot
+                    # even though `.code_interpreter_call_code.done` (above) usually already set it.
+                    contents.extend(self._code_interpreter_item_to_contents(done_item, mark_code_as_snapshot=True))
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
