@@ -3,7 +3,7 @@
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
-namespace Demo.ComputerUse;
+namespace Demo.ComputerUsePreview;
 
 /// <summary>
 /// Enum for tracking the state of the simulated web search flow.
