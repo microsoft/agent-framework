@@ -377,6 +377,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 CreatedAt = update.CreatedAt,
                 FinishReason = update.FinishReason,
                 MessageId = update.MessageId,
+                ModelId = (update.RawRepresentation as ChatResponseUpdate)?.ModelId,
                 RawRepresentation = update,
                 ResponseId = update.ResponseId,
                 Role = update.Role,

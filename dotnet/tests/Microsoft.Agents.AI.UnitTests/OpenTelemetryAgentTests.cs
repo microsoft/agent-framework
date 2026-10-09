@@ -1034,6 +1034,44 @@ public class OpenTelemetryAgentTests
 #pragma warning restore MEAI001
 
     [Fact]
+    public async Task RunStreamingAsync_ReportsResponseModelFromInnerUpdateAsync()
+    {
+        // Arrange
+        // The telemetry chat client reads the response model off the ChatResponseUpdate the agent's update is
+        // wrapped in, so ModelId has to be carried over from the inner update's raw representation.
+        var sourceName = Guid.NewGuid().ToString();
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        var innerAgent = new TestAIAgent { RunStreamingAsyncFunc = CallbackAsync };
+
+        async static IAsyncEnumerable<AgentResponseUpdate> CallbackAsync(
+            IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            yield return new AgentResponseUpdate(ChatRole.Assistant, "ok")
+            {
+                RawRepresentation = new ChatResponseUpdate { ModelId = "innermodel" },
+            };
+        }
+
+        using var agent = new OpenTelemetryAgent(innerAgent, sourceName);
+
+        // Act
+        await foreach (var update in agent.RunStreamingAsync("hi"))
+        {
+            await Task.Yield();
+        }
+
+        // Assert
+        var activity = Assert.Single(activities);
+        Assert.Equal("innermodel", activity.GetTagItem("gen_ai.response.model"));
+    }
+
+    [Fact]
     public async Task AutoWireChatClient_ChatClientAgentRunOptions_NoUserFactory_PreservesChatOptions_Async()
     {
         // When the caller passes a ChatClientAgentRunOptions without a ChatClientFactory, the auto-wiring
