@@ -1456,4 +1456,18 @@ def test_extract_json_reads_first_fenced_object(text: str) -> None:
     assert _extract_json(text)["is_request_satisfied"] is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"is_request_satisfied": true, "answer": "The f-string is missing its closing } so add it."}',
+        'Ledger: {"is_request_satisfied": true, "answer": "Open the block with { and keep going"} done',
+        '{"is_request_satisfied": true, "answer": "Escaped quote \\" then a brace }"}',
+    ],
+)
+def test_extract_json_ignores_braces_inside_strings(text: str) -> None:
+    from agent_framework_orchestrations._magentic import _extract_json  # type: ignore
+
+    assert _extract_json(text)["is_request_satisfied"] is True
+
+
 # endregion
