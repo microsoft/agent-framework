@@ -70,22 +70,23 @@ class SerializationProtocol(Protocol):
             assert isinstance(user_msg, SerializationProtocol)
             assert isinstance(restored_msg, SerializationProtocol)
 
-        The protocol is also implemented by simpler classes like ``UsageDetails``:
+        The protocol is also implemented by simpler classes like ``Content``:
 
         .. code-block:: python
 
-            from agent_framework import UsageDetails
+            from agent_framework import Content
+            from agent_framework._serialization import SerializationProtocol
 
-            # Create usage tracking instance
-            usage = UsageDetails(input_token_count=150, output_token_count=75, total_token_count=225)
+            # Create a text content instance
+            content = Content.from_text(text="Hello")
 
             # Seamless serialization with type preservation
-            usage_dict = usage.to_dict()
-            restored_usage = UsageDetails.from_dict(usage_dict)
+            content_dict = content.to_dict()
+            restored_content = Content.from_dict(content_dict)
 
             # Both satisfy the SerializationProtocol
-            assert isinstance(usage, SerializationProtocol)
-            assert restored_usage.total_token_count == 225
+            assert isinstance(content, SerializationProtocol)
+            assert restored_content.text == "Hello"
 
         The protocol ensures consistent serialization behavior across all framework components,
         enabling reliable data persistence, API communication, and object reconstruction
