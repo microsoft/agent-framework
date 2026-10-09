@@ -4,6 +4,7 @@ import json
 
 from agent_framework import AgentResponse, Content, Message
 from mcp import types
+from mcp.shared.exceptions import MCPError
 from pytest import raises
 
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
@@ -34,12 +35,12 @@ def test_mcp_to_run_converts_selected_argument() -> None:
 
 
 def test_mcp_to_run_rejects_missing_argument() -> None:
-    with raises(ValueError, match="'task' string"):
+    with raises(MCPError, match="'task' string"):
         mcp_to_run({})
 
 
 def test_mcp_to_run_rejects_non_string_argument() -> None:
-    with raises(ValueError, match="'task' must be a string"):
+    with raises(MCPError, match="'task' must be a string"):
         mcp_to_run({"task": 42})
 
 
