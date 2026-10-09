@@ -6,6 +6,22 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > This package is in **beta**. APIs may change before its stable release. It is
 > included in `agent-framework[all]`.
 
+## FIDES compatibility
+
+> [!WARNING]
+> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
+> made inside generated code bypass the agent's function middleware, so FIDES
+> policy enforcement and label tracking do not apply to those nested calls or
+> intermediate code values. Checks on the outer `execute_code` invocation do not
+> enforce the policies of individual tools called inside it.
+>
+> Registering tools with recognized FIDES `additional_properties` logs a warning,
+> but does not block execution. This is a best-effort diagnostic: FIDES also uses
+> defaults for unannotated tools, so no warning does not imply support or safety.
+> Keep tools that require FIDES as direct agent tools, not Monty-managed tools, and
+> enforce authorization and destination restrictions inside host functions.
+> See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
 ## Installation
 
 ```bash

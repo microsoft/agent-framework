@@ -39,6 +39,7 @@ from agent_framework._sessions import (
     SessionContext,
     _filter_approval_control_messages,
 )
+from agent_framework._types import _get_operation_state
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
     ChatClientException,
@@ -50,6 +51,7 @@ from openai.types.responses import (
     ResponseComputerToolCall,
     ResponseComputerToolCallOutputItem,
     ResponseContentPartDoneEvent,
+    ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseOutputItemDoneEvent,
@@ -9605,6 +9607,81 @@ def test_streaming_response_in_progress_sets_continuation_token() -> None:
     assert _response_id_from_token(update.continuation_token) == "resp_stream_123"
 
 
+def test_streaming_tokenless_intermediate_update_preserves_continuation_token() -> None:
+    """Tokenless Responses API events should not erase an active background token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_123"
+    in_progress_event.response.conversation = None
+
+    text_delta_event = MagicMock()
+    text_delta_event.type = "response.output_text.delta"
+    text_delta_event.delta = "working"
+    text_delta_event.logprobs = None
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(text_delta_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is not None
+    assert _response_id_from_token(response.continuation_token) == "resp_stream_123"
+
+
+def test_streaming_error_event_raises_chat_client_exception() -> None:
+    """Responses API error events should surface their provider details."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param="input",
+        sequence_number=2,
+        type="error",
+    )
+
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
+
+    assert "OpenAI streaming error: server_error: The response stream failed. (parameter: input)" in str(exc_info.value)
+
+
+async def test_resumed_stream_error_clears_continuation_token() -> None:
+    """A failed resumed stream should clear its caller-owned continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_stream_error"
+    in_progress_event.response.conversation = None
+    error_event = ResponseErrorEvent(
+        code="server_error",
+        message="The response stream failed.",
+        param=None,
+        sequence_number=2,
+        type="error",
+    )
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([in_progress_event, error_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_stream_error"}}
+    updates: list[ChatResponseUpdate] = []
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(ChatClientException, match="OpenAI streaming error: server_error"),
+    ):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        async for update in stream:
+            updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].continuation_token == {"response_id": "resp_stream_error"}
+    assert "continuation_token" not in options
+
+
 def test_streaming_response_created_with_in_progress_status_sets_continuation_token() -> None:
     """Test that response.created with in_progress status sets continuation_token."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -9623,6 +9700,54 @@ def test_streaming_response_created_with_in_progress_status_sets_continuation_to
 
     assert update.continuation_token is not None
     assert _response_id_from_token(update.continuation_token) == "resp_created_123"
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "incomplete", "cancelled"])
+def test_streaming_response_created_with_terminal_status_clears_continuation_token(status: str) -> None:
+    """A terminal status embedded in response.created should terminate the operation."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_created_terminal"
+    in_progress_event.response.conversation = None
+
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_terminal"
+    created_event.response.conversation = None
+    created_event.response.status = status
+
+    updates = [
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(created_event, options={}, function_call_ids={}),
+    ]
+
+    assert _get_operation_state(updates[-1]) == "terminal"
+    assert ChatResponse.from_updates(updates).continuation_token is None
+
+
+async def test_resumed_stream_terminal_created_event_clears_continuation_token() -> None:
+    """A terminal response.created event should clear the resumed stream token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    created_event = MagicMock()
+    created_event.type = "response.created"
+    created_event.response.id = "resp_created_cancelled"
+    created_event.response.conversation = None
+    created_event.response.status = "cancelled"
+    retrieve = AsyncMock(return_value=_FakeAsyncEventStream([created_event]))
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_created_cancelled"}}
+
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["resume"])],
+            stream=True,
+            options=options,
+        )
+        assert isinstance(stream, ResponseStream)
+        response = await stream.get_final_response()
+
+    assert response.continuation_token is None
+    assert "continuation_token" not in options
 
 
 def test_streaming_response_completed_no_continuation_token() -> None:
@@ -9751,6 +9876,47 @@ def test_streaming_terminal_response_sets_finish_reason(
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
 
     assert update.finish_reason == expected_finish_reason
+    assert _get_operation_state(update) == "terminal"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "status", "incomplete_reason"),
+    [
+        ("response.failed", "failed", None),
+        ("response.incomplete", "incomplete", "other"),
+    ],
+)
+def test_streaming_terminal_response_clears_aggregated_continuation_token(
+    event_type: str,
+    status: str,
+    incomplete_reason: str | None,
+) -> None:
+    """Terminal Responses API events should clear an earlier continuation token."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    in_progress_event = MagicMock()
+    in_progress_event.type = "response.in_progress"
+    in_progress_event.response.id = "resp_terminal"
+    in_progress_event.response.conversation = None
+
+    terminal_event = MagicMock()
+    terminal_event.type = event_type
+    terminal_event.response.id = "resp_terminal"
+    terminal_event.response.conversation = None
+    terminal_event.response.model = "test-model"
+    terminal_event.response.created_at = 1000000000
+    terminal_event.response.usage = None
+    terminal_event.response.status = status
+    terminal_event.response.incomplete_details = (
+        MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
+    )
+    terminal_event.response.output = []
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(in_progress_event, options={}, function_call_ids={}),
+        client._parse_chunk_from_openai(terminal_event, options={}, function_call_ids={}),
+    ])
+
+    assert response.continuation_token is None
 
 
 def test_map_chat_to_agent_update_preserves_continuation_token() -> None:

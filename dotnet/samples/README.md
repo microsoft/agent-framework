@@ -19,6 +19,9 @@ were local agents. These are supported using various `AIAgent` subclasses.
 | [`04-hosting/`](./04-hosting/) | Deployment: A2A and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
 
+For published integrations maintained outside the Agent Framework team, see
+[Community projects](./community-projects.md).
+
 ## Getting Started
 
 Start with `01-get-started/` and work through the numbered files:

@@ -24,7 +24,7 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
 
 from typing_extensions import Required, TypedDict
 
@@ -40,6 +40,8 @@ else:
 logger = logging.getLogger("agent_framework")
 
 _SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
+_OperationState: TypeAlias = Literal["in_progress", "terminal"]
+_OPERATION_STATE_SERIALIZATION_KEY: Final[str] = "_operation_state"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -78,6 +80,44 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
 
 
 # region Internal Helper functions for unified Content
+
+
+class _ParsedDataUri(NamedTuple):
+    """The parts of an RFC 2397 data URI."""
+
+    media_type: str
+    is_base64: bool
+    payload: str
+
+
+def _parse_data_uri(uri: str) -> _ParsedDataUri:
+    """Parse a ``data:`` URI once, so every caller reads it the same way.
+
+    RFC 2397: ``data:[<media-type>][;parameter[=value]]...[;base64],<data>``. The media type is
+    everything between ``data:`` and the first ``;`` and defaults to ``text/plain`` when empty.
+    ``base64`` is the only encoding marker and is only valid once, as the last parameter; other
+    parameters such as ``charset=utf-8`` are metadata. Only the metadata before the first comma
+    is inspected, so a ``;base64,`` sequence inside the payload is never treated as a marker.
+
+    Raises:
+        ContentError: If the URI has no comma or carries an unsupported encoding marker.
+    """
+    if "," not in uri:
+        raise ContentError("Data URI must contain a comma separating metadata and data")
+    prefix, payload = uri.split(",", 1)
+    parts = prefix.split(";")
+    parameters = parts[1:]
+    for index, parameter in enumerate(parameters):
+        if parameter == "base64":
+            if index != len(parameters) - 1:
+                raise ContentError("Data URI 'base64' marker must be the last parameter")
+        elif parameter and "=" not in parameter:
+            raise ContentError(f"Unsupported data URI encoding: {parameter}")
+    return _ParsedDataUri(
+        media_type=parts[0][5:] or "text/plain",  # Remove 'data:'
+        is_base64=bool(parameters) and parameters[-1] == "base64",
+        payload=payload,
+    )
 
 
 def detect_media_type_from_base64(
@@ -132,14 +172,18 @@ def detect_media_type_from_base64(
         # Remove data URI prefix if present
         if not data_uri.startswith("data:") or "," not in data_uri:
             raise ValueError("Invalid data URI format.")
-        prefix, data_str = data_uri.split(",", 1)
-        if not prefix.endswith(";base64"):
+        try:
+            parsed = _parse_data_uri(data_uri)
+        except ContentError as exc:
+            raise ValueError(str(exc)) from exc
+        if not parsed.is_base64:
             raise ValueError("Data URI must use base64 encoding.")
+        data_str = parsed.payload
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         try:
-            data = base64.b64decode(data_str)
+            data = base64.b64decode(data_str, validate=True)
         except Exception as exc:
             raise ValueError("Invalid base64 data provided.") from exc
     if data is None:
@@ -155,9 +199,16 @@ def detect_media_type_from_base64(
         return "image/gif"
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WEBP":
         return "image/webp"
-    if data.startswith(b"BM"):
+    if (
+        data.startswith(b"BM")
+        and len(data) >= 18
+        and int.from_bytes(data[14:18], "little") in (12, 40, 52, 56, 64, 108, 124)
+    ):
         return "image/bmp"
-    if data.startswith(b"<svg") or data.startswith(b"<?xml"):
+    head = data[:512].lstrip()
+    if head.startswith(b"\xef\xbb\xbf"):
+        head = head[3:].lstrip()
+    if re.match(rb"<svg(?=[\s/>])", head) or (head.startswith(b"<?xml") and re.search(rb"<svg(?=[\s/>])", head)):
         return "image/svg+xml"
 
     # Documents
@@ -167,7 +218,13 @@ def detect_media_type_from_base64(
     # Audio
     if data.startswith(b"RIFF") and len(data) > 11 and data[8:12] == b"WAVE":
         return "audio/wav"
-    if data.startswith(b"ID3") or data.startswith(b"\xff\xfb") or data.startswith(b"\xff\xf3"):
+    if data.startswith(b"ID3") or (
+        len(data) >= 2
+        and data[0] == 0xFF
+        and (data[1] & 0xE0) == 0xE0
+        and (data[1] & 0x18) != 0x08  # MPEG version 01 is reserved.
+        and (data[1] & 0x06) != 0  # Layer 00 is reserved.
+    ):
         return "audio/mpeg"
     if data.startswith(b"OggS"):
         return "audio/ogg"
@@ -199,11 +256,10 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     if not uri.startswith("data:"):
         return None
 
-    if ";base64," not in uri:
+    parsed = _parse_data_uri(uri)
+    if not parsed.is_base64:
         raise ContentError("Data URI must use base64 encoding")
-
-    _, data = uri.split(";base64,", 1)
-    return data
+    return parsed.payload
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -246,20 +302,9 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
 
     # Check for data URI
     if uri.startswith("data:"):
-        if "," not in uri:
-            raise ContentError("Data URI must contain a comma separating metadata and data")
-        prefix, _ = uri.split(",", 1)
-        if ";" in prefix:
-            parts = prefix.split(";")
-            if len(parts) < 2:
-                raise ContentError("Invalid data URI format")
-            # Check encoding
-            encoding = parts[-1]
-            if encoding not in ("base64", ""):
-                raise ContentError(f"Unsupported data URI encoding: {encoding}")
-            if media_type is None:
-                # attempt to extract:
-                media_type = parts[0][5:]  # Remove 'data:'
+        parsed = _parse_data_uri(uri)
+        if media_type is None:
+            media_type = parsed.media_type
         return {"type": "data", "uri": uri, "media_type": media_type}
 
     # Check for common URI schemes
@@ -1693,7 +1738,11 @@ class Content:
         raise ContentError(f"Addition not supported for content type: {self.type}")
 
     def _add_text_content(self, other: Content) -> Content:
-        """Add two TextContent instances."""
+        """Add two TextContent instances.
+
+        Keep the merge rules here in sync with ``_merge_content_run``, which
+        folds a run of chunks in one pass without calling ``__add__``.
+        """
         return Content(
             "text",
             text=self.text + other.text,  # type: ignore[attr-defined, operator]
@@ -1703,7 +1752,12 @@ class Content:
         )
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
-        """Add two TextReasoningContent instances."""
+        """Add two TextReasoningContent instances.
+
+        Keep the mismatch checks and merge rules here in sync with
+        ``_coalesce_text_content`` / ``_merge_content_run``, which fold a run of
+        chunks in one pass without calling ``__add__``.
+        """
         # Ensure we do not silently merge contents with conflicting ids
         if self.id and other.id and self.id != other.id:
             raise AdditionItemMismatch(
@@ -2236,7 +2290,60 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         and update.finish_reason is not None
     ):
         response.finish_reason = update.finish_reason
-    response.continuation_token = update.continuation_token
+    operation_state = _get_operation_state(update)
+    _copy_operation_state(update, response)
+    if operation_state == "terminal":
+        response.continuation_token = None
+    elif operation_state == "in_progress":
+        if update.continuation_token is not None:
+            response.continuation_token = update.continuation_token
+    else:
+        response.continuation_token = update.continuation_token
+
+
+def _get_operation_state(
+    value: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+) -> _OperationState | None:
+    """Get framework-internal resumable-operation state."""
+    return value._operation_state  # pyright: ignore[reportPrivateUsage]
+
+
+def _set_operation_state(
+    value: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+    state: _OperationState | None,
+) -> None:
+    """Set framework-internal resumable-operation state."""
+    value._operation_state = state  # pyright: ignore[reportPrivateUsage]
+
+
+def _serialize_operation_state(
+    value: ChatResponseUpdate | AgentResponseUpdate,
+    data: dict[str, Any],
+    exclude: set[str] | None,
+) -> dict[str, Any]:
+    """Add explicitly set operation state to an update's serialized representation."""
+    if (not exclude or _OPERATION_STATE_SERIALIZATION_KEY not in exclude) and (
+        operation_state := _get_operation_state(value)
+    ):
+        data[_OPERATION_STATE_SERIALIZATION_KEY] = operation_state
+    return data
+
+
+def _deserialize_operation_state(value: MutableMapping[str, Any]) -> tuple[dict[str, Any], _OperationState | None]:
+    """Remove and validate operation state from an update's serialized representation."""
+    data = dict(value)
+    operation_state = data.pop(_OPERATION_STATE_SERIALIZATION_KEY, None)
+    if operation_state not in (None, "in_progress", "terminal"):
+        raise ValueError(f"Invalid operation state: {operation_state!r}")
+    return data, operation_state
+
+
+def _copy_operation_state(
+    source: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+    target: ChatResponse[Any] | ChatResponseUpdate | AgentResponse[Any] | AgentResponseUpdate,
+) -> None:
+    """Copy framework-internal resumable-operation state."""
+    _set_operation_state(target, _get_operation_state(source))
 
 
 def _apply_response_tail_to_update(
@@ -2251,6 +2358,7 @@ def _apply_response_tail_to_update(
     """
     update.finish_reason = response.finish_reason
     update.continuation_token = response.continuation_token
+    _copy_operation_state(response, update)
     if response.additional_properties:
         merged = dict(update.additional_properties) if update.additional_properties else {}
         merged.update(response.additional_properties)
@@ -2300,39 +2408,105 @@ def _merge_function_call_content(message: Message, content: Content) -> None:
     message.contents.append(content)
 
 
+def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reasoning"]) -> Content:
+    """Fold a collected run of same-type contents in one pass.
+
+    The result matches folding the run with repeated ``+=``: the earliest chunk
+    wins per additional-property key, annotations concatenate in order, and raw
+    representations flatten into one list (left untouched when a single chunk
+    carries the only value). The run head's own raw representation is dropped,
+    matching the old path whose initial ``deepcopy`` discards it
+    (``_SHALLOW_COPY_FIELDS``). The head's nested values are deep-copied for the
+    same reason, so mutating the source head after the fold cannot leak into
+    the aggregate.
+    """
+    head = run[0]
+    merged_props: dict[str, Any] = {}
+    for content in reversed(run[1:]):
+        merged_props.update(content.additional_properties)
+    merged_props.update(deepcopy(head.additional_properties))
+    annotation_seqs = [
+        deepcopy(c.annotations) if c is head else c.annotations for c in run if c.annotations is not None
+    ]
+    annotations = [a for seq in annotation_seqs for a in seq] if annotation_seqs else None
+    non_null_raws = [c.raw_representation for c in run[1:] if c.raw_representation is not None]
+    raw_representation: Any
+    if not non_null_raws:
+        raw_representation = None
+    elif len(non_null_raws) == 1:
+        raw_representation = non_null_raws[0]
+    else:
+        raw_representation = []
+        for raw in non_null_raws:
+            raw_representation.extend(raw if isinstance(raw, list) else [raw])
+    if type_str == "text":
+        return Content(
+            "text",
+            text="".join(c.text or "" for c in run),
+            annotations=annotations,
+            additional_properties=merged_props,
+            raw_representation=raw_representation,
+        )
+    return Content(
+        "text_reasoning",
+        id=next((c.id for c in run if c.id), run[-1].id),
+        text=None if all(c.text is None for c in run) else "".join(c.text or "" for c in run),
+        protected_data=next((c.protected_data for c in reversed(run) if c.protected_data is not None), None),
+        annotations=annotations,
+        additional_properties=merged_props,
+        raw_representation=raw_representation,
+    )
+
+
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
-    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
+    """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item.
+
+    Mergeable runs are collected and folded in a single pass, so aggregating n
+    chunks costs O(n) instead of the O(n^2) of repeated ``+=``.
+    """
     if not contents:
         return
     coalesced_contents: list[Content] = []
-    first_new_content: Any | None = None
+    run: list[Content] = []
+    run_id: str | None = None
+    run_has_text = False
+    run_has_reasoning_text = False
+
+    def flush() -> None:
+        nonlocal run_id, run_has_text, run_has_reasoning_text
+        if run:
+            coalesced_contents.append(deepcopy(run[0]) if len(run) == 1 else _merge_content_run(run, type_str))
+            run.clear()
+        run_id = None
+        run_has_text = run_has_reasoning_text = False
+
     for content in contents:
-        if content.type == type_str:
-            if first_new_content is None:
-                first_new_content = deepcopy(content)
-            elif type_str == "text" and first_new_content.additional_properties.get(
-                _MODEL_OUTPUT_KIND_KEY
-            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
-                coalesced_contents.append(first_new_content)
-                first_new_content = deepcopy(content)
-            else:
-                try:
-                    first_new_content += content
-                except AdditionItemMismatch:
-                    # Different IDs means a new logical segment; flush the current one
-                    coalesced_contents.append(first_new_content)
-                    first_new_content = deepcopy(content)
-        else:
-            # skip this content, it is not of the right type
-            # so write the existing one to the list and start a new one,
-            # once the right type is found again
-            if first_new_content:
-                coalesced_contents.append(first_new_content)
-            first_new_content = None
-            # but keep the other content in the new list
+        if content.type != type_str:
+            flush()
             coalesced_contents.append(content)
-    if first_new_content:
-        coalesced_contents.append(first_new_content)
+            continue
+        if run:
+            if type_str == "text":
+                # A folded run keeps the first chunk's value for this key, so the
+                # run head alone decides whether the next chunk joins or splits.
+                if run[0].additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != content.additional_properties.get(
+                    _MODEL_OUTPUT_KIND_KEY
+                ):
+                    flush()
+            else:
+                other_id: str | None = getattr(content, "id", None)
+                if (run_id and other_id and run_id != other_id) or (
+                    run_has_text
+                    and getattr(content, "text", None)
+                    and (run_has_reasoning_text != ("reasoning_text" in content.additional_properties))
+                ):
+                    flush()
+        run.append(content)
+        if type_str == "text_reasoning":
+            run_id = run_id or getattr(content, "id", None)
+            run_has_text = run_has_text or bool(getattr(content, "text", None))
+            run_has_reasoning_text = run_has_reasoning_text or "reasoning_text" in content.additional_properties
+    flush()
     contents.clear()
     contents.extend(coalesced_contents)
 
@@ -2646,6 +2820,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     def mark_internal_conversation_id(self) -> None:
@@ -2975,11 +3150,34 @@ class ChatResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
             allow_none=True,
         )
         self.raw_representation = raw_representation
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize the update, including framework-internal operation state when set."""
+        return _serialize_operation_state(
+            self,
+            super().to_dict(exclude=exclude, exclude_none=exclude_none),
+            exclude,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: MutableMapping[str, Any],
+        /,
+        *,
+        dependencies: MutableMapping[str, Any] | None = None,
+    ) -> ChatResponseUpdate:
+        """Deserialize an update and restore framework-internal operation state."""
+        data, operation_state = _deserialize_operation_state(value)
+        update = super().from_dict(data, dependencies=dependencies)
+        _set_operation_state(update, operation_state)
+        return update
 
     @property
     def text(self) -> str:
@@ -3100,6 +3298,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.raw_representation = raw_representation
 
     @property
@@ -3315,6 +3514,7 @@ def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFun
     if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
         agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
         agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    _copy_operation_state(response, agent_response)
     return agent_response
 
 
@@ -3427,11 +3627,34 @@ class AgentResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
+        self._operation_state: _OperationState | None = None
         self.additional_properties = _restore_compaction_annotation_in_additional_properties(
             additional_properties,
             allow_none=True,
         )
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+        """Serialize the update, including framework-internal operation state when set."""
+        return _serialize_operation_state(
+            self,
+            super().to_dict(exclude=exclude, exclude_none=exclude_none),
+            exclude,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: MutableMapping[str, Any],
+        /,
+        *,
+        dependencies: MutableMapping[str, Any] | None = None,
+    ) -> AgentResponseUpdate:
+        """Deserialize an update and restore framework-internal operation state."""
+        data, operation_state = _deserialize_operation_state(value)
+        update = super().from_dict(data, dependencies=dependencies)
+        _set_operation_state(update, operation_state)
+        return update
 
     @property
     def text(self) -> str:
@@ -3451,7 +3674,7 @@ class AgentResponseUpdate(SerializationMixin):
 
 
 def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None) -> AgentResponseUpdate:
-    return AgentResponseUpdate(
+    agent_update = AgentResponseUpdate(
         contents=update.contents,
         role=update.role,
         author_name=update.author_name or agent_name,
@@ -3463,6 +3686,8 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         additional_properties=update.additional_properties,
         raw_representation=update,
     )
+    _copy_operation_state(update, agent_update)
+    return agent_update
 
 
 # Type variables for ResponseStream
@@ -3841,7 +4066,13 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         """Close the stream on block exit, including an early consumer break."""
-        await self.close()
+        try:
+            await self.close()
+        except Exception:
+            # GeneratorExit also represents an explicit close(), whose failure must be reported.
+            if exc is None or isinstance(exc, GeneratorExit):
+                raise
+            logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
 
     def _start_content_pipeline(self) -> None:
         if self._content_pipeline_started:
@@ -3988,16 +4219,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     async def _abort_buffered_materialization(self, exc: BaseException) -> None:
         self._stream_error = exc
         try:
-            iterator = self._iterator
-            if iterator is not None:
-                if isinstance(iterator, ResponseStream):
-                    await cast(ResponseStream[UpdateT, Any], iterator).close()
-                else:
-                    close = getattr(iterator, "aclose", None)
-                    if close is not None:
-                        await close()
-            self._consumed = True
-            await self._run_cleanup_hooks()
+            # close() also runs the hooks if releasing the iterator fails.
+            await self.close()
         finally:
             self._stream_error = None
 
@@ -4131,9 +4354,18 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             self._buffered_materialized = True
         except BaseException as exc:
             try:
-                if release_phase_started:
-                    await self._run_release_error_hooks(exc)
-                await self._abort_buffered_materialization(exc)
+                try:
+                    if release_phase_started:
+                        await self._run_release_error_hooks(exc)
+                except Exception:
+                    logger.warning("Stream error hook failed while handling an existing exception.", exc_info=True)
+                finally:
+                    try:
+                        await self._abort_buffered_materialization(exc)
+                    except Exception:
+                        logger.warning(
+                            "Buffered stream cleanup failed while handling an existing exception.", exc_info=True
+                        )
             except BaseException as cleanup_exc:
                 self._buffered_materialization_error = cleanup_exc
                 raise
@@ -4166,12 +4398,17 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             # provider stream suspended until GC. Hooks run first because they
             # read self._stream_error, and close() would consume the one-shot
             # cleanup run without it. close() stays in finally so the provider
-            # stream is released even when a hook raises; the original
-            # exception always re-raises.
+            # stream is released even when a hook raises. Ordinary cleanup
+            # errors must not replace this failure; a new cancellation still propagates.
             try:
                 await self._handle_stream_error(exc)
+            except Exception:
+                logger.warning("Stream cleanup hook failed while handling an existing exception.", exc_info=True)
             finally:
-                await self.close()
+                try:
+                    await self.close()
+                except Exception:
+                    logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
             raise
 
     async def close(self) -> None:
@@ -4179,6 +4416,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
         """
+        iterator_failed = False
         try:
             iterator: AsyncIterator[UpdateT] | None = self._iterator
             if iterator is not None:
@@ -4188,9 +4426,17 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
                         await close()
+        except BaseException:
+            iterator_failed = True
+            raise
         finally:
             self._consumed = True
-            await self._run_cleanup_hooks()
+            try:
+                await self._run_cleanup_hooks()
+            except Exception:
+                if not iterator_failed:
+                    raise
+                logger.warning("Stream cleanup hook failed after iterator close failed.", exc_info=True)
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
@@ -4279,7 +4525,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         *,
         phase: Literal["before_transform", "after_transform"] = "after_transform",
     ) -> ResponseStream[UpdateT, FinalT]:
-        """Register a blocking gate for the finalized result."""
+        """Register a blocking gate for the finalized result.
+
+        The gate runs at finalization. On a stream that is not buffered the consumer has
+        already received the updates by then, so a gate that raises cannot hold them back;
+        call ``buffer_updates()`` to hold updates until the gates pass.
+        """
         self._ensure_content_configuration_mutable()
         self._validate_gate_phase(phase)
         gates = self._result_gates_before if phase == "before_transform" else self._result_gates_after
