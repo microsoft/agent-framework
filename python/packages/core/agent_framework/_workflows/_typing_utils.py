@@ -71,13 +71,13 @@ def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
-    """Check if the given agent is a Agent.
+    """Check if the given agent is an Agent.
 
     Args:
         agent (Any): The agent to check.
 
     Returns:
-        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+        TypeGuard[Agent]: True if the agent is an Agent, False otherwise.
     """
     return isinstance(agent, Agent)
 
@@ -485,6 +485,13 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     target_origin = get_origin(target_type)
     target_args = get_args(target_type)
 
+    # A bare alias from `typing` (typing.Sequence, typing.List) has an origin but no type
+    # arguments; treat it as the bare container class it stands for.
+    if source_origin is not None and not source_args and isinstance(source_origin, type):
+        source_type, source_origin = source_origin, None
+    if target_origin is not None and not target_args and isinstance(target_origin, type):
+        target_type, target_origin = target_origin, None
+
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
         # Special case: if source is also a Union, check that each source member
@@ -511,6 +518,20 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
                 # Handle cases where issubclass doesn't work (e.g., with special forms)
                 return False
         return source_type == target_type
+
+    # A bare container class on one side (list[str] -> list, or list -> list[str]):
+    # the unparameterized side accepts any element type, so compare the containers.
+    # issubclass raises TypeError for a Protocol that is not runtime_checkable.
+    if target_origin is None and isinstance(target_type, type) and isinstance(source_origin, type):
+        try:
+            return issubclass(source_origin, target_type)
+        except TypeError:
+            return False
+    if source_origin is None and isinstance(source_type, type) and isinstance(target_origin, type):
+        try:
+            return issubclass(source_type, target_origin)
+        except TypeError:
+            return False
 
     # Case 5: different container types are not compatible
     if source_origin != target_origin:

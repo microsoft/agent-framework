@@ -43,7 +43,7 @@ class Writer(Executor):
     """Custom executor that owns a domain specific agent responsible for generating content.
 
     This class demonstrates:
-    - Attaching a Agent to an Executor so it participates as a node in a workflow.
+    - Attaching an Agent to an Executor so it participates as a node in a workflow.
     - Using a @handler method to accept a typed input and forward a typed output via ctx.send_message.
     """
 

@@ -10,6 +10,8 @@ on:
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
       - ".github/workflows/devflow-fix-ci.yml"
+      - ".github/workflows/issue-plan.md"
+      - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
       - "python/uv.lock"
   push:
@@ -23,6 +25,8 @@ on:
       - ".github/workflows/python-test-coverage.yml"
       - ".github/workflows/github-automation-tests.yml"
       - ".github/workflows/devflow-fix-ci.yml"
+      - ".github/workflows/issue-plan.md"
+      - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
       - "python/uv.lock"
 

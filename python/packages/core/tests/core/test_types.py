@@ -5,7 +5,8 @@ import base64
 import contextlib
 import json
 import warnings
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
@@ -42,12 +43,15 @@ from agent_framework._compaction import (
 )
 from agent_framework._types import (
     _CONTENT_ITEM_SNAPSHOT_KEY,
+    _MODEL_OUTPUT_KIND_KEY,
     _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
+    _get_operation_state,
     _parse_content_list,
     _parse_structured_response_value,
     _process_update,
+    _set_operation_state,
     _validate_uri,
     add_usage_details,
     map_chat_to_agent_update,
@@ -2726,6 +2730,222 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[1].text == "Thinking B1 B2"
 
 
+def _reference_coalesce(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
+    """The pre-fix fold, kept as the equivalence oracle: deepcopy the run head, then += the rest."""
+    if not contents:
+        return
+    coalesced: list[Content] = []
+    acc: Content | None = None
+    for content in contents:
+        if content.type == type_str:
+            if acc is None:
+                acc = deepcopy(content)
+            elif type_str == "text" and acc.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced.append(acc)
+                acc = deepcopy(content)
+            else:
+                try:
+                    acc += content
+                except AdditionItemMismatch:
+                    coalesced.append(acc)
+                    acc = deepcopy(content)
+        else:
+            if acc:
+                coalesced.append(acc)
+            acc = None
+            coalesced.append(content)
+    if acc:
+        coalesced.append(acc)
+    contents.clear()
+    contents.extend(coalesced)
+
+
+@pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
+def test_coalesce_matches_repeated_add(type_str: Literal["text", "text_reasoning"]) -> None:
+    """The one-pass fold must reproduce the repeated-+= result on a mixed stream."""
+    from agent_framework._types import _coalesce_text_content
+
+    def make(i: int, **kwargs: Any) -> Content:
+        if type_str == "text":
+            return Content.from_text(f"chunk{i} ", **kwargs)
+        return Content.from_text_reasoning(text=f"chunk{i} ", **kwargs)
+
+    streams = [
+        # plain run
+        [make(i) for i in range(5)],
+        # run with props, annotations and raw representations of mixed shapes
+        [
+            make(0, additional_properties={"a": 1}, raw_representation={"n": 0}),
+            make(1, additional_properties={"a": 2, "b": 1}, raw_representation=[{"n": 1}]),
+            make(2),
+            make(3, raw_representation={"n": 3}),
+        ],
+        # annotations on the head, on a later chunk, and on both
+        [
+            make(0, annotations=[{"type": "citation", "url": "https://a"}]),
+            make(1),
+            make(2, annotations=[{"type": "citation", "url": "https://b"}]),
+        ],
+        [make(0), make(1, annotations=[{"type": "citation", "url": "https://b"}]), make(2)],
+        # split by an unrelated content type, then resume
+        [make(0), Content.from_data(b"\x00", media_type="application/octet-stream"), make(1), make(2)],
+        # single chunk stays a plain copy
+        [make(0, raw_representation={"n": 0})],
+    ]
+    if type_str == "text":
+        marker = {_MODEL_OUTPUT_KIND_KEY: "refusal"}
+        streams.append([make(0), make(1, additional_properties=marker), make(2, additional_properties=marker), make(3)])
+    else:
+        streams.append([make(0, id="rs_a"), make(1, id="rs_a"), make(2, id="rs_b"), make(3)])
+        streams.append([
+            make(0, additional_properties={"reasoning_text": True}),
+            make(1),
+            make(2, additional_properties={"reasoning_text": True}),
+        ])
+
+    for stream in streams:
+        # Shallow copies: deepcopy would strip raw_representation up front and make
+        # the explicit raw comparison below vacuous.
+        expected = [copy(c) for c in stream]
+        _reference_coalesce(expected, type_str)
+        actual = list(stream)
+        _coalesce_text_content(actual, type_str)
+        assert actual == expected, type_str
+        # Content.__eq__ excludes raw_representation, so compare it explicitly.
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected], type_str
+
+
+def test_coalesce_fold_does_not_readd_chunks() -> None:
+    """Aggregating n chunks must not invoke Content.__add__ per chunk (the old O(n^2) path)."""
+    from agent_framework._types import _coalesce_text_content
+
+    calls = 0
+    original_add = Content.__add__
+
+    def counting_add(self: Content, other: Content) -> Content:
+        nonlocal calls
+        calls += 1
+        return original_add(self, other)
+
+    contents = [Content.from_text(f"c{i} ", raw_representation={"i": i}) for i in range(2000)]
+    try:
+        Content.__add__ = counting_add  # type: ignore[method-assign]
+        _coalesce_text_content(contents, "text")
+    finally:
+        Content.__add__ = original_add  # type: ignore[method-assign]
+
+    assert calls == 0
+    assert len(contents) == 1
+    assert contents[0].text == "".join(f"c{i} " for i in range(2000))
+    # The run head's raw representation is dropped by the fold's deepcopy semantics;
+    # the remaining 1999 entries flatten in order.
+    assert contents[0].raw_representation == [{"i": i} for i in range(1, 2000)]
+
+
+def test_coalesce_text_reasoning_one_pass_semantics() -> None:
+    """text_reasoning specifics: id from the first tagged chunk, protected_data from the last non-null."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text_reasoning(id="rs_a", text="t1", protected_data="sig1"),
+        Content.from_text_reasoning(text="t2"),
+        Content.from_text_reasoning(text=None, protected_data="sig2"),
+    ]
+    _coalesce_text_content(contents, "text_reasoning")
+    assert len(contents) == 1
+    assert contents[0].id == "rs_a"
+    assert contents[0].text == "t1t2"
+    assert contents[0].protected_data == "sig2"
+
+    # a fully text-less run keeps text=None rather than ""
+    none_run = [Content.from_text_reasoning(text=None), Content.from_text_reasoning(text=None)]
+    _coalesce_text_content(none_run, "text_reasoning")
+    assert len(none_run) == 1
+    assert none_run[0].text is None
+
+
+def test_coalesce_text_reasoning_empty_id_matches_repeated_add() -> None:
+    """An empty-string id survives the fold exactly like repeated += (``None or ""`` yields ``""``)."""
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [Content.from_text_reasoning(text="a"), Content.from_text_reasoning(id="", text="b")]
+    _coalesce_text_content(contents, "text_reasoning")
+    assert len(contents) == 1
+    assert contents[0].id == ""
+
+
+def test_coalesce_detaches_run_head_nested_values() -> None:
+    """Mutating the source head's nested values after the fold must not leak into the aggregate."""
+    from agent_framework._types import _coalesce_text_content
+
+    head = Content.from_text(
+        "h ",
+        additional_properties={"k": {"nested": 1}},
+        annotations=[{"type": "citation", "url": "https://a"}],
+    )
+    contents = [head, Content.from_text("t")]
+    _coalesce_text_content(contents, "text")
+    props = head.additional_properties
+    annotations = head.annotations
+    assert props is not None and annotations is not None
+    props["k"]["nested"] = 99
+    annotations[0]["url"] = "https://mutated"
+    folded_props = contents[0].additional_properties
+    folded_annotations = contents[0].annotations
+    assert folded_props is not None and folded_annotations is not None
+    assert folded_props["k"]["nested"] == 1
+    assert folded_annotations[0]["url"] == "https://a"
+
+
+@pytest.mark.parametrize("type_str", ["text", "text_reasoning"])
+def test_coalesce_matches_repeated_add_fuzz(type_str: Literal["text", "text_reasoning"]) -> None:
+    """Seeded random streams: the one-pass fold must match repeated += exactly.
+
+    The oracle folds through the live ``__add__``, so any future drift between
+    the add-path and the one-pass fold fails here.
+    """
+    import random
+
+    from agent_framework._types import _coalesce_text_content
+
+    rng = random.Random(20261002)
+
+    def rand_chunk() -> Content:
+        kwargs: dict[str, Any] = {}
+        if rng.random() < 0.5:
+            props: dict[str, Any] = {rng.choice(["a", "b"]): rng.randint(0, 3)}
+            if type_str == "text" and rng.random() < 0.2:
+                props[_MODEL_OUTPUT_KIND_KEY] = rng.choice(["refusal", "regular"])
+            if type_str == "text_reasoning" and rng.random() < 0.3:
+                props["reasoning_text"] = True
+            kwargs["additional_properties"] = props
+        if rng.random() < 0.3:
+            annotation: Annotation = {"type": "citation", "url": f"https://x/{rng.randint(0, 9)}"}
+            kwargs["annotations"] = [annotation]
+        if rng.random() < 0.4:
+            kwargs["raw_representation"] = (
+                {"n": rng.randint(0, 5)} if rng.random() < 0.5 else [{"n": rng.randint(0, 5)}]
+            )
+        if type_str == "text":
+            return Content.from_text(rng.choice(["", "x", "y "]), **kwargs)
+        return Content.from_text_reasoning(
+            id=rng.choice([None, "", "rs_a", "rs_b"]), text=rng.choice([None, "", "t "]), **kwargs
+        )
+
+    for _ in range(300):
+        stream = [rand_chunk() for _ in range(rng.randint(0, 8))]
+        if stream and rng.random() < 0.3:
+            stream.insert(rng.randrange(len(stream)), Content.from_data(b"\x00", media_type="application/octet-stream"))
+        expected = [copy(c) for c in stream]
+        _reference_coalesce(expected, type_str)
+        actual = list(stream)
+        _coalesce_text_content(actual, type_str)
+        assert actual == expected
+        assert [c.raw_representation for c in actual] == [c.raw_representation for c in expected]
+
+
 def test_agent_response_from_updates_preserves_refusal_marker() -> None:
     marker = {"model_output_kind": "refusal"}
     response = AgentResponse.from_updates([
@@ -4738,6 +4958,41 @@ class TestResponseStreamTransformHooks:
         assert (await pending_update).text == "UPDATE_0"
 
 
+class _FailingCloseIterator:
+    def __init__(
+        self,
+        failure: BaseException | None,
+        close_error: BaseException | None,
+        *,
+        close_waiting: asyncio.Event | None = None,
+    ) -> None:
+        self._failure = failure
+        self._close_error = close_error
+        self._close_waiting = close_waiting
+        self._yielded = False
+        self.close_calls = 0
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._yielded:
+            self._yielded = True
+            return "first"
+        if self._failure is not None:
+            raise self._failure
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        if self._close_waiting is not None and self.close_calls == 1:
+            self._close_waiting.set()
+            await asyncio.Event().wait()
+        await asyncio.sleep(0)
+        if self._close_error is not None:
+            raise self._close_error
+
+
 class TestResponseStreamCleanupHooks:
     """Tests for cleanup hooks (after stream consumption, before finalizer)."""
 
@@ -5040,6 +5295,210 @@ class TestResponseStreamCleanupHooks:
                 pass
 
         assert cleanup_called["value"] is True
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    @pytest.mark.parametrize("cleanup_kind", ["iterator", "hook"])
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_primary_error_survives_cleanup_failure(
+        self,
+        stream_updates: bool,
+        cleanup_kind: Literal["iterator", "hook"],
+        failure_kind: Literal["runtime", "cancelled"],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        failure = RuntimeError("operation failed") if failure_kind == "runtime" else asyncio.CancelledError("cancelled")
+        cleanup_error = OSError("cleanup failed")
+        source = _FailingCloseIterator(failure, cleanup_error if cleanup_kind == "iterator" else None)
+        cleanup_calls = 0
+
+        async def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            await asyncio.sleep(0)
+            if cleanup_kind == "hook":
+                raise cleanup_error
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=stream_updates,
+        )
+        with pytest.raises(type(failure)) as error:
+            async for _ in stream:
+                pass
+
+        assert error.value is failure
+        assert source.close_calls >= 1
+        assert cleanup_calls == 1
+        assert any(record.exc_info is not None for record in caplog.records)
+        if not stream_updates:
+            close_calls = source.close_calls
+            with pytest.raises(type(failure)) as repeated_error:
+                await anext(stream)
+            assert repeated_error.value is failure
+            assert source.close_calls == close_calls
+            assert cleanup_calls == 1
+
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_context_body_error_survives_close_failure(
+        self, failure_kind: Literal["runtime", "cancelled"]
+    ) -> None:
+        failure = RuntimeError("body failed") if failure_kind == "runtime" else asyncio.CancelledError("body cancelled")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+        stream: ResponseStream[str, str] = ResponseStream(source, finalizer=lambda values: "".join(values))
+
+        with pytest.raises(type(failure)) as error:
+            async with stream:
+                assert await anext(stream) == "first"
+                raise failure
+
+        assert error.value is failure
+        assert source.close_calls == 1
+
+    @pytest.mark.parametrize("release_kind", ["close", "context", "complete", "buffered_complete"])
+    @pytest.mark.parametrize("cleanup_kind", ["iterator", "hook"])
+    async def test_cleanup_failure_without_body_error_is_reported(
+        self,
+        release_kind: Literal["close", "context", "complete", "buffered_complete"],
+        cleanup_kind: Literal["iterator", "hook"],
+    ) -> None:
+        cleanup_error = OSError("cleanup failed")
+        source = _FailingCloseIterator(None, cleanup_error if cleanup_kind == "iterator" else None)
+        cleanup_calls = 0
+
+        async def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            if cleanup_kind == "hook":
+                raise cleanup_error
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=release_kind != "buffered_complete",
+        )
+        with pytest.raises(OSError) as error:
+            if release_kind == "close":
+                await anext(stream)
+                await stream.close()
+            else:
+                async with stream:
+                    if release_kind == "context":
+                        await anext(stream)
+                    else:
+                        async for _ in stream:
+                            pass
+
+        assert error.value is cleanup_error
+        assert source.close_calls >= 1
+        assert cleanup_calls == 1
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    async def test_finalizer_error_survives_close_failure(self, stream_updates: bool) -> None:
+        failure = ValueError("finalizer failed")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+
+        def finalize(values: Sequence[str]) -> str:
+            raise failure
+
+        stream: ResponseStream[str, str] = ResponseStream(source, finalizer=finalize, stream_updates=stream_updates)
+        with pytest.raises(ValueError) as error:
+            async with stream:
+                async for _ in stream:
+                    pass
+
+        assert error.value is failure
+        assert source.close_calls >= 1
+
+    @pytest.mark.parametrize("stream_updates", [True, False], ids=["live", "buffered"])
+    @pytest.mark.parametrize("cleanup_fails", [False, True], ids=["cleanup-success", "cleanup-failure"])
+    async def test_new_cancellation_during_error_cleanup_propagates(
+        self, stream_updates: bool, cleanup_fails: bool
+    ) -> None:
+        cleanup_waiting = asyncio.Event()
+        source = _FailingCloseIterator(RuntimeError("operation failed"), None, close_waiting=cleanup_waiting)
+        cleanup_calls = 0
+
+        def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            if cleanup_fails:
+                raise OSError("cleanup hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source,
+            finalizer=lambda values: "".join(values),
+            cleanup_hooks=[cleanup],
+            stream_updates=stream_updates,
+        )
+        if stream_updates:
+            await anext(stream)
+        task = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(cleanup_waiting.wait(), timeout=5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert task.cancelled()
+            assert cleanup_calls == 1
+            if not stream_updates:
+                close_calls = source.close_calls
+                with pytest.raises(asyncio.CancelledError):
+                    await anext(stream)
+                assert source.close_calls == close_calls
+                assert cleanup_calls == 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+    async def test_iterator_close_error_survives_cleanup_hook_failure(
+        self, failure_kind: Literal["runtime", "cancelled"]
+    ) -> None:
+        failure = OSError("iterator close failed") if failure_kind == "runtime" else asyncio.CancelledError("cancelled")
+        source = _FailingCloseIterator(None, failure)
+        cleanup_calls = 0
+
+        def cleanup() -> None:
+            nonlocal cleanup_calls
+            cleanup_calls += 1
+            raise ValueError("cleanup hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source, finalizer=lambda values: "".join(values), cleanup_hooks=[cleanup]
+        )
+        await anext(stream)
+        with pytest.raises(type(failure)) as error:
+            await stream.close()
+
+        assert error.value is failure
+        assert source.close_calls == 1
+        assert cleanup_calls == 1
+
+    async def test_buffered_error_hook_failure_does_not_skip_cleanup(self) -> None:
+        failure = ValueError("release failed")
+        source = _FailingCloseIterator(None, OSError("close failed"))
+
+        def fail_release() -> None:
+            raise failure
+
+        def fail_error_hook(error: BaseException) -> None:
+            assert error is failure
+            raise RuntimeError("error hook failed")
+
+        stream: ResponseStream[str, str] = ResponseStream(
+            source, finalizer=lambda values: "".join(values), stream_updates=False
+        )
+        stream._with_release_hook(fail_release)._with_release_error_hook(fail_error_hook)
+
+        with pytest.raises(ValueError) as error:
+            await anext(stream)
+
+        assert error.value is failure
+        assert source.close_calls == 1
+        assert stream.updates == []
 
 
 class TestResponseStreamResultHooks:
@@ -6354,4 +6813,278 @@ def test_agent_response_update_serialization_includes_finish_reason() -> None:
     assert data["finish_reason"] == "tool_calls"
 
 
+def test_chat_response_preserves_continuation_token_for_explicitly_in_progress_updates() -> None:
+    """Chat response aggregation should preserve an in-progress continuation token."""
+    token_update = ChatResponseUpdate(
+        contents=[Content.from_text(text="working")],
+        response_id="resp_1",
+        model="gpt-5",
+        continuation_token=cast(Any, {"response_id": "resp_1"}),
+    )
+    tokenless_update = ChatResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
+
+    aggregated = ChatResponse.from_updates([token_update, tokenless_update])
+
+    assert aggregated.continuation_token == {"response_id": "resp_1"}
+
+
+def test_chat_response_update_serialization_preserves_in_progress_continuation_token() -> None:
+    """Serialized in-progress chat updates should retain an active continuation token."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    tokenless_update = ChatResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
+
+    serialized_updates = json.dumps([token_update.to_dict(), tokenless_update.to_dict()])
+    restored_updates = [ChatResponseUpdate.from_dict(update_data) for update_data in json.loads(serialized_updates)]
+
+    assert ChatResponse.from_updates(restored_updates).continuation_token == {"response_id": "resp_1"}
+
+
+def test_chat_response_update_serialization_preserves_terminal_state() -> None:
+    """Serialized terminal chat updates should retain terminal operation state."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    serialized_updates = json.dumps([token_update.to_dict(), terminal_update.to_dict()])
+    restored_updates = [ChatResponseUpdate.from_dict(update_data) for update_data in json.loads(serialized_updates)]
+
+    assert _get_operation_state(restored_updates[0]) == "in_progress"
+    assert _get_operation_state(restored_updates[1]) == "terminal"
+    assert ChatResponse.from_updates(restored_updates).continuation_token is None
+
+
+def test_chat_response_terminal_update_clears_continuation_token() -> None:
+    """An explicitly terminal chat response should clear its continuation token."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    aggregated = ChatResponse.from_updates([token_update, terminal_update])
+
+    assert aggregated.continuation_token is None
+
+
+def test_chat_response_legacy_tokenless_update_clears_continuation_token() -> None:
+    """Providers without explicit operation state should retain legacy token overwrite behavior."""
+    events = [
+        ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
+        ChatResponseUpdate(finish_reason="stop"),
+    ]
+
+    aggregated = ChatResponse.from_updates(events)
+
+    assert aggregated.continuation_token is None
+    assert aggregated.finish_reason == "stop"
+
+
+def test_agent_response_legacy_tokenless_update_clears_continuation_token() -> None:
+    """Legacy agent providers should retain token overwrite behavior."""
+    aggregated = AgentResponse.from_updates([
+        AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
+        AgentResponseUpdate(finish_reason="stop"),
+    ])
+
+    assert aggregated.continuation_token is None
+    assert aggregated.finish_reason == "stop"
+
+
+def test_agent_response_update_preserves_continuation_token() -> None:
+    """Agent response aggregation should preserve an in-progress continuation token."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    tokenless_update = AgentResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
+
+    aggregated = AgentResponse.from_updates([token_update, tokenless_update])
+
+    assert aggregated.continuation_token == {"response_id": "resp_1"}
+
+
+def test_agent_response_update_serialization_preserves_in_progress_continuation_token() -> None:
+    """Serialized in-progress agent updates should retain an active continuation token."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    tokenless_update = AgentResponseUpdate(contents=[Content.from_text(text="...still working")])
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(tokenless_update, "in_progress")
+
+    serialized_updates = json.dumps([token_update.to_dict(), tokenless_update.to_dict()])
+    restored_updates = [AgentResponseUpdate.from_dict(update_data) for update_data in json.loads(serialized_updates)]
+
+    assert AgentResponse.from_updates(restored_updates).continuation_token == {"response_id": "resp_1"}
+
+
+def test_agent_response_update_serialization_preserves_terminal_state() -> None:
+    """Serialized terminal agent updates should retain terminal operation state."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    serialized_updates = json.dumps([token_update.to_dict(), terminal_update.to_dict()])
+    restored_updates = [AgentResponseUpdate.from_dict(update_data) for update_data in json.loads(serialized_updates)]
+
+    assert _get_operation_state(restored_updates[0]) == "in_progress"
+    assert _get_operation_state(restored_updates[1]) == "terminal"
+    assert AgentResponse.from_updates(restored_updates).continuation_token is None
+
+
+def test_agent_response_terminal_update_clears_continuation_token() -> None:
+    """An explicitly terminal agent response should clear its continuation token."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    aggregated = AgentResponse.from_updates([token_update, terminal_update])
+
+    assert aggregated.continuation_token is None
+
+
+def test_map_chat_to_agent_update_preserves_terminal_signal() -> None:
+    """Chat-to-agent update conversion should preserve terminality."""
+    chat_update = ChatResponseUpdate()
+    _set_operation_state(chat_update, "terminal")
+    update = map_chat_to_agent_update(chat_update, agent_name=None)
+
+    assert (
+        AgentResponse.from_updates([
+            AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"})),
+            update,
+        ]).continuation_token
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ChatResponse(),
+        AgentResponse(),
+    ],
+)
+def test_response_serialization_omits_private_operation_state(
+    value: ChatResponse | AgentResponse,
+) -> None:
+    """Internal operation state should not change the public serialized shape."""
+    _set_operation_state(value, "terminal")
+
+    assert "_operation_state" not in value.to_dict()
+
+
+@pytest.mark.parametrize("value", [ChatResponseUpdate(), AgentResponseUpdate()])
+def test_update_serialization_includes_explicit_operation_state(
+    value: ChatResponseUpdate | AgentResponseUpdate,
+) -> None:
+    """Update serialization should preserve explicitly set internal operation state."""
+    _set_operation_state(value, "terminal")
+
+    assert value.to_dict()["_operation_state"] == "terminal"
+
+
+def test_chat_response_round_trip_preserves_terminal_operation_state() -> None:
+    """Chat response buffering should preserve terminality."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+    response = ChatResponse.from_updates([token_update, terminal_update])
+
+    round_tripped_updates = response.to_updates()
+    legacy_token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+    round_tripped = ChatResponse.from_updates([legacy_token_update, *round_tripped_updates])
+
+    assert round_tripped.continuation_token is None
+
+
+def test_agent_response_round_trip_preserves_terminal_operation_state() -> None:
+    """Agent response buffering should preserve terminality."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+    response = AgentResponse.from_updates([token_update, terminal_update])
+
+    round_tripped_updates = response.to_updates()
+    legacy_token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+    round_tripped = AgentResponse.from_updates([legacy_token_update, *round_tripped_updates])
+
+    assert round_tripped.continuation_token is None
+
+
+async def test_buffered_chat_response_replacement_preserves_terminal_operation_state() -> None:
+    """Buffered chat conversion should retain terminality on rebuilt updates."""
+    token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = ChatResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    async def updates() -> AsyncIterable[ChatResponseUpdate]:
+        yield token_update
+        yield terminal_update
+
+    stream = ResponseStream(
+        updates(),
+        finalizer=ChatResponse.from_updates,
+        result_transforms=[lambda response: response],
+        stream_updates=False,
+        result_to_updates=ChatResponse.to_updates,
+    )
+
+    released = [update async for update in stream]
+    stale_token_update = ChatResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+
+    assert ChatResponse.from_updates([stale_token_update, *released]).continuation_token is None
+
+
+async def test_buffered_agent_response_replacement_preserves_terminal_operation_state() -> None:
+    """Buffered agent conversion should retain terminality on rebuilt updates."""
+    token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "resp_1"}))
+    terminal_update = AgentResponseUpdate()
+    _set_operation_state(token_update, "in_progress")
+    _set_operation_state(terminal_update, "terminal")
+
+    async def updates() -> AsyncIterable[AgentResponseUpdate]:
+        yield token_update
+        yield terminal_update
+
+    stream = ResponseStream(
+        updates(),
+        finalizer=AgentResponse.from_updates,
+        result_transforms=[lambda response: response],
+        stream_updates=False,
+        result_to_updates=AgentResponse.to_updates,
+    )
+
+    released = [update async for update in stream]
+    stale_token_update = AgentResponseUpdate(continuation_token=cast(Any, {"response_id": "stale"}))
+
+    assert AgentResponse.from_updates([stale_token_update, *released]).continuation_token is None
+
+
 # endregion
+
+
+def test_get_data_bytes_as_str_ignores_base64_marker_inside_the_payload():
+    """A ';base64,' sequence inside the payload is data, not the encoding marker."""
+    content = Content.from_uri(uri="data:text/plain,a;base64,QUJD")
+    with raises(ContentError, match="base64 encoding"):
+        _get_data_bytes_as_str(content)
+
+
+def test_data_uri_readers_agree_on_the_base64_marker():
+    """Validation, media type detection and payload extraction share one reading of a data URI."""
+    png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
+    uri = f"data:image/png;charset=utf-8;base64,{png_b64}"
+    content = Content.from_uri(uri=uri)
+    assert content.media_type == "image/png"
+    assert _get_data_bytes_as_str(content) == png_b64
+    assert detect_media_type_from_base64(data_uri=uri) == "image/png"
+    payload_marker = f"data:image/png,x;base64,{png_b64}"
+    with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
+        detect_media_type_from_base64(data_uri=payload_marker)

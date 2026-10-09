@@ -55,11 +55,11 @@ Agent Framework `AgentSession`, but they are not interchangeable.
 During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
 
 ```python
-session.service_session_id
 # Response or conversation continuation handle
+session.service_session_id
 
-session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 # Foundry hosted-agent session ID
+session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 ```
 
 Keep the same `AgentSession` across turns so Agent Framework can forward both values correctly. When cleaning up,
@@ -138,7 +138,7 @@ This will create the following Azure resources:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+export FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -146,7 +146,7 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+$env:FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -191,11 +191,11 @@ Or in PowerShell:
 
 #### Running the Agent Host with Python
 
-Clone the repository containing the sample code:
+Clone the repository containing the sample code and change directory to the selected sample (here we use `/responses/basic`):
 
 ```bash
 git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
+cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses/basic
 ```
 
 #### Environment setup
@@ -225,7 +225,7 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
    uv pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.
+3. Create a `.env` file with your Foundry configuration following the `.env.example` file in the sample.
 
 4. Make sure you are logged in with the Azure CLI:
 
@@ -246,6 +246,10 @@ Right now, the agent host should be running on `http://localhost:8088`
 On another terminal, run the following command to invoke the agent:
 
 ```bash
+# Windows Command Prompt
+curl.exe -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d "{\"input\":\"Hello!\"}"
+
+# macOS/Linux
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
 ```
 
@@ -280,7 +284,7 @@ azd deploy
 > The Foundry hosting infrastructure will inject the following environment variables into your agent at runtime:
 >
 > - `FOUNDRY_PROJECT_ENDPOINT`: The endpoint URL for the Foundry project where the agent is deployed.
-> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of the model deployment in your Foundry project. This is configured during the agent initialization process with `azd ai agent init`.
+> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The azd-managed model deployment name configured by `azd ai agent init`. Sample code prefers `FOUNDRY_MODEL` for local runs and falls back to this hosted value.
 > - `APPLICATIONINSIGHTS_CONNECTION_STRING`: The connection string for Application Insights to enable telemetry for your agent.
 
 This will package your agent and deploy it to the Foundry environment, making it accessible through the Foundry project endpoint. Once it's deployed, you can also access the agent through the Foundry UI.
