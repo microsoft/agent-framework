@@ -202,14 +202,22 @@ public sealed class LoopAgent : DelegatingAIAgent
             if (iteration >= this._maxIterations)
             {
                 this.LogMaxIterationsReached(iteration);
-                return this.BuildResult(response, transcript, aggregatedUsage);
+                AgentResponse capResult = this.BuildResult(response, transcript, aggregatedUsage);
+                (capResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = LoopExitReason.IterationCapReached;
+                return capResult;
             }
 
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
             {
-                return this.BuildResult(response, transcript, aggregatedUsage);
+                AgentResponse evalResult = this.BuildResult(response, transcript, aggregatedUsage);
+                if (context.AdditionalProperties.TryGetValue(LoopExitReason.AdditionalPropertiesKey, out object? exitReason))
+                {
+                    (evalResult.AdditionalProperties ??= new())[LoopExitReason.AdditionalPropertiesKey] = exitReason;
+                }
+
+                return evalResult;
             }
 
             currentMessages = step.Messages;
@@ -332,6 +340,9 @@ public sealed class LoopAgent : DelegatingAIAgent
     /// </summary>
     private async ValueTask<LoopNextStep> EvaluateAndBuildNextAsync(LoopContext context, List<string?> feedbackLog, JsonElement? initialSessionSnapshot, CancellationToken cancellationToken)
     {
+        // Clear any exit reason stamped during an earlier pass so only the evaluators of the final iteration can supply it.
+        context.AdditionalProperties.Remove(LoopExitReason.AdditionalPropertiesKey);
+
         // Evaluate in order; the first evaluator that requests a re-invocation wins.
         LoopEvaluation? winner = null;
         foreach (LoopEvaluator evaluator in this._evaluators)
