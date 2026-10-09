@@ -35,6 +35,8 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_AGENT_RUN_KEY,
+    WORKFLOW_AGENT_SESSION_ID_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from ._edge import (
@@ -411,6 +413,7 @@ class Workflow(DictConvertible):
         # ever iterating, the weakref dereferences to ``None`` once Python collects it,
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
+        self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -428,6 +431,10 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
+
+    def _set_agent_run_context(self, session_id: str | None) -> None:
+        self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, session_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
@@ -864,6 +871,10 @@ class Workflow(DictConvertible):
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )
 
+        if message is not None:
+            self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, False)
+            self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
+
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
         # its async-generator finalizer ran. Clear it so this run starts clean and does
@@ -1141,6 +1152,8 @@ class Workflow(DictConvertible):
             if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
                 _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
+        if self._response_batch_validator is not None:
+            self._response_batch_validator([pending_requests[request_id] for request_id in coerced_responses])
         return coerced_responses
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:

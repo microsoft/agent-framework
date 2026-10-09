@@ -17,6 +17,14 @@ Both state classes validate object attribute names but leave dictionary keys unc
 ## MCP Handler Lifetimes
 
 `DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
+Cache identity includes a framework-owned workflow session ID in addition to
+endpoint, label, connection, and headers, so separate fresh runs do not share a
+stateful MCP protocol session while continuations and checkpoint restores do.
+Direct fresh runs reset this scope even for message-list inputs; only
+framework-marked WorkflowAgent turns retain the agent continuation scope.
+Sessionless WorkflowAgent turns select their own checkpointed scope at Entry,
+independent of explicit agent sessions, direct runs, and restored approval scopes.
+Approval continuations keep their originating active scope until the next Entry.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.
@@ -36,6 +44,11 @@ workflow-local HMAC key held separately in trusted host checkpoint state.
 Only the opaque binding and header names enter the approval payload; raw headers
 are not checkpointed. Changed or unverifiable headers produce a replacement
 request for the same pinned operation, with a fresh request ID and no dispatch.
+Pending requests also retain their originating workflow session ID across later
+fresh runs and checkpoint restores. Resuming an MCP approval restores that scope
+for downstream actions instead of inheriting a later run's MCP session.
+Factory-built workflows reject response batches containing MCP approvals from
+different originating scopes before dispatch; resume each scope in a separate run.
 Fresh executors verify unchanged approvals using the checkpointed key; legacy
 requests or missing verification state require reapproval for non-empty headers.
 Custom handlers remain responsible for identity changes

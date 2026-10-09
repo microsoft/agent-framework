@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -28,12 +29,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// a pre-configured <see cref="HttpClient"/> for each server.
 /// Provider-backed invocations create and dispose a separate MCP session for every call, including
 /// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
-/// Without a provider, sessions are cached by server URL, label, connection name, and explicit headers.
+/// Without a provider, workflow invocations are cached by workflow session, server URL, label,
+/// connection name, and explicit headers in a bounded least-recently-used cache. Evicted sessions
+/// are disposed after their active invocations finish.
 /// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
-public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
+public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyncDisposable
 {
+    private const int DefaultClientCacheMaxSize = 32;
     private const string FilenameAdditionalPropertyName = "filename";
 
     /// <summary>
@@ -43,12 +47,21 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     public const string ListToolsToolName = "tools/list";
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
+    private static readonly OperationCanceledException s_clientCreationCancelledException =
+        new("The MCP client creator was cancelled.");
 
     private readonly Func<string, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Func<HttpMessageHandler> _httpMessageHandlerFactory;
-    private readonly Dictionary<(string Url, string Label, string Connection, string HeadersHash), ClientConnection> _clients = [];
-    private readonly Dictionary<string, HttpClient> _ownedHttpClients = [];
+    private readonly Func<ClientConnection, ValueTask> _clientConnectionDisposer;
+    private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), CachedClient> _clients = [];
+    private readonly Dictionary<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash), TaskCompletionSource<CachedClient>> _clientCreations = [];
+    private readonly HashSet<TaskCompletionSource<bool>> _clientCreationLifetimes = [];
+    private readonly LinkedList<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> _clientLru = [];
+    private readonly HashSet<CachedClient> _retiredClients = [];
+    private readonly Dictionary<string, OwnedHttpClient> _ownedHttpClients = [];
     private readonly SemaphoreSlim _clientLock = new(1, 1);
+    private readonly SemaphoreSlim _clientCreationSemaphore;
+    private readonly int _clientCacheMaxSize;
     private readonly AsyncLocal<ProviderInvocationContext?> _providerInvocationContext = new();
     private TaskCompletionSource<bool>? _providerInvocationsDrained;
     private int _activeProviderInvocations;
@@ -83,10 +96,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
 
     internal DefaultMcpToolHandler(
         Func<string, CancellationToken, Task<HttpClient?>>? httpClientProvider,
-        Func<HttpMessageHandler> httpMessageHandlerFactory)
+        Func<HttpMessageHandler> httpMessageHandlerFactory,
+        int clientCacheMaxSize = DefaultClientCacheMaxSize,
+        Func<ClientConnection, ValueTask>? clientConnectionDisposer = null)
     {
+        if (clientCacheMaxSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(clientCacheMaxSize), "The MCP client cache size must be positive.");
+        }
+
         this._httpClientProvider = httpClientProvider;
         this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
+        this._clientConnectionDisposer = clientConnectionDisposer ?? (connection => connection.DisposeAsync());
+        this._clientCacheMaxSize = clientCacheMaxSize;
+        this._clientCreationSemaphore = new(clientCacheMaxSize, clientCacheMaxSize);
     }
 
     /// <inheritdoc/>
@@ -97,6 +120,26 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         IDictionary<string, object?>? arguments,
         IDictionary<string, string>? headers,
         string? connectionName,
+        CancellationToken cancellationToken = default)
+        => await this.InvokeToolInWorkflowSessionAsync(
+            serverUrl,
+            serverLabel,
+            toolName,
+            arguments,
+            headers,
+            connectionName,
+            workflowSessionId: string.Empty,
+            cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc/>
+    public async Task<McpServerToolResultContent> InvokeToolInWorkflowSessionAsync(
+        string serverUrl,
+        string? serverLabel,
+        string toolName,
+        IDictionary<string, object?>? arguments,
+        IDictionary<string, string>? headers,
+        string? connectionName,
+        string workflowSessionId,
         CancellationToken cancellationToken = default)
     {
         if (IsListToolsToolName(toolName))
@@ -126,7 +169,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             try
             {
                 ClientConnection invocationClient = await this.CreateClientAsync(
-                    serverUrl.Trim(), serverLabel, headers, httpClientCacheKey: null, cancellationToken).ConfigureAwait(false);
+                    serverUrl.Trim(), serverLabel, headers, cancellationToken).ConfigureAwait(false);
                 await using (invocationClient.ConfigureAwait(false))
                 {
                     return await InvokeClientAsync(invocationClient.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
@@ -151,8 +194,16 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
         }
 
-        McpClient client = await this.GetOrCreateClientAsync(serverUrl, serverLabel, headers, connectionName, cancellationToken).ConfigureAwait(false);
-        return await InvokeClientAsync(client, toolName, arguments, cancellationToken).ConfigureAwait(false);
+        CachedClient cachedClient = await this.AcquireClientAsync(
+            serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await InvokeClientAsync(cachedClient.Connection.Client, toolName, arguments, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await this.ReleaseClientAsync(cachedClient).ConfigureAwait(false);
+        }
     }
 
     private static async Task<McpServerToolResultContent> InvokeClientAsync(
@@ -218,12 +269,14 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         Task? providerInvocations;
+        List<Task<bool>> clientCreationLifetimes;
         await this._clientLock.WaitAsync().ConfigureAwait(false);
         try
         {
             this.ThrowIfDisposing();
             this._disposing = true;
             providerInvocations = this._providerInvocationsDrained?.Task;
+            clientCreationLifetimes = this._clientCreationLifetimes.Select(source => source.Task).ToList();
         }
         finally
         {
@@ -235,31 +288,98 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             await providerInvocations.ConfigureAwait(false);
         }
 
+        Exception? clientCreationException = null;
+        try
+        {
+            await Task.WhenAll(clientCreationLifetimes).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatalException(exception))
+        {
+            clientCreationException = exception;
+        }
+
+        List<CachedClient> cachedClients;
+        List<CachedClient> clientsToDispose = [];
         await this._clientLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            foreach (ClientConnection client in this._clients.Values)
+            cachedClients = [.. this._clients.Values, .. this._retiredClients];
+            foreach (CachedClient client in cachedClients)
             {
-                await client.DisposeAsync().ConfigureAwait(false);
+                client.Evicted = true;
+                this._retiredClients.Add(client);
+                if (client.ActiveInvocations == 0 && !client.DisposalClaimed)
+                {
+                    client.DisposalClaimed = true;
+                    clientsToDispose.Add(client);
+                }
             }
 
             this._clients.Clear();
-
-            // Dispose only HttpClients that the handler created (not user-provided ones)
-            foreach (HttpClient httpClient in this._ownedHttpClients.Values)
-            {
-                httpClient.Dispose();
-            }
-
-            this._ownedHttpClients.Clear();
+            this._clientLru.Clear();
         }
         finally
         {
             this._clientLock.Release();
         }
 
-        this._clientLock.Dispose();
+        Exception? clientCleanupException = null;
+        try
+        {
+            await DrainCleanupAsync(
+                clientsToDispose.Select(client => this.DisposeCachedClientAsync(client)),
+                cachedClients.Select(client => client.Disposed.Task)).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatalException(exception))
+        {
+            clientCleanupException = exception;
+        }
+        finally
+        {
+            this._clientLock.Dispose();
+            this._clientCreationSemaphore.Dispose();
+        }
+
+        if (clientCreationException is not null)
+        {
+            ExceptionDispatchInfo.Capture(clientCreationException).Throw();
+        }
+
+        if (clientCleanupException is not null)
+        {
+            ExceptionDispatchInfo.Capture(clientCleanupException).Throw();
+        }
     }
+
+    internal static async Task DrainCleanupAsync(IEnumerable<Task> cleanupTasks, IEnumerable<Task> completionTasks)
+    {
+        Exception? cleanupException = null;
+        try
+        {
+            await Task.WhenAll(cleanupTasks).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatalException(exception))
+        {
+            cleanupException = exception;
+        }
+
+        await Task.WhenAll(completionTasks).ConfigureAwait(false);
+
+        if (cleanupException is not null)
+        {
+            ExceptionDispatchInfo.Capture(cleanupException).Throw();
+        }
+    }
+
+    private static bool IsFatalException(Exception exception) =>
+        exception is OutOfMemoryException and not InsufficientMemoryException
+        or StackOverflowException
+        or AccessViolationException
+        or AppDomainUnloadedException
+        or BadImageFormatException
+        or CannotUnloadAppDomainException
+        or InvalidProgramException
+        or ThreadAbortException;
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "CA1513:Use ObjectDisposedException throw helper",
         Justification = "The helper is not available on .NET Framework or .NET Standard 2.0.")]
@@ -271,28 +391,240 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
-    private async Task<McpClient> GetOrCreateClientAsync(
+    private async Task<CachedClient> AcquireClientAsync(
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
         string? connectionName,
+        string workflowSessionId,
         CancellationToken cancellationToken)
     {
         string trimmedUrl = serverUrl.Trim();
-        var clientCacheKey = BuildCacheKey(trimmedUrl, serverLabel, connectionName, headers);
+        var clientCacheKey = BuildCacheKey(workflowSessionId, trimmedUrl, serverLabel, connectionName, headers);
+        CachedClient? clientToDispose = null;
+        TaskCompletionSource<CachedClient>? clientCreation;
+        TaskCompletionSource<bool>? clientCreationLifetime = null;
+        bool ownsClientCreation = false;
 
         await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             this.ThrowIfDisposing();
-            if (this._clients.TryGetValue(clientCacheKey, out ClientConnection? existingClient))
+            if (this._clients.TryGetValue(clientCacheKey, out CachedClient? existingClient))
             {
-                return existingClient.Client;
+                existingClient.ActiveInvocations++;
+                this._clientLru.Remove(existingClient.LruNode);
+                this._clientLru.AddLast(existingClient.LruNode);
+                return existingClient;
             }
 
-            ClientConnection newClient = await this.CreateClientAsync(trimmedUrl, serverLabel, headers, trimmedUrl, cancellationToken).ConfigureAwait(false);
-            this._clients[clientCacheKey] = newClient;
-            return newClient.Client;
+            if (!this._clientCreations.TryGetValue(clientCacheKey, out clientCreation))
+            {
+                clientCreation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                this._clientCreations[clientCacheKey] = clientCreation;
+                clientCreationLifetime = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                this._clientCreationLifetimes.Add(clientCreationLifetime);
+                ownsClientCreation = true;
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        if (!ownsClientCreation)
+        {
+            try
+            {
+                await WaitForClientCreationAsync(clientCreation.Task, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception)
+                when (ReferenceEquals(exception, s_clientCreationCancelledException))
+            {
+                return await this.AcquireClientAsync(
+                    serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
+            }
+
+            return await this.AcquireClientAsync(
+                serverUrl, serverLabel, headers, connectionName, workflowSessionId, cancellationToken).ConfigureAwait(false);
+        }
+
+        TaskCompletionSource<bool> ownedClientCreationLifetime = clientCreationLifetime ??
+            throw new InvalidOperationException("Missing MCP client creation lifetime.");
+        ClientConnection? connection = null;
+        bool creationSemaphoreEntered = false;
+        Exception? clientCreationCleanupException = null;
+        try
+        {
+            await this._clientCreationSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            creationSemaphoreEntered = true;
+            await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                this.ThrowIfDisposing();
+            }
+            finally
+            {
+                this._clientLock.Release();
+            }
+
+            connection = await this.CreateClientAsync(
+                trimmedUrl, serverLabel, headers, cancellationToken,
+                cleanupException => clientCreationCleanupException = cleanupException).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Exception sharedCreationException =
+                exception is OperationCanceledException && cancellationToken.IsCancellationRequested
+                    ? s_clientCreationCancelledException
+                    : exception;
+            try
+            {
+                await this.CompleteClientCreationFailureAsync(
+                    clientCacheKey, clientCreation, sharedCreationException).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (creationSemaphoreEntered)
+                {
+                    this._clientCreationSemaphore.Release();
+                    creationSemaphoreEntered = false;
+                }
+
+                await this.CompleteClientCreationLifetimeAsync(
+                    ownedClientCreationLifetime, clientCreationCleanupException).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        ObjectDisposedException? disposedException = null;
+        CachedClient? result = null;
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            this._clientCreations.Remove(clientCacheKey);
+            if (this._disposing)
+            {
+                disposedException = new ObjectDisposedException(nameof(DefaultMcpToolHandler));
+            }
+            else
+            {
+                LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> node =
+                    this._clientLru.AddLast(clientCacheKey);
+                CachedClient newClient = new(connection, node) { ActiveInvocations = 1 };
+                connection = null;
+                this._clients[clientCacheKey] = newClient;
+
+                if (this._clients.Count > this._clientCacheMaxSize)
+                {
+                    LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> evictedNode =
+                        this._clientLru.First!;
+                    this._clientLru.RemoveFirst();
+                    CachedClient evictedClient = this._clients[evictedNode.Value];
+                    this._clients.Remove(evictedNode.Value);
+                    evictedClient.Evicted = true;
+                    this._retiredClients.Add(evictedClient);
+                    if (evictedClient.ActiveInvocations == 0)
+                    {
+                        evictedClient.DisposalClaimed = true;
+                        clientToDispose = evictedClient;
+                    }
+                }
+
+                result = newClient;
+                clientCreation.TrySetResult(newClient);
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        try
+        {
+            if (connection is not null)
+            {
+                await this._clientConnectionDisposer(connection).ConfigureAwait(false);
+            }
+
+            if (disposedException is not null)
+            {
+                clientCreation.TrySetException(disposedException);
+                throw disposedException;
+            }
+
+            if (clientToDispose is not null)
+            {
+                await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception)
+        {
+            if (disposedException is not null && !ReferenceEquals(exception, disposedException))
+            {
+                clientCreation.TrySetException(exception);
+                clientCreationCleanupException = exception;
+            }
+
+            if (result is not null)
+            {
+                await this.ReleaseClientAsync(result).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (creationSemaphoreEntered)
+            {
+                this._clientCreationSemaphore.Release();
+            }
+
+            await this.CompleteClientCreationLifetimeAsync(
+                ownedClientCreationLifetime, clientCreationCleanupException).ConfigureAwait(false);
+        }
+
+        return result ?? throw new InvalidOperationException("Failed to acquire MCP client.");
+    }
+
+    private static async Task WaitForClientCreationAsync(Task<CachedClient> clientCreation, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.CanBeCanceled || clientCreation.IsCompleted)
+        {
+            await clientCreation.ConfigureAwait(false);
+            return;
+        }
+
+        TaskCompletionSource<bool> cancellation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenRegistration registration = cancellationToken.Register(
+            static state => ((TaskCompletionSource<bool>)state!).TrySetResult(true),
+            cancellation);
+
+        if (await Task.WhenAny(clientCreation, cancellation.Task).ConfigureAwait(false) == cancellation.Task)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        await clientCreation.ConfigureAwait(false);
+    }
+
+    private async Task CompleteClientCreationFailureAsync(
+        (string WorkflowSession, string Url, string Label, string Connection, string HeadersHash) clientCacheKey,
+        TaskCompletionSource<CachedClient> clientCreation,
+        Exception exception)
+    {
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (this._clientCreations.TryGetValue(clientCacheKey, out TaskCompletionSource<CachedClient>? existingCreation) &&
+                ReferenceEquals(existingCreation, clientCreation))
+            {
+                this._clientCreations.Remove(clientCacheKey);
+            }
+
+            clientCreation.TrySetException(exception);
+            _ = clientCreation.Task.Exception;
         }
         finally
         {
@@ -300,60 +632,129 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
+    private async Task CompleteClientCreationLifetimeAsync(
+        TaskCompletionSource<bool> clientCreationLifetime,
+        Exception? cleanupException = null)
+    {
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            this._clientCreationLifetimes.Remove(clientCreationLifetime);
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        if (cleanupException is not null)
+        {
+            clientCreationLifetime.TrySetException(cleanupException);
+        }
+        else
+        {
+            clientCreationLifetime.TrySetResult(true);
+        }
+    }
+
+    private async ValueTask ReleaseClientAsync(CachedClient client)
+    {
+        bool dispose = false;
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            client.ActiveInvocations--;
+            if (client.ActiveInvocations == 0 && client.Evicted && !client.DisposalClaimed)
+            {
+                client.DisposalClaimed = true;
+                dispose = true;
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        if (dispose)
+        {
+            await this.DisposeCachedClientAsync(client).ConfigureAwait(false);
+        }
+    }
+
+    private async Task DisposeCachedClientAsync(CachedClient client)
+    {
+        Exception? cleanupException = null;
+        try
+        {
+            await this._clientConnectionDisposer(client.Connection).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            cleanupException = exception;
+            throw;
+        }
+        finally
+        {
+            await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                this._retiredClients.Remove(client);
+            }
+            finally
+            {
+                this._clientLock.Release();
+            }
+
+            if (cleanupException is not null)
+            {
+                client.Disposed.TrySetException(cleanupException);
+            }
+            else
+            {
+                client.Disposed.TrySetResult(true);
+            }
+        }
+    }
+
     /// <summary>
-    /// Builds the per-client cache key as a 4-tuple of
-    /// (trimmed serverUrl, serverLabel, connectionName, headers hash). All four components
-    /// participate so that callers using different labels/connections/headers receive
-    /// distinct <see cref="McpClient"/> instances even when targeting the same URL.
+    /// Builds the per-client cache key as a 5-tuple of
+    /// (workflowSessionId, trimmed serverUrl, serverLabel, connectionName, headers hash).
+    /// All five components participate so that separate workflow sessions and callers using
+    /// different labels/connections/headers receive distinct <see cref="McpClient"/> instances
+    /// even when targeting the same URL.
     /// </summary>
-    internal static (string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
+    internal static (string WorkflowSession, string Url, string Label, string Connection, string HeadersHash) BuildCacheKey(
+        string workflowSessionId,
         string trimmedUrl,
         string? serverLabel,
         string? connectionName,
         IDictionary<string, string>? headers) =>
-        (trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
+        (workflowSessionId, trimmedUrl, serverLabel ?? string.Empty, connectionName ?? string.Empty, ComputeHeadersHash(headers));
 
     private async Task<ClientConnection> CreateClientAsync(
         string serverUrl,
         string? serverLabel,
         IDictionary<string, string>? headers,
-        string? httpClientCacheKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<Exception>? reportCleanupFailure = null)
     {
-        // Only the no-provider path shares handler-owned HTTP clients.
         HttpClient? httpClient = null;
         bool ownsHttpClient = false;
+        OwnedHttpClientLease? ownedHttpClientLease = null;
 
         if (this._httpClientProvider is not null)
         {
             httpClient = await this._httpClientProvider(serverUrl, cancellationToken).ConfigureAwait(false);
         }
 
-        if (httpClient is null &&
-            (httpClientCacheKey is null || !this._ownedHttpClients.TryGetValue(httpClientCacheKey, out httpClient)))
+        if (httpClient is null && this._httpClientProvider is not null)
         {
-            // Pin credential headers to the configured server origin as defense-in-depth. Forcing
-            // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
-            // SSE message endpoint), and AllowAutoRedirect=false blocks auto-redirects. This handler is the
-            // backstop: it guarantees the Authorization token and other credentials never leave the pinned
-            // origin even if a future change re-enables AutoDetect or redirects, or the SDK constructs a
-            // request to a new URI (AdditionalHeaders are re-stamped by the transport, so HttpClient's own
-            // redirect header-stripping does not cover them).
-            // Caveat for future maintainers: the handler strips credentials on every cross-origin request.
-            // That is safe today because this handler carries auth via static request headers, not the
-            // SDK's built-in OAuth flow. If OAuth support is ever added here, requests to the authorization
-            // server (a different origin than the MCP resource server) legitimately carry credentials, so
-            // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
-            OriginPinningHandler pinningHandler = new(new Uri(serverUrl)) { InnerHandler = this._httpMessageHandlerFactory() };
-            httpClient = new HttpClient(pinningHandler);
-            if (httpClientCacheKey is null)
-            {
-                ownsHttpClient = true;
-            }
-            else
-            {
-                this._ownedHttpClients[httpClientCacheKey] = httpClient;
-            }
+            httpClient = this.CreatePinnedHttpClient(serverUrl);
+            ownsHttpClient = true;
+        }
+        else if (httpClient is null)
+        {
+            ownedHttpClientLease = await this.AcquireOwnedHttpClientAsync(serverUrl, cancellationToken).ConfigureAwait(false);
+            httpClient = ownedHttpClientLease.Client;
         }
 
         HttpClientTransportOptions transportOptions = new()
@@ -368,18 +769,106 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             TransportMode = HttpTransportMode.StreamableHttp
         };
 
-        HttpClientTransport transport = new(transportOptions, httpClient, ownsHttpClient: ownsHttpClient);
-
+        HttpClientTransport? transport = null;
         try
         {
+            HttpClient resolvedHttpClient = httpClient ?? throw new InvalidOperationException("Failed to resolve MCP HTTP client.");
+            transport = new(transportOptions, resolvedHttpClient, ownsHttpClient: ownsHttpClient);
             McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return new ClientConnection(client, transport);
+            ClientConnection connection = new(client, transport, ownedHttpClientLease);
+            ownedHttpClientLease = null;
+            return connection;
         }
         catch
         {
-            await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+            try
+            {
+                try
+                {
+                    if (transport is not null)
+                    {
+                        await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    if (ownedHttpClientLease is not null)
+                    {
+                        await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception cleanupException)
+            {
+                reportCleanupFailure?.Invoke(cleanupException);
+                throw;
+            }
+
             throw;
         }
+    }
+
+    private async Task<OwnedHttpClientLease> AcquireOwnedHttpClientAsync(
+        string serverUrl,
+        CancellationToken cancellationToken)
+    {
+        await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!this._ownedHttpClients.TryGetValue(serverUrl, out OwnedHttpClient? entry))
+            {
+                entry = new(this.CreatePinnedHttpClient(serverUrl));
+                this._ownedHttpClients[serverUrl] = entry;
+            }
+
+            entry.ReferenceCount++;
+            return new(this, serverUrl, entry.Client);
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+    }
+
+    private async ValueTask ReleaseOwnedHttpClientAsync(string serverUrl)
+    {
+        HttpClient? clientToDispose = null;
+        await this._clientLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            OwnedHttpClient entry = this._ownedHttpClients[serverUrl];
+            if (--entry.ReferenceCount == 0)
+            {
+                this._ownedHttpClients.Remove(serverUrl);
+                clientToDispose = entry.Client;
+            }
+        }
+        finally
+        {
+            this._clientLock.Release();
+        }
+
+        try
+        {
+            clientToDispose?.Dispose();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Trace.TraceWarning("Failed to dispose MCP HTTP client: {0}", exception);
+        }
+    }
+
+    private HttpClient CreatePinnedHttpClient(string serverUrl)
+    {
+        // Pin credential headers to the configured server origin as defense-in-depth. Forcing
+        // StreamableHttp (below) already removes the primary vector (a server-advertised cross-origin
+        // SSE message endpoint), and AllowAutoRedirect=false blocks auto-redirects. This handler is the
+        // backstop: it guarantees the Authorization token and other credentials never leave the pinned
+        // origin even if a future change re-enables AutoDetect or redirects, or the SDK constructs a
+        // request to a new URI (AdditionalHeaders are re-stamped by the transport, so HttpClient's own
+        // redirect header-stripping does not cover them).
+        OriginPinningHandler pinningHandler = new(new Uri(serverUrl)) { InnerHandler = this._httpMessageHandlerFactory() };
+        return new HttpClient(pinningHandler);
     }
 
     private static HttpMessageHandler CreateHttpMessageHandler() =>
@@ -394,11 +883,56 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private sealed class ProviderInvocationContext(Task completion, ProviderInvocationContext? parent)
     {
         public Task Completion { get; } = completion;
-
         public ProviderInvocationContext? Parent { get; } = parent;
     }
 
-    internal sealed class ClientConnection(McpClient client, IAsyncDisposable transport) : IAsyncDisposable
+    private sealed class CachedClient(
+        ClientConnection connection,
+        LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> lruNode)
+    {
+        public ClientConnection Connection { get; } = connection;
+
+        public LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> LruNode { get; } = lruNode;
+
+        public TaskCompletionSource<bool> Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ActiveInvocations { get; set; }
+
+        public bool Evicted { get; set; }
+
+        public bool DisposalClaimed { get; set; }
+    }
+
+    private sealed class OwnedHttpClient(HttpClient client)
+    {
+        public HttpClient Client { get; } = client;
+
+        public int ReferenceCount { get; set; }
+    }
+
+    private sealed class OwnedHttpClientLease(
+        DefaultMcpToolHandler owner,
+        string serverUrl,
+        HttpClient client) : IAsyncDisposable
+    {
+        private bool _disposed;
+
+        public HttpClient Client { get; } = client;
+
+        public async ValueTask DisposeAsync()
+        {
+            if (!this._disposed)
+            {
+                this._disposed = true;
+                await owner.ReleaseOwnedHttpClientAsync(serverUrl).ConfigureAwait(false);
+            }
+        }
+    }
+
+    internal sealed class ClientConnection(
+        McpClient client,
+        IAsyncDisposable transport,
+        IAsyncDisposable? ownedHttpClientLease = null) : IAsyncDisposable
     {
         public McpClient Client { get; } = client;
 
@@ -410,8 +944,18 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             }
             finally
             {
-                // McpClient owns the connected session, not the reusable transport factory.
-                await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                try
+                {
+                    // McpClient owns the connected session, not the reusable transport factory.
+                    await DisposeResourceAsync(transport, "transport").ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (ownedHttpClientLease is not null)
+                    {
+                        await ownedHttpClientLease.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
             }
         }
     }

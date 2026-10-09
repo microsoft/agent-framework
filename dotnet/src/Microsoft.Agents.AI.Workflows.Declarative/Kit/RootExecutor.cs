@@ -63,7 +63,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     [SendsMessage(typeof(ActionExecutorResult))]
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        DeclarativeWorkflowContext declarativeContext = new(context, this._state);
+        DeclarativeWorkflowContext declarativeContext =
+            await DeclarativeWorkflowContext.CreateAsync(context, this._state, cancellationToken).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 

@@ -48,7 +48,13 @@ from ._declarative_base import (
     DeclarativeWorkflowState,
 )
 from ._executors_tools import ToolApprovalResponse
-from ._mcp_handler import MCPToolHandler, MCPToolInvocation, MCPToolResult
+from ._mcp_handler import (
+    MCPToolHandler,
+    MCPToolInvocation,
+    MCPToolResult,
+    get_or_create_workflow_session_id,
+    restore_workflow_session_id,
+)
 
 __all__ = [
     "MCP_ACTION_EXECUTORS",
@@ -81,6 +87,8 @@ class MCPToolApprovalRequest:
             (e.g. ``conversation_id``) for use by the resume handler.
         header_binding: Opaque binding of the reviewed headers. The verification
             key is retained separately in trusted workflow state.
+        workflow_session_id: Framework-owned MCP session identifier from the
+            run that originated the approval request.
     """
 
     request_id: str
@@ -92,6 +100,7 @@ class MCPToolApprovalRequest:
     connection_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=lambda: {})
     header_binding: str | None = None
+    workflow_session_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +245,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             arguments=arguments,
             headers=headers,
             connection_name=connection_name,
+            workflow_session_id=get_or_create_workflow_session_id(ctx.state),
         )
         if require_approval:
             await self._request_approval(
@@ -301,6 +311,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             header_binding=(
                 self._bind_headers(ctx, request_id, invocation.headers, create_key=True) if invocation.headers else None
             ),
+            workflow_session_id=invocation.workflow_session_id,
         )
         logger.info("%s: requesting approval for MCP tool '%s'", self.__class__.__name__, invocation.tool_name)
         await ctx.request_info(request, ToolApprovalResponse, request_id=request_id)
@@ -324,6 +335,11 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         output_messages_path = _get_output_path(self._action_def, "messages")
         output_result_path = _get_output_path(self._action_def, "result")
 
+        workflow_session_id = getattr(original_request, "workflow_session_id", None)
+        if workflow_session_id is None:
+            workflow_session_id = get_or_create_workflow_session_id(ctx.state)
+        restore_workflow_session_id(ctx.state, workflow_session_id)
+
         if response.approved is not True:
             logger.info(
                 "%s: MCP tool '%s' rejected: %s",
@@ -342,6 +358,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             arguments=original_request.arguments,
             headers=self._evaluate_headers(state, self._action_def.get("headers")),
             connection_name=getattr(original_request, "connection_name", None),
+            workflow_session_id=workflow_session_id,
         )
         if invocation.headers or original_request.header_names:
             binding = getattr(original_request, "header_binding", None)

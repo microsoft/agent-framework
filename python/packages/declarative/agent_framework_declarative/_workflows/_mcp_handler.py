@@ -30,8 +30,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
@@ -40,6 +42,7 @@ import httpx
 
 if TYPE_CHECKING:
     from agent_framework import Content
+    from agent_framework._workflows._state import State
 
 __all__ = [
     "ClientProvider",
@@ -52,6 +55,61 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_MAX_SIZE = 32
+_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
+_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY = "_declarative_mcp_agent_workflow_session_namespace"
+_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_sessionless_agent_workflow_session_id"
+_WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
+
+
+def get_or_create_workflow_session_id(state: State) -> str:
+    agent_session_id = state.get(_WORKFLOW_AGENT_SESSION_ID_KEY)
+    if agent_session_id is not None:
+        if not isinstance(agent_session_id, str) or not agent_session_id:
+            raise ValueError("Invalid agent session state.")
+        namespace_value = state.get(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY)
+        if namespace_value is None:
+            namespace_value = uuid.uuid4().hex
+            state.set(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY, namespace_value)
+        if not isinstance(namespace_value, str):
+            raise ValueError("Invalid MCP agent workflow session state.")
+        try:
+            namespace = uuid.UUID(namespace_value)
+        except ValueError as exc:
+            raise ValueError("Invalid MCP agent workflow session state.") from exc
+        workflow_session_id = uuid.uuid5(namespace, agent_session_id).hex
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+        return workflow_session_id
+
+    workflow_session_id = state.get(_WORKFLOW_SESSION_ID_KEY)
+    if workflow_session_id is None:
+        workflow_session_id = uuid.uuid4().hex
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+    if not isinstance(workflow_session_id, str) or not workflow_session_id:
+        raise ValueError("Invalid MCP workflow session state.")
+    return workflow_session_id
+
+
+def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent_run: bool = False) -> None:
+    if state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
+        get_or_create_workflow_session_id(state)
+    elif is_agent_run:
+        workflow_session_id = state.get(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY)
+        if workflow_session_id is None:
+            workflow_session_id = uuid.uuid4().hex
+            state.set(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+        if not isinstance(workflow_session_id, str) or not workflow_session_id:
+            raise ValueError("Invalid MCP sessionless agent workflow session state.")
+        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+    elif reset_unscoped:
+        state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
+
+
+def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
+    if not isinstance(workflow_session_id, str) or not workflow_session_id:
+        raise ValueError("Invalid MCP approval workflow session state.")
+    # An approval resumes its originating scope, not the latest agent turn's scope.
+    state.set(_WORKFLOW_AGENT_SESSION_ID_KEY, None)
+    state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
 
 
 @dataclass
@@ -73,6 +131,9 @@ class MCPToolInvocation:
     - ``connection_name``: Optional Foundry connection name forwarded for
       handlers that resolve auth/credentials by connection. The default
       handler does not consume this field.
+    - ``workflow_session_id``: Framework-owned identifier for the current
+      workflow session. The default handler uses it to prevent separate
+      workflows from sharing one stateful MCP protocol session.
     """
 
     server_url: str
@@ -81,6 +142,7 @@ class MCPToolInvocation:
     arguments: dict[str, Any] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
     headers: dict[str, str] = field(default_factory=dict)  # type: ignore[reportUnknownVariableType]
     connection_name: str | None = None
+    workflow_session_id: str | None = None
 
 
 def _empty_outputs() -> list[Any]:
@@ -153,6 +215,23 @@ class _CacheEntry:
 
     tool: Any  # MCPStreamableHTTPTool — typed Any to avoid import at module load
     owned_httpx_client: httpx.AsyncClient | None
+    active_users: int = 0
+    evicted: bool = False
+    disposal_claimed: bool = False
+    closed: asyncio.Event = field(default_factory=asyncio.Event)
+    close_exception: BaseException | None = None
+
+
+class _EntryCreationCancelled(Exception):
+    """Signal waiters to retry after the task creating their entry was cancelled."""
+
+
+class _EntryCreationCleanupFailure(BaseException):
+    """Keep failed-handshake cleanup separate from the connection failure."""
+
+    def __init__(self, creation_exception: BaseException, cleanup_exception: BaseException) -> None:
+        self.creation_exception = creation_exception
+        self.cleanup_exception = cleanup_exception
 
 
 class DefaultMCPToolHandler:
@@ -160,12 +239,15 @@ class DefaultMCPToolHandler:
 
     Without a ``client_provider``, caches one
     :class:`agent_framework.MCPStreamableHTTPTool` instance per
-    ``(server_url, server_label, connection_name, headers_hash)`` in a bounded
-    LRU. The cache prevents re-establishing an MCP session for every
-    invocation while ensuring different header sets (auth tokens) cannot
-    share a session — matches the .NET design intent while bounding
-    cardinality. ``server_label`` and ``connection_name`` also participate
-    in the key to distinguish logical connections.
+    ``(workflow_session_id, server_url, server_label, connection_name,
+    headers_hash)`` in a bounded LRU. The cache prevents re-establishing an MCP
+    session for every invocation while ensuring separate workflow sessions and
+    different header sets (auth tokens) cannot share a session — matches the
+    .NET design intent while bounding cardinality. ``server_label`` and
+    ``connection_name`` also participate in the key to distinguish logical
+    connections. Active invocations lease their cache entry, so eviction waits
+    for the final user before closing it. Concurrent entry creation is also
+    capped at ``cache_max_size``.
     Header *names* are lower-cased inside the hash payload only — the
     headers passed on the wire keep the caller's original casing — so two
     YAML actions that spell ``Authorization`` differently still share a
@@ -199,8 +281,9 @@ class DefaultMCPToolHandler:
         client_provider: Optional per-invocation ``httpx.AsyncClient`` provider.
         cache_max_size: Maximum number of cached MCP clients in no-provider mode.
             When exceeded, the least-recently-used entry is evicted and its
-            owned client closed. Defaults to ``32``. Does not enable session
-            caching when a provider is configured.
+            owned client closed after any active invocation finishes. This also
+            limits simultaneous connection attempts. Defaults to ``32``. Does
+            not enable session caching when a provider is configured.
     """
 
     LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
@@ -228,14 +311,17 @@ class DefaultMCPToolHandler:
             raise ValueError(f"cache_max_size must be positive, got {cache_max_size}")
         self._client_provider = client_provider
         self._cache_max_size = cache_max_size
-        self._cache: OrderedDict[tuple[str, str, str, str], _CacheEntry] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, str, str, str], _CacheEntry] = OrderedDict()
+        self._retired: dict[int, _CacheEntry] = {}
         # Outer lock guards the cache + in-flight-future map only — never
         # held across network I/O.
         self._cache_lock = asyncio.Lock()
+        self._creation_semaphore = asyncio.Semaphore(cache_max_size)
         # Per-key in-flight futures: while one task is connecting, other
         # tasks awaiting the same key will await the same future and share
         # the resulting cache entry.
-        self._inflight: dict[tuple[str, str, str, str], asyncio.Future[_CacheEntry]] = {}
+        self._inflight: dict[tuple[str, str, str, str, str], asyncio.Future[_CacheEntry]] = {}
+        self._inflight_cleanup: dict[tuple[str, str, str, str, str], asyncio.Future[None]] = {}
         # Completion signals only: provider-backed calls never share entries.
         self._active_invocations: set[asyncio.Future[None]] = set()
         # Keep ancestry so a completed nested call cannot hide an active parent
@@ -246,6 +332,7 @@ class DefaultMCPToolHandler:
         # Set by ``aclose`` to prevent post-close cache insertions and to
         # reject new ``invoke_tool`` calls. Once set, never cleared.
         self._closed = False
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
         """Invoke ``invocation.tool_name`` on an MCP client for the server.
@@ -303,7 +390,9 @@ class DefaultMCPToolHandler:
 
             return await self._invoke_entry(entry, invocation)
         finally:
-            if completion is not None:
+            if self._client_provider is None and entry is not None:
+                await self._release_entry(entry)
+            elif completion is not None:
                 try:
                     if entry is not None:
                         await self._close_invocation_entry(entry)
@@ -428,7 +517,7 @@ class DefaultMCPToolHandler:
         are rejected after connecting and cleaned up by their invocation.
         Concurrent shutdown calls wait for those invocations as well.
 
-        Idempotent. In no-provider mode, a second call returns immediately.
+        Idempotent. Concurrent and subsequent calls await the same shutdown task.
         Drains any in-flight ``_create_entry`` tasks before returning so their resources are
         cleaned up; the in-flight tasks see ``self._closed`` in phase 3 of
         :meth:`_get_or_create_entry`, close their own entry, and resolve
@@ -444,17 +533,53 @@ class DefaultMCPToolHandler:
                 "DefaultMCPToolHandler.aclose() cannot be called from an active provider-backed invocation"
             )
         async with self._cache_lock:
-            if self._closed and self._client_provider is None:
-                return
-            self._closed = True
-            entries = list(self._cache.values())
-            self._cache.clear()
-            inflight_futures = list(self._inflight.values())
-            active_invocations = list(self._active_invocations)
+            if self._shutdown_task is None:
+                self._closed = True
+                entries = list(self._cache.values())
+                entry_ids = {id(entry) for entry in entries}
+                entries.extend(entry for entry in self._retired.values() if id(entry) not in entry_ids)
+                self._cache.clear()
+                entries_to_close: list[_CacheEntry] = []
+                for entry in entries:
+                    entry.evicted = True
+                    self._retired[id(entry)] = entry
+                    if entry.active_users == 0 and not entry.disposal_claimed:
+                        entry.disposal_claimed = True
+                        entries_to_close.append(entry)
+                inflight_futures = list(self._inflight.values())
+                inflight_cleanup_futures = list(self._inflight_cleanup.values())
+                active_invocations = list(self._active_invocations)
+                self._shutdown_task = asyncio.create_task(
+                    self._drain_shutdown(
+                        entries,
+                        entries_to_close,
+                        inflight_futures,
+                        inflight_cleanup_futures,
+                        active_invocations,
+                    )
+                )
+            shutdown_task = self._shutdown_task
 
-        for completion in active_invocations:
-            # Cancelling shutdown must not cancel an invocation's completion signal.
-            await asyncio.shield(completion)
+        await asyncio.shield(shutdown_task)
+
+    async def _drain_shutdown(
+        self,
+        entries: list[_CacheEntry],
+        entries_to_close: list[_CacheEntry],
+        inflight_futures: list[asyncio.Future[_CacheEntry]],
+        inflight_cleanup_futures: list[asyncio.Future[None]],
+        active_invocations: list[asyncio.Future[None]],
+    ) -> None:
+        if active_invocations:
+            invocation_results = await asyncio.gather(*active_invocations, return_exceptions=True)
+            for result in invocation_results:
+                if isinstance(result, BaseException):
+                    if isinstance(result, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                        raise result
+                    logger.debug(
+                        "DefaultMCPToolHandler: active invocation raised during aclose",
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
 
         # Wait for in-flight creations to finish their self-cleanup. Each
         # in-flight task self-closes its entry under the closed-flag branch
@@ -466,9 +591,23 @@ class DefaultMCPToolHandler:
             except BaseException:
                 logger.debug("DefaultMCPToolHandler: in-flight future raised during aclose", exc_info=True)
                 continue
+        cleanup_results = await asyncio.gather(*inflight_cleanup_futures, return_exceptions=True)
 
+        close_results = await asyncio.gather(
+            *(self._close_claimed_entry(entry) for entry in entries_to_close),
+            return_exceptions=True,
+        )
         for entry in entries:
-            await self._close_entry(entry)
+            await entry.closed.wait()
+        for entry in entries:
+            if entry.close_exception is not None:
+                raise entry.close_exception
+        for result in cleanup_results:
+            if isinstance(result, BaseException):
+                raise result
+        for result in close_results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def __aenter__(self) -> DefaultMCPToolHandler:
         return self
@@ -483,6 +622,7 @@ class DefaultMCPToolHandler:
     async def _get_or_create_entry(self, invocation: MCPToolInvocation) -> _CacheEntry:
         """Look up (or create) the cached MCP client for this invocation."""
         key = self._cache_key(
+            invocation.workflow_session_id,
             invocation.server_url,
             invocation.server_label,
             invocation.connection_name,
@@ -498,28 +638,31 @@ class DefaultMCPToolHandler:
             existing = self._cache.get(key)
             if existing is not None:
                 self._cache.move_to_end(key)
+                existing.active_users += 1
                 return existing
             inflight = self._inflight.get(key)
             if inflight is None:
                 inflight = asyncio.get_running_loop().create_future()
                 self._inflight[key] = inflight
+                self._inflight_cleanup[key] = asyncio.get_running_loop().create_future()
                 creating = True
 
         if not creating:
-            return await inflight
+            with suppress(_EntryCreationCancelled):
+                _ = await asyncio.shield(inflight)
+            return await self._get_or_create_entry(invocation)
 
         # Phase 2: we own creation. Build the entry outside the lock.
         try:
-            entry = await self._create_entry(invocation)
+            async with self._creation_semaphore:
+                async with self._cache_lock:
+                    if self._closed:
+                        raise RuntimeError("DefaultMCPToolHandler is closed")
+                entry = await self._create_entry(invocation)
         except BaseException as exc:
-            async with self._cache_lock:
-                self._inflight.pop(key, None)
-            if not inflight.done():
-                inflight.set_exception(exc if isinstance(exc, BaseException) else RuntimeError(str(exc)))
-            # Mark the exception retrieved to suppress noisy "Future exception
-            # was never retrieved" warnings when there are no other awaiters
-            # (other awaiters still see the exception through their ``await``).
-            inflight.exception()
+            await self._complete_inflight_failure(key, inflight, exc)
+            if isinstance(exc, _EntryCreationCleanupFailure):
+                raise exc.cleanup_exception from exc.creation_exception
             raise
 
         # Phase 3: insert with LRU eviction; resolve the in-flight future.
@@ -530,42 +673,165 @@ class DefaultMCPToolHandler:
         evicted: _CacheEntry | None = None
         duplicate: _CacheEntry | None = None
         handler_closed = False
-        async with self._cache_lock:
-            self._inflight.pop(key, None)
-            if self._closed:
-                handler_closed = True
-            else:
-                existing = self._cache.get(key)
-                if existing is not None:
-                    # Another writer beat us; prefer the existing entry and
-                    # discard ours after the lock is released.
-                    self._cache.move_to_end(key)
-                    duplicate = entry
-                    entry = existing
+        try:
+            async with self._cache_lock:
+                self._inflight.pop(key, None)
+                if self._closed:
+                    handler_closed = True
                 else:
-                    self._cache[key] = entry
-                    self._cache.move_to_end(key)
-                    if len(self._cache) > self._cache_max_size:
-                        _evicted_key, evicted = self._cache.popitem(last=False)
-                if not inflight.done():
-                    inflight.set_result(entry)
+                    existing = self._cache.get(key)
+                    if existing is not None:
+                        # Another writer beat us; prefer the existing entry and
+                        # discard ours after the lock is released.
+                        self._cache.move_to_end(key)
+                        duplicate = entry
+                        entry = existing
+                        entry.active_users += 1
+                    else:
+                        entry.active_users = 1
+                        self._cache[key] = entry
+                        self._cache.move_to_end(key)
+                        if len(self._cache) > self._cache_max_size:
+                            _evicted_key, evicted = self._cache.popitem(last=False)
+                            evicted.evicted = True
+                            self._retired[id(evicted)] = evicted
+                            if evicted.active_users == 0:
+                                evicted.disposal_claimed = True
+                    if not inflight.done():
+                        inflight.set_result(entry)
+        except BaseException as exc:
+            await self._abort_entry_creation(key, inflight, entry, exc)
+            raise
 
         if handler_closed:
             # Close our orphaned entry; resolve the future with a clear
             # error so the caller (and any other awaiters) surface a
             # consistent "handler is closed" failure rather than receiving
             # an entry we are about to close behind their back.
-            await self._close_entry(entry)
             err = RuntimeError("DefaultMCPToolHandler is closed")
-            if not inflight.done():
-                inflight.set_exception(err)
-            inflight.exception()
+            cleanup = self._inflight_cleanup.pop(key)
+            try:
+                await self._close_invocation_entry(entry, cleanup)
+            finally:
+                if not inflight.done():
+                    inflight.set_exception(err)
+                inflight.exception()
             raise err
-        if duplicate is not None:
-            await self._close_entry(duplicate)
-        if evicted is not None:
-            await self._close_entry(evicted)
+        cleanup = self._inflight_cleanup.pop(key)
+        cleanup.set_result(None)
+        try:
+            if duplicate is not None:
+                await self._close_entry(duplicate)
+            if evicted is not None and evicted.disposal_claimed:
+                await self._close_claimed_entry(evicted)
+        except BaseException:
+            await self._release_entry(entry)
+            raise
         return entry
+
+    async def _abort_entry_creation(
+        self,
+        key: tuple[str, str, str, str, str],
+        inflight: asyncio.Future[_CacheEntry],
+        entry: _CacheEntry,
+        exc: BaseException,
+    ) -> None:
+        async def cleanup() -> None:
+            async with self._cache_lock:
+                cleanup_outcome = self._inflight_cleanup[key]
+            try:
+                await self._close_entry(entry)
+            except BaseException as cleanup_exc:
+                cleanup_outcome.set_exception(cleanup_exc)
+                cleanup_outcome.exception()
+                raise
+            else:
+                cleanup_outcome.set_result(None)
+            finally:
+                async with self._cache_lock:
+                    self._inflight.pop(key, None)
+                    self._inflight_cleanup.pop(key, None)
+                if not inflight.done():
+                    inflight.set_exception(self._entry_creation_exception(exc))
+                inflight.exception()
+
+        cleanup_task = asyncio.create_task(cleanup())
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                continue
+        cleanup_task.result()
+
+    async def _complete_inflight_failure(
+        self,
+        key: tuple[str, str, str, str, str],
+        inflight: asyncio.Future[_CacheEntry],
+        exc: BaseException,
+    ) -> None:
+        async def cleanup() -> None:
+            async with self._cache_lock:
+                self._inflight.pop(key, None)
+                cleanup_outcome = self._inflight_cleanup.pop(key)
+            creation_exception = exc
+            if isinstance(exc, _EntryCreationCleanupFailure):
+                creation_exception = exc.creation_exception
+                cleanup_outcome.set_exception(exc.cleanup_exception)
+                cleanup_outcome.exception()
+            else:
+                cleanup_outcome.set_result(None)
+            if not inflight.done():
+                inflight.set_exception(self._entry_creation_exception(creation_exception))
+            inflight.exception()
+
+        cleanup_task = asyncio.create_task(cleanup())
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                continue
+        cleanup_task.result()
+
+    @staticmethod
+    def _entry_creation_exception(exc: BaseException) -> BaseException:
+        if isinstance(exc, asyncio.CancelledError):
+            return _EntryCreationCancelled()
+        return exc
+
+    async def _release_entry(self, entry: _CacheEntry) -> None:
+        release = asyncio.create_task(self._release_entry_core(entry))
+        cancelled = False
+        while not release.done():
+            try:
+                await asyncio.shield(release)
+            except asyncio.CancelledError:
+                cancelled = True
+        release.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _release_entry_core(self, entry: _CacheEntry) -> None:
+        close_entry = False
+        async with self._cache_lock:
+            entry.active_users -= 1
+            if entry.active_users == 0 and entry.evicted and not entry.disposal_claimed:
+                entry.disposal_claimed = True
+                close_entry = True
+
+        if close_entry:
+            await self._close_claimed_entry(entry)
+
+    async def _close_claimed_entry(self, entry: _CacheEntry) -> None:
+        cleanup_outcome: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        try:
+            await self._close_invocation_entry(entry, cleanup_outcome)
+        except BaseException as exc:
+            entry.close_exception = cleanup_outcome.exception() if cleanup_outcome.done() else exc
+            raise
+        finally:
+            async with self._cache_lock:
+                self._retired.pop(id(entry), None)
+                entry.closed.set()
 
     async def _create_entry(self, invocation: MCPToolInvocation) -> _CacheEntry:
         """Construct (and connect) a fresh MCP client for ``invocation``."""
@@ -592,7 +858,7 @@ class DefaultMCPToolHandler:
         )
         try:
             await tool.connect()
-        except BaseException:
+        except BaseException as creation_exception:
             failed_entry = _CacheEntry(
                 tool=tool,
                 owned_httpx_client=(
@@ -601,10 +867,15 @@ class DefaultMCPToolHandler:
                     else None
                 ),
             )
-            if self._client_provider is not None:
-                await self._close_invocation_entry(failed_entry)
-            else:
-                await self._close_entry(failed_entry)
+            try:
+                if self._client_provider is not None:
+                    await self._close_invocation_entry(failed_entry)
+                else:
+                    await self._close_entry(failed_entry)
+            except BaseException as cleanup_exception:
+                if self._client_provider is not None:
+                    raise
+                raise _EntryCreationCleanupFailure(creation_exception, cleanup_exception) from cleanup_exception
             raise
 
         # ``MCPStreamableHTTPTool.get_mcp_client`` lazily creates an
@@ -617,7 +888,11 @@ class DefaultMCPToolHandler:
             owned_client = cast("httpx.AsyncClient | None", getattr(tool, "_httpx_client", None))
         return _CacheEntry(tool=tool, owned_httpx_client=owned_client)
 
-    async def _close_invocation_entry(self, entry: _CacheEntry) -> None:
+    async def _close_invocation_entry(
+        self,
+        entry: _CacheEntry,
+        cleanup_outcome: asyncio.Future[None] | None = None,
+    ) -> None:
         """Finish invocation cleanup even if the caller is cancelled again."""
         # MCPStreamableHTTPTool dispatches connect/close to its lifecycle owner,
         # keeping the SDK's cancel-scope entry and exit on that same task.
@@ -628,7 +903,16 @@ class DefaultMCPToolHandler:
                 await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 cancelled = True
-        cleanup.result()  # Propagate cancellation/errors from cleanup itself.
+        try:
+            cleanup.result()  # Propagate cancellation/errors from cleanup itself.
+        except BaseException as exc:
+            if cleanup_outcome is not None and not cleanup_outcome.done():
+                cleanup_outcome.set_exception(exc)
+                cleanup_outcome.exception()
+            raise
+        else:
+            if cleanup_outcome is not None and not cleanup_outcome.done():
+                cleanup_outcome.set_result(None)
         if cancelled:
             raise asyncio.CancelledError
 
@@ -648,16 +932,18 @@ class DefaultMCPToolHandler:
 
     @staticmethod
     def _cache_key(
+        workflow_session_id: str | None,
         server_url: str,
         server_label: str | None,
         connection_name: str | None,
         headers: dict[str, str] | None,
-    ) -> tuple[str, str, str, str]:
+    ) -> tuple[str, str, str, str, str]:
         """Build an order-independent cache key for the invocation identity.
 
         Used only without a ``client_provider``. The key includes
-        ``server_label`` and ``connection_name`` to distinguish logical
-        connections.
+        ``workflow_session_id`` to isolate stateful MCP protocol sessions
+        between workflows, plus ``server_label`` and ``connection_name`` to
+        distinguish logical connections.
 
         Header *names* are lower-cased inside the hash payload only so
         that ``Authorization`` and ``authorization`` map to the same
@@ -669,4 +955,10 @@ class DefaultMCPToolHandler:
             normalized = sorted((k.lower(), v) for k, v in headers.items())
             payload = json.dumps(normalized, ensure_ascii=False)
             headers_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        return (server_url, server_label or "", connection_name or "", headers_hash)
+        return (
+            workflow_session_id or "",
+            server_url,
+            server_label or "",
+            connection_name or "",
+            headers_hash,
+        )

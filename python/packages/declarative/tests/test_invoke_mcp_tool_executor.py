@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
     reason="PowerFx engine not available (requires dotnet runtime)",
 )
 
-from agent_framework import Content, Message  # noqa: E402
+from agent_framework import AgentSession, Content, Message  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
@@ -164,6 +164,409 @@ class TestFieldForwarding:
         assert inv.headers == {}
         assert inv.arguments == {}
         assert inv.connection_name is None
+        assert inv.workflow_session_id
+
+    @pytest.mark.asyncio
+    async def test_separate_workflows_receive_separate_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        first = factory.create_workflow_from_definition(_yaml(_action()))
+        second = factory.create_workflow_from_definition(_yaml(_action()))
+
+        await first.run({})
+        await second.run({})
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[1].workflow_session_id
+        assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_fresh_runs_on_same_workflow_receive_separate_session_ids(
+        self, message_list: bool, streaming: bool
+    ) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+
+        for text in ("first run", "second run"):
+            inputs: list[Message] | dict[str, Any] = (
+                [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            )
+            if streaming:
+                await workflow.run(inputs, stream=True).get_final_response()
+            else:
+                await workflow.run(inputs)
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[0].workflow_session_id != handler.invocations[1].workflow_session_id
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_as_agent_continuation_reuses_workflow_session_id(self, streaming: bool) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+
+        for text in ("first turn", "second turn"):
+            if streaming:
+                await agent.run(text, stream=True).get_final_response()
+            else:
+                await agent.run(text)
+
+        assert len(handler.invocations) == 2
+        assert handler.invocations[0].workflow_session_id
+        assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
+
+    @pytest.mark.parametrize("intervening_run", ["explicit_session", "direct_dict", "direct_message_list"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_sessionless_agent_scope_survives_intervening_runs(
+        self, intervening_run: str, streaming: bool, restore: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = _yaml(_action())
+        workflow = factory.create_workflow_from_definition(definition)
+        agent = workflow.as_agent(name="mcp-agent")
+
+        async def agent_turn(text: str, session: AgentSession | None = None) -> None:
+            if streaming:
+                await agent.run(text, session=session, stream=True, checkpoint_storage=storage).get_final_response()
+            else:
+                await agent.run(text, session=session, checkpoint_storage=storage)
+
+        await agent_turn("first sessionless turn")
+        if intervening_run == "explicit_session":
+            await agent_turn("explicit session turn", AgentSession())
+        else:
+            inputs: list[Message] | dict[str, Any] = (
+                [Message(role="user", contents=[Content.from_text("direct run")])]
+                if intervening_run == "direct_message_list"
+                else {}
+            )
+            if streaming:
+                await workflow.run(inputs, stream=True, checkpoint_storage=storage).get_final_response()
+            else:
+                await workflow.run(inputs, checkpoint_storage=storage)
+
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+            agent = workflow.as_agent(name="mcp-agent")
+
+        await agent_turn("second sessionless turn")
+
+        session_ids = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert len(session_ids) == 3
+        assert all(session_ids)
+        assert session_ids[0] != session_ids[1]
+        assert session_ids[0] == session_ids[2]
+
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_sessionless_agent_does_not_inherit_direct_scope(
+        self, message_list: bool, streaming: bool, restore: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = _yaml(_action())
+        workflow = factory.create_workflow_from_definition(definition)
+        inputs: list[Message] | dict[str, Any] = (
+            [Message(role="user", contents=[Content.from_text("direct run")])] if message_list else {}
+        )
+        if streaming:
+            await workflow.run(inputs, stream=True, checkpoint_storage=storage).get_final_response()
+        else:
+            await workflow.run(inputs, checkpoint_storage=storage)
+
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        agent = workflow.as_agent(name="mcp-agent")
+        for text in ("first sessionless turn", "second sessionless turn"):
+            if streaming:
+                await agent.run(text, stream=True).get_final_response()
+            else:
+                await agent.run(text)
+
+        session_ids = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert len(session_ids) == 3
+        assert all(session_ids)
+        assert session_ids[0] != session_ids[1]
+        assert session_ids[1] == session_ids[2]
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_sessionless_scope_survives_approval_origin_restoration(
+        self, streaming: bool, approved: bool, restore: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        downstream = {**_action(tool_name="downstream"), "id": "downstream"}
+        definition = _yaml(_action(require_approval=True))
+        definition["actions"].append(downstream)
+        workflow = factory.create_workflow_from_definition(definition)
+        agent = workflow.as_agent(name="mcp-agent")
+
+        async def agent_turn(text: str, session: AgentSession | None = None) -> None:
+            if streaming:
+                await agent.run(text, session=session, stream=True, checkpoint_storage=storage).get_final_response()
+            else:
+                await agent.run(text, session=session, checkpoint_storage=storage)
+
+        await agent_turn("first sessionless turn")
+        [sessionless_approval] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        responses = {sessionless_approval.request_id: ToolApprovalResponse(approved=approved)}
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+        assert [invocation.workflow_session_id for invocation in handler.invocations] == [
+            sessionless_approval.data.workflow_session_id
+        ] * (2 if approved else 1)
+
+        await agent_turn("explicit session turn", AgentSession())
+        [explicit_approval] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        assert sessionless_approval.data.workflow_session_id
+        assert explicit_approval.data.workflow_session_id
+        assert sessionless_approval.data.workflow_session_id != explicit_approval.data.workflow_session_id
+
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+            agent = workflow.as_agent(name="mcp-agent")
+
+        responses = {explicit_approval.request_id: ToolApprovalResponse(approved=approved)}
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+        assert [invocation.workflow_session_id for invocation in handler.invocations] == [
+            scope
+            for scope in (sessionless_approval.data.workflow_session_id, explicit_approval.data.workflow_session_id)
+            for _ in range(2 if approved else 1)
+        ]
+
+        await agent_turn("second sessionless turn")
+        [new_approval] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        assert new_approval.data.workflow_session_id == sessionless_approval.data.workflow_session_id
+        responses = {new_approval.request_id: ToolApprovalResponse(approved=approved)}
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+        assert [invocation.workflow_session_id for invocation in handler.invocations] == [
+            scope
+            for scope in (
+                sessionless_approval.data.workflow_session_id,
+                explicit_approval.data.workflow_session_id,
+                sessionless_approval.data.workflow_session_id,
+            )
+            for _ in range(2 if approved else 1)
+        ]
+        assert not await workflow._runner_context.get_pending_request_info_events()
+
+    @pytest.mark.asyncio
+    async def test_as_agent_sessions_isolate_and_reuse_workflow_session_ids(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+        session_a = AgentSession()
+        session_b = AgentSession()
+
+        await agent.run("session A first turn", session=session_a)
+        await agent.run("session B first turn", session=session_b)
+        await agent.run("session A second turn", session=session_a)
+
+        assert len(handler.invocations) == 3
+        session_a_id = handler.invocations[0].workflow_session_id
+        session_b_id = handler.invocations[1].workflow_session_id
+        assert session_a_id
+        assert session_b_id
+        assert session_a_id != session_b_id
+        assert handler.invocations[2].workflow_session_id == session_a_id
+
+    @pytest.mark.parametrize("message_list", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("explicit_session", [False, True])
+    async def test_direct_fresh_runs_after_agent_turn_receive_separate_session_ids(
+        self, message_list: bool, streaming: bool, explicit_session: bool
+    ) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action()))
+        agent = workflow.as_agent(name="mcp-agent")
+
+        await agent.run("agent turn", session=AgentSession() if explicit_session else None)
+        for text in ("first direct run", "second direct run"):
+            inputs: list[Message] | dict[str, Any] = (
+                [Message(role="user", contents=[Content.from_text(text)])] if message_list else {}
+            )
+            if streaming:
+                await workflow.run(inputs, stream=True).get_final_response()
+            else:
+                await workflow.run(inputs)
+
+        session_ids = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert len(session_ids) == 3
+        assert all(session_ids)
+        assert len(set(session_ids)) == 3
+
+    @pytest.mark.asyncio
+    async def test_continuation_reuses_workflow_session_id(self) -> None:
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+        from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
+
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+
+        paused = await workflow.run({})
+        [approval] = paused.get_request_info_events()
+        workflow_session_id = get_or_create_workflow_session_id(workflow._runner.state)  # pyright: ignore[reportPrivateUsage]
+        await workflow.run(responses={approval.request_id: ToolApprovalResponse(approved=True)})
+
+        assert handler.last_invocation is not None
+        assert handler.last_invocation.workflow_session_id == workflow_session_id
+
+    @pytest.mark.parametrize("restore", [False, True])
+    @pytest.mark.parametrize("agent_sessions", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize("second_approved", [False, True])
+    async def test_pending_approval_uses_originating_workflow_session_id(
+        self, restore: bool, agent_sessions: bool, streaming: bool, approved: bool, second_approved: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ToolApprovalResponse
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        downstream = _action(tool_name="downstream")
+        downstream["id"] = "downstream"
+        definition = {"name": "mcp_test", "actions": [_action(require_approval=True), downstream]}
+        workflow = factory.create_workflow_from_definition(definition)
+        agent = workflow.as_agent(name="mcp-agent")
+
+        if agent_sessions:
+            await agent.run("first turn", session=AgentSession(), checkpoint_storage=storage)
+        else:
+            await workflow.run({}, checkpoint_storage=storage)
+        [first_approval] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        first_session_id = first_approval.data.workflow_session_id
+
+        await workflow.run({}, checkpoint_storage=storage)
+        [second_approval] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != first_approval.request_id
+        ]
+
+        assert first_session_id
+        assert second_approval.data.workflow_session_id
+        assert first_session_id != second_approval.data.workflow_session_id
+
+        checkpoint_id = None
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        decisions = {first_approval.request_id: approved, second_approval.request_id: second_approved}
+        batch = {request_id: ToolApprovalResponse(approved=decision) for request_id, decision in decisions.items()}
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            if streaming:
+                await workflow.run(
+                    responses=batch,
+                    stream=True,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=storage,
+                ).get_final_response()
+            else:
+                await workflow.run(responses=batch, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        assert handler.call_count == 0
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == set(batch)
+
+        for approval in (first_approval, second_approval):
+            responses = {approval.request_id: ToolApprovalResponse(approved=decisions[approval.request_id])}
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+
+        expected_tools = [
+            tool
+            for decision in (approved, second_approved)
+            for tool in (["search", "downstream"] if decision else ["downstream"])
+        ]
+        assert [invocation.tool_name for invocation in handler.invocations] == expected_tools
+        expected_sessions = [
+            approval.data.workflow_session_id
+            for approval in (first_approval, second_approval)
+            for _ in range(2 if decisions[approval.request_id] else 1)
+        ]
+        assert [invocation.workflow_session_id for invocation in handler.invocations] == expected_sessions
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    async def test_same_scope_approval_batch_is_supported(self, streaming: bool, approved: bool) -> None:
+        from agent_framework import WorkflowBuilder
+
+        from agent_framework_declarative._workflows import InvokeMcpToolActionExecutor, ToolApprovalResponse
+        from agent_framework_declarative._workflows._declarative_builder import _validate_mcp_response_batch
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        handler = StubMcpHandler(_ok())
+        entry = JoinExecutor({"kind": "Entry"}, id="entry")
+        actions = [
+            InvokeMcpToolActionExecutor({**_action(require_approval=True), "id": name}, mcp_tool_handler=handler)
+            for name in ("first", "second")
+        ]
+        workflow = WorkflowBuilder(start_executor=entry).add_fan_out_edges(entry, actions).build()
+        workflow._response_batch_validator = _validate_mcp_response_batch
+        paused = await workflow.run({})
+        approvals = paused.get_request_info_events()
+        assert len(approvals) == 2
+        scopes = {approval.data.workflow_session_id for approval in approvals}
+        assert len(scopes) == 1
+        assert all(scopes)
+
+        responses = {approval.request_id: ToolApprovalResponse(approved=approved) for approval in approvals}
+        if streaming:
+            await workflow.run(responses=responses, stream=True).get_final_response()
+        else:
+            await workflow.run(responses=responses)
+
+        assert handler.call_count == (2 if approved else 0)
+        assert all(invocation.workflow_session_id in scopes for invocation in handler.invocations)
+        assert not await workflow._runner_context.get_pending_request_info_events()
 
     @pytest.mark.asyncio
     async def test_arguments_evaluated_and_preserves_none(self) -> None:
@@ -445,6 +848,8 @@ class TestApprovalFlow:
         requests = paused.get_request_info_events()
         approval = next(event for event in requests if isinstance(event.data, MCPToolApprovalRequest))
         change_request = next(event for event in requests if event is not approval)
+        approval_session_id = approval.data.workflow_session_id
+        assert approval_session_id
         selector = "second" if change_context else "first"
         await workflow.run(responses={change_request.request_id: ExternalInputResponse(user_input=selector)})
         assert handler.call_count == 0
@@ -454,7 +859,14 @@ class TestApprovalFlow:
         assert "context-second" not in repr(checkpoints)
         assert "context-first" not in repr(approval.data)
         assert "context-second" not in repr(approval.data)
-        checkpoint = max(checkpoints, key=lambda item: item.timestamp)
+        # Wall-clock timestamps can tie on Windows. Select the checkpoint after
+        # the context change, where only the original approval remains pending.
+        checkpoint = next(
+            item
+            for item in checkpoints
+            if approval.request_id in item.pending_request_info_events
+            and change_request.request_id not in item.pending_request_info_events
+        )
         assert checkpoint.state[_HEADER_BINDING_KEY] not in repr(approval.data)
         if restore:
             workflow = build()
@@ -466,6 +878,7 @@ class TestApprovalFlow:
             assert not resumed.get_request_info_events()
             assert handler.last_invocation is not None
             assert handler.last_invocation.headers == {"Authorization": "context-first"}
+            assert handler.last_invocation.workflow_session_id == approval_session_id
             return
         assert handler.call_count == 0
         [replacement] = resumed.get_request_info_events()
@@ -478,6 +891,7 @@ class TestApprovalFlow:
         assert handler.last_invocation is not None
         assert handler.last_invocation.headers == {"Authorization": "context-second"}
         assert handler.last_invocation.arguments == {"q": "reviewed"}
+        assert handler.last_invocation.workflow_session_id == approval_session_id
 
     @pytest.mark.asyncio
     async def test_approval_required_emits_request_and_yields(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]

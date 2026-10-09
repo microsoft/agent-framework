@@ -14,11 +14,13 @@ action definitions and creates a proper workflow graph with:
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 from agent_framework import (
     Workflow,
     WorkflowBuilder,
+    WorkflowEvent,
 )
 
 from ._declarative_base import (
@@ -41,7 +43,11 @@ from ._executors_control_flow import (
 )
 from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
 from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
-from ._executors_mcp import MCP_ACTION_EXECUTORS, InvokeMcpToolActionExecutor
+from ._executors_mcp import (
+    MCP_ACTION_EXECUTORS,
+    InvokeMcpToolActionExecutor,
+    MCPToolApprovalRequest,
+)
 from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
 from ._http_handler import HttpRequestHandler
 from ._mcp_handler import MCPToolHandler
@@ -106,6 +112,20 @@ ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
     "RequestExternalInput.prompt": ["message"],
     "RequestExternalInput.variable": ["property"],
 }
+
+
+def _validate_mcp_response_batch(requests: Sequence[WorkflowEvent[Any]]) -> None:
+    scopes: set[str | None] = set()
+    for request in requests:
+        if isinstance(request.data, MCPToolApprovalRequest):
+            scope = getattr(request.data, "workflow_session_id", None)
+            if scope is not None and (not isinstance(scope, str) or not scope):
+                raise ValueError("Invalid MCP approval workflow session state.")
+            scopes.add(scope)
+    if len(scopes) > 1:
+        raise DeclarativeWorkflowError(
+            "MCP approval responses from different workflow sessions must be submitted in separate runs."
+        )
 
 
 class DeclarativeWorkflowBuilder:
@@ -236,7 +256,9 @@ class DeclarativeWorkflowBuilder:
             if isinstance(executor, DeclarativeActionExecutor):
                 executor.set_declarative_env_config(self._env_config)
 
-        return builder.build()
+        workflow = builder.build()
+        workflow._response_batch_validator = _validate_mcp_response_batch  # pyright: ignore[reportPrivateUsage]
+        return workflow
 
     def _validate_workflow(self, actions: list[dict[str, Any]]) -> None:
         """Validate the workflow definition before building.
