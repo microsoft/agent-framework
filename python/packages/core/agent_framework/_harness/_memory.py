@@ -823,6 +823,7 @@ class MemoryFileStore(MemoryStore):
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
+            record.slug = topic_path.stem
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
@@ -831,7 +832,9 @@ class MemoryFileStore(MemoryStore):
         topic_path = self._topic_path(session, source_id=source_id, topic=topic)
         if not topic_path.exists():
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        record.slug = topic_path.stem
+        return record
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file."""
