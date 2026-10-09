@@ -36,7 +36,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
-import httpx
+import httpx2 as httpx
 
 if TYPE_CHECKING:
     from agent_framework import Content
@@ -400,7 +400,7 @@ class DefaultMCPToolHandler:
         while True:
             tool_list = await session.list_tools(params=params)
             collected.extend(tool_list.tools)
-            next_cursor = getattr(tool_list, "nextCursor", None)
+            next_cursor = getattr(tool_list, "next_cursor", getattr(tool_list, "nextCursor", None))
             if not next_cursor:
                 break
             params = mcp_types.PaginatedRequestParams(cursor=next_cursor)
@@ -410,8 +410,8 @@ class DefaultMCPToolHandler:
                 {
                     "name": tool.name,
                     "description": tool.description,
-                    "inputSchema": tool.inputSchema,
-                    "outputSchema": tool.outputSchema,
+                    "inputSchema": getattr(tool, "input_schema", getattr(tool, "inputSchema", None)),
+                    "outputSchema": getattr(tool, "output_schema", getattr(tool, "outputSchema", None)),
                 }
                 for tool in collected
             ],
@@ -587,7 +587,7 @@ class DefaultMCPToolHandler:
             name=invocation.server_label or "McpClient",
             url=invocation.server_url,
             load_prompts=False,
-            http_client=cast(Any, provided_client),
+            http_client=provided_client,
             header_provider=_header_provider if captured_headers else None,
         )
         try:

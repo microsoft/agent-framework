@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     Content,
     Message,

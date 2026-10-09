@@ -20,7 +20,7 @@ import sys
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 from agent_framework import Content
 from agent_framework.exceptions import ToolExecutionException
@@ -173,7 +173,9 @@ class TestProviderLifetimes:
             if request.method == "GET":
                 return httpx.Response(405)
             if request.method == "DELETE":
-                terminated.append(request.headers["mcp-session-id"])
+                session_id = request.headers.get("mcp-session-id")
+                if session_id is not None:
+                    terminated.append(session_id)
                 return httpx.Response(200)
 
             body = json.loads(request.content)
@@ -182,21 +184,21 @@ class TestProviderLifetimes:
             if "id" not in body:
                 return httpx.Response(202)
             headers: dict[str, str] = {}
-            if method == "initialize":
-                session_id = f"lifecycle-{len(initialized) + 1}"
-                initialized.append(session_id)
-                headers["mcp-session-id"] = session_id
+            if method == "server/discover":
+                initialized.append(f"discovery-{len(initialized) + 1}")
                 result = {
-                    "protocolVersion": body["params"]["protocolVersion"],
+                    "supportedVersions": ["2026-07-28"],
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "lifecycle", "version": "1"},
                 }
             elif method == "tools/list":
                 result = {
+                    "resultType": "complete",
+                    "ttlMs": 0,
+                    "cacheScope": "private",
                     "tools": [{"name": "ok", "inputSchema": {"type": "object", "properties": {}}}],
                 }
             elif method == "tools/call":
-                result = {"content": [{"type": "text", "text": "ok"}]}
+                result = {"resultType": "complete", "content": [{"type": "text", "text": "ok"}]}
             else:
                 assert method == "ping"
                 result = {}
@@ -240,7 +242,7 @@ class TestProviderLifetimes:
                         assert provider.await_count == index
                         assert len(tools) == index
                         assert len(initialized) == index
-                        assert terminated == initialized
+                        assert not terminated
                         assert not handler._active_invocations
                         assert not handler._cache
                         tool = tools[-1]
@@ -257,6 +259,7 @@ class TestProviderLifetimes:
                             assert not caller_client.is_closed
                             assert caller_client.close_count == 0
             assert len({id(tool) for tool in tools}) == 4
+            assert methods.count("server/discover") == 4
             assert methods.count("tools/call") == 2
             assert methods.count("tools/list") == 6
             assert not any(
