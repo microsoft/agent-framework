@@ -2825,6 +2825,35 @@ def test_make_json_safe_plain_enum_uses_its_value():
     assert json.loads(json.dumps(result)) == result
 
 
+def test_make_json_safe_enum_with_serializer_hook_keeps_it():
+    """Test make_json_safe uses an enum's own to_dict/model_dump/dict hook instead of its raw value."""
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Shape(Enum):
+        SQUARE = 4
+
+        def to_dict(self):
+            return {"name": self.name, "sides": self.value}
+
+    class Mode(Enum):
+        FAST = "fast"
+
+        def model_dump(self):
+            return {"mode": self.value, "label": "Fast"}
+
+    class Unit(Enum):
+        METRE = "m"
+
+        def dict(self):
+            return {"symbol": self.value}
+
+    assert make_json_safe({"shape": Shape.SQUARE}) == {"shape": {"name": "SQUARE", "sides": 4}}
+    assert make_json_safe(Mode.FAST) == {"mode": "fast", "label": "Fast"}
+    assert make_json_safe([Unit.METRE]) == [{"symbol": "m"}]
+
+
 def test_make_json_safe_mixin_enums_are_unchanged():
     """Test make_json_safe keeps str and int mixin enums as the scalars they already are."""
     import json

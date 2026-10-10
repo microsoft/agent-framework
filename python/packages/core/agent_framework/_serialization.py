@@ -747,10 +747,6 @@ def make_json_safe(obj: Any) -> Any:
     """
     if isinstance(obj, _JSON_SCALAR_TYPES):
         return obj
-    if isinstance(obj, Enum):
-        # A plain Enum member is not a scalar, and its ``__dict__`` points back at the enum class,
-        # so the generic fallback below would recurse until RecursionError.
-        return make_json_safe(obj.value)
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if isinstance(obj, (bytes, bytearray)):
@@ -776,6 +772,11 @@ def make_json_safe(obj: Any) -> Any:
             return make_json_safe(obj.dict())  # type: ignore[no-any-return]
         except TypeError:
             pass
+    if isinstance(obj, Enum):
+        # After the serializer hooks, so an enum that defines one keeps it. A plain Enum member
+        # is not a scalar, and its ``__dict__`` points back at the enum class, so the generic
+        # fallback below would recurse until RecursionError.
+        return make_json_safe(obj.value)
     if isinstance(obj, dict):
         return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
     if isinstance(obj, (list, tuple)):
