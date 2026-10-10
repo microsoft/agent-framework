@@ -10,6 +10,7 @@ import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time
+from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar, Final, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
@@ -734,9 +735,9 @@ def make_json_safe(obj: Any) -> Any:
     """Recursively convert an object to a JSON-serializable form.
 
     Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
-    datetimes, bytes (base64), lists, dicts, and primitives.  Falls back to ``str()`` for
-    any remaining non-serializable value so that ``json.dumps`` never raises a
-    ``TypeError``.
+    enum members (as their values), datetimes, bytes (base64), lists, dicts, and primitives.
+    Falls back to ``str()`` for any remaining non-serializable value so that ``json.dumps``
+    never raises a ``TypeError``.
 
     Args:
         obj: Object to make JSON safe.
@@ -771,6 +772,11 @@ def make_json_safe(obj: Any) -> Any:
             return make_json_safe(obj.dict())  # type: ignore[no-any-return]
         except TypeError:
             pass
+    if isinstance(obj, Enum):
+        # After the serializer hooks, so an enum that defines one keeps it. A plain Enum member
+        # is not a scalar, and its ``__dict__`` points back at the enum class, so the generic
+        # fallback below would recurse until RecursionError.
+        return make_json_safe(obj.value)
     if isinstance(obj, dict):
         return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
     if isinstance(obj, (list, tuple)):
