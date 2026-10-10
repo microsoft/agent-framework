@@ -181,6 +181,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
         context_mode: Literal["full", "last_agent", "custom"] | None = None,
         *,
         allow_direct_output: bool = False,
+        ensure_trailing_user_turn: bool = False,
     ) -> None:
         """Initialize the AgentApprovalExecutor.
 
@@ -192,8 +193,13 @@ class AgentApprovalExecutor(WorkflowExecutor):
                 downstream participant). Set this when this executor is the workflow's
                 terminator — so the user-approved final response surfaces as a workflow
                 ``output`` event.
+            ensure_trailing_user_turn: If True, appends a synthetic user continuation
+                message when the cache ends on an assistant message. Some chat-completions
+                providers return empty text when the prompt ends on ``assistant``.
+                Defaults to False.
         """
         self._context_mode: Literal["full", "last_agent", "custom"] | None = context_mode
+        self._ensure_trailing_user_turn = ensure_trailing_user_turn
         self._description = agent.description
 
         super().__init__(
@@ -217,6 +223,7 @@ class AgentApprovalExecutor(WorkflowExecutor):
         agent_executor = AgentExecutor(
             agent,
             context_mode=self._context_mode,
+            ensure_trailing_user_turn=self._ensure_trailing_user_turn,
         )
         request_info_cls = _TerminalAgentRequestInfoExecutor if terminal else AgentRequestInfoExecutor
         request_info_executor = request_info_cls(id="agent_request_info_executor")

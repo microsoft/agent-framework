@@ -532,6 +532,103 @@ async def test_chain_only_agent_responses_three_agents() -> None:
     assert a3.last_messages[0].role == "assistant" and "A2 reply" in (a3.last_messages[0].text or "")
 
 
+def test_sequential_builder_ensure_trailing_user_turn_defaults_to_false() -> None:
+    """ensure_trailing_user_turn should default to False, preserving existing behavior."""
+    a1 = _EchoAgent(id="agent1", name="A1")
+    builder = SequentialBuilder(participants=[a1])
+    assert builder._ensure_trailing_user_turn is False  # type: ignore[attr-defined]
+
+
+async def test_sequential_ensure_trailing_user_turn_disabled_second_agent_sees_assistant_ending() -> None:
+    """Default(flag off) second agent context still ends on first agent assistant message.
+    with the default setting the second participant receives a conversation ending on `assistant`"""
+
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2]).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = a2.last_messages
+    assert len(seen) == 2
+    assert seen[-1].role == "assistant" and "A1 reply" in (seen[-1].text or "")
+
+
+async def test_sequential_ensure_trailing_user_enabled_appends_synthetic_user_message() -> None:
+    """with ensure_trailing_user_turn=True, the second agent receives a synthetic trailing
+    user message appended after the first agent assistant reply."""
+
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2], ensure_trailing_user_turn=True).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = a2.last_messages
+    assert len(seen) == 3
+    assert seen[0].role == "user" and "hello" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "A1 reply" in (seen[1].text or "")
+    assert seen[2].role == "user"
+
+
+async def test_sequential_ensure_trailing_user_turn_combined_with_chain_only_agent_responses() -> None:
+    """`chain_only_agent_responses = True` still produces an assistant-ending list
+    (`[assistant(writer)]`), so the synthetic turn must be appended there too.
+    """
+
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(
+        participants=[a1, a2],
+        chain_only_agent_responses=True,
+        ensure_trailing_user_turn=True,
+    ).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = a2.last_messages
+    assert len(seen) == 2
+    assert seen[0].role == "assistant" and "A1 reply" in (seen[0].text or "")
+    assert seen[1].role == "user"
+
+
+async def test_sequential_ensure_trailing_user_turn_with_request_info_wrapped_agent() -> None:
+    """ensure_trailing_user_turn must also be honored for agents wrapped via with_request_info()
+    (i.e. threaded through AgentApprovalExecutor -> its inner AgentExecutor).
+    """
+    from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
+
+    a1 = _CapturingAgent(id="agent1", name="A1", reply_text="A1 reply")
+    a2 = _CapturingAgent(id="agent2", name="A2", reply_text="A2 reply")
+
+    wf = SequentialBuilder(participants=[a1, a2], ensure_trailing_user_turn=True).with_request_info(agents=[a1]).build()
+
+    request_events: list[Any] = []
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
+            request_events.append(ev)
+
+    assert request_events
+    responses = {req.request_id: AgentRequestInfoResponse.approve() for req in request_events}
+
+    async for ev in wf.run(stream=True, responses=responses):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = a2.last_messages
+    assert len(seen) == 3
+    assert seen[-1].role == "user"
+
+
 # ---------------------------------------------------------------------------
 # with_request_info tests
 # ---------------------------------------------------------------------------
