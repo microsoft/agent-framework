@@ -48,6 +48,17 @@ public sealed class RedisCheckpointStoreTests
     }
 
     [Theory]
+    [InlineData("{x}")]
+    [InlineData("{}")]
+    [InlineData("app{")]
+    [InlineData("}app")]
+    public void Constructor_KeyPrefixWithHashTagBraces_Throws(string keyPrefix)
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => new RedisCheckpointStore(this._connection.Object, new() { KeyPrefix = keyPrefix }));
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(-1)]
     public void Constructor_NonPositiveTimeToLive_Throws(int seconds)
@@ -94,6 +105,65 @@ public sealed class RedisCheckpointStoreTests
         Assert.Equal(["app:{session-1}:seq", "app:{session-1}:index", "app:{session-1}:data", "app:{session-1}:parents"], keys!.Select(k => k.ToString()));
         Assert.Equal([checkpoint.CheckpointId, """{"step":2}""", "parent-id", "300000"], values!.Select(v => v.ToString()));
         this._connection.Verify(c => c.GetDatabase(3, It.IsAny<object?>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("checkpoints", "session-1")]
+    [InlineData("checkpoints", "}abc")]
+    [InlineData("checkpoints", "{x}")]
+    [InlineData("checkpoints", "a{b}c")]
+    [InlineData("checkpoints", "{}")]
+    [InlineData("checkpoints", "}")]
+    [InlineData("checkpoints", "a}b{c")]
+    [InlineData("checkpoints", "%7B")]
+    [InlineData("checkpoints", "İstanbul")]
+    [InlineData("app:tenant-1", "}abc")]
+    [InlineData("İzmir:checkpoints", "a{b}c")]
+    public async Task CreateCheckpointAsync_SessionKeys_ShareOneClusterHashSlotAsync(string keyPrefix, string sessionId)
+    {
+        // Arrange
+        RedisKey[]? keys = null;
+        this.SetupScriptEvaluate((k, _) => keys = k);
+        RedisCheckpointStore store = new(this._connection.Object, new() { KeyPrefix = keyPrefix });
+
+        // Act
+        await store.CreateCheckpointAsync(sessionId, JsonSerializer.SerializeToElement(1));
+
+        // Assert: one script touches all four keys, so on Redis Cluster they must hash to the same slot.
+        Assert.Equal(4, keys!.Length);
+        Assert.All(keys, key => Assert.StartsWith($"{keyPrefix}:{{", key.ToString(), StringComparison.Ordinal));
+        Assert.Single(keys.Select(key => RedisHashSlot.Calculate(key.ToString())).Distinct());
+    }
+
+    [Theory]
+    [InlineData("{", "%7B")]
+    [InlineData("}", "%7D")]
+    [InlineData("%", "%25")]
+    public async Task CreateCheckpointAsync_EscapedSessionIds_DoNotShareKeysAsync(string sessionId, string escapedLookalike)
+    {
+        // Arrange
+        List<string> keys = [];
+        this.SetupScriptEvaluate((k, _) => keys.Add(k![1].ToString()));
+        RedisCheckpointStore store = new(this._connection.Object);
+
+        // Act
+        await store.CreateCheckpointAsync(sessionId, JsonSerializer.SerializeToElement(1));
+        await store.CreateCheckpointAsync(escapedLookalike, JsonSerializer.SerializeToElement(2));
+
+        // Assert
+        Assert.Equal(2, keys.Distinct().Count());
+    }
+
+    [Theory]
+    [InlineData("foo", 12182)]
+    [InlineData("123456789", 12739)]
+    [InlineData("{user1000}.following", 3443)]
+    [InlineData("foo{}{bar}", 8363)]
+    [InlineData("foo{{bar}}zap", 4015)]
+    public void RedisHashSlot_MatchesRedisClusterSpecification(string key, int expectedSlot)
+    {
+        // Act & Assert: reference values from the Redis Cluster specification and CLUSTER KEYSLOT.
+        Assert.Equal(expectedSlot, RedisHashSlot.Calculate(key));
     }
 
     [Fact]

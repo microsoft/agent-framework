@@ -177,6 +177,31 @@ public sealed class RedisCheckpointStoreServerTests : IAsyncLifetime
         await Assert.ThrowsAsync<KeyNotFoundException>(() => store.RetrieveCheckpointAsync("session-b", key).AsTask());
     }
 
+    [Theory]
+    [InlineData("}abc")]
+    [InlineData("{x}")]
+    [InlineData("a{b}c")]
+    [InlineData("{}")]
+    [InlineData("%7B")]
+    [InlineData("İstanbul")]
+    public async Task CheckpointOperations_WithBracesOrUnicodeInSessionId_SucceedAsync(string sessionId)
+    {
+        // Arrange: on Redis Cluster a malformed hash tag would make the create script fail with CROSSSLOT.
+        RedisCheckpointStore store = this.CreateStore(timeToLive: TimeSpan.FromHours(1));
+        CheckpointInfo first = await store.CreateCheckpointAsync(sessionId, JsonSerializer.SerializeToElement(1));
+
+        // Act
+        CheckpointInfo second = await store.CreateCheckpointAsync(sessionId, JsonSerializer.SerializeToElement(2), parent: first);
+        IEnumerable<CheckpointInfo> index = await store.RetrieveIndexAsync(sessionId);
+        IEnumerable<CheckpointInfo> children = await store.RetrieveIndexAsync(sessionId, withParent: first);
+        JsonElement value = await store.RetrieveCheckpointAsync(sessionId, second);
+
+        // Assert
+        Assert.Equal([first, second], index);
+        Assert.Equal([second], children);
+        Assert.Equal(2, value.GetInt32());
+    }
+
     [Fact]
     public async Task CreateCheckpointAsync_SessionKeysShareHashSlotAndExpireTogetherAsync()
     {
@@ -190,7 +215,7 @@ public sealed class RedisCheckpointStoreServerTests : IAsyncLifetime
         // Assert
         IDatabase database = this._redis.Connection.GetDatabase();
         RedisKey[] keys = [.. s_sessionKeySuffixes.Select(suffix => (RedisKey)$"{this._keyPrefix}:{{session-a}}:{suffix}")];
-        Assert.Single(keys.Select(k => this._redis.Connection.HashSlot(k)).Distinct());
+        Assert.Single(keys.Select(k => RedisHashSlot.Calculate(k.ToString())).Distinct());
         foreach (RedisKey key in keys)
         {
             TimeSpan? timeToLive = await database.KeyTimeToLiveAsync(key);

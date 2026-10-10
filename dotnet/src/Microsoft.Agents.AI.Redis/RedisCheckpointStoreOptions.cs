@@ -11,10 +11,12 @@ public sealed class RedisCheckpointStoreOptions
 {
     /// <summary>
     /// Gets or sets the prefix for all Redis keys written by the store. Defaults to "checkpoints".
+    /// The prefix must not contain '{' or '}'.
     /// </summary>
     /// <remarks>
     /// The keys of a session are <c>{KeyPrefix}:{sessionId}:index</c>, <c>:data</c>, <c>:parents</c> and <c>:seq</c>,
     /// with the session id wrapped in braces so that all keys of a session share a Redis Cluster hash tag.
+    /// The characters <c>%</c>, <c>{</c> and <c>}</c> in the session id are written as <c>%25</c>, <c>%7B</c> and <c>%7D</c>.
     /// </remarks>
     public string KeyPrefix { get; set; } = "checkpoints";
 

@@ -18,7 +18,12 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// For each session the store keeps a sorted set of checkpoint ids scored by a per-session commit counter, a hash with the
 /// checkpoint JSON (stored verbatim) and a hash with the parent checkpoint ids. A Lua script writes all of them in one atomic
 /// step, so <see cref="RetrieveIndexAsync"/> always returns checkpoints in commit order, also when several processes write
-/// to the same session. All keys of a session share the hash tag <c>{sessionId}</c>, so the store also works with Redis Cluster.
+/// to the same session.
+/// </para>
+/// <para>
+/// All keys of a session share the Redis Cluster hash tag <c>{sessionId}</c>, so the store also works with Redis Cluster.
+/// To keep that tag valid for any session id, the characters <c>%</c>, <c>{</c> and <c>}</c> in the session id are written as
+/// <c>%25</c>, <c>%7B</c> and <c>%7D</c> in the keys, and <see cref="RedisCheckpointStoreOptions.KeyPrefix"/> must not contain braces.
 /// </para>
 /// <para>
 /// The store does not own the <see cref="IConnectionMultiplexer"/>; the application creates it, shares it and disposes it.
@@ -54,6 +59,8 @@ public sealed class RedisCheckpointStore : JsonCheckpointStore
         return seq
         """;
 
+    private static readonly char[] s_hashTagDelimiters = ['{', '}'];
+
     private readonly IConnectionMultiplexer _connection;
     private readonly int _database;
     private readonly string _keyPrefix;
@@ -65,13 +72,17 @@ public sealed class RedisCheckpointStore : JsonCheckpointStore
     /// <param name="connection">The Redis connection to use. The store does not dispose it.</param>
     /// <param name="options">Optional configuration options.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="connection"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when <see cref="RedisCheckpointStoreOptions.KeyPrefix"/> is null or whitespace.</exception>
+    /// <exception cref="ArgumentException">Thrown when <see cref="RedisCheckpointStoreOptions.KeyPrefix"/> is null, whitespace or contains '{' or '}'.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <see cref="RedisCheckpointStoreOptions.TimeToLive"/> is not positive.</exception>
     public RedisCheckpointStore(IConnectionMultiplexer connection, RedisCheckpointStoreOptions? options = null)
     {
         this._connection = Throw.IfNull(connection);
         this._database = options?.Database ?? -1;
         this._keyPrefix = Throw.IfNullOrWhitespace(options?.KeyPrefix ?? "checkpoints", nameof(options.KeyPrefix));
+        if (this._keyPrefix.IndexOfAny(s_hashTagDelimiters) >= 0)
+        {
+            throw new ArgumentException("KeyPrefix must not contain '{' or '}', which Redis Cluster uses to delimit hash tags.", nameof(options));
+        }
 
         if (options?.TimeToLive is TimeSpan timeToLive)
         {
@@ -137,9 +148,17 @@ public sealed class RedisCheckpointStore : JsonCheckpointStore
     {
         Throw.IfNullOrWhitespace(sessionId);
 
-        string root = $"{this._keyPrefix}:{{{sessionId}}}";
+        string root = $"{this._keyPrefix}:{{{EscapeHashTag(sessionId)}}}";
         return new SessionKeys($"{root}:seq", $"{root}:index", $"{root}:data", $"{root}:parents");
     }
+
+    // A hash tag ends at the first '}' and must not be empty, so braces in the session id are escaped. Escaping '%' as well
+    // keeps the mapping one-to-one, so different session ids never share keys.
+    private static string EscapeHashTag(string sessionId) =>
+        sessionId
+            .Replace("%", "%25", StringComparison.Ordinal)
+            .Replace("{", "%7B", StringComparison.Ordinal)
+            .Replace("}", "%7D", StringComparison.Ordinal);
 
     private readonly record struct SessionKeys(RedisKey Sequence, RedisKey Index, RedisKey Data, RedisKey Parents);
 }

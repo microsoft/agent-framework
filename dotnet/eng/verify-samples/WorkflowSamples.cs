@@ -221,6 +221,7 @@ internal static class WorkflowSamples
             MustContain =
             [
                 "Stopping the first run after 4 checkpoints.",
+                "Resuming from checkpoint 4, the latest checkpoint of the session in Redis.",
                 "Workflow completed with result: 42 found in 7 tries!",
             ],
         },

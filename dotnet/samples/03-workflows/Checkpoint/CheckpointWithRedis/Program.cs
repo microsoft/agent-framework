@@ -2,6 +2,7 @@
 
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.InProc;
 using StackExchange.Redis;
 
 namespace WorkflowCheckpointWithRedisSample;
@@ -14,6 +15,7 @@ namespace WorkflowCheckpointWithRedisSample;
 /// - Any process that connects to the same Redis server can find the latest checkpoint of a session
 ///   and resume the workflow from it.
 /// - An optional time to live removes the checkpoints of a session some time after its last checkpoint.
+/// - The first run uses lockstep execution, so it can be stopped exactly after a given super step.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
@@ -39,17 +41,24 @@ public static class Program
         };
         CheckpointManager checkpointManager = CheckpointManager.CreateJson(new RedisCheckpointStore(redis, options));
 
+        // In lockstep mode the next super step only runs when the event stream is read further, so stopping
+        // the stream after the fourth checkpoint stops the workflow exactly there, as if the process had crashed.
+        const int StopAfterCheckpoints = 4;
+        List<CheckpointInfo> checkpoints = [];
+        InProcessExecutionEnvironment lockstep = InProcessExecution.Lockstep.WithCheckpointing(checkpointManager);
         Workflow workflow = WorkflowFactory.BuildWorkflow();
-        await using (StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, NumberSignal.Init, checkpointManager, sessionId))
+        await using (StreamingRun run = await lockstep.RunStreamingAsync(workflow, NumberSignal.Init, sessionId))
         {
-            // Stop the run part way through, as if the process had crashed.
-            int checkpointCount = 0;
             await foreach (WorkflowEvent evt in run.WatchStreamAsync())
             {
-                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: not null } && ++checkpointCount == 4)
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: CheckpointInfo checkpoint })
                 {
-                    Console.WriteLine($"Stopping the first run after {checkpointCount} checkpoints.");
-                    break;
+                    checkpoints.Add(checkpoint);
+                    if (checkpoints.Count == StopAfterCheckpoints)
+                    {
+                        Console.WriteLine($"Stopping the first run after {checkpoints.Count} checkpoints.");
+                        break;
+                    }
                 }
             }
         }
@@ -61,7 +70,12 @@ public static class Program
         CheckpointManager resumeManager = CheckpointManager.CreateJson(new RedisCheckpointStore(redis, options));
         CheckpointInfo latest = await resumeManager.GetLatestCheckpointAsync(sessionId)
             ?? throw new InvalidOperationException($"No checkpoint found for session '{sessionId}'.");
-        Console.WriteLine($"Resuming session '{sessionId}' from checkpoint '{latest.CheckpointId}'.");
+        if (!latest.Equals(checkpoints[^1]))
+        {
+            throw new InvalidOperationException("The latest checkpoint in Redis is not the last checkpoint of the first run.");
+        }
+
+        Console.WriteLine($"Resuming from checkpoint {checkpoints.Count}, the latest checkpoint of the session in Redis.");
 
         Workflow resumedWorkflow = WorkflowFactory.BuildWorkflow();
         await using StreamingRun resumedRun = await InProcessExecution.ResumeStreamingAsync(resumedWorkflow, latest, resumeManager);
