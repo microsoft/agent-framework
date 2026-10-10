@@ -901,6 +901,26 @@ class TestStateTypeRegistry:
         assert isinstance(restored.state["value"], PydanticState)
         assert restored.state["value"].value == "ok"
 
+    def test_registered_pydantic_state_restores_nested_registered_values(self) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticMessageState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+
+        register_state_type(PydanticMessageState, type_id="pydantic_message_state_test")
+        session = AgentSession(session_id="nested-message")
+        session.state["value"] = PydanticMessageState(
+            message=Message(role="user", contents=["persisted"])
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticMessageState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
+
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
             def to_dict(self) -> dict[str, Any]:
@@ -1145,6 +1165,28 @@ class TestFileSessionStore:
         assert files[0].parent == tmp_path
         assert files[0].suffix == ".json"
         assert json.loads(files[0].read_bytes())["version"] == "1.0"
+
+    async def test_round_trips_registered_pydantic_state_with_nested_message(self, tmp_path: Path) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticFileMessageState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+
+        register_state_type(PydanticFileMessageState, type_id="pydantic_file_message_state_test")
+        session = AgentSession(session_id="file-nested-message")
+        session.state["value"] = PydanticFileMessageState(
+            message=Message(role="user", contents=["persisted"])
+        )
+
+        await FileSessionStore(tmp_path).set("tenant_file-nested-message", session)
+        restored = await FileSessionStore(tmp_path).get("tenant_file-nested-message")
+
+        assert restored is not None
+        assert isinstance(restored.state["value"], PydanticFileMessageState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
 
     async def test_round_trips_binary_messagepack_session(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path, serialization_format="msgpack")

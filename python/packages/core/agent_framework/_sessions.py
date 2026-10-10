@@ -271,7 +271,16 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
     if issubclass(cls, BaseModel):
 
         def decode_pydantic(payload: Mapping[str, Any]) -> Any:
-            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+            # The encoder's payload items went through _serialize_value, so a
+            # nested registered value (e.g. Message) sits in the payload as its
+            # tagged dict. Restore nested values the same way before validating,
+            # otherwise Pydantic receives the tagged dict where the field
+            # expects the reconstructed instance.
+            return cls.model_validate({
+                key: _deserialize_value(value, path=f"{cls.__name__}.{key}")
+                for key, value in payload.items()
+                if key != "type"
+            })
 
         return decode_pydantic
 
