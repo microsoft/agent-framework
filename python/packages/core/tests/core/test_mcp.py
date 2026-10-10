@@ -3632,7 +3632,14 @@ async def test_mcp_connection_reset_integration():
 
         tool.session.call_tool = call_tool_with_error  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
-        # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
+        # An ambiguous tools/call failure must not replay the operation.
+        with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+            await func.invoke(query="What is Agent Framework?")
+
+        assert call_count == 1
+
+        # Recovery applies only to a separately initiated operation.
+        await tool.connect(reset=True)
         second_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert second_result is not None
         assert len(second_result) > 0
@@ -6102,6 +6109,64 @@ async def test_mcp_tool_call_tool_does_not_retry_after_connection_loss() -> None
 
     tool.session.call_tool.assert_awaited_once()
     mock_connect.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("idempotent_hint", "read_only_hint"),
+    [
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
+async def test_mcp_tool_untrusted_annotations_never_authorize_replay(
+    idempotent_hint: bool,
+    read_only_hint: bool,
+) -> None:
+    """Discovered MCP annotations must not authorize replay of ambiguous tool calls."""
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    session = Mock(spec=ClientSession)
+
+    advertised_tool = types.Tool(
+        name="remote_tool",
+        description="A tool with advisory execution annotations.",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=types.ToolAnnotations(
+            idempotentHint=idempotent_hint,
+            readOnlyHint=read_only_hint,
+        ),
+    )
+    session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[advertised_tool]))
+
+    effects: list[str] = []
+
+    async def execute_then_disconnect(*args: Any, **kwargs: Any) -> Any:
+        effects.append("executed")
+        raise ClosedResourceError
+
+    session.call_tool = AsyncMock(side_effect=execute_then_disconnect)
+    tool.session = session
+
+    # Discover the annotated tool through the framework's real loading path.
+    await tool.load_tools()
+
+    assert len(tool.functions) == 1
+    remote_function = tool.functions[0]
+    assert remote_function.name == "remote_tool"
+
+    with (
+        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        pytest.raises(ToolExecutionException, match="outcome is unknown") as exc_info,
+    ):
+        await remote_function.invoke(arguments={})
+
+    assert effects == ["executed"]
+    session.list_tools.assert_awaited_once()
+    session.call_tool.assert_awaited_once()
+    mock_connect.assert_not_awaited()
+    assert isinstance(exc_info.value.__cause__, ClosedResourceError)
 
 
 async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> None:
