@@ -441,6 +441,50 @@ def test_type_compatibility_basic() -> None:
     assert not is_type_compatible(Animal, Dog)
 
 
+def test_type_compatibility_bare_container() -> None:
+    """A bare container class accepts any parameterization of it, in either direction."""
+    import typing
+    from collections.abc import Sequence
+
+    assert is_type_compatible(list[str], list)
+    assert is_type_compatible(dict[str, int], dict)
+    assert is_type_compatible(tuple[int, int], tuple)
+    assert is_type_compatible(list[int], Sequence)
+    assert is_type_compatible(list, list[str])
+
+    # Bare aliases from `typing` carry an origin but no arguments. getattr keeps
+    # pyupgrade from rewriting typing.List and typing.Dict to the builtins.
+    typing_list = getattr(typing, "List")  # noqa: B009
+    typing_dict = getattr(typing, "Dict")  # noqa: B009
+    assert is_type_compatible(list[str], typing.Sequence)
+    assert is_type_compatible(list[str], typing_list)
+    assert is_type_compatible(dict[str, int], typing.Mapping)
+    assert is_type_compatible(typing_list, typing.Sequence)
+    assert is_type_compatible(typing_list, list[str])
+    assert not is_type_compatible(list[str], typing.Mapping)
+    assert not is_type_compatible(typing_dict, list[str])
+
+    assert not is_type_compatible(list[str], dict)
+    assert not is_type_compatible(dict, list[str])
+    assert not is_type_compatible(list[str], str)
+
+
+def test_type_compatibility_bare_container_and_protocol() -> None:
+    """A Protocol that is not runtime_checkable is reported as incompatible, not raised."""
+    from typing import Generic, Protocol, TypeVar
+
+    T_co = TypeVar("T_co", covariant=True)
+
+    class SupportsClose(Protocol):
+        def close(self) -> None: ...
+
+    class Box(Protocol, Generic[T_co]):
+        def get(self) -> T_co: ...
+
+    assert not is_type_compatible(list[str], SupportsClose)
+    assert not is_type_compatible(list, Box[int])
+
+
 def test_type_compatibility_unions() -> None:
     """Test type compatibility with Union types."""
     # Source matches target union member

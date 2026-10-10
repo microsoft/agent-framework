@@ -517,7 +517,7 @@ class MagenticManagerBase(ABC):
 
 
 class StandardMagenticManager(MagenticManagerBase):
-    """Standard Magentic manager that performs real LLM calls via a Agent.
+    """Standard Magentic manager that performs real LLM calls via an Agent.
 
     The manager constructs prompts that mirror the original Magentic One orchestration:
     - Facts gathering
