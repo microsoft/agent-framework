@@ -75,6 +75,7 @@ from ._harness._background_agents import (
     DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
     BackgroundAgentsProvider,
     BackgroundTaskInfo,
+    BackgroundTaskRuntimeStore,
     BackgroundTaskStatus,
 )
 from ._harness._file_access import (
@@ -408,6 +409,7 @@ __all__ = [
     "Annotation",
     "BackgroundAgentsProvider",
     "BackgroundTaskInfo",
+    "BackgroundTaskRuntimeStore",
     "BackgroundTaskStatus",
     "BaseAgent",
     "BaseChatClient",
