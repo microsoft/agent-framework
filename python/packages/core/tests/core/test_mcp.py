@@ -10182,3 +10182,98 @@ async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
 
 
 # endregion
+
+
+async def test_load_tools_sorts_input_schema_properties_deterministically() -> None:
+    """Verify that inputSchema properties are sorted deterministically for prompt caching."""
+
+    class TestServer(MCPTool):
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    tool = TestServer(name="test")
+    tool.session = AsyncMock()
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="demo_tool",
+            description="A test tool with unsorted schema properties",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "z_param": {"type": "string"},
+                    "a_param": {"type": "number"},
+                    "m_param": {"type": "boolean"},
+                },
+            },
+        ),
+    ]
+    page.nextCursor = None
+    tool.session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    func = next(f for f in tool.functions if f.name == "demo_tool")
+    schema = func.parameters()
+    assert isinstance(schema, dict)
+    assert list(schema["properties"].keys()) == ["a_param", "m_param", "z_param"]
+
+
+async def test_load_tools_sorts_nested_input_schema_deterministically() -> None:
+    """Verify that nested properties, items, and $defs are recursively sorted deterministically."""
+
+    class TestServer(MCPTool):
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    tool = TestServer(name="test")
+    tool.session = AsyncMock()
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="nested_tool",
+            description="Tool with nested objects and defs",
+            inputSchema={
+                "type": "object",
+                "$defs": {
+                    "ZDef": {"type": "string"},
+                    "ADef": {"type": "integer"},
+                },
+                "properties": {
+                    "user": {
+                        "type": "object",
+                        "properties": {
+                            "zip": {"type": "string"},
+                            "address": {"type": "string"},
+                        },
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "value": {"type": "string"},
+                                "key": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        ),
+    ]
+    page.nextCursor = None
+    tool.session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    func = next(f for f in tool.functions if f.name == "nested_tool")
+    schema = func.parameters()
+    assert isinstance(schema, dict)
+    assert list(schema["$defs"].keys()) == ["ADef", "ZDef"]
+    assert list(schema["properties"].keys()) == ["tags", "user"]
+    assert list(schema["properties"]["user"]["properties"].keys()) == ["address", "zip"]
+    assert list(schema["properties"]["tags"]["items"]["properties"].keys()) == ["key", "value"]

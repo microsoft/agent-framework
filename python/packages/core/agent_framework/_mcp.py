@@ -721,6 +721,44 @@ def _mcp_header_identity(headers: Mapping[str, str]) -> _MCPHeaderIdentity:
     return tuple(sorted(normalized.items()))
 
 
+def _canonicalize_schema(schema: Any) -> Any:
+    """Recursively sort schema properties deterministically to preserve prompt cache stability.
+
+    Sorts keys within 'properties', 'patternProperties', and schema definition mappings
+    ('$defs', 'definitions'), and recursively canonicalizes nested schemas in objects and arrays.
+    Non-dict/list values and schema structures without these keys are returned unmodified.
+    """
+    if isinstance(schema, dict):
+        result: dict[str, Any] = {}
+        schema_dict = cast(dict[str, Any], schema)
+        for key, val in schema_dict.items():
+            if key in {"properties", "patternProperties", "$defs", "definitions"} and isinstance(val, dict):
+                # Sort mapping keys deterministically, recursively canonicalizing each subschema
+                sub_dict = cast(dict[str, Any], val)
+                sorted_items: list[tuple[str, Any]] = sorted(sub_dict.items(), key=lambda pair: pair[0])
+                result[key] = {k: _canonicalize_schema(v) for k, v in sorted_items}
+            elif key == "items":
+                if isinstance(val, dict):
+                    result[key] = _canonicalize_schema(val)
+                elif isinstance(val, list):
+                    items_list = cast(list[Any], val)
+                    result[key] = [_canonicalize_schema(item) for item in items_list]
+                else:
+                    result[key] = val
+            elif key in {"allOf", "anyOf", "oneOf"} and isinstance(val, list):
+                branches_list = cast(list[Any], val)
+                result[key] = [_canonicalize_schema(sub) for sub in branches_list]
+            elif isinstance(val, (dict, list)):
+                result[key] = _canonicalize_schema(val)
+            else:
+                result[key] = val
+        return result
+    if isinstance(schema, list):
+        schema_list = cast(list[Any], schema)
+        return [_canonicalize_schema(item) for item in schema_list]
+    return schema
+
+
 # Internal polling bounds for MCP long-running tasks. Not user-tunable today;
 # promote to MCPTaskOptions if a concrete need arises.
 _MCP_TASK_MIN_POLL_INTERVAL = timedelta(milliseconds=500)
@@ -2610,6 +2648,9 @@ class MCPTool:
                 input_schema = dict(tool.inputSchema or {})
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
+                elif isinstance(input_schema.get("properties"), dict):
+                    # Sort property keys recursively to preserve prompt cache stability
+                    input_schema = _canonicalize_schema(input_schema)
 
                 # Register declared param names before the existing-tool skip below so that
                 # reloads (e.g. notifications/tools/list_changed) preserve the allowlist for
