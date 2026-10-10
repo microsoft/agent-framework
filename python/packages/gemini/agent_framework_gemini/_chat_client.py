@@ -493,7 +493,7 @@ class RawGeminiChatClient(
                     # instead of leaving the response open until the generator is garbage collected.
                     try:
                         async for chunk in response_stream:
-                            yield self._process_chunk(chunk)
+                            yield self._process_chunk(chunk, model)
                     finally:
                         aclose = getattr(response_stream, "aclose", None)
                         if aclose is not None:
@@ -1071,13 +1071,14 @@ class RawGeminiChatClient(
             raw_representation=response,
         )
 
-    def _process_chunk(self, chunk: types.GenerateContentResponse) -> ChatResponseUpdate:
+    def _process_chunk(self, chunk: types.GenerateContentResponse, model: str) -> ChatResponseUpdate:
         """Convert a single streaming chunk to a framework ChatResponseUpdate.
 
         Usage details are attached only to the final chunk, identified by a non-None finish reason.
 
         Args:
             chunk: A streaming ``GenerateContentResponse`` chunk from the Gemini API.
+            model: The model resolved for this request, used when the chunk carries no model version.
 
         Returns:
             A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
@@ -1096,7 +1097,7 @@ class RawGeminiChatClient(
 
         return ChatResponseUpdate(
             contents=contents,
-            model=chunk.model_version,
+            model=chunk.model_version or model,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )
