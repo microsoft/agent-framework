@@ -27,6 +27,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
+    Final,
     Generic,
     Literal,
     NoReturn,
@@ -71,6 +72,7 @@ from agent_framework._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
     validate_tool_mode,
 )
@@ -154,6 +156,7 @@ logger = logging.getLogger("agent_framework.openai")
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -801,6 +804,8 @@ class RawOpenAIChatClient(
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
         """Convert exceptions to appropriate service exceptions. Always raises."""
+        if isinstance(ex, ChatClientException):
+            raise ex
         if isinstance(ex, BadRequestError) and ex.code == "content_filter":
             raise OpenAIContentFilterException(
                 f"{type(self)} service encountered a content error: {ex}",
@@ -813,6 +818,15 @@ class RawOpenAIChatClient(
             ),
             inner_exception=ex,
         ) from ex
+
+    @override
+    def service_url(self) -> str:
+        """Get the URL of the service.
+
+        Returns:
+            The base URL of the underlying OpenAI client, or ``"Unknown"`` if there is no client.
+        """
+        return str(self.client.base_url) if self.client else "Unknown"
 
     @override
     def _inner_get_response(
@@ -866,6 +880,22 @@ class RawOpenAIChatClient(
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
+                                if isinstance(options, dict) and (
+                                    chunk.type
+                                    in (
+                                        "error",
+                                        "response.completed",
+                                        "response.incomplete",
+                                        "response.failed",
+                                    )
+                                    or (
+                                        chunk.type == "response.created"
+                                        and chunk.response.status in _TERMINAL_RESPONSE_STATUSES
+                                    )
+                                ):
+                                    # Clear the caller-owned resume token before parsing because
+                                    # error parsing raises and response.created may itself be terminal.
+                                    options.pop("continuation_token", None)
                                 update = self._parse_chunk_from_openai(
                                     chunk,
                                     options=validated_options,
@@ -874,19 +904,6 @@ class RawOpenAIChatClient(
                                 )
                                 if served_model is not None:
                                     update.model = served_model
-                                if chunk.type in (
-                                    "response.completed",
-                                    "response.incomplete",
-                                    "response.failed",
-                                ) and isinstance(options, dict):
-                                    # Same as the non-streaming path (issue #5394): once the resumed
-                                    # background response has finished, drop the continuation_token
-                                    # from the caller's options dict. FunctionInvocationLayer reuses
-                                    # that dict, so a leftover token makes the next tool-loop iteration
-                                    # retrieve this response again instead of POSTing the tool results,
-                                    # and the tools run again each time. Do it before yielding, so a
-                                    # consumer that stops at the terminal update doesn't keep it.
-                                    options.pop("continuation_token", None)
                                 yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -3649,6 +3666,7 @@ class RawOpenAIChatClient(
         created_at: str | None = None
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
+        operation_state: Literal["in_progress", "terminal"] = "in_progress"
         model = self.model
 
         def output_text_properties(output: Any) -> dict[str, Any] | None:
@@ -3735,6 +3753,13 @@ class RawOpenAIChatClient(
             # ResponseQueuedEvent,
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
+            case "error":
+                error_details = event.message
+                if event.code:
+                    error_details = f"{event.code}: {error_details}"
+                if event.param:
+                    error_details = f"{error_details} (parameter: {event.param})"
+                self._handle_request_error(RuntimeError(f"OpenAI streaming error: {error_details}"))
             case "response.content_part.added":
                 event_part = event.part
                 match event_part.type:
@@ -3882,16 +3907,16 @@ class RawOpenAIChatClient(
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
-                if event.response.status and event.response.status in (
-                    "in_progress",
-                    "queued",
-                ):
+                if event.response.status in _TERMINAL_RESPONSE_STATUSES:
+                    operation_state = "terminal"
+                elif event.response.status in ("in_progress", "queued"):
                     continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.completed" | "response.incomplete" | "response.failed":
+                operation_state = "terminal"
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
                 model = event.response.model
@@ -4192,7 +4217,7 @@ class RawOpenAIChatClient(
                 if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
                     logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
-        return ChatResponseUpdate(
+        update = ChatResponseUpdate(
             contents=contents,
             conversation_id=conversation_id,
             response_id=response_id,
@@ -4204,6 +4229,8 @@ class RawOpenAIChatClient(
             additional_properties=metadata,
             raw_representation=event,
         )
+        _set_operation_state(update, operation_state)
+        return update
 
     def _parse_usage_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
         details = UsageDetails(

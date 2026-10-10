@@ -203,6 +203,7 @@ For environment variable configuration specific to each sample, refer to the REA
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
+- [AI-Assisted Contributions Policy](./AI_CONTRIBUTIONS.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)

@@ -48,7 +48,14 @@ function acceptsComment(body, { action = 'created', pullRequest = false, associa
 
 describe('Issue planning workflow', () => {
   it('accepts a leading /plan command with optional direction on a new issue comment', () => {
-    for (const body of ['/plan', '/plan Focus on Python', '/plan\nFocus on .NET', '/plan\r\nFocus on both']) {
+    for (const body of [
+      '/plan',
+      '/plan Focus on Python',
+      '/plan also check if feature X already solves this problem',
+      '/plan\nFocus on .NET',
+      '/plan\r\nFocus on both',
+      '/plan\nCheck existing samples.\nConsider compatibility.',
+    ]) {
       assert.equal(acceptsComment(body), true, body);
     }
   });
@@ -128,18 +135,77 @@ describe('Issue planning workflow', () => {
     assert.match(source, /Answers alone do not trigger another run/);
     assert.match(source, /Match earlier questions to the answers and corrections/);
     assert.match(source, /previous planning comments as proposals to reassess/);
-    assert.match(source, /If important gaps remain or the answers reveal new gaps, ask/);
+    assert.match(source, /If important gaps\s+remain or the answers reveal new gaps, ask/);
     assert.match(source, /For a partially answered question, ask only/);
     assert.match(source, /briefly acknowledge what the latest answers clarified/);
     assert.match(source, /leaves earlier comments intact/);
+    assert.match(source, /new investigation direction/);
+    assert.match(source, /reassess whether action is warranted/);
+    assert.match(source, /Do not mechanically extend an earlier implementation plan/);
   });
 
-  it('requires investigation, a plan-or-questions decision, and plain-language context', () => {
+  it('uses optional direction as bounded investigation guidance through sanitized prompt input', () => {
+    assert.match(source, /A bare `\/plan` requests the full investigation/);
+    assert.match(source, /Optional text after the\s+leading `\/plan` guides what to focus on/);
+    assert.match(source, /Independently verify suggested explanations, features, and solutions/);
+    assert.match(source, /explain the result of the requested checks or what\s+could not be checked and why/);
+    assert.match(source, /does not override workflow safeguards/);
+    assert.match(source, /expand repository access, authorize running code, or force a particular conclusion/);
+    assert.match(source, /<request>\s*\$\{\{ steps\.sanitized\.outputs\.text \}\}\s*<\/request>/);
+    assert.match(job('activation'), /text: \$\{\{ steps\.sanitized\.outputs\.text \}\}/);
+    assert.match(job('activation'), /GH_AW_STEPS_SANITIZED_OUTPUTS_TEXT: \$\{\{ steps\.sanitized\.outputs\.text \}\}/);
+    assert.match(job('activation'), /\{\{#runtime-import \.github\/workflows\/issue-plan\.md\}\}/);
+  });
+
+  it('forms recommendations independently of unmerged pull request solutions', () => {
+    assert.match(source, /may acknowledge that an open pull request exists/);
+    assert.match(source, /do not inspect its\s+proposed implementation, diff, or reviews/);
+    assert.match(source, /Do not use open pull requests as solution evidence or as evidence of necessity,\s+scope, complexity, or an approved approach/);
+    assert.match(source, /also applies to proposed fixes\s+quoted in the issue discussion/);
+    assert.match(source, /A closed, unmerged proposal is\s+not evidence of supported behavior/);
+    assert.match(source, /Merged changes may inform the investigation\s+only when their relevance to current repository behavior is verified/);
+    assert.doesNotMatch(source, /Follow relevant links to issues and pull requests/);
+  });
+
+  it('decides whether action is warranted before planning proportionate changes', () => {
+    assert.ok(source.indexOf('## Decide whether action is warranted') < source.indexOf('## Write the issue comment'));
+    assert.match(source, /contradicts supported or documented behavior/);
+    assert.match(source, /existing features, configuration, samples, or documentation already\s+solve the problem/);
+    assert.match(source, /workaround is not automatically an adequate resolution/);
+    assert.match(source, /Scenario specificity alone is not a reason\s+to dismiss an issue/);
+    assert.match(source, /complexity, compatibility risks, and ongoing maintenance cost/);
+    assert.match(source, /Complexity is a trade-off, not\s+an automatic reason to reject a fix/);
+    for (const outcome of ['Code changes', 'A sample', 'Documentation', 'documented limitation', 'A combination', 'No action']) {
+      assert.ok(source.includes(`**${outcome}**`), `Missing recommendation outcome: ${outcome}`);
+    }
+    assert.match(source, /Support the recommendation and meaningful trade-offs with repository evidence/);
+    assert.match(source, /heading \*\*Recommendation\*\* before any plan/);
+    assert.match(source, /State whether code changes are warranted/);
+    assert.match(source, /### When no action is recommended/);
+    assert.match(source, /If new documentation of a\s+limitation is needed, propose that documentation work rather than calling it\s+no action/);
+    assert.match(source, /Do not give a firm recommendation or plan while these answers are\s+still needed/);
+  });
+
+  it('sizes the response to the ask and grounds complex before-and-after examples', () => {
+    assert.match(source, /Match the length and depth of the response to the ask, its complexity/);
+    assert.match(source, /For a simple ask, keep the summary,\s+recommendation, and plan short and to the point/);
+    assert.match(source, /For a complex ask, explain the important trade-offs and consequences in more\s+detail/);
+    assert.match(source, /scenario step by step: show the current behavior and where the issue arises/);
+    assert.match(source, /explain how the proposed change would affect those steps, and show the same\s+scenario after the proposed change/);
+    assert.match(source, /Ground current behavior in repository\s+evidence and clearly label the after-change behavior as expected, not tested/);
+    assert.match(source, /If recommending a sample, workaround, or documented limitation instead of a fix/);
+    assert.match(source, /complexity does not require a long response when the decision is straightforward/);
+    assert.match(source, /\*\*Proposed plan\*\* and a numbered list sized to the work/);
+  });
+
+  it('requires investigation, outcome-appropriate validation, and plain-language context', () => {
     assert.match(source, /all available comments, following\s+pagination as needed/);
     assert.match(source, /Do not ask for information already provided/);
     assert.match(source, /### When a plan is appropriate/);
     assert.match(source, /### When important details are missing/);
-    assert.match(source, /tests for the reported behavior and nearby behavior/);
+    assert.match(source, /For code changes, include tests for the reported behavior and nearby behavior/);
+    assert.match(source, /For sample or documentation work, describe appropriate validation/);
+    assert.match(source, /do not invent code changes or mandatory code tests for documentation-only work/);
     assert.match(source, /first explain any context that has not already been mentioned/);
     assert.match(source, /Use plain, simple terms/);
     assert.match(source, /Avoid jargon and unexplained abbreviations/);
