@@ -526,18 +526,18 @@ def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
     assert client._parse_usage(None) is None
 
 
+class _FakeSession:
+    def __init__(self, region_name: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.region_name = region_name
+
+    def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
+        self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
+        return _StubBedrockRuntime()
+
+
 def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     """BedrockChatClient should build a runtime client from a provided boto3 session."""
-
-    class _FakeSession:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, Any]] = []
-            self.region_name: str | None = None
-
-        def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
-            self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
-            return _StubBedrockRuntime()
-
     session = _FakeSession()
 
     client = BedrockChatClient(
@@ -554,6 +554,37 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
             "config": session.calls[0]["config"],
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("region", "env_region", "session_region", "expected_region"),
+    [
+        (None, None, "eu-west-1", "eu-west-1"),
+        ("us-west-2", None, "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        (None, None, None, "us-east-1"),
+    ],
+    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+)
+def test_init_resolves_region_with_boto3_session(
+    monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
+    env_region: str | None,
+    session_region: str | None,
+    expected_region: str,
+) -> None:
+    """A configured region wins, then the provided session's region, then the default region."""
+    if env_region:
+        monkeypatch.setenv("BEDROCK_REGION", env_region)
+    else:
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name=session_region)
+
+    client = BedrockChatClient(model="amazon.titan-text", region=region, boto3_session=cast(Boto3Session, session))
+
+    assert session.calls[0]["region_name"] == expected_region
+    assert client.region == expected_region
+    assert client.service_url() == f"https://bedrock-runtime.{expected_region}.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
