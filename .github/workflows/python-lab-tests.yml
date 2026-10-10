@@ -78,10 +78,10 @@ jobs:
         run: uv run pytest -m "resource_intensive and not integration" --junitxml=test-results-resource-intensive.xml
 
       - name: Run lab lint
-        run: uv run poe lint
+        run: uv run poe syntax-check
 
       - name: Run lab format check
-        run: uv run poe fmt --check
+        run: uv run poe syntax-format --check
 
       - name: Run lab type checking
         run: uv run poe pyright

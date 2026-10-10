@@ -13,6 +13,7 @@ on:
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
+      - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
   push:
     branches:
@@ -28,6 +29,7 @@ on:
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
       - "python/pyproject.toml"
+      - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
 
 permissions:
@@ -49,7 +51,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.9"
+          version: "0.12.23"
 
       - name: Run JavaScript tests
         run: node --test .github/tests/*.js
@@ -63,17 +65,16 @@ jobs:
           UV_NO_CONFIG: "1"
         run: |
           griffe_requirement="$(
-            python3 - "$GITHUB_WORKSPACE/python/pyproject.toml" <<'PY'
+            python3 - "$GITHUB_WORKSPACE/python/tooling/requirements-api-compatibility.txt" <<'PY'
           import sys
-          import tomllib
 
-          with open(sys.argv[1], "rb") as pyproject_file:
-              dev_dependencies = tomllib.load(pyproject_file)["dependency-groups"]["dev"]
           requirements = [
-              dependency for dependency in dev_dependencies if dependency.startswith("griffe")
+              line.strip()
+              for line in open(sys.argv[1], encoding="utf-8")
+              if line.strip() and not line.lstrip().startswith("#")
           ]
           if len(requirements) != 1:
-              raise SystemExit("Expected exactly one Griffe development dependency")
+              raise SystemExit("Expected exactly one Griffe tool requirement")
           print(requirements[0])
           PY
           )"

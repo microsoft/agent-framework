@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from task_runner import build_work_items, discover_projects, run_tasks
+from scripts.task_runner import build_work_items, discover_projects, run_tasks
 
 
 def main() -> None:

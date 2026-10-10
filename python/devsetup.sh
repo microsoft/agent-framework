@@ -3,8 +3,6 @@ uv python install 3.10 3.11 3.12 3.13
 PYTHON_VERSION="3.13"
 uv venv --python $PYTHON_VERSION
 # Install AF and all dependencies
-uv sync --dev
-# Install all the tools and dependencies
 uv run poe install
 # Install prek hooks
 uv run poe prek-install

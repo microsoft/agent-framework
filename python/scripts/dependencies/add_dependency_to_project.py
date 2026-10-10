@@ -16,9 +16,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomli
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.task_runner import discover_projects, project_filter_matches
 
 
@@ -33,7 +33,7 @@ class WorkspacePackage:
 
 def _load_distribution_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     return str(data.get("project", {}).get("name", "")).strip()
 
 
