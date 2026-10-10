@@ -43,6 +43,12 @@ Once completed, please proceed to the other samples listed below.
 |--------|----------|
 | [Looping](./Loop) | Shows how to create a loop within a workflow |
 
+### Checkpointing
+
+| Sample | Concepts |
+|--------|----------|
+| [Checkpoint with Redis](./Checkpoint/CheckpointWithRedis) | Stores workflow checkpoints in Redis and resumes a session from its latest checkpoint in a new workflow instance |
+
 ### Workflow Shared States
 
 | Sample | Concepts |

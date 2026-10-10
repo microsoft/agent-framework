@@ -211,6 +211,20 @@ internal static class WorkflowSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Workflow_Checkpoint_CheckpointWithRedis",
+            ProjectPath = "samples/03-workflows/Checkpoint/CheckpointWithRedis",
+            OptionalEnvironmentVariables = ["REDIS_CONNECTION_STRING"],
+            SkipReason = "Requires a running Redis server.",
+            IsDeterministic = true,
+            MustContain =
+            [
+                "Stopping the first run after 4 checkpoints.",
+                "Workflow completed with result: 42 found in 7 tries!",
+            ],
+        },
+
         // ───────────────────────────────────────────────────────────────────
         // Concurrent
         // ───────────────────────────────────────────────────────────────────
