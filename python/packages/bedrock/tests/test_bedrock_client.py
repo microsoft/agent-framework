@@ -587,6 +587,22 @@ def test_init_resolves_region_with_boto3_session(
     assert client.service_url() == f"https://bedrock-runtime.{expected_region}.amazonaws.com"
 
 
+def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client wins, so the unused session should not change the reported region."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name="eu-west-1")
+
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        client=cast(BaseClient, _StubBedrockRuntime()),
+        boto3_session=cast(Boto3Session, session),
+    )
+
+    assert session.calls == []
+    assert client.region == "us-east-1"
+    assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
+
+
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
 @pytest.mark.parametrize(
     ("client_type", "module"),

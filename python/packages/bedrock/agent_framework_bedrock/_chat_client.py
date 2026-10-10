@@ -319,7 +319,7 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        session_region = boto3_session.region_name if boto3_session else None
+        session_region = boto3_session.region_name if boto3_session and not client else None
         region = settings.get("region") or session_region or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
