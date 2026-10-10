@@ -2503,8 +2503,8 @@ async def test_local_mcp_server_function_execution_error():
             await func.invoke(param="test_value")
 
 
-async def test_mcp_tool_reconnects_after_session_terminated_error():
-    """Session termination errors should reconnect once and retry the tool call."""
+async def test_mcp_tool_session_terminated_does_not_replay_call():
+    """A terminated session must not cause automatic tool-call replay."""
 
     class TestServer(MCPTool):
         def __init__(self, **kwargs: Any) -> None:
@@ -2532,11 +2532,18 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
     server = TestServer(name="test_server")
     await server.connect()
 
+    with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+        await server.call_tool("test_tool", param="test_value")
+
+    assert server.connect_count == 1
+    assert server.sessions[0].call_tool.await_count == 1
+
+    # Recovery is possible for a new, explicitly initiated operation.
+    await server.connect(reset=True)
     result = await server.call_tool("test_tool", param="test_value")
 
     assert _mcp_result_to_text(result) == "recovered"
     assert server.connect_count == 2
-    assert server.sessions[0].call_tool.await_count == 1
     assert server.sessions[1].call_tool.await_count == 1
 
 
@@ -3583,10 +3590,10 @@ async def test_mcp_connection_reset_integration():
     """Test that connection reset works correctly with a real MCP server.
 
     This integration test verifies:
-    1. Initial connection and tool execution works
-    2. Simulating connection failure triggers automatic reconnection
-    3. Tool execution works after reconnection
-    4. Exit stack cleanup happens properly during reconnection
+    1. Initial connection and tool execution succeed
+    2. Ambiguous connection failure raises without replaying the tool call
+    3. Explicit reconnection allows a subsequent independent tool invocation
+    4. Session and exit stack are replaced during explicit reconnection
     """
     url = os.environ.get("LOCAL_MCP_URL")
 
@@ -3625,7 +3632,14 @@ async def test_mcp_connection_reset_integration():
 
         tool.session.call_tool = call_tool_with_error  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
-        # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
+        # An ambiguous tools/call failure must not replay the operation.
+        with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+            await func.invoke(query="What is Agent Framework?")
+
+        assert call_count == 1
+
+        # Recovery applies only to a separately initiated operation.
+        await tool.connect(reset=True)
         second_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert second_result is not None
         assert len(second_result) > 0
@@ -5890,20 +5904,15 @@ async def test_load_prompts_empty_pagination():
     assert len(tool._functions) == 0
 
 
-async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_error():
-    """Test that verifies reconnection on ClosedResourceError for issue #2884.
-
-    This test verifies the fix for issue #2884: the tool tries operations optimistically
-    and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
-    """
+async def test_mcp_tool_connection_loss_does_not_replay_tool_call() -> None:
+    """A disconnected MCP tools/call must not be replayed automatically."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from anyio.streams.memory import ClosedResourceError
+    from anyio import ClosedResourceError
 
     from agent_framework._mcp import MCPStdioTool
     from agent_framework.exceptions import ToolExecutionException
 
-    # Create a mock MCP tool
     tool = MCPStdioTool(
         name="test_server",
         command="test_command",
@@ -5911,82 +5920,20 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         load_tools=True,
     )
 
-    # Mock the session
-    mock_session = MagicMock()
-    mock_session._request_id = 1
-    mock_session.call_tool = AsyncMock()
+    session = MagicMock()
+    session.call_tool = AsyncMock(side_effect=ClosedResourceError())
+    tool.session = session
+    tool.is_connected = True
+    tool._tools_loaded = True
 
-    # Mock _exit_stack.aclose to track cleanup calls
-    original_exit_stack = tool._exit_stack
-    tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
+    with (
+        patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect,
+        pytest.raises(ToolExecutionException, match="outcome is unknown"),
+    ):
+        await tool.call_tool("test_tool", arg1="value2")
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
-
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
-            tool.session = mock_session
-            tool.is_connected = True
-            tool._tools_loaded = True
-
-        mock_connect.side_effect = restore_session
-
-        # Simulate initial connection
-        tool.session = mock_session
-        tool.is_connected = True
-        tool._tools_loaded = True
-
-        # First call should work - connection is valid
-        mock_session.call_tool.return_value = types.CallToolResult(content=[])
-        result = await tool.call_tool("test_tool", arg1="value1")
-        assert result is not None
-
-        # Test Case 1: Connection closed unexpectedly, should reconnect and retry
-        # Simulate ClosedResourceError on first call, then succeed
-        call_count = 0
-
-        async def call_tool_with_error(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise ClosedResourceError
-            return types.CallToolResult(content=[])
-
-        mock_session.call_tool = call_tool_with_error
-
-        # This call should trigger reconnection after ClosedResourceError
-        result = await tool.call_tool("test_tool", arg1="value2")
-        assert result is not None
-        # Verify reconnect was attempted with reset=True
-        assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
-        # Verify _exit_stack.aclose was called during reconnection
-        original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-
-        # Test Case 2: Reconnection failure
-        # Reset counters
-        call_count = 0
-        mock_connect.reset_mock()
-        original_exit_stack.aclose.reset_mock()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-
-        # Make call_tool always raise ClosedResourceError
-        async def always_fail(*args, **kwargs):
-            raise ClosedResourceError
-
-        mock_session.call_tool = always_fail
-
-        # Change mock_connect to simulate failed reconnection
-        mock_connect.side_effect = Exception("Failed to reconnect")
-
-        # This should raise ToolExecutionException when reconnection fails
-        with pytest.raises(ToolExecutionException) as exc_info:
-            await tool.call_tool("test_tool", arg1="value3")
-
-        # Verify reconnection was attempted
-        assert mock_connect.call_count >= 1
-        # Verify error message indicates reconnection failure
-        assert "failed to reconnect" in str(exc_info.value).lower()
+    session.call_tool.assert_awaited_once()
+    mock_connect.assert_not_awaited()
 
 
 async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
@@ -6148,21 +6095,78 @@ async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
         await tool.get_prompt("remote_prompt")
 
 
-async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> None:
+async def test_mcp_tool_call_tool_does_not_retry_after_connection_loss() -> None:
     from anyio.streams.memory import ClosedResourceError
 
     tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
+    tool.session = Mock(call_tool=AsyncMock(side_effect=ClosedResourceError()))
 
     with (
         patch.object(tool, "connect", AsyncMock()) as mock_connect,
-        patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.call_tool("remote_tool")
 
-    mock_connect.assert_awaited_once_with(reset=True)
-    mock_error.assert_called_once()
+    tool.session.call_tool.assert_awaited_once()
+    mock_connect.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("idempotent_hint", "read_only_hint"),
+    [
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
+async def test_mcp_tool_untrusted_annotations_never_authorize_replay(
+    idempotent_hint: bool,
+    read_only_hint: bool,
+) -> None:
+    """Discovered MCP annotations must not authorize replay of ambiguous tool calls."""
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    session = Mock(spec=ClientSession)
+
+    advertised_tool = types.Tool(
+        name="remote_tool",
+        description="A tool with advisory execution annotations.",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=types.ToolAnnotations(
+            idempotentHint=idempotent_hint,
+            readOnlyHint=read_only_hint,
+        ),
+    )
+    session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[advertised_tool]))
+
+    effects: list[str] = []
+
+    async def execute_then_disconnect(*args: Any, **kwargs: Any) -> Any:
+        effects.append("executed")
+        raise ClosedResourceError
+
+    session.call_tool = AsyncMock(side_effect=execute_then_disconnect)
+    tool.session = session
+
+    # Discover the annotated tool through the framework's real loading path.
+    await tool.load_tools()
+
+    assert len(tool.functions) == 1
+    remote_function = tool.functions[0]
+    assert remote_function.name == "remote_tool"
+
+    with (
+        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        pytest.raises(ToolExecutionException, match="outcome is unknown") as exc_info,
+    ):
+        await remote_function.invoke(arguments={})
+
+    assert effects == ["executed"]
+    session.list_tools.assert_awaited_once()
+    session.call_tool.assert_awaited_once()
+    mock_connect.assert_not_awaited()
+    assert isinstance(exc_info.value.__cause__, ClosedResourceError)
 
 
 async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> None:
@@ -10182,3 +10186,54 @@ async def test_failed_connect_keeps_the_owner_when_a_session_is_live():
 
 
 # endregion
+
+
+async def test_mcp_regular_tool_call_does_not_duplicate_side_effect_after_disconnect() -> None:
+    """A lost response must not cause a side-effecting MCP tool to execute twice."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    import mcp.types as types
+    from anyio import ClosedResourceError
+
+    from agent_framework._mcp import MCPStdioTool
+    from agent_framework.exceptions import ToolExecutionException
+
+    tool = MCPStdioTool(
+        name="duplicate_execution_test",
+        command="test_command",
+        load_tools=True,
+    )
+
+    session = MagicMock()
+    side_effect_count = 0
+
+    async def server_call_tool(*args: Any, **kwargs: Any) -> types.CallToolResult:
+        nonlocal side_effect_count
+
+        # Simulate the server completing a non-idempotent operation.
+        side_effect_count += 1
+
+        if side_effect_count == 1:
+            # Operation completed, but the response was lost.
+            raise ClosedResourceError
+
+        return types.CallToolResult(content=[])
+
+    session.call_tool = AsyncMock(side_effect=server_call_tool)
+
+    tool.session = session
+    tool.is_connected = True
+    tool._tools_loaded = True
+
+    async def reconnect(*, reset: bool = False) -> None:
+        assert reset is True
+        tool.session = session
+        tool.is_connected = True
+
+    with patch.object(tool, "connect", side_effect=reconnect), pytest.raises(ToolExecutionException):
+        await tool.call_tool("charge_customer")
+
+    assert side_effect_count == 1, (
+        f"Duplicate MCP side effect: remote operation executed {side_effect_count} times after response loss"
+    )
+    session.call_tool.assert_awaited_once()

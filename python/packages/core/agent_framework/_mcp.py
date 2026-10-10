@@ -2852,7 +2852,7 @@ class MCPTool:
             OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
         })
         with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:
-            return await self._call_tool_with_retries(
+            return await self._call_tool_once(
                 tool_name,
                 filtered_kwargs,
                 meta,
@@ -2860,7 +2860,7 @@ class MCPTool:
                 span,
             )
 
-    async def _call_tool_with_retries(
+    async def _call_tool_once(
         self,
         tool_name: str,
         filtered_kwargs: dict[str, Any],
@@ -2868,64 +2868,56 @@ class MCPTool:
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
     ) -> str | list[Content]:
-        """Execute the MCP tools/call RPC with retry logic."""
+        """Execute an MCP tool call without replaying uncertain outcomes."""
         from anyio import ClosedResourceError
         from mcp.shared.exceptions import McpError
 
-        for attempt in range(2):
-            try:
-                result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
-                _capture_mcp_tool_result(result)
-                if result.isError:
-                    parsed = parser(result)
-                    text = (
-                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
-                        if isinstance(parsed, list)
-                        else str(parsed)
-                    )
-                    # Per OTel MCP semconv: set error.type="tool_error" for isError results
-                    if span.is_recording():
-                        set_mcp_span_error(span, "tool_error", text or str(parsed))
-                    raise ToolExecutionException(text or str(parsed))
-                return parser(result)
-            except ToolExecutionException:
-                raise
-            except (ClosedResourceError, McpError) as call_ex:
-                is_session_terminated = (
-                    isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
+        try:
+            result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
+            _capture_mcp_tool_result(result)
+            if result.isError:
+                parsed = parser(result)
+                text = (
+                    "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                    if isinstance(parsed, list)
+                    else str(parsed)
                 )
-                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
-                if not is_connection_lost:
-                    error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
-                    if span.is_recording():
-                        set_mcp_span_error(span, type(call_ex).__name__, error_message)
-                    raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
-
-                if attempt == 0:
-                    # First attempt failed, try reconnecting.
-                    logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
-                    try:
-                        await self.connect(reset=True)
-                        continue
-                    except Exception as reconn_ex:
-                        raise ToolExecutionException(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
-
-                # Second attempt also failed, give up.
-                logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                # Per OTel MCP semconv: set error.type="tool_error" for isError results
                 if span.is_recording():
-                    set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
-                raise ToolExecutionException(
-                    f"Failed to call tool '{tool_name}' - connection lost.",
-                    inner_exception=call_ex,
-                ) from call_ex
-            except Exception as ex:
+                    set_mcp_span_error(span, "tool_error", text or str(parsed))
+                raise ToolExecutionException(text or str(parsed))
+            return parser(result)
+        except ToolExecutionException:
+            raise
+        except (ClosedResourceError, McpError) as call_ex:
+            is_session_terminated = (
+                isinstance(call_ex, McpError) and "session terminated" in call_ex.error.message.lower()
+            )
+            is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
+            if not is_connection_lost:
+                error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
                 if span.is_recording():
-                    set_mcp_span_error(span, type(ex).__name__, str(ex))
-                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+                    set_mcp_span_error(span, type(call_ex).__name__, error_message)
+                raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
+
+            # The server may have executed this operation before the
+            # connection failed. Reissuing tools/call could duplicate
+            # non-idempotent side effects.
+            logger.warning(
+                "MCP connection lost during tool '%s'; execution outcome is unknown. "
+                "Not retrying to avoid duplicate side effects.",
+                tool_name,
+            )
+            if span.is_recording():
+                set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
+            raise ToolExecutionException(
+                f"Failed to call tool '{tool_name}' - connection lost; remote execution outcome is unknown.",
+                inner_exception=call_ex,
+            ) from call_ex
+        except Exception as ex:
+            if span.is_recording():
+                set_mcp_span_error(span, type(ex).__name__, str(ex))
+            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
 
     def _resolved_extra_args(self, tool_name: str) -> set[str]:
         """Return the user-configured extra argument names allowed for a tool."""
