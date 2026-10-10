@@ -12,7 +12,7 @@ import struct
 import sys
 import typing
 import warnings
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -23,7 +23,10 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import dataclass
-from functools import partial, wraps
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import time as datetime_time
+from decimal import Decimal
+from functools import cache, partial, wraps
 from time import perf_counter, time, time_ns
 from typing import (
     TYPE_CHECKING,
@@ -40,11 +43,12 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic_core import to_jsonable_python
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -167,6 +171,71 @@ class _OpaqueArgumentToken:
     identity: int
 
 
+@cache
+def _pydantic_tzinfo_type() -> type:
+    """Return the fixed-offset time zone type pydantic parses UTC offsets into."""
+    # pydantic-core only exports this type from 2.10, so take it from a parsed value.
+    return type(TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo)
+
+
+def _timedelta_token(value: timedelta) -> tuple[Any, ...]:
+    return (timedelta, value.days, value.seconds, value.microseconds)
+
+
+def _time_zone_token(zone: tzinfo | None) -> tuple[Any, ...] | None:
+    """Return a token for no time zone or a fixed-offset one, or None for any other time zone."""
+    if zone is None:
+        return (None,)
+    if type(zone) is timezone:
+        # A timezone holds its offset and, when one was given, its name (repr() shows it).
+        offset, *name = cast(Any, zone).__getinitargs__()
+        if type(offset) is timedelta and all(type(part) is str for part in name):
+            return (timezone, _timedelta_token(offset), *name)
+        return None
+    if type(zone) is _pydantic_tzinfo_type():
+        # pydantic's time zone holds only its offset.
+        return (type(zone), _timedelta_token(cast(timedelta, zone.utcoffset(None))))
+    return None
+
+
+def _immutable_scalar_token(value: Any) -> tuple[Any, ...] | None:
+    """Return a token for an immutable value an input model produces, or None for any other value.
+
+    These are the values an input model converts JSON arguments to (for example
+    "2026-01-02" -> date). Only the exact types are trusted, because a subclass can add
+    mutable state. A token lists every field of the value that a tool can observe, so two
+    values share a token only when a tool cannot tell them apart. Neither ``==`` nor
+    ``str()`` does that: Decimal("1.0") equals Decimal("1.00"), equal instants in different
+    time zones compare equal, and ``str()`` leaves out a datetime's ``fold``, a UUID's
+    ``is_safe`` and a time zone's name.
+    """
+    value_type = cast(type[object], type(value))
+    if value_type is date:
+        return (date, value.year, value.month, value.day)
+    if value_type is datetime or value_type is datetime_time:
+        zone = _time_zone_token(value.tzinfo)
+        if zone is None:
+            return None
+        date_fields = (value.year, value.month, value.day) if value_type is datetime else ()
+        return (value_type, *date_fields, value.hour, value.minute, value.second, value.microsecond, value.fold, zone)
+    if value_type is timedelta:
+        return _timedelta_token(value)
+    if value_type is Decimal:
+        return (Decimal, value.as_tuple())
+    if value_type is UUID:
+        return (UUID, value.int, value.is_safe)
+    return None
+
+
+def _unordered_token(tokens: Iterable[Any]) -> frozenset[tuple[Any, int]]:
+    """Return an order-free token that keeps how many items share each token.
+
+    A plain frozenset would merge distinct items that share a token: a set or dict can hold
+    several NaNs, because NaN is not equal to itself, and every NaN gets the same token.
+    """
+    return frozenset(Counter(tokens).items())
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -174,7 +243,7 @@ def _argument_comparison_token(value: Any) -> Any:
     if isinstance(value, dict):
         return (
             "dict",
-            frozenset(
+            _unordered_token(
                 (_argument_comparison_token(key), _argument_comparison_token(item))
                 for key, item in cast(dict[Any, Any], value).items()
             ),
@@ -183,10 +252,17 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
     if isinstance(value, tuple):
         return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, frozenset):
+        return ("frozenset", _unordered_token(_argument_comparison_token(item) for item in cast(frozenset[Any], value)))
+    if isinstance(value, set):
+        return ("set", _unordered_token(_argument_comparison_token(item) for item in cast(set[Any], value)))
     if isinstance(value, float):
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
+    scalar_token = _immutable_scalar_token(value)
+    if scalar_token is not None:
+        return scalar_token
     value_type = cast(type[object], type(value))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
@@ -844,6 +920,7 @@ class FunctionTool(SerializationMixin):
         if arguments is None:
             return {}
 
+        validated_by_model = False
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -855,6 +932,7 @@ class FunctionTool(SerializationMixin):
                     # parameter the model deliberately set to null, failing the
                     # invocation on the missing argument (#5934).
                     parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -862,7 +940,17 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                parsed_arguments = arguments.model_dump(exclude_unset=True)
+                if self.input_model is not None and not self._schema_supplied:
+                    # An instance can skip validation (model_construct) or be changed after it,
+                    # so its data is validated like mapping arguments and the function receives
+                    # the annotated types (#8661). Checking its JSON form is not enough: a date
+                    # in a datetime field serializes to a valid string. Validation reports any
+                    # mismatch, so the dump skips pydantic's serializer warnings.
+                    parsed_arguments = arguments.model_dump(exclude_unset=True, warnings=False)
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
+                else:
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -877,6 +965,12 @@ class FunctionTool(SerializationMixin):
                 str(exc),
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
+
+        if validated_by_model:
+            # The input model already enforced the full schema and converted JSON values
+            # to the annotated Python types (e.g. datetime, set, tuple), which the
+            # lightweight JSON type checks below would wrongly reject (#8661).
+            return parsed_arguments
 
         try:
             return _validate_arguments_against_schema(
@@ -1944,9 +2038,46 @@ def _function_argument_validation_error_result(
     )
 
 
+def _replacement_arguments(tool: FunctionTool, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return middleware-repaired arguments in the JSON form a replacement approval request holds.
+
+    The request is persisted with the session, so its arguments must be JSON-native. Approving it
+    prepares the JSON arguments again, so they must reproduce the repaired values exactly. JSON
+    cannot carry a datetime's ``fold`` or a UUID's ``is_safe``, and offsets parse into pydantic's
+    own time zone type; for such values every approval would only lead to another replacement.
+    """
+    from ._middleware import MiddlewareFailure
+
+    message = (
+        "Function arguments changed after approval to values a replacement approval request cannot "
+        "represent exactly. Middleware should produce the values the tool's input model parses from JSON."
+    )
+    try:
+        json_arguments = cast(dict[str, Any], to_jsonable_python(dict(arguments)))
+    except Exception as exc:
+        # Not only PydanticSerializationError: bytes that are not UTF-8 raise UnicodeDecodeError, a
+        # circular value raises ValueError, and a value that runs code while it is serialized can
+        # raise anything. None of them can be represented, so all of them fail closed the same way.
+        raise MiddlewareFailure(message) from exc
+    try:
+        repaired = tool._prepare_arguments(arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError:
+        # Arguments that do not validate (such as approval-visible security placeholders, or a
+        # short-circuited repair) produce no values to reproduce.
+        return json_arguments
+    try:
+        reproduced = tool._prepare_arguments(json_arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError as exc:
+        raise MiddlewareFailure(message) from exc
+    if _argument_comparison_token(reproduced) != _argument_comparison_token(repaired):
+        raise MiddlewareFailure(message)
+    return json_arguments
+
+
 def _replacement_approval_request(
     function_call: Content,
     arguments: Mapping[str, Any],
+    tool: FunctionTool,
 ) -> Content:
     """Create a new approval generation for middleware-repaired arguments."""
     from ._types import Content
@@ -1959,7 +2090,7 @@ def _replacement_approval_request(
     repaired_call = Content.from_function_call(
         call_id=call_id,
         name=function_call.name,  # type: ignore[arg-type]
-        arguments=copy.deepcopy(dict(arguments)),
+        arguments=_replacement_arguments(tool, arguments),
         id=occurrence_id,
         annotations=copy.deepcopy(function_call.annotations),
         additional_properties=copy.deepcopy(function_call.additional_properties),
@@ -2263,7 +2394,7 @@ async def _auto_invoke_function(
             except _FunctionArgumentsChangedAfterApproval as exc:
                 raise MiddlewareTermination(
                     "Function arguments changed after approval.",
-                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                    result=_replacement_approval_request(function_call_content, exc.arguments, tool),
                 ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -2286,7 +2417,7 @@ async def _auto_invoke_function(
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
             "Function arguments changed after approval.",
-            result=_replacement_approval_request(function_call_content, exc.arguments),
+            result=_replacement_approval_request(function_call_content, exc.arguments, tool),
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
