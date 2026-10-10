@@ -144,6 +144,14 @@ listed below.
 - `agent-framework-core`: `FunctionInvocationContext.add_tools` and
   `FunctionInvocationContext.remove_tools` from `agent_framework/_middleware.py`
 
+#### `SERVER_COMPACTION`
+
+- `agent-framework-core`: `Content.from_compaction` and the `compaction` content type from
+  `agent_framework/_types.py`
+- `agent-framework-openai`: `ContextManagementOptions` and the `context_management` option on
+  `OpenAIChatOptions` (also used by `FoundryChatClient`), including replay of compaction items for
+  `store=False` requests
+
 #### `SESSION_STORE`
 
 - `agent-framework-core`: `SessionStore` and `FileSessionStore` from

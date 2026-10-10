@@ -6441,6 +6441,18 @@ def test_oauth_consent_request_serialization_roundtrip():
     assert d["user_input_request"] is True
 
 
+def test_compaction_content_creation_and_serialization_roundtrip():
+    """Test Content.from_compaction keeps the encrypted payload and id through serialization."""
+    content = Content.from_compaction(id="cmp_1", protected_data="encrypted-state")
+
+    assert content.type == "compaction"
+    assert content.id == "cmp_1"
+    assert content.protected_data == "encrypted-state"
+
+    restored = Content.from_dict(content.to_dict())
+    assert (restored.type, restored.id, restored.protected_data) == ("compaction", "cmp_1", "encrypted-state")
+
+
 # endregion
 
 
