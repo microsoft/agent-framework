@@ -847,6 +847,99 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_AsAgent_ApprovalResponse_ResumesTheAgentHoldingTheRequestWithoutANewTurnAsync()
+    {
+        const string BookTableCallId = "call_book_1";
+        const string BookTableName = "BookTable";
+
+        int bookTableCallCount = 0;
+        AIFunction bookTable = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            () =>
+            {
+                Interlocked.Increment(ref bookTableCallCount);
+                return "BK-1";
+            },
+            name: BookTableName,
+            description: "Books a table"));
+
+        int coordinatorCallCount = 0;
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            Interlocked.Increment(ref coordinatorCallCount);
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_handoff_1", transferFuncName)]));
+        }), name: "coordinator");
+
+        int bookerCallCount = 0;
+        var booker = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            int call = Interlocked.Increment(ref bookerCallCount);
+            return call switch
+            {
+                1 => new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(BookTableCallId, BookTableName)])),
+                _ => new(new ChatMessage(ChatRole.Assistant, "Booked.")),
+            };
+        }), name: "booker", description: "Books tables", tools: [bookTable]);
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, booker)
+            .Build();
+
+        AIAgent workflowAgent = workflow.AsAIAgent(name: "BookingWorkflow", includeExceptionDetails: true);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+
+        AgentResponse first = await workflowAgent.RunAsync("Book a table.", session);
+
+        // The session answers the request it raised, whose ID is the workflow-facing one.
+        ToolApprovalRequestContent request = first.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .First(r => r.RequestId != r.ToolCall.CallId);
+        Assert.Equal(BookTableCallId, request.ToolCall.CallId);
+        Assert.Equal(0, bookTableCallCount);
+
+        AgentResponse resumed = await workflowAgent.RunAsync([new ChatMessage(ChatRole.User, [request.CreateResponse(approved: true)])], session);
+
+        // The approval resumes the booker's turn; the coordinator does not start another one.
+        Assert.Empty(resumed.Messages.SelectMany(m => m.Contents).OfType<ErrorContent>());
+        Assert.Equal(1, bookTableCallCount);
+        Assert.Equal(1, coordinatorCallCount);
+        Assert.Single(resumed.Messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>());
+        Assert.Equal("Booked.", resumed.Messages.Last(m => m.Role == ChatRole.Assistant).Text);
+    }
+
+    [Fact]
+    public async Task Handoffs_AsAgent_RunWithoutMessages_InvokesTheInitialAgentAsync()
+    {
+        int coordinatorCallCount = 0;
+        var coordinator = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            Interlocked.Increment(ref coordinatorCallCount);
+            return new(new ChatMessage(ChatRole.Assistant, "coordinator responded"));
+        }), name: "coordinator");
+
+        var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "specialist responded"))),
+            name: "specialist", description: "The specialist agent");
+
+        var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(coordinator)
+            .WithHandoff(coordinator, specialist)
+            .Build();
+
+        AIAgent workflowAgent = workflow.AsAIAgent(name: "Workflow", includeExceptionDetails: true);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+
+        AgentResponse first = await workflowAgent.RunAsync(session);
+        AgentResponse second = await workflowAgent.RunAsync(session);
+
+        Assert.Equal(2, coordinatorCallCount);
+        Assert.Equal("coordinator responded", first.Text);
+        Assert.Equal("coordinator responded", second.Text);
+        Assert.Empty(second.Messages.SelectMany(m => m.Contents).OfType<ErrorContent>());
+    }
+
+    [Fact]
     public async Task Handoffs_ReturnToPrevious_DisabledByDefault_SecondTurnRoutesViaCoordinatorAsync()
     {
         int coordinatorCallCount = 0;

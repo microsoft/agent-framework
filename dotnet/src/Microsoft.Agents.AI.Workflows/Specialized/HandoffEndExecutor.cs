@@ -143,6 +143,8 @@ internal sealed class HandoffEndExecutor : Executor, IResettableExecutor
                     sharedState.PreviousAgentId = handoff.PreviousAgentId;
                 }
 
+                sharedState.IsTurnInProgress = false;
+
                 await context.YieldOutputAsync(sharedState.Conversation.CloneHistory(), cancellationToken).ConfigureAwait(false);
 
                 return sharedState;

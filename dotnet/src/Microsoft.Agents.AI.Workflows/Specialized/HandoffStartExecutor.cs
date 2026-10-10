@@ -25,11 +25,12 @@ internal static class HandoffConstants
 internal sealed class HandoffSharedState
 {
     [JsonConstructor]
-    internal HandoffSharedState(MultiPartyConversation conversation, string? previousAgentId, Dictionary<string, int>? autonomousTurnsByAgent)
+    internal HandoffSharedState(MultiPartyConversation conversation, string? previousAgentId, Dictionary<string, int>? autonomousTurnsByAgent, bool isTurnInProgress = false)
     {
         this.Conversation = conversation;
         this.PreviousAgentId = previousAgentId;
         this.AutonomousTurnsByAgent = autonomousTurnsByAgent ?? [];
+        this.IsTurnInProgress = isTurnInProgress;
     }
 
     public HandoffSharedState()
@@ -51,6 +52,13 @@ internal sealed class HandoffSharedState
     /// </summary>
     [JsonInclude]
     public Dictionary<string, int> AutonomousTurnsByAgent { get; internal set; }
+
+    /// <summary>
+    /// Whether a turn started by <see cref="HandoffStartExecutor"/> has not yet reached <see cref="HandoffEndExecutor"/>.
+    /// A turn holding a pending request stays in progress until the response resumes and completes it.
+    /// </summary>
+    [JsonInclude]
+    public bool IsTurnInProgress { get; internal set; }
 }
 
 /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
@@ -67,12 +75,28 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
         base.ConfigureProtocol(protocolBuilder).SendsMessage<HandoffState>();
 
-    protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
-        return context.InvokeWithStateAsync(
+        // WorkflowSession sends a turn token on every resume, including a resume that only answers a request held
+        // by an agent executor. That executor continues the turn it holds, so a second, empty turn is not started
+        // alongside it: both would write the shared state in the same superstep. A turn token without messages
+        // while no turn is in progress is a run with no new input, and starts a turn as usual.
+        if (messages.Count == 0)
+        {
+            HandoffSharedState? currentState = await context.ReadStateAsync<HandoffSharedState>(
+                HandoffConstants.HandoffSharedStateKey, HandoffConstants.HandoffSharedStateScope, cancellationToken).ConfigureAwait(false);
+
+            if (currentState?.IsTurnInProgress == true)
+            {
+                return;
+            }
+        }
+
+        await context.InvokeWithStateAsync(
             async (HandoffSharedState? sharedState, IWorkflowContext context, CancellationToken cancellationToken) =>
             {
                 sharedState ??= new HandoffSharedState();
+                sharedState.IsTurnInProgress = true;
                 sharedState.Conversation.AddMessages(messages);
 
                 // Reset all autonomous-mode counters at the start of every fresh user turn so that a
@@ -91,7 +115,7 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
             },
             HandoffConstants.HandoffSharedStateKey,
             HandoffConstants.HandoffSharedStateScope,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     public new ValueTask ResetAsync() => base.ResetAsync();
