@@ -3590,10 +3590,10 @@ async def test_mcp_connection_reset_integration():
     """Test that connection reset works correctly with a real MCP server.
 
     This integration test verifies:
-    1. Initial connection and tool execution works
-    2. Simulating connection failure triggers automatic reconnection
-    3. Tool execution works after reconnection
-    4. Exit stack cleanup happens properly during reconnection
+    1. Initial connection and tool execution succeed
+    2. Ambiguous connection failure raises without replaying the tool call
+    3. Explicit reconnection allows a subsequent independent tool invocation
+    4. Session and exit stack are replaced during explicit reconnection
     """
     url = os.environ.get("LOCAL_MCP_URL")
 
