@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Oracle Database 23ai vector collections and stores."""
+"""Oracle AI Database 26ai vector collections and stores."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from array import array
 from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
+from inspect import signature
 from typing import Any, ClassVar, Generic, Protocol, TypeAlias, cast
 from uuid import UUID
 
@@ -64,12 +65,74 @@ _METRICS = {
 _ORDER_OPERATORS = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
 
-class OracleSettings(TypedDict, total=False):
-    """Connection settings resolved from arguments, a selected .env file, or ``ORACLE_`` variables."""
+class OracleSettings(TypedDict, total=False, extra_items=Any):
+    """Connection and pool settings resolved from arguments, a selected .env file, or ``ORACLE_`` variables."""
 
     dsn: str | None
     user: str | None
     password: SecretString | None
+    pool_alias: str | None
+    min: int | None
+    max: int | None
+    increment: int | None
+    getmode: int | None
+    homogeneous: bool | None
+    timeout: int | None
+    wait_timeout: int | None
+    max_lifetime_session: int | None
+    max_sessions_per_shard: int | None
+    soda_metadata_cache: bool | None
+    ping_interval: int | None
+    ping_timeout: int | None
+    proxy_user: str | None
+    newpassword: SecretString | None
+    wallet_password: SecretString | None
+    access_token: SecretString | None
+    host: str | None
+    port: int | None
+    protocol: str | None
+    https_proxy: str | None
+    https_proxy_port: int | None
+    service_name: str | None
+    instance_name: str | None
+    sid: str | None
+    server_type: str | None
+    cclass: str | None
+    purity: int | None
+    expire_time: int | None
+    retry_count: int | None
+    retry_delay: int | None
+    tcp_connect_timeout: float | None
+    ssl_server_dn_match: bool | None
+    ssl_server_cert_dn: str | None
+    wallet_location: str | None
+    events: bool | None
+    externalauth: bool | None
+    mode: int | None
+    disable_oob: bool | None
+    stmtcachesize: int | None
+    edition: str | None
+    tag: str | None
+    matchanytag: bool | None
+    config_dir: str | None
+    debug_jdwp: str | None
+    connection_id_prefix: str | None
+    sdu: int | None
+    pool_boundary: str | None
+    use_tcp_fast_open: bool | None
+    program: str | None
+    machine: str | None
+    terminal: str | None
+    osuser: str | None
+    driver_name: str | None
+    use_sni: bool | None
+    thick_mode_dsn_passthrough: bool | None
+    pool_name: str | None
+
+
+_CREDENTIAL_SETTING_NAMES = {"dsn", "user", "password"}
+_ORACLE_SETTING_NAMES = frozenset(OracleSettings.__annotations__)
+_CREATE_POOL_PARAMETER_NAMES = frozenset(signature(oracledb.create_pool_async).parameters)
 
 
 def _quote_identifier(name: str) -> str:
@@ -218,12 +281,13 @@ class _Client:
         dsn: str | None = None,
         user: str | None = None,
         password: SecretString | None = None,
+        pool_parameters: Mapping[str, Any] | None = None,
         client: OracleClient | None = None,
     ) -> None:
         if client is not None:
             if not isinstance(client, (oracledb.AsyncConnection, oracledb.AsyncConnectionPool)):
                 raise TypeError("client must be an oracledb AsyncConnection or AsyncConnectionPool.")
-            if any(value is not None for value in (dsn, user, password)):
+            if any(value is not None for value in (dsn, user, password)) or pool_parameters:
                 raise ValueError("An Oracle client cannot be combined with connection settings.")
         else:
             if not isinstance(dsn, str) or not dsn.strip():
@@ -236,6 +300,7 @@ class _Client:
         self._dsn = dsn
         self._user = user
         self._password = password
+        self._pool_parameters = dict(pool_parameters or {})
         self._pool: oracledb.AsyncConnectionPool | None = None
         self._lock = asyncio.Lock()
         self._closed = False
@@ -253,9 +318,18 @@ class _Client:
             if self._pool is None:
                 if self._user is None or self._dsn is None or self._password is None:
                     raise RuntimeError("Oracle connection settings are missing.")
-                self._pool = oracledb.create_pool_async(
-                    user=self._user, password=self._password.get_secret_value(), dsn=self._dsn, min=0, max=4
-                )
+                pool_parameters = {
+                    "min": 0,
+                    "max": 4,
+                    **{
+                        name: value.get_secret_value() if isinstance(value, SecretString) else value
+                        for name, value in self._pool_parameters.items()
+                    },
+                    "user": self._user,
+                    "password": self._password.get_secret_value(),
+                    "dsn": self._dsn,
+                }
+                self._pool = oracledb.create_pool_async(**pool_parameters)
             return self._pool
 
     @asynccontextmanager
@@ -292,24 +366,44 @@ def _create_client(
     dsn: str | None,
     user: str | None,
     password: str | SecretString | None,
+    pool_parameters: OracleSettings | None,
     client: OracleClient | None,
     env_file_path: str | None,
     env_file_encoding: str | None,
 ) -> _Client:
     if client is not None:
-        if any(value is not None for value in (dsn, user, password, env_file_path, env_file_encoding)):
-            raise ValueError("client cannot be combined with dsn, user, password, or .env settings.")
+        if any(value is not None for value in (dsn, user, password, pool_parameters, env_file_path, env_file_encoding)):
+            raise ValueError("client cannot be combined with dsn, user, password, pool_parameters, or .env settings.")
         return _Client(client=client)
+    supplied_pool_parameters = dict(pool_parameters or {})
+    overrides: dict[str, Any] = {
+        name: value for name, value in supplied_pool_parameters.items() if name in _ORACLE_SETTING_NAMES
+    }
+    overrides.update({
+        name: value for name, value in (("dsn", dsn), ("user", user), ("password", password)) if value is not None
+    })
     settings = load_settings(
         OracleSettings,
         env_prefix="ORACLE_",
-        dsn=dsn,
-        user=user,
-        password=password,
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
+        **overrides,
     )
-    return _Client(dsn=settings.get("dsn"), user=settings.get("user"), password=settings.get("password"))
+    resolved_pool_parameters: dict[str, Any] = {
+        name: value for name, value in settings.items() if name not in _CREDENTIAL_SETTING_NAMES and value is not None
+    }
+    resolved_pool_parameters.update({
+        name: value for name, value in supplied_pool_parameters.items() if name not in _ORACLE_SETTING_NAMES
+    })
+    if unsupported := resolved_pool_parameters.keys() - _CREATE_POOL_PARAMETER_NAMES:
+        names = ", ".join(sorted(unsupported))
+        raise ValueError(f"Oracle pool setting(s) not supported by the installed python-oracledb version: {names}.")
+    return _Client(
+        dsn=settings.get("dsn"),
+        user=settings.get("user"),
+        password=settings.get("password"),
+        pool_parameters=resolved_pool_parameters,
+    )
 
 
 def _scalar_field(definition: VectorStoreCollectionDefinition, name: str) -> VectorStoreField:
@@ -445,7 +539,7 @@ class OracleCollection(
     BaseVectorSearch[KeyT, ModelT],
     Generic[KeyT, ModelT],
 ):
-    """Store typed records and search Oracle Database 23ai native VECTOR columns."""
+    """Store typed records and search Oracle AI Database 26ai native VECTOR columns."""
 
     supported_key_types: ClassVar[set[str] | None] = {"str", "int", "UUID"}
     supported_vector_types: ClassVar[set[str] | None] = {"float", "float32", "float64", "int8"}
@@ -461,12 +555,13 @@ class OracleCollection(
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
+        pool_parameters: OracleSettings | None = None,
         client: OracleClient | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         _shared_client: _Client | None = None,
     ) -> None:
-        """Initialize a collection with explicit, selected .env, or environment credentials.
+        """Initialize a collection with explicit, .env, or environment connection settings.
 
         Args:
             record_type: Registered application model, or dict with an explicit definition.
@@ -476,12 +571,17 @@ class OracleCollection(
             dsn: Oracle connect string; defaults to ``ORACLE_DSN``.
             user: Oracle database user; defaults to ``ORACLE_USER``.
             password: Database password or AF SecretString; defaults to ``ORACLE_PASSWORD``.
+            pool_parameters: Additional ``create_pool_async`` settings, including options supported by the installed
+                driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
+                take precedence, followed by this mapping, the selected .env file, process environment, and connector
+                pool defaults.
             client: Borrowed async connection or pool in place of connection settings.
             env_file_path: Optional selected .env file; no implicit discovery.
             env_file_encoding: Encoding of the selected .env file.
         """
         if _shared_client is not None and any(
-            item is not None for item in (dsn, user, password, client, env_file_path, env_file_encoding)
+            item is not None
+            for item in (dsn, user, password, pool_parameters, client, env_file_path, env_file_encoding)
         ):
             raise ValueError("Shared Oracle clients cannot be combined with connection settings.")
         super().__init__(
@@ -497,6 +597,7 @@ class OracleCollection(
             dsn=dsn,
             user=user,
             password=password,
+            pool_parameters=pool_parameters,
             client=client,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
@@ -874,6 +975,7 @@ class OracleStore(BaseVectorStore):
         dsn: str | None = None,
         user: str | None = None,
         password: str | SecretString | None = None,
+        pool_parameters: OracleSettings | None = None,
         client: OracleClient | None = None,
         embedding_generator: EmbeddingClient | None = None,
         env_file_path: str | None = None,
@@ -885,6 +987,10 @@ class OracleStore(BaseVectorStore):
             dsn: Oracle connect string; defaults to ``ORACLE_DSN``.
             user: Oracle database user; defaults to ``ORACLE_USER``.
             password: Database password or AF SecretString; defaults to ``ORACLE_PASSWORD``.
+            pool_parameters: Additional ``create_pool_async`` settings, including options supported by the installed
+                driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
+                take precedence, followed by this mapping, the selected .env file, process environment, and connector
+                pool defaults.
             client: Borrowed async connection or pool in place of connection settings.
             embedding_generator: Default local embedding client for child collections.
             env_file_path: Optional selected .env file; no implicit discovery.
@@ -895,6 +1001,7 @@ class OracleStore(BaseVectorStore):
             dsn=dsn,
             user=user,
             password=password,
+            pool_parameters=pool_parameters,
             client=client,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,

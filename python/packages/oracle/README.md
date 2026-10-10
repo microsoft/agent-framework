@@ -1,9 +1,9 @@
 # Agent Framework Oracle vector store
 
 An alpha connector for storing and searching native `VECTOR` columns in Oracle
-Database 23ai or newer. `OracleCollection` implements async batch CRUD and
-vector search; `OracleStore` shares a client across collections; `OracleSettings`
-resolves connection configuration through Agent Framework.
+AI Database 26ai. `OracleCollection` implements async batch CRUD and vector
+search; `OracleStore` shares a client across collections; `OracleSettings`
+describes the connection and pool settings resolved through Agent Framework.
 
 ## Installation and setup
 
@@ -11,7 +11,7 @@ resolves connection configuration through Agent Framework.
 pip install agent-framework-oracle --pre
 ```
 
-Requires Python 3.10+, Oracle Database 23ai or newer with `COMPATIBLE` set to
+Requires Python 3.10+, Oracle AI Database 26ai with `COMPATIBLE` set to
 **23.4.0 or higher**, `python-oracledb` 2.2.x or 3.x, and permission to
 create/drop tables in the connected user's schema. The connector uses the
 driver's async Thin-mode API; it does not initialize the Thick client or
@@ -20,11 +20,42 @@ It does not create or alter schemas, vector indexes, or existing tables.
 
 Set `ORACLE_DSN` (for example `localhost:1521/FREEPDB1`), `ORACLE_USER`, and
 `ORACLE_PASSWORD`, or pass `dsn`, `user`, and `password` to either constructor.
-Credentials are resolved in order: **explicit argument > selected `.env` file
-> process environment**. A `.env` file is read only when `env_file_path` is
-specified; `env_file_encoding` overrides UTF-8. `password` accepts `str` or
-Agent Framework `SecretString` and is unwrapped only when opening a connection.
-Missing or empty credentials are errors.
+Typed driver settings can also be supplied with the `pool_parameters` mapping.
+Settings are resolved in order: **named `dsn`/`user`/`password` argument >
+`pool_parameters` > selected `.env` file > process environment > connector
+pool defaults**. A `.env` file is read only when `env_file_path` is specified;
+the selected file must exist, and `env_file_encoding` overrides UTF-8.
+`password` accepts `str` or Agent Framework `SecretString` and is unwrapped only
+when opening a connection. Missing or empty credentials are errors.
+
+Explicit `pool_parameters` keys are forwarded when they are accepted by the
+installed `python-oracledb` version, including newly added driver options not
+yet declared by the open `OracleSettings` typed dictionary. This preserves
+editor discovery for known options while allowing forward-compatible keys.
+Unsupported names and typos raise an error; unrecognized `ORACLE_` environment
+variables remain ignored.
+
+Recognized scalar `oracledb.create_pool_async()` options can also be supplied as
+`ORACLE_` settings. The prefix is removed, the remainder is converted to the
+driver's lowercase keyword name, and boolean, integer, and floating-point
+values are converted before the pool is created. Password-like values remain
+masked until they are passed to the driver. For example:
+
+```dotenv
+ORACLE_DSN=localhost:1521/FREEPDB1
+ORACLE_USER=example
+ORACLE_PASSWORD=database-password
+ORACLE_WALLET_LOCATION=/path/to/wallet
+ORACLE_WALLET_PASSWORD=wallet-password
+ORACLE_MIN=1
+ORACLE_MAX=8
+ORACLE_HOMOGENEOUS=false
+```
+
+The connector uses `min=0` and `max=4` when those options are not configured.
+Unrecognized `ORACLE_` variables are ignored. Options that require callbacks,
+classes, collections, or SSL context objects are not loaded from text settings;
+use a configured client for those cases.
 
 Alternatively, pass a configured `oracledb.AsyncConnection` or
 `oracledb.AsyncConnectionPool` as `client` for advanced authentication. A
@@ -130,8 +161,8 @@ creates and deletes a unique test table.
 
 The unit tests require no Oracle server. To run the live integration test,
 provide **all three** `ORACLE_TEST_DSN`, `ORACLE_TEST_USER`, and
-`ORACLE_TEST_PASSWORD` for an explicitly designated disposable Oracle 23ai+
-schema where the user can create and drop tables:
+`ORACLE_TEST_PASSWORD` for an explicitly designated disposable Oracle AI
+Database 26ai schema where the user can create and drop tables:
 
 ```bash
 cd python
@@ -145,6 +176,6 @@ deletes only that table.
 
 ## Documentation
 
-- [Oracle Database AI Vector Search requirements](https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/overview-ai-vector-search.html)
+- [Oracle AI Vector Search requirements](https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/overview-ai-vector-search.html)
 - [python-oracledb 2.2 vector types](https://python-oracledb.readthedocs.io/en/v2.2.0/user_guide/vector_data_type.html)
 - [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)
