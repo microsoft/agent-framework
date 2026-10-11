@@ -7054,8 +7054,7 @@ async def test_endpoint_approval_snapshot_pairs_result_with_later_turn_reusing_c
                 entries.append(
                     ("tool", f"{message.get('toolCallId') or message.get('tool_call_id')}={message['content']}")
                 )
-            elif role == "assistant" and (message.get("toolCalls") or message.get("tool_calls")):
-                tool_calls = message.get("toolCalls") or message.get("tool_calls")
+            elif role == "assistant" and (tool_calls := message.get("toolCalls") or message.get("tool_calls")):
                 entries.append(("call", ",".join(tool_call["id"] for tool_call in tool_calls)))
             else:
                 entries.append((role, message.get("content") or ""))
