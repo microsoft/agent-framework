@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug 05_first_workflow",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/05_first_workflow/bin/Debug/net10.0/05_first_workflow.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/05_first_workflow",
+            "preLaunchTask": "build-solution",
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        }
+    ]
+}
