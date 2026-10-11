@@ -1979,6 +1979,42 @@ class TestFileHistoryProvider:
         with pytest.raises(ValueError, match="record 1.*truncated"):
             await provider.get_messages("broken")
 
+    async def test_msgpack_rejects_oversized_batch_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("oversized")
+        await provider.save_messages("oversized", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "oversized",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    Message(role="assistant", contents=["x" * 256]),
+                ],
+            )
+
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello"]
+
+        await provider.save_messages("oversized", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello", "fits"]
+
+    async def test_msgpack_record_at_size_limit_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        message = Message(role="assistant", contents=["at the limit"])
+        record_length = len(msgspec.msgpack.encode(message.to_dict()))
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", record_length)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        await provider.save_messages("limit", [message])
+
+        assert [loaded.text for loaded in await provider.get_messages("limit")] == ["at the limit"]
+
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path)
 

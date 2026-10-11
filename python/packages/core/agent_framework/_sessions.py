@@ -2466,11 +2466,19 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
+                # Encode and check the whole batch first so a record the reader would reject
+                # never reaches the file and the existing history stays loadable.
+                records = [_DEFAULT_MSGPACK_ENCODER.encode(message.to_dict()) for message in new_messages]
+                for record in records:
+                    if len(record) > self._MAX_MSGPACK_RECORD_BYTES:
+                        raise ValueError(
+                            f"Message encodes to {len(record)} bytes, which exceeds the "
+                            f"{self._MAX_MSGPACK_RECORD_BYTES}-byte MessagePack history record limit."
+                        )
                 with file_path.open("ab") as file_handle:
-                    for message in new_messages:
-                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
-                        file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
-                        file_handle.write(serialized)
+                    for record in records:
+                        file_handle.write(len(record).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
+                        file_handle.write(record)
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
