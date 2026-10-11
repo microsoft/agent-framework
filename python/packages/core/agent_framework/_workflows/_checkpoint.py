@@ -205,6 +205,19 @@ class CheckpointStorage(Protocol):
         ...
 
 
+def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
+
+    Checkpoints taken at the same superstep boundary can share a timestamp. Among the
+    checkpoints with the newest timestamp, one that another of them names as its
+    ``previous_checkpoint_id`` is superseded, so the result does not depend on save order.
+    """
+    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
+    return next((cp for cp in candidates if cp.checkpoint_id not in superseded_ids), candidates[0])
+
+
 class InMemoryCheckpointStorage:
     """In-memory checkpoint storage for testing and development."""
 
@@ -243,7 +256,7 @@ class InMemoryCheckpointStorage:
         checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
         if not checkpoints:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
+        latest_checkpoint = _select_latest_checkpoint(checkpoints)
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return copy.deepcopy(latest_checkpoint)
 
@@ -854,7 +867,7 @@ class FileCheckpointStorage:
         checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
         if not checkpoints:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
+        latest_checkpoint = _select_latest_checkpoint(checkpoints)
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
         return latest_checkpoint
 
