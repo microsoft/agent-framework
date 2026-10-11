@@ -732,6 +732,7 @@ class StandardMagenticManager(MagenticManagerBase):
                 ledger = _coerce_model(MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
+                unknown_speaker_ledger = None
             else:
                 next_speaker = ledger.next_speaker.answer
                 if (
