@@ -47,6 +47,7 @@ import inspect
 import json
 import logging
 import math
+import sys
 import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextvars import Context, ContextVar
@@ -426,12 +427,24 @@ def get_run_context() -> RunContext | None:
 # ---------------------------------------------------------------------------
 
 
-class WorkflowInterrupted(BaseException):
+if sys.version_info >= (3, 11):
+
+    class _WorkflowInterruptedBase(asyncio.CancelledError):
+        pass
+
+else:
+
+    class _WorkflowInterruptedBase(BaseException):
+        pass
+
+
+class WorkflowInterrupted(_WorkflowInterruptedBase):
     """Internal: raised when request_info() is called during initial execution.
 
-    Inherits from ``BaseException`` (not ``Exception``) so that user code
-    with ``except Exception:`` handlers inside a ``@workflow`` function does
-    not accidentally intercept the HITL interruption signal.
+    On Python 3.11+, the signal is cancellation-shaped so ``TaskGroup`` does
+    not cancel sibling tasks. Python 3.10 retains the original ``BaseException``
+    behavior because ``gather`` normalizes cancellation subclasses there.
+    User code with ``except Exception:`` handlers does not intercept either form.
     """
 
     def __init__(self, request_id: str, request_data: Any, response_type: type) -> None:
@@ -566,10 +579,6 @@ class RunContext:
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # Reference counts for tasks currently executing one or more nested @steps.
         self._active_step_tasks: dict[asyncio.Task[Any], int] = {}
-        # Step tasks active when request_info interrupted this run.
-        self._interrupted_step_tasks: set[asyncio.Task[Any]] = set()
-        # Whether newly started step tasks belong to the current pause settlement.
-        self._capture_interrupted_step_tasks = False
         # First internal interruption raised during this run, even if user concurrency swallows it.
         self._workflow_interruption: WorkflowInterrupted | None = None
         # The task executing the workflow body; gather/task-group children differ from this task.
@@ -652,9 +661,6 @@ class RunContext:
         )
         await self.add_event(event)
         self._pending_requests[rid] = event
-        current_task = asyncio.current_task()
-        self._capture_interrupted_step_tasks = True
-        self._interrupted_step_tasks.update(task for task in self._active_step_tasks if task is not current_task)
         interruption = WorkflowInterrupted(rid, request_data, response_type)
         if self._workflow_interruption is None:
             self._workflow_interruption = interruption
@@ -734,35 +740,24 @@ class RunContext:
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+        tasks = [task for task in self._workflow_tasks if task is not current_task]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _settle_workflow_tasks(self) -> None:
-        """Wait for active steps, cancel detached tasks, and surface real failures."""
+        """Wait for active steps, then cancel and drain detached tasks."""
         current_task = asyncio.current_task()
-        settled_tasks = self._interrupted_step_tasks
 
         def _pending_step_tasks() -> list[asyncio.Task[Any]]:
-            settled_tasks.update(task for task in self._active_step_tasks if task is not current_task)
-            return [task for task in settled_tasks if task is not current_task and not task.done()]
+            return [task for task in self._active_step_tasks if task is not current_task and not task.done()]
 
         try:
-            try:
-                while pending := _pending_step_tasks():
-                    await asyncio.gather(*pending, return_exceptions=True)
-                await self._cancel_workflow_tasks()
-            except BaseException:
-                await self._cancel_workflow_tasks()
-                raise
-
-            for task in settled_tasks:
-                if task is current_task or task.cancelled():
-                    continue
-                error = task.exception()
-                if error is not None:
-                    _, remaining = _split_workflow_interruption(error)
-                    if remaining is not None:
-                        raise remaining from None
-        finally:
-            self._capture_interrupted_step_tasks = False
+            while pending := _pending_step_tasks():
+                await asyncio.gather(*pending, return_exceptions=True)
+            await self._cancel_workflow_tasks()
+        except BaseException:
+            await self._cancel_workflow_tasks()
+            raise
 
     def _get_legacy_step_cache_key(self, step_name: str) -> str:
         idx = self._step_call_counters.get(step_name, 0)
@@ -1128,8 +1123,6 @@ class StepWrapper(Generic[R]):
         step_task = asyncio.current_task()
         if step_task is not None:
             ctx._active_step_tasks[step_task] = ctx._active_step_tasks.get(step_task, 0) + 1
-            if ctx._capture_interrupted_step_tasks and step_task is not ctx._root_task:
-                ctx._interrupted_step_tasks.add(step_task)
         try:
             # Inject RunContext if the step function declares it
             call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
