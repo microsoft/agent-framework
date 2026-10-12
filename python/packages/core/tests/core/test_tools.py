@@ -1306,6 +1306,29 @@ def test_tool_serialization():
     assert restored_tool_2(10, 4) == 6
 
 
+@pytest.mark.parametrize("with_func", [True, False])
+def test_tool_serialization_with_json_schema_input_model(with_func: bool):
+    """Test that a tool declared with a JSON schema keeps its parameters through serialization."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
+
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    func = get_weather if with_func else None
+    weather_tool = FunctionTool(name="get_weather", description="Get the weather", func=func, input_model=schema)
+
+    tool_dict = weather_tool.to_dict()
+    assert tool_dict["input_model"] == schema
+
+    restored_tool = FunctionTool.from_dict(tool_dict, dependencies={"function_tool": {"func": func}})
+    assert restored_tool.parameters() == schema
+    assert restored_tool.func is func
+
+
 # region _parse_inputs tests
 
 
