@@ -63,7 +63,6 @@ required-version = "==0.13.1"
 # Security floors for transitive dependencies.
 override-dependencies = [
     "mcp>=2.2.0,<3",
-    "tenacity>=9.2.1,<10",
     "uvicorn[standard]>=0.34.0",
     "python-multipart>=0.0.31",
 ]
