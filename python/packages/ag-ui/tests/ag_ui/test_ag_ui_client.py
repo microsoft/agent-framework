@@ -1386,6 +1386,7 @@ class TestAGUIChatClient:
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
             {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "my_tool"},
             {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"param": "test"}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
@@ -1413,6 +1414,125 @@ class TestAGUIChatClient:
                     found = True
                     break
         assert found, "Expected to find function_call content for my_tool"
+
+    @pytest.mark.parametrize(
+        "terminal_events",
+        [
+            [
+                {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+            ],
+            [{"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"}],
+            [
+                {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "late failure"},
+            ],
+            [
+                {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "late", "delta": "late"},
+            ],
+            [
+                {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                {
+                    "type": "RUN_FINISHED",
+                    "threadId": "thread_1",
+                    "runId": "run_1",
+                    "outcome": {"type": "interrupt", "interrupts": []},
+                },
+            ],
+        ],
+        ids=[
+            "run-error-after-end",
+            "run-finished-without-end",
+            "run-error-after-finished",
+            "content-after-finished",
+            "interrupt-outcome",
+        ],
+    )
+    async def test_client_tool_call_requires_successful_protocol_commit(
+        self,
+        monkeypatch: MonkeyPatch,
+        terminal_events: list[dict[str, Any]],
+    ) -> None:
+        """Client tools require TOOL_CALL_END and a successful RUN_FINISHED."""
+        executed: list[str] = []
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            events = [
+                {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "unsafe"}'},
+                *terminal_events,
+            ]
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [write_value]},
+        )
+
+        assert executed == []
+
+    async def test_client_tool_call_executes_after_successful_protocol_commit(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """A completed client call still executes exactly once after RUN_FINISHED."""
+        executed: list[str] = []
+        call_count = 0
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            del args, kwargs
+            call_count += 1
+            events = (
+                [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "safe"}'},
+                    {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+                if call_count == 1
+                else [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            )
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [write_value]},
+        )
+
+        assert response.text == "done"
+        assert executed == ["safe"]
+        assert call_count == 2
 
     async def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(
         self, monkeypatch: MonkeyPatch

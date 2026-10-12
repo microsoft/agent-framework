@@ -52,6 +52,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.
+- `AGUIChatClient` treats streamed client-tool fragments as provisional. A local client tool becomes executable only
+  after its matching `TOOL_CALL_END`, a successful `RUN_FINISHED`, and natural completion of that event stream.
+  `RUN_ERROR`, interrupt outcomes, missing end events, cancellation, or post-terminal protocol traffic must not
+  expose an executable function call.
 - A2UI continuation retains the inner response's original model-turn and reasoning/call/result groups. UI
   rendering and its accounting remain adapter-owned while server tools use the existing function loop.
   Streaming uses an executable adapter handoff tool that returns a private control request through the existing
@@ -66,6 +70,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   control outcomes and the original middleware's relative order.
   Adapter-side compatibility execution is limited to non-core agents without context providers; unsupported
   provider preparation fails explicitly instead of executing with a partial policy.
+  Client `forwardedProps.injectA2UITool` is only a per-request request to use a capability the backend has already
+  enabled with `a2ui_config["inject_a2ui_tool"]`; request metadata alone must never activate a server tool or sub-agent.
 - Local approval resume checks the current function-invocation configuration before any approved side effect begins.
   When invocation is disabled, grants remain pending under their original retention deadline and the endpoint emits
   `APPROVAL_INVOCATION_DISABLED`; only a later explicit retry after re-enablement can execute them. Rejections and
@@ -106,6 +112,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  When state is exposed to the model, keep it in an explicitly untrusted user-data message; never promote request
+  state values into system/developer instruction authority.
   Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
   object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
   `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
@@ -140,6 +148,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
+- AG-UI multimodal request URLs accept only web/data schemes. Do not pass file, FTP, or application-defined URI
+  schemes from request content into provider clients; broader outbound access requires an application-owned policy.
 
 ## Usage
 

@@ -9,6 +9,7 @@ import binascii
 import json
 import logging
 from typing import Any, cast, get_args
+from urllib.parse import urlsplit
 
 from agent_framework import (
     Content,
@@ -43,6 +44,7 @@ from ._utils import (
 
 logger = logging.getLogger(__name__)
 _VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
+_ALLOWED_MULTIMODAL_URI_SCHEMES = frozenset({"data", "http", "https"})
 _APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
 
 
@@ -427,6 +429,9 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         }.get(part_type, "application/octet-stream")
 
     if isinstance(url, str) and url:
+        scheme = urlsplit(url).scheme.lower()
+        if scheme not in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+            raise ValueError(f"Unsupported AG-UI multimodal URI scheme: {scheme or '<missing>'}.")
         return Content.from_uri(uri=url, media_type=mime_type)
 
     if isinstance(data, str) and data:
@@ -799,8 +804,11 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 accepted = parsed.get("accepted") is True if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
-                # Log the full approval payload to debug modified arguments
-                logger.info(f"Approval payload received: {parsed}")
+                logger.debug(
+                    "Approval response received for tool_call_id=%s accepted=%s",
+                    tool_call_id,
+                    accepted,
+                )
 
                 approval_call_id = tool_call_id
                 resolved_call_id = _resolve_approval_call_id(tool_call_id, parsed)

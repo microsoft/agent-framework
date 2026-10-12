@@ -93,12 +93,28 @@ def _checkpoint_request_owner(metadata: dict[str, Any]) -> WorkflowRequestOwner 
     return snapshot_scope, thread_id
 
 
+def _workflow_checkpoint_storage(workflow: Workflow) -> CheckpointStorage | None:
+    """Return the workflow's effective builder/runtime checkpoint storage."""
+    runner = getattr(workflow, "_runner", None)
+    context = getattr(runner, "context", None)
+    if context is None:
+        return None
+    get_storage = getattr(context, "_get_effective_checkpoint_storage", None)
+    if not callable(get_storage):
+        return None
+    return cast(CheckpointStorage | None, get_storage())
+
+
 class _OwnedWorkflowCheckpointStorage:
     """Attach one AG-UI request owner to checkpoints in their original save."""
 
     def __init__(self, storage: CheckpointStorage, owner: WorkflowRequestOwner) -> None:
         self._storage = storage
         self._owner = owner
+
+    def _owns(self, checkpoint: WorkflowCheckpoint) -> bool:
+        checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
+        return checkpoint_owner == self._owner or (checkpoint_owner is None and self._owner == (None, None))
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint with ownership for any pending request occurrences."""
@@ -110,24 +126,30 @@ class _OwnedWorkflowCheckpointStorage:
         return await self._storage.save(checkpoint)
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
-        """Load a checkpoint from the underlying store."""
-        return await self._storage.load(checkpoint_id)
+        """Load a checkpoint only when it belongs to this request owner."""
+        checkpoint = await self._storage.load(checkpoint_id)
+        if not self._owns(checkpoint):
+            raise PermissionError("The workflow checkpoint is unavailable for this AG-UI request owner.")
+        return checkpoint
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
-        """List checkpoints from the underlying store."""
-        return await self._storage.list_checkpoints(workflow_name=workflow_name)
+        """List checkpoints belonging to this request owner."""
+        checkpoints = await self._storage.list_checkpoints(workflow_name=workflow_name)
+        return [checkpoint for checkpoint in checkpoints if self._owns(checkpoint)]
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
-        """Delete a checkpoint from the underlying store."""
+        """Delete a checkpoint only when it belongs to this request owner."""
+        await self.load(checkpoint_id)
         return await self._storage.delete(checkpoint_id)
 
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
-        """Get the latest checkpoint from the underlying store."""
-        return await self._storage.get_latest(workflow_name=workflow_name)
+        """Get the latest checkpoint belonging to this request owner."""
+        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
+        return max(checkpoints, key=lambda checkpoint: checkpoint.timestamp, default=None)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
-        """List checkpoint IDs from the underlying store."""
-        return await self._storage.list_checkpoint_ids(workflow_name=workflow_name)
+        """List checkpoint IDs belonging to this request owner."""
+        return [checkpoint.checkpoint_id for checkpoint in await self.list_checkpoints(workflow_name=workflow_name)]
 
 
 class _WorkflowSnapshotBuilder:
@@ -552,7 +574,6 @@ class AgentFrameworkWorkflow:
         )
         stored_snapshot = snapshot_session.stored
 
-        checkpoint_storage = self.checkpoint_storage
         checkpoint_id = _checkpoint_id_from_input(input_data)
 
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
@@ -563,15 +584,18 @@ class AgentFrameworkWorkflow:
             if interrupt.get("id") is not None
         }
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
-        # Prefer wrapper/endpoint storage; otherwise allow builder/runtime storage on the
-        # resolved workflow so pause ids emitted without AG-UI storage still resume.
+        checkpoint_storage = self.checkpoint_storage or _workflow_checkpoint_storage(workflow)
+        owned_checkpoint_storage = (
+            _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
+            if checkpoint_storage is not None
+            else None
+        )
         if checkpoint_id is not None and checkpoint_storage is None:
-            if not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-                raise ValueError(
-                    "Resuming from a checkpoint requires checkpoint_storage to be configured on "
-                    "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
-                    "checkpoint storage on the workflow instance."
-                )
+            raise ValueError(
+                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
+                "checkpoint storage on the workflow instance."
+            )
         live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
@@ -585,25 +609,21 @@ class AgentFrameworkWorkflow:
                     return
         if checkpoint_id is not None:
             try:
-                if checkpoint_storage is not None:
-                    checkpoint = await checkpoint_storage.load(checkpoint_id)
-                else:
-                    checkpoint = await workflow._runner.context.load_checkpoint(checkpoint_id)  # pyright: ignore[reportPrivateUsage]
-                    if checkpoint is None:
-                        raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
+                if owned_checkpoint_storage is None:
+                    raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
+                await owned_checkpoint_storage.load(checkpoint_id)
+            except PermissionError:
+                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield RunErrorEvent(
+                    message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",
+                    code="WORKFLOW_RESUME_NOT_FOUND",
+                )
+                return
             except Exception as exc:
                 yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                 yield RunErrorEvent(
                     message=f"Could not load workflow checkpoint '{checkpoint_id}': {exc}",
                     code="WORKFLOW_CHECKPOINT_LOAD_FAILED",
-                )
-                return
-            checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
-            if checkpoint_owner is not None and checkpoint_owner != request_owner:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-                yield RunErrorEvent(
-                    message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",
-                    code="WORKFLOW_RESUME_NOT_FOUND",
                 )
                 return
         if self.workflow is not None and checkpoint_id is None:
@@ -646,9 +666,7 @@ class AgentFrameworkWorkflow:
         if effective_state:
             input_data["state"] = effective_state
 
-        run_checkpoint_storage = checkpoint_storage
-        if checkpoint_storage is not None:
-            run_checkpoint_storage = _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
+        run_checkpoint_storage = owned_checkpoint_storage
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
             # Resume / checkpoint-only requests need stored history. Empty input prepends;

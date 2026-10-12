@@ -12,6 +12,7 @@ import uuid
 import warnings
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
+from copy import copy
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
@@ -63,6 +64,22 @@ def _unwrap_server_function_call_contents(contents: MutableSequence[Content | di
     for idx, content in enumerate(contents):
         if content.type == "server_function_call":  # type: ignore[union-attr]
             contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
+
+
+def _copy_update_with_contents(update: ChatResponseUpdate, contents: Sequence[Content]) -> ChatResponseUpdate:
+    """Copy one update while replacing only its contents."""
+    copied = copy(update)
+    copied.contents = list(contents)
+    copied.additional_properties = dict(update.additional_properties or {})
+    return copied
+
+
+def _run_finished_commits_client_tools(event: Mapping[str, Any]) -> bool:
+    """Return whether a terminal AG-UI event commits buffered client tool calls."""
+    outcome = event.get("outcome")
+    if outcome is None:
+        return True
+    return isinstance(outcome, Mapping) and outcome.get("type") == "success"
 
 
 BaseChatClientT = TypeVar("BaseChatClientT", bound=type[BaseChatClient[Any]])
@@ -513,33 +530,84 @@ class AGUIChatClient(
             resume=_serialize_resume(options.get("resume")),
         )
         body_failed = False
+        pending_client_tool_updates: list[tuple[str, ChatResponseUpdate]] = []
+        completed_client_tool_call_ids: set[str] = set()
+        terminal_update: ChatResponseUpdate | None = None
+        terminal_commits_client_tools = False
         try:
             async for event in events:
                 logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+                event_type = str(event.get("type", "")).upper()
+                if terminal_update is not None:
+                    pending_client_tool_updates.clear()
+                    completed_client_tool_call_ids.clear()
+                    terminal_update = None
+                    terminal_commits_client_tools = False
+                ending_tool_call_id = (
+                    AGUIEventConverter._get_tool_call_id(event) or converter.current_tool_call_id  # pyright: ignore[reportPrivateUsage]
+                    if event_type == "TOOL_CALL_END"
+                    else None
+                )
                 update = converter.convert_event(event)
+                if ending_tool_call_id is not None:
+                    completed_client_tool_call_ids.add(ending_tool_call_id)
                 if update is not None:
                     logger.debug(
                         "[AGUIChatClient] Converted update",
                         extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
                     )
                     # Distinguish client vs server tools
-                    for i, content in enumerate(update.contents):
+                    immediate_contents: list[Content] = []
+                    buffered_contents: list[Content] = []
+                    for content in update.contents:
                         if content.type == "function_call":
                             logger.debug(
                                 f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
                             )
                             if content.name in client_tool_set:
-                                # Client tool - let function invocation execute it
+                                # Client tools are executable only after a matching
+                                # TOOL_CALL_END and successful RUN_FINISHED.
                                 if not content.additional_properties:
                                     content.additional_properties = {}
                                 content.additional_properties["agui_thread_id"] = thread_id
+                                buffered_contents.append(content)
                             else:
                                 # Server tool - wrap so function invocation ignores it
                                 logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
                                 self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
-                                update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
+                                immediate_contents.append(
+                                    Content(type="server_function_call", function_call=content)  # type: ignore[arg-type]
+                                )
+                        else:
+                            immediate_contents.append(content)
 
-                    yield update
+                    if buffered_contents:
+                        for content in buffered_contents:
+                            pending_client_tool_updates.append(
+                                (content.call_id or "", _copy_update_with_contents(update, [content]))
+                            )
+
+                    if event_type == "RUN_ERROR":
+                        pending_client_tool_updates.clear()
+                        completed_client_tool_call_ids.clear()
+                        terminal_update = None
+                        terminal_commits_client_tools = False
+                    elif event_type == "RUN_FINISHED":
+                        terminal_update = _copy_update_with_contents(update, immediate_contents)
+                        terminal_commits_client_tools = _run_finished_commits_client_tools(event)
+                        continue
+
+                    if immediate_contents or not buffered_contents:
+                        yield _copy_update_with_contents(update, immediate_contents)
+
+            if terminal_update is not None:
+                if terminal_commits_client_tools:
+                    for call_id, pending_update in pending_client_tool_updates:
+                        if call_id in completed_client_tool_call_ids:
+                            yield pending_update
+                yield terminal_update
+            pending_client_tool_updates.clear()
+            completed_client_tool_call_ids.clear()
         except GeneratorExit:
             # An explicit close() has no body failure to take precedence over cleanup.
             raise

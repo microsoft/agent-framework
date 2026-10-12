@@ -5,6 +5,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from time import sleep
+from typing import cast
 
 import pytest
 from typing_extensions import Self
@@ -25,10 +26,23 @@ def test_approval_state_thread_id_scopes_thread() -> None:
     assert "thread-1" in scoped_thread_id
 
 
+def test_approval_state_thread_id_is_injective_across_separator_like_values() -> None:
+    assert approval_state_thread_id(scope="tenant", thread_id="one\x1ftwo") != approval_state_thread_id(
+        scope="tenant\x1fone",
+        thread_id="two",
+    )
+
+
 @pytest.mark.parametrize("scope", ["", object()])
 def test_approval_state_thread_id_rejects_invalid_scope(scope: object) -> None:
     with pytest.raises(ValueError, match="scope must be a non-empty string"):
         approval_state_thread_id(scope=scope, thread_id="thread-1")
+
+
+@pytest.mark.parametrize("thread_id", ["", object()])
+def test_approval_state_thread_id_rejects_invalid_thread_id(thread_id: object) -> None:
+    with pytest.raises(ValueError, match="thread_id must be a non-empty string"):
+        approval_state_thread_id(scope=None, thread_id=cast(str, thread_id))
 
 
 def test_approval_state_store_rejects_invalid_max_entries() -> None:

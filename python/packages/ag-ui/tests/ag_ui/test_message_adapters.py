@@ -2610,6 +2610,14 @@ def test_convert_agui_content_unknown_source_type_fallback():
     assert result.uri == "https://example.com/img.png"
 
 
+@pytest.mark.parametrize("uri", ["file:///etc/passwd", "ftp://example.com/file", "custom://resource", "/relative"])
+def test_convert_agui_content_rejects_unsafe_uri_schemes(uri: str) -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Unsupported AG-UI multimodal URI scheme"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": uri}})
+
+
 def test_convert_agui_content_data_uri_prefix():
     """base64 data starting with 'data:' is treated as data URI."""
     from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
