@@ -2,13 +2,17 @@
 
 import inspect
 import json
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from queue import Queue
+from threading import Event, Lock
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import Agent, SupportsChatGetResponse
+from agent_framework import Agent, Message, SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.foundry import FoundryLocalClient
@@ -100,6 +104,77 @@ def test_foundry_local_client_reuses_singleton(mock_foundry_local_manager: Magic
         FoundryLocalClient(model="test-model-id")
         manager_class.initialize.assert_not_called()
         mock_foundry_local_manager.start_web_service.assert_not_called()
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+def test_foundry_local_client_serializes_concurrent_setup(
+    mock_foundry_local_manager_factory: Callable[[], MagicMock], first_fails: bool
+) -> None:
+    first_manager = mock_foundry_local_manager_factory()
+    first_manager.urls = None
+    replacement_manager = mock_foundry_local_manager_factory()
+    preparing = Event()
+    release_preparation = Event()
+    lock_attempts: Queue[None] = Queue()
+    setup_lock = Lock()
+    observed_lock = MagicMock()
+
+    def enter_lock() -> None:
+        lock_attempts.put(None)
+        setup_lock.acquire()
+
+    observed_lock.__enter__.side_effect = enter_lock
+    observed_lock.__exit__.side_effect = lambda *_: setup_lock.release()
+
+    def prepare_first_model() -> None:
+        assert setup_lock.locked(), "Model preparation must remain inside the shared setup lock."
+        preparing.set()
+        assert release_preparation.wait(5), "Timed out waiting to release model preparation."
+        if first_fails:
+            raise RuntimeError("model preparation failed")
+
+    first_manager.catalog.get_model_variant.return_value.download.side_effect = prepare_first_model
+    first_manager.start_web_service.side_effect = lambda: setattr(first_manager, "urls", ["http://localhost:5272"])
+
+    with (
+        patch("agent_framework_foundry_local._foundry_local_client.FoundryLocalManager") as manager_class,
+        patch("agent_framework_foundry_local._foundry_local_client._MANAGER_SETUP_LOCK", observed_lock, create=True),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        manager_class.instance = None
+        managers = iter([first_manager, replacement_manager])
+        manager_class.initialize.side_effect = lambda _: setattr(manager_class, "instance", next(managers))
+
+        def close_first_manager() -> None:
+            assert setup_lock.locked(), "Failed setup must finish cleanup before another client can use the manager."
+            manager_class.instance = None
+
+        first_manager.close.side_effect = close_first_manager
+        first = executor.submit(FoundryLocalClient, model="test-model-id")
+        try:
+            assert preparing.wait(5), "First client did not reach model preparation."
+            lock_attempts.get(timeout=5)
+            second = executor.submit(FoundryLocalClient, model="test-model-id", prepare_model=False)
+            lock_attempts.get(timeout=5)
+            assert not second.done()
+            manager_class.initialize.assert_called_once()
+            first_manager.start_web_service.assert_called_once_with()
+        finally:
+            release_preparation.set()
+
+        if first_fails:
+            with pytest.raises(RuntimeError, match="model preparation failed"):
+                first.result(timeout=5)
+            assert second.result(timeout=5).manager is replacement_manager
+            assert manager_class.initialize.call_count == 2
+            first_manager.close.assert_called_once_with()
+            replacement_manager.close.assert_not_called()
+        else:
+            assert first.result(timeout=5).manager is first_manager
+            assert second.result(timeout=5).manager is first_manager
+            manager_class.initialize.assert_called_once()
+            first_manager.close.assert_not_called()
+        first_manager.start_web_service.assert_called_once_with()
 
 
 def test_foundry_local_client_rejects_configuration_for_existing_manager(mock_foundry_local_manager: MagicMock) -> None:
@@ -212,25 +287,25 @@ def test_foundry_local_client_selects_device_variant(
 
 def test_foundry_local_client_exact_id_rejects_wrong_device(mock_foundry_local_manager: MagicMock) -> None:
     with pytest.raises(ValueError, match="exact-variant:1:GPU.*not found"):
-        FoundryLocalClient(model="exact-variant:1", device=DeviceType.GPU)
+        FoundryLocalClient(model="exact-variant:1", device=DeviceType("GPU"))
     mock_foundry_local_manager.catalog.get_model.return_value.download.assert_not_called()
 
 
 def test_foundry_local_client_missing_device_variant(mock_foundry_local_manager: MagicMock) -> None:
     with pytest.raises(ValueError, match="model-alias:GPU.*not found"):
-        FoundryLocalClient(model="model-alias", device=DeviceType.GPU)
+        FoundryLocalClient(model="model-alias", device=DeviceType("GPU"))
 
 
 def test_foundry_local_client_unknown_runtime_does_not_match_device(mock_foundry_local_manager: MagicMock) -> None:
     mock_model = mock_foundry_local_manager.catalog.get_model_variant.return_value
     mock_model.info.runtime = None
     with pytest.raises(ValueError, match="model-alias:CPU.*not found"):
-        FoundryLocalClient(model="model-alias", device=DeviceType.CPU)
+        FoundryLocalClient(model="model-alias", device=DeviceType("CPU"))
 
 
 def test_foundry_local_client_invalid_device(mock_foundry_local_manager: MagicMock) -> None:
     with pytest.raises(ValueError, match="DeviceType"):
-        FoundryLocalClient(model="model-alias", device="invalid")  # pyright: ignore[reportArgumentType]
+        FoundryLocalClient(model="model-alias", device=cast(DeviceType, "invalid"))
     mock_foundry_local_manager.catalog.get_model.assert_not_called()
 
 
@@ -309,10 +384,11 @@ async def test_foundry_local_client_uses_openai_transport(mock_foundry_local_man
         )
         with patch("agent_framework_foundry_local._foundry_local_client.AsyncOpenAI", return_value=async_client):
             client = FoundryLocalClient(model="test-model-id", prepare_model=False)
+        messages = [Message(role="user", contents=["Hi"])]
         if stream:
-            result = "".join([update.text async for update in client.get_response("Hi", stream=True)])
+            result = "".join([update.text async for update in client.get_response(messages, stream=True)])
         else:
-            result = (await client.get_response("Hi")).text
+            result = (await client.get_response(messages)).text
 
     assert result == "Hello"
     assert len(requests) == 1

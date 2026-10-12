@@ -25,8 +25,10 @@ The client initializes the Foundry Local SDK singleton, prepares the selected mo
 and starts its built-in OpenAI-compatible HTTP service. Streaming, middleware, and
 function invocation continue to use Agent Framework's OpenAI transport.
 
-All clients in a process share the SDK manager and web service. To customize cache
-directories or other SDK settings, pass `configuration=Configuration(app_name="my-app", ...)`
+All clients in a process share the SDK manager and web service. Concurrent client
+construction is serialized through model preparation and failed-setup cleanup.
+To customize cache directories or other SDK settings, pass
+`configuration=Configuration(app_name="my-app", ...)`
 when creating the first client, or initialize `FoundryLocalManager` yourself before
 creating clients. Register accelerated execution providers through the SDK manager
 before selecting GPU/NPU variants. A `device` value of `"CPU"`, `"GPU"`, or `"NPU"`

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from threading import Lock
 from typing import Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
@@ -45,6 +46,7 @@ __all__ = [
 ]
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+_MANAGER_SETUP_LOCK = Lock()
 
 
 # region Foundry Local Chat Options TypedDict
@@ -333,71 +335,72 @@ class FoundryLocalClient(
         model_setting = cast(str, settings.get("model"))
         device_type = DeviceType(device) if device is not None else None
 
-        manager = FoundryLocalManager.instance
-        owns_manager = manager is None
-        if manager is None:
-            if not bootstrap:
-                raise ValueError(
-                    "bootstrap=False requires an initialized Foundry Local manager and running web service."
-                )
-            FoundryLocalManager.initialize(configuration or Configuration(app_name="agent-framework"))
+        with _MANAGER_SETUP_LOCK:
             manager = FoundryLocalManager.instance
+            owns_manager = manager is None
             if manager is None:
-                raise RuntimeError("Foundry Local manager initialization did not create a singleton.")
-        elif configuration is not None:
-            raise ValueError(
-                "Foundry Local is already initialized; configure the shared manager before creating clients."
-            )
-
-        initialized = False
-        try:
-            if not manager.urls:
                 if not bootstrap:
-                    raise ValueError("bootstrap=False requires a running Foundry Local web service.")
-                manager.start_web_service()
-            if not manager.urls:
-                raise ValueError("Foundry Local web service did not provide a bound URL.")
-
-            is_variant_id = ":" in model_setting
-            model_handle = (
-                manager.catalog.get_model_variant(model_setting)
-                if is_variant_id
-                else manager.catalog.get_model(model_setting)
-            )
-            if model_handle is not None and device_type is not None:
-                model_handle = next(
-                    (
-                        variant
-                        for variant in ([model_handle] if is_variant_id else model_handle.variants)
-                        if (runtime := variant.info.runtime) is not None and runtime.device_type == device_type
-                    ),
-                    None,
+                    raise ValueError(
+                        "bootstrap=False requires an initialized Foundry Local manager and running web service."
+                    )
+                FoundryLocalManager.initialize(configuration or Configuration(app_name="agent-framework"))
+                manager = FoundryLocalManager.instance
+                if manager is None:
+                    raise RuntimeError("Foundry Local manager initialization did not create a singleton.")
+            elif configuration is not None:
+                raise ValueError(
+                    "Foundry Local is already initialized; configure the shared manager before creating clients."
                 )
-            elif model_handle is not None and not is_variant_id:
-                # Pin the alias's chosen variant before download changes the cached preference.
-                model_handle = manager.catalog.get_model_variant(model_handle.id)
-            if model_handle is None:
-                target = f"{model_setting}:{device_type.value}" if device_type is not None else model_setting
-                raise ValueError(f"Model with ID or alias '{target}' not found in Foundry Local.")
 
-            model_id = model_handle.id
-            if prepare_model:
-                model_handle.download()
-                model_handle.load()
+            initialized = False
+            try:
+                if not manager.urls:
+                    if not bootstrap:
+                        raise ValueError("bootstrap=False requires a running Foundry Local web service.")
+                    manager.start_web_service()
+                if not manager.urls:
+                    raise ValueError("Foundry Local web service did not provide a bound URL.")
 
-            super().__init__(
-                model=model_id,
-                async_client=AsyncOpenAI(
-                    base_url=f"{manager.urls[0].rstrip('/')}/v1",
-                    api_key="foundry-local",
-                    timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
-                ),
-                additional_properties=additional_properties,
-                middleware=middleware,
-                function_invocation_configuration=function_invocation_configuration,
-            )
-            self.manager = manager
-            initialized = True
-        finally:
-            if owns_manager and not initialized:
-                manager.close()
+                is_variant_id = ":" in model_setting
+                model_handle = (
+                    manager.catalog.get_model_variant(model_setting)
+                    if is_variant_id
+                    else manager.catalog.get_model(model_setting)
+                )
+                if model_handle is not None and device_type is not None:
+                    model_handle = next(
+                        (
+                            variant
+                            for variant in ([model_handle] if is_variant_id else model_handle.variants)
+                            if (runtime := variant.info.runtime) is not None and runtime.device_type == device_type
+                        ),
+                        None,
+                    )
+                elif model_handle is not None and not is_variant_id:
+                    # Pin the alias's chosen variant before download changes the cached preference.
+                    model_handle = manager.catalog.get_model_variant(model_handle.id)
+                if model_handle is None:
+                    target = f"{model_setting}:{device_type.value}" if device_type is not None else model_setting
+                    raise ValueError(f"Model with ID or alias '{target}' not found in Foundry Local.")
+
+                model_id = model_handle.id
+                if prepare_model:
+                    model_handle.download()
+                    model_handle.load()
+
+                super().__init__(
+                    model=model_id,
+                    async_client=AsyncOpenAI(
+                        base_url=f"{manager.urls[0].rstrip('/')}/v1",
+                        api_key="foundry-local",
+                        timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+                    ),
+                    additional_properties=additional_properties,
+                    middleware=middleware,
+                    function_invocation_configuration=function_invocation_configuration,
+                )
+                self.manager = manager
+                initialized = True
+            finally:
+                if owns_manager and not initialized:
+                    manager.close()

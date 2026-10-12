@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -45,18 +45,29 @@ def foundry_local_unit_test_env(monkeypatch: Any, exclude_list: list[str], overr
 
 
 @fixture
-def mock_foundry_local_manager() -> Iterator[MagicMock]:
-    """Fixture that provides a mock FoundryLocalManager."""
-    mock_manager = MagicMock(spec=FoundryLocalManager)
-    mock_manager.urls = ["http://localhost:5272"]
-    mock_manager.catalog = MagicMock(spec=Catalog)
+def mock_foundry_local_manager_factory() -> Callable[[], MagicMock]:
+    """Create independent mock managers with their own catalog models."""
 
-    mock_model = MagicMock(spec=IModel)
-    mock_model.id = "test-model-id"
-    mock_model.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.CPU))
-    mock_model.variants = [mock_model]
-    mock_manager.catalog.get_model.return_value = mock_model
-    mock_manager.catalog.get_model_variant.return_value = mock_model
+    def create_manager() -> MagicMock:
+        mock_manager = MagicMock(spec=FoundryLocalManager)
+        mock_manager.urls = ["http://localhost:5272"]
+        mock_manager.catalog = MagicMock(spec=Catalog)
+
+        mock_model = MagicMock(spec=IModel)
+        mock_model.id = "test-model-id"
+        mock_model.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.CPU))
+        mock_model.variants = [mock_model]
+        mock_manager.catalog.get_model.return_value = mock_model
+        mock_manager.catalog.get_model_variant.return_value = mock_model
+        return mock_manager
+
+    return create_manager
+
+
+@fixture
+def mock_foundry_local_manager(mock_foundry_local_manager_factory: Callable[[], MagicMock]) -> Iterator[MagicMock]:
+    """Fixture that provides a mock FoundryLocalManager."""
+    mock_manager = mock_foundry_local_manager_factory()
 
     with patch("agent_framework_foundry_local._foundry_local_client.FoundryLocalManager") as manager_class:
         manager_class.instance = mock_manager
