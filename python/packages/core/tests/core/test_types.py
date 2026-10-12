@@ -483,9 +483,7 @@ def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() ->
 def test_code_interpreter_tool_result_empty_outputs_then_text() -> None:
     """Initial empty outputs=[] must not IndexError when a text chunk arrives."""
     updates = [
-        ChatResponseUpdate(
-            contents=[Content.from_code_interpreter_tool_result(call_id="ci_1", outputs=[])]
-        ),
+        ChatResponseUpdate(contents=[Content.from_code_interpreter_tool_result(call_id="ci_1", outputs=[])]),
         ChatResponseUpdate(
             contents=[
                 Content.from_code_interpreter_tool_result(
