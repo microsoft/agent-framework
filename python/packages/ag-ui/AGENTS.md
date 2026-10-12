@@ -52,10 +52,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.
-- `AGUIChatClient` treats streamed client-tool fragments as provisional. A local client tool becomes executable only
-  after its matching `TOOL_CALL_END`, a successful `RUN_FINISHED`, and natural completion of that event stream.
-  `RUN_ERROR`, interrupt outcomes, missing end events, cancellation, or post-terminal protocol traffic must not
-  expose an executable function call.
+- `AGUIChatClient` follows the shared function-loop completion contract rather than requiring provider-specific
+  finish markers. Complete arguments may execute without `TOOL_CALL_END`; when `RUN_ERROR` invalidates a response
+  after a local client-tool call has been exposed, raise `ResponseInvalidatedException` so the function loop and
+  direct stream consumers discard that call.
 - A2UI continuation retains the inner response's original model-turn and reasoning/call/result groups. UI
   rendering and its accounting remain adapter-owned while server tools use the existing function loop.
   Streaming uses an executable adapter handoff tool that returns a private control request through the existing
