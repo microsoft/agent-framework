@@ -397,6 +397,96 @@ public sealed class AgentMcpSkillsSourceTests
         Assert.Empty(skills);
     }
 
+    [Fact]
+    public async Task GetContentAsync_IndexResponse_CombinesAllTextBlocksAsync()
+    {
+        // Arrange
+        byte[] bytes = [0xff];
+        await using var server = new InMemoryMcpServer(builder => builder.WithReadResourceHandler((request, _) =>
+        {
+            string uri = request.Params!.Uri;
+            return ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = uri == "skill://index.json"
+                    ? [new TextResourceContents { Uri = uri, Text = SampleSkillIndex }]
+                    : [
+                        new TextResourceContents { Uri = "skill://other/first.md", Text = "First." },
+                        new TextResourceContents { Uri = uri, Text = "Second." },
+                        BlobResourceContents.FromBytes(bytes, uri, "text/markdown"),
+                    ],
+            });
+        }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        string content = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal("First.\nSecond.", content);
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("text")]
+    [InlineData("binary")]
+    public async Task GetResourceAsync_IndexResponse_PreservesCompatibilityAsync(string kind)
+    {
+        // Arrange
+        byte[] bytes = [1, 2, 3, 4];
+        await using var server = new InMemoryMcpServer(builder => builder.WithReadResourceHandler((request, _) =>
+        {
+            string uri = request.Params!.Uri;
+            if (uri == "skill://index.json")
+            {
+                return ValueTask.FromResult(new ReadResourceResult
+                {
+                    Contents = [new TextResourceContents { Uri = uri, Text = SampleSkillIndex }],
+                });
+            }
+
+            return ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = kind switch
+                {
+                    "empty" => [new TextResourceContents { Uri = uri, Text = "" }],
+                    "binary" =>
+                    [
+                        new TextResourceContents { Uri = uri, Text = "Ignored text." },
+                        BlobResourceContents.FromBytes(bytes, "skill://other/icon.bin", "application/octet-stream"),
+                    ],
+                    _ =>
+                    [
+                        new TextResourceContents { Uri = "skill://other/first.md", Text = "First." },
+                        new TextResourceContents { Uri = uri, Text = "Second." },
+                    ],
+                },
+            });
+        }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var content = await resource.ReadAsync();
+
+        // Assert
+        if (kind == "empty")
+        {
+            Assert.Null(content);
+        }
+        else if (kind == "binary")
+        {
+            Assert.Equal(bytes, Assert.IsType<DataContent>(content).Data.ToArray());
+        }
+        else
+        {
+            Assert.Equal("First.\nSecond.", content);
+        }
+    }
+
     private static InMemoryMcpServer CreatePermissiveSkillServer(string skillMdUri, List<string> reads)
     {
         string index = JsonSerializer.Serialize(new

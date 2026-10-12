@@ -5,11 +5,14 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ## What it demonstrates
 
 - Hosting a small MCP server (in this same executable, launched with `--server`) that
-  exposes skill resources following the SEP-2640 convention.
+  advertises the `io.modelcontextprotocol/skills` extension and exposes `skills/list`.
 - Connecting an `McpClient` to the embedded server via stdio transport.
-- Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which reads
-  `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from the
-  index entries.
+- Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which discovers skills
+  through `skills/list` and reads their instructions through `resources/read`.
+- Returning a complete skill list with frontmatter and the resource URIs of
+  `SKILL.md` and `references/conversion-table.md`.
+- Serving the conversion-table resource from the file-based skills sample, which the
+  skill instructions tell the agent to read before performing a conversion.
 - The progressive disclosure pattern across MCP: advertise → load → read resources, exactly
   as for filesystem-backed skills.
 
@@ -18,14 +21,16 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ### Prerequisites
 
 - .NET 10.0 SDK
-- Azure OpenAI endpoint with a deployed model
+- Microsoft Foundry project with a deployed model
 
 ### Setup
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+$env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
+
+Authenticate with `az login`.
 
 ### Run
 
@@ -36,8 +41,7 @@ dotnet run
 ## Security Considerations
 
 Discovering skills over MCP means an external MCP server controls what skill content (including
-instructions and, for archive-type entries, extracted files) reaches the agent. A compromised or
+instructions and supporting resources) reaches the agent. A compromised or
 untrustworthy server could return adversarial content designed to manipulate the agent (indirect
 prompt injection) or to exfiltrate data through skill instructions/scripts. Only connect `UseMcpSkills`
-to MCP servers you have vetted and trust, and keep the conservative archive size/file-count limits in
-`AgentMcpSkillsSourceOptions` unless you have a specific reason to raise them.
+to MCP servers you have vetted and trust.
