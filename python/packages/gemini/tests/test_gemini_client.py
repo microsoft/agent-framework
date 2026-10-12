@@ -595,6 +595,26 @@ async def test_get_response_streaming_model_falls_back_to_requested_model() -> N
     assert updates[0].model == "gemini-2.5-pro"
 
 
+async def test_get_response_streaming_keeps_model_version_seen_earlier() -> None:
+    """A later chunk without model_version must not replace a version already seen in the stream."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    first = _make_response([_make_part(text="Hi")], finish_reason=None, model_version="gemini-2.5-pro-002")
+    last = _make_response([_make_part(text="!")], finish_reason="STOP")
+    last.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([first, last]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.model for update in updates] == ["gemini-2.5-pro-002", "gemini-2.5-pro-002"]
+    assert final.model == "gemini-2.5-pro-002"
+
+
 async def test_get_response_uses_model_from_options() -> None:
     """Uses the model specified in options, overriding the client's default."""
     client, mock = _make_gemini_client(model="gemini-2.5-flash")
