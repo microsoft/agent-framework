@@ -729,8 +729,7 @@ class WorkflowExecutor(Executor):
         # The sub-workflow is the source of truth for what it is awaiting. Validate the response
         # against its pending requests and ignore anything unknown or already handled.
         pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
-        previously_pending_request_ids = set(pending_requests)
-        if request_id not in previously_pending_request_ids:
+        if request_id not in pending_requests:
             logger.warning(
                 f"WorkflowExecutor {self.id} received a response for an unknown or already-handled "
                 f"request_id: {request_id}. This response will be ignored."
@@ -743,11 +742,11 @@ class WorkflowExecutor(Executor):
             responses={request_id: response},
             tools=ctx.get_runtime_tools(),
         )
-        # A restored sub-workflow can re-emit sibling requests before consuming this response.
-        # They were already forwarded to the parent, so only propagate requests created by this run.
+        # A restored sub-workflow can re-emit the exact pending event objects before consuming
+        # this response. Suppress those objects, but preserve new requests that reuse an ID.
         result[:] = [
             event
             for event in result
-            if event.type != "request_info" or event.request_id not in previously_pending_request_ids
+            if event.type != "request_info" or event is not pending_requests.get(event.request_id)
         ]
         await self._process_workflow_result(result, ctx)
