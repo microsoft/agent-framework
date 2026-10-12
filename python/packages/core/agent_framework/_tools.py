@@ -507,6 +507,21 @@ def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
 ClassT = TypeVar("ClassT", bound="SerializationMixin")
 
 
+class _BoundToolCache:
+    """Keep bound tools on their owner without serializing runtime bindings."""
+
+    def __init__(self, owner: Any = None) -> None:
+        self.owner = owner
+        self.tools: dict[FunctionTool, FunctionTool] = {}
+
+    def __reduce__(self) -> tuple[type[_BoundToolCache], tuple[()]]:
+        return type(self), ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Exclude runtime bindings when the owner is converted to JSON."""
+        return {}
+
+
 class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
@@ -735,14 +750,16 @@ class FunctionTool(SerializationMixin):
         """Implement the descriptor protocol to support bound methods.
 
         When a FunctionTool is accessed as an attribute of a class instance,
-        this method is called to bind the instance to the function.
+        this method is called to bind the instance to the function. Instances
+        with a ``__dict__`` cache their bound tools across attribute accesses.
+        For slots-only instances, retain the returned tool to preserve its counters.
 
         Args:
             obj: The instance that owns the descriptor, or None for class access.
             objtype: The type that owns the descriptor.
 
         Returns:
-            A new FunctionTool with the instance bound to the wrapped function.
+            A FunctionTool with the instance bound to the wrapped function.
         """
         if obj is None:
             # Accessed from the class, not an instance
@@ -753,9 +770,19 @@ class FunctionTool(SerializationMixin):
             sig = inspect.signature(self.func)
             params = list(sig.parameters.keys())
             if params and params[0] in {"self", "cls"}:
-                # Create a new FunctionTool with the bound method
-                import copy
+                instance_dict: dict[str, Any] | None = getattr(obj, "__dict__", None)
+                if isinstance(instance_dict, dict):
+                    cache = instance_dict.get("_agent_framework_bound_tools")
+                    # A shallow-copied owner must not reuse the original owner's bindings.
+                    if not isinstance(cache, _BoundToolCache) or cache.owner is not obj:
+                        cache = instance_dict["_agent_framework_bound_tools"] = _BoundToolCache(obj)
+                    if self not in cache.tools:
+                        bound_func = copy.copy(self)
+                        bound_func._instance = obj
+                        cache.tools[self] = bound_func
+                    return cache.tools[self]
 
+                # shortcut: slots-only owners cannot store bindings; retain the returned tool for persistent limits.
                 bound_func = copy.copy(self)
                 bound_func._instance = obj
                 return bound_func
