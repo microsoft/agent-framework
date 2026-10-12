@@ -530,10 +530,16 @@ class MemoryTopicRecord:
                 if stripped:
                     summary_lines.append(_unescape_markdown_line(stripped))
                 continue
-            if current_section == "memories" and stripped.startswith("- "):
-                memory_text = _unescape_markdown_line(stripped[2:].strip())
-                if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
-                    memories.append(memory_text)
+            if current_section == "memories":
+                if stripped.startswith("- "):
+                    memory_text = _unescape_markdown_line(stripped[2:].strip())
+                    if memory_text and memory_text != DEFAULT_MEMORY_NO_TOPICS_TEXT[2:]:
+                        memories.append(memory_text)
+                elif stripped and memories and not stripped.startswith("#"):
+                    # Files written before multiline normalization carry a
+                    # continuation line as bare text; fold it back into the
+                    # bullet it continues instead of dropping it.
+                    memories[-1] = f"{memories[-1]} {_unescape_markdown_line(stripped)}"
 
         if topic is None:
             raise ValueError("Memory topic markdown is missing a '# <topic>' heading.")

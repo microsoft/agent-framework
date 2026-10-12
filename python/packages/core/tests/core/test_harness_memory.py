@@ -201,6 +201,25 @@ def test_memory_topic_record_preserves_multiline_summary_metadata_text(summary_l
     assert record.memories == ["Updated: the milestone moved.", "Sessions: retain previous notes."]
 
 
+def test_memory_topic_record_folds_legacy_continuation_lines() -> None:
+    """A bare continuation line in a pre-normalization file rejoins the bullet it continues."""
+    markdown = (
+        "# deploy\n\n"
+        "Updated: 2026-04-21T10:05:00+00:00\n"
+        "Sessions: -\n\n"
+        "## Summary\n\n"
+        "## Memories\n"
+        "- Deploy staging.\n"
+        "Then deploy production.\n"
+        "- Rollback plan ready.\n"
+    )
+
+    record = MemoryTopicRecord.from_markdown(markdown)
+
+    assert record.memories == ["Deploy staging. Then deploy production.", "Rollback plan ready."]
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()).memories == record.memories
+
+
 async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_path) -> None:
     """The file-backed memory store should manage topics, ``MEMORY.md``, state, and transcript search."""
     store = MemoryFileStore(
