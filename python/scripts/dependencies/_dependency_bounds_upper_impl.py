@@ -21,12 +21,12 @@ from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-import tomli
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 CHECK_TASK_PRIORITY = ("dependency-pyright", "check", "typing", "pyright", "mypy", "lint")
 AZURE_MONITOR_OPENTELEMETRY = "azure-monitor-opentelemetry"
 OPENTELEMETRY_SDK = "opentelemetry-sdk"
-VALIDATION_TOOL_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "zuban"})
+MANUALLY_MANAGED_DEV_PINS = frozenset({"mypy", "pyrefly", "pyright", "ruff", "ty", "uv", "zuban"})
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
 SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
@@ -261,7 +261,7 @@ def _collect_development_pin_replacements(
     catalog: VersionCatalog,
 ) -> dict[str, str]:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     project = data.get("project", {}) or {}
     optional_dependencies = project.get("optional-dependencies", {}) or {}
     dependency_groups = data.get("dependency-groups", {}) or {}
@@ -320,9 +320,9 @@ def _collect_development_pin_replacements(
         current_exact_version = _exact_pin_version(parsed_requirement)
         if current_exact_version is None:
             continue
-        if dependency_name in VALIDATION_TOOL_DEV_PINS:
+        if dependency_name in MANUALLY_MANAGED_DEV_PINS:
             logger.info(
-                "Skipping %s in %s because validation tool upgrades should be handled separately.",
+                "Skipping %s in %s because its version must be coordinated separately.",
                 dependency_name,
                 pyproject_file,
             )
@@ -447,7 +447,7 @@ def _load_lock_versions(workspace_root: Path) -> dict[str, list[Version]]:
     if not lock_file.exists():
         return {}
     with lock_file.open("rb") as f:
-        lock_data = tomli.load(f)
+        lock_data = tomllib.load(f)
     versions_by_name: dict[str, set[Version]] = {}
     for package_data in lock_data.get("package", []):
         package_name = str(package_data.get("name", "")).lower()
@@ -555,7 +555,7 @@ def _upload_is_not_newer(file_info: dict[str, object], *, exclude_newer: datetim
 
 def _load_package_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     return str(data["project"]["name"])
 
 
@@ -575,7 +575,7 @@ def _collect_targets(
     dependency_filters: set[str] | None,
 ) -> tuple[list[DependencyTarget], list[str]]:
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
     project = data.get("project", {})
     dependencies: list[str] = list(project.get("dependencies", []) or [])
 
@@ -765,7 +765,7 @@ def _run_tasks(
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        extend_command_with_task(command, task_name, workspace_root=workspace_root)
+        extend_command_with_task(command, task_name)
         try:
             result = subprocess.run(
                 command,
@@ -1207,7 +1207,7 @@ def main() -> None:
 
     root_package_name = _load_package_name(workspace_pyproject)
     with workspace_pyproject.open("rb") as f:
-        root_config = tomli.load(f)
+        root_config = tomllib.load(f)
     root_project_section = root_config.get("project", {})
     root_optional_dependencies = root_project_section.get("optional-dependencies", {}) or {}
     root_dependency_groups = root_config.get("dependency-groups", {}) or {}

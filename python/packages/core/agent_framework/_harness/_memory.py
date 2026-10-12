@@ -506,10 +506,10 @@ class MemoryTopicRecord:
                 topic = stripped[2:].strip()
                 current_section = None
                 continue
-            if stripped.startswith("Updated: "):
+            if current_section is None and stripped.startswith("Updated: "):
                 updated_at = stripped.removeprefix("Updated: ").strip()
                 continue
-            if stripped.startswith("Sessions: "):
+            if current_section is None and stripped.startswith("Sessions: "):
                 raw_sessions = stripped.removeprefix("Sessions: ").strip()
                 session_ids = (
                     []

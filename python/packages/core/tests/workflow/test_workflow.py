@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import contextlib
 import gc
 import logging
 import tempfile
@@ -751,6 +752,209 @@ async def test_workflow_multiple_runs_no_state_collision_after_rebuild():
         wf2 = _build()
         result2 = await wf2.run(StateTrackingMessage(data="message2", run_id="run2"))
         assert result2.get_outputs()[0] == ["run2:message2"]
+
+
+@dataclass
+class FlakyMessage:
+    """A message that can fail on demand for testing state discard behavior."""
+
+    fail: bool
+
+
+class FlakyStateExecutor(Executor):
+    """An executor that fails on demand to test state discard on failure."""
+
+    def __init__(self, id: str, write_staged_event: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._write_staged_event = write_staged_event
+
+    @handler
+    async def handle_message(
+        self,
+        message: FlakyMessage,
+        ctx: WorkflowContext[FlakyMessage, str],
+    ) -> None:
+        if message.fail:
+            ctx.set_state("secret", "leaked-from-failed-run")
+            # Signal that the write has been staged for deterministic test synchronization
+            if self._write_staged_event:
+                self._write_staged_event.set()
+            # Small delay to ensure cancellation can happen after write is staged
+            await asyncio.sleep(0.01)
+            raise RuntimeError("simulated transient failure")
+
+        await ctx.yield_output("ok")
+
+
+async def test_workflow_discards_pending_state_after_failed_superstep():
+    """Test that pending state from a failed superstep is discarded and not committed.
+
+    This is a regression test for GitHub issue #7859: pending state writes from
+    a failed superstep must not leak into a later successful run on the same
+    Workflow instance.
+    """
+    workflow = WorkflowBuilder(start_executor=FlakyStateExecutor(id="flaky")).build()
+
+    # First run: fails after staging a state write
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        await workflow.run(FlakyMessage(fail=True))
+
+    # Verify the failed run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the failed run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
+
+
+@dataclass
+class FanOutTestMessage:
+    """Message for fan-out state leak test."""
+
+    should_fail: bool
+
+
+class FanOutSourceExecutor(Executor):
+    """Source executor that sends fan-out test messages."""
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext[FanOutTestMessage]) -> None:
+        # Forward the message to targets
+        await ctx.send_message(message)
+
+
+class FailingTargetExecutor(Executor):
+    """Target that fails immediately on execute."""
+
+    def __init__(self, id: str, b_started: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        if message.should_fail:
+            # Wait for slow target to start before failing to ensure deterministic ordering
+            if self._b_started:
+                await self._b_started.wait()
+            raise RuntimeError("target A failed")
+
+
+class SlowStateWritingTargetExecutor(Executor):
+    """Target that writes state after being unblocked (vulnerable pattern if not cancelled)."""
+
+    def __init__(self, id: str, b_started: asyncio.Event, release_b: asyncio.Event, b_task_ref: list) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+        self._release_b = release_b
+        self._b_task_ref = b_task_ref
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        self._b_task_ref.append(asyncio.current_task())
+        self._b_started.set()
+        if message.should_fail:
+            await self._release_b.wait()
+            ctx.set_state("leak_key", "leaked_value")
+
+
+async def test_workflow_discards_pending_state_after_fanout_failure():
+    """Test that pending state from a fan-out sibling target is discarded when another target fails.
+
+    Regression test for GitHub issue #7859: when a fan-out superstep has one target fail
+    while a sibling target is still running, the sibling's state writes must not leak
+    into committed state.
+    """
+    b_started = asyncio.Event()
+    release_b = asyncio.Event()
+    b_task_ref: list[asyncio.Task] = []
+
+    source = FanOutSourceExecutor(id="source")
+    failing_target = FailingTargetExecutor(id="failing_target", b_started=b_started)
+    slow_target = SlowStateWritingTargetExecutor(
+        id="slow_target", b_started=b_started, release_b=release_b, b_task_ref=b_task_ref
+    )
+
+    workflow = WorkflowBuilder(start_executor=source).add_fan_out_edges(source, [failing_target, slow_target]).build()
+
+    # Verify topology: single FanOutEdgeGroup with two targets under one edge_runner
+    from agent_framework._workflows._edge import FanOutEdgeGroup
+
+    fan_out_groups = [eg for eg in workflow.edge_groups if isinstance(eg, FanOutEdgeGroup)]
+    assert len(fan_out_groups) == 1, f"Expected 1 FanOutEdgeGroup, got {len(fan_out_groups)}"
+    assert fan_out_groups[0].target_ids == [failing_target.id, slow_target.id], (
+        f"Expected targets [{failing_target.id}, {slow_target.id}], got {fan_out_groups[0].target_ids}"
+    )
+
+    async def _run_workflow() -> WorkflowRunResult:
+        return await workflow.run(FanOutTestMessage(should_fail=True))
+
+    run_task: asyncio.Task[WorkflowRunResult] = asyncio.create_task(_run_workflow())
+    with pytest.raises(RuntimeError, match="target A failed"):
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    release_b.set()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.wait_for(b_task_ref[0], timeout=0.5)
+
+    b_task_ref.clear()
+
+    result = await workflow.run(FanOutTestMessage(should_fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    committed_state = workflow._runner.state.export_state()
+    assert "leak_key" not in committed_state
+
+
+async def test_workflow_discards_pending_state_on_cancellation():
+    """Test that pending state from a cancelled superstep is discarded and not committed.
+
+    Regression test for PR #8819 review comment: asyncio.CancelledError inherits from
+    BaseException (not Exception since Python 3.8), so `except Exception:` never catches it.
+    When a superstep's task is cancelled, the discard() call must still run to prevent
+    pending writes from leaking into the next run.
+
+    This test creates a workflow that will stage a state write, then yields control
+    before completing (via a slow executor). We cancel the task while it's mid-superstep
+    to ensure the write is staged and the runner's except block is hit.
+    """
+    # Use deterministic synchronization to ensure write is staged before cancellation
+    write_staged_event = asyncio.Event()
+    workflow = WorkflowBuilder(
+        start_executor=FlakyStateExecutor(id="flaky", write_staged_event=write_staged_event)
+    ).build()
+
+    # Create a task that will stage a state write then fail
+    async def _run_failing():
+        return await workflow.run(FlakyMessage(fail=True))
+
+    run_task = asyncio.create_task(_run_failing())
+
+    # Wait for the write to be staged before cancelling (deterministic synchronization)
+    await write_staged_event.wait()
+
+    # Cancel the task while it's mid-superstep (after write is staged but before error handling completes)
+    run_task.cancel()
+
+    # Await the task, confirming CancelledError is raised (discard() must not swallow it)
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+
+    # Verify the cancelled run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the cancelled run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
 
 
 async def test_workflow_checkpoint_runtime_only_configuration(

@@ -995,7 +995,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance.
+        """Initialize an Agent instance.
 
         Args:
             client: The chat client to use for the agent.
@@ -2104,7 +2104,7 @@ class Agent(
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance."""
+        """Initialize an Agent instance."""
         super().__init__(
             client=client,
             instructions=instructions,
