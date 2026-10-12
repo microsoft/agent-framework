@@ -229,14 +229,28 @@ def _parse_exact_int(text: str) -> int:
     return value
 
 
+def _reject_non_str_keys(value: Any) -> None:
+    """Recursively raise if any mapping key is not a ``str``, since JSON would silently coerce it."""
+    if isinstance(value, Mapping):
+        for key, item in cast("Mapping[Any, Any]", value).items():
+            if not isinstance(key, str):
+                raise TypeError(f"mapping keys must be str, got {type(key).__name__}: {key!r}")
+            _reject_non_str_keys(item)
+    elif isinstance(value, (list, tuple)):
+        for item in cast("Sequence[Any]", value):
+            _reject_non_str_keys(item)
+
+
 def _to_struct_safe_json(values: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON round-tripped copy of ``values`` that a protobuf ``Struct`` can carry exactly.
 
     Raises:
-        TypeError: If a value is not JSON-compatible.
+        TypeError: If a value is not JSON-compatible or a mapping key is not a ``str``.
         ValueError: If a value is NaN, infinite, an out-of-range integer, or otherwise unrepresentable.
         OverflowError: If a number is too large for a protobuf ``Struct``.
     """
+    # json.dumps coerces non-str keys (for example 1 and "1" collide), so reject them before the round trip.
+    _reject_non_str_keys(values)
     # allow_nan=False rejects NaN and infinities, and parse_int rejects integers a Struct would round.
     round_tripped = cast(
         "dict[str, Any]", json.loads(json.dumps(dict(values), allow_nan=False), parse_int=_parse_exact_int)

@@ -2946,6 +2946,20 @@ async def test_run_rejects_values_protobuf_struct_cannot_carry(mock_a2a_client: 
     assert mock_a2a_client.call_count == 0
 
 
+@mark.parametrize(
+    "value",
+    [{1: "numeric", "1": "string"}, {"nested": [{2: "x"}]}, {None: "x"}],
+    ids=["key-collision", "nested-in-list", "none-key"],
+)
+async def test_run_rejects_non_str_mapping_keys(mock_a2a_client: MockA2AClient, value: Any) -> None:
+    agent = _forwarding_agent(mock_a2a_client, ["tenant"])
+
+    with raises(AgentInvalidRequestException):
+        await agent.run("Hello", function_invocation_kwargs={"tenant": value})
+
+    assert mock_a2a_client.call_count == 0
+
+
 async def test_run_forwards_integers_at_the_exact_boundary(mock_a2a_client: MockA2AClient) -> None:
     agent = _forwarding_agent(mock_a2a_client, ["count"])
     mock_a2a_client.add_message_response("msg-1", "Done")
