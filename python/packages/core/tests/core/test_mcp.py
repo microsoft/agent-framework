@@ -187,7 +187,11 @@ _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignor
         lambda value: MCPTool(name="compat", task_options=value),  # type: ignore[abstract]  # ty: ignore[call-non-callable]
         lambda value: MCPStdioTool(name="compat", command="python", task_options=value),
         lambda value: MCPStreamableHTTPTool(name="compat", url="https://example.com/mcp", task_options=value),
-        lambda value: MCPWebsocketTool(name="compat", url="wss://example.com/mcp", task_options=value),
+        lambda value: MCPWebsocketTool(  # ty: ignore[deprecated]
+            name="compat",
+            url="wss://example.com/mcp",
+            task_options=value,
+        ),
     ],
 )
 @pytest.mark.parametrize("task_options", [None, object()])
