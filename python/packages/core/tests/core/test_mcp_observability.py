@@ -116,8 +116,10 @@ def test_mcp_client_span_unhandled_exception_respects_sensitive_data(
     private_error_detail = "founder-secret-token"
 
     span_exporter.clear()
-    with pytest.raises(RuntimeError, match="MCP operation failed"), create_mcp_client_span("test/operation"):
-        raise RuntimeError(f"MCP operation failed: {private_error_detail}")
+    with pytest.raises(RuntimeError, match="MCP operation failed"):  # noqa: SIM117
+        # Keep these contexts nested so static analysis recognizes the following assertions as reachable.
+        with create_mcp_client_span("test/operation"):
+            raise RuntimeError(f"MCP operation failed: {private_error_detail}")
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1

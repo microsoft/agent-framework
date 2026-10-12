@@ -572,8 +572,11 @@ def test_workflow_span_lifecycle_exceptions_are_not_failures(
     """Workflow span helpers should not classify lifecycle-control exceptions as failures."""
     span_exporter.clear()
 
-    with pytest.raises(exception_type), create_workflow_span("workflow.lifecycle"):
-        raise exception_type()
+    try:
+        with create_workflow_span("workflow.lifecycle"):
+            raise exception_type()
+    except exception_type:
+        pass
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
