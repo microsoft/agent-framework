@@ -6,7 +6,7 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
+from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder, workflow
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._runner_context import InProcRunnerContext, MessageType, WorkflowMessage
 from agent_framework._workflows._state import State
@@ -408,8 +408,12 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     assert len(aggregator_span.links) >= 2, f"Expected at least 2 links, got {len(aggregator_span.links)}"
 
 
-async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExporter) -> None:
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_workflow_error_handling_in_tracing(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that workflow errors are properly recorded in traces."""
+    private_error_detail = "founder-secret-token"
 
     class FailingExecutor(Executor):
         def __init__(self) -> None:
@@ -417,10 +421,11 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
 
         @handler
         async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
-            raise ValueError("Test error")
+            raise ValueError(f"Test error: {private_error_detail}")
 
     failing_executor = FailingExecutor()
     workflow = WorkflowBuilder(start_executor=failing_executor).build()
+    span_exporter.clear()
 
     # Run workflow and expect error
     with pytest.raises(ValueError, match="Test error"):
@@ -441,6 +446,79 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
     assert "workflow.started" in event_names
     assert "workflow.error" in event_names
     assert workflow_span.status.status_code.name == "ERROR"
+    assert workflow_span.attributes is not None
+    assert workflow_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (workflow_span.status.description or "")) is enable_sensitive_data
+
+    workflow_error = next(event for event in workflow_span.events if event.name == "workflow.error")
+    assert workflow_error.attributes is not None
+    assert workflow_error.attributes["error.type"] == "ValueError"
+    assert ("error.message" in workflow_error.attributes) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert private_error_detail in str(workflow_error.attributes["error.message"])
+
+    workflow_exception_events = [event for event in workflow_span.events if event.name == "exception"]
+    assert bool(workflow_exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = workflow_exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
+
+    executor_spans = [span for span in spans if span.name == "executor.process failing_executor"]
+    assert len(executor_spans) == 1
+    executor_span = executor_spans[0]
+    assert executor_span.attributes is not None
+    assert executor_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert executor_span.status.status_code.name == "ERROR"
+    assert (private_error_detail in (executor_span.status.description or "")) is enable_sensitive_data
+    executor_exception_events = [event for event in executor_span.events if event.name == "exception"]
+    assert bool(executor_exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = executor_exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_functional_workflow_error_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """Functional workflow spans should redact exception details unless explicitly enabled."""
+    private_error_detail = "founder-secret-token"
+
+    @workflow
+    async def failing_workflow(message: str) -> None:
+        raise RuntimeError(f"Functional workflow failed: {message}")
+
+    workflow_instance = failing_workflow.build()
+    span_exporter.clear()
+    stream = workflow_instance.run(private_error_detail, stream=True)
+    with pytest.raises(RuntimeError, match="Functional workflow failed"):
+        async for _ in stream:
+            pass
+
+    spans = span_exporter.get_finished_spans()
+    workflow_spans = [span for span in spans if span.name == "workflow.run"]
+    assert len(workflow_spans) == 1
+    span = workflow_spans[0]
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert span.status.status_code.name == "ERROR"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+
+    error_event = next(event for event in span.events if event.name == "workflow.error")
+    assert error_event.attributes is not None
+    assert error_event.attributes["error.type"] == "RuntimeError"
+    assert ("error.message" in error_event.attributes) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert private_error_detail in str(error_event.attributes["error.message"])
+
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
@@ -480,7 +558,8 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
     assert restored_msg.source_span_ids == ["span123"]  # Test new format
 
 
-async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter) -> None:
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter, enable_sensitive_data: bool) -> None:
     """Test that build errors are properly recorded in build spans."""
 
     # Create a valid builder, then clear the start executor to trigger a build-time ValueError
@@ -510,5 +589,13 @@ async def test_workflow_build_error_tracing(span_exporter: InMemorySpanExporter)
 
     error_event = error_events[0]
     assert error_event.attributes is not None
-    assert "starting executor" in str(error_event.attributes.get("build.error.message")).lower()
     assert error_event.attributes.get("build.error.type") == "ValueError"
+    assert ("build.error.message" in error_event.attributes) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert "starting executor" in str(error_event.attributes["build.error.message"]).lower()
+
+    assert build_span.attributes is not None
+    assert build_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert ("starting executor" in (build_span.status.description or "").lower()) is enable_sensitive_data
+    exception_events = [event for event in build_span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data

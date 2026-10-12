@@ -1175,7 +1175,10 @@ class FunctionTool(SerializationMixin):
                 end_time_stamp = perf_counter()
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
-                logger.error(f"Function failed. Error: {exception}")
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                    logger.error("Function failed. Error: %s", exception)
+                else:
+                    logger.error("Function %s failed (%s).", self.name, type(exception).__name__)
                 raise
             else:
                 if skip_parsing:

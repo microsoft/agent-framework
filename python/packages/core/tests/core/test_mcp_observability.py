@@ -93,6 +93,15 @@ def _make_get_prompt_result(text: str = "prompt result") -> types.GetPromptResul
     )
 
 
+def _assert_error_detail_policy(span: Any, private_error_detail: str, enable_sensitive_data: bool) -> None:
+    assert span.status.status_code == StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert private_error_detail in str(exception_events[0].attributes.get("exception.message"))
+
+
 # endregion
 
 
@@ -222,10 +231,16 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
     assert span.attributes[OtelAttr.TOOL_NAME] == "get-weather"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_tool_error_sets_error_type(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """When CallToolResult.isError is true, error.type should be 'tool_error' per MCP spec."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("bad input", is_error=True))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=_make_call_tool_result(f"bad input: {private_error_detail}", is_error=True)
+    )
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
@@ -236,13 +251,19 @@ async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemory
     assert len(call_spans) == 1
     span = call_spans[0]
     assert span.attributes.get(OtelAttr.ERROR_TYPE) == "tool_error"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
-async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_mcp_error_sets_error_type(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """When session.call_tool() raises McpError, error.type should be the exception class name."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=McpError(ErrorData(code=-32600, message=f"invalid request: {private_error_detail}"))
+    )
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
@@ -253,7 +274,30 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemoryS
     assert len(call_spans) == 1
     span = call_spans[0]
     assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_list_error_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """tools/list errors should keep their type without exporting private details by default."""
+    private_error_detail = "founder-secret-token"
+    tool = _make_connected_mcp_tool()
+    tool.session.list_tools = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=RuntimeError(f"list failed: {private_error_detail}")
+    )
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="list failed"):
+        await tool.load_tools()
+
+    spans = span_exporter.get_finished_spans()
+    list_spans = [span for span in spans if span.name == "tools/list"]
+    assert len(list_spans) == 1
+    span = list_spans[0]
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "RuntimeError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
 # endregion
@@ -281,11 +325,15 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
     assert span.attributes[OtelAttr.PROMPT_NAME] == "analyze-code"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_prompts_get_mcp_error_sets_error_type(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
+    private_error_detail = "founder-secret-token"
     tool = _make_connected_mcp_tool()
     tool.session.get_prompt = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
-        side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
+        side_effect=McpError(ErrorData(code=-32602, message=f"prompt not found: {private_error_detail}"))
     )
 
     span_exporter.clear()
@@ -297,7 +345,7 @@ async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemory
     assert len(prompt_spans) == 1
     span = prompt_spans[0]
     assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert span.status.status_code == StatusCode.ERROR
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
 # endregion

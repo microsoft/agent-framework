@@ -2025,7 +2025,11 @@ class MCPTool:
                 ) from ex
             try:
                 with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
-                    initialize_result = await session.initialize()
+                    try:
+                        initialize_result = await session.initialize()
+                    except (Exception, asyncio.CancelledError) as init_ex:
+                        set_mcp_span_error(init_span, type(init_ex).__name__, str(init_ex))
+                        raise
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
                     self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
@@ -2051,7 +2055,11 @@ class MCPTool:
                 if self.session._request_id == 0:  # type: ignore[attr-defined]
                     # If the session is not initialized, we need to reinitialize it
                     with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
-                        initialize_result = await self.session.initialize()
+                        try:
+                            initialize_result = await self.session.initialize()
+                        except (Exception, asyncio.CancelledError) as init_ex:
+                            set_mcp_span_error(init_span, type(init_ex).__name__, str(init_ex))
+                            raise
                         init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
                         self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
                 elif self._server_capabilities is None:
@@ -2457,8 +2465,14 @@ class MCPTool:
                             "Skipping MCP prompt loading because the server did not advertise prompts support."
                         )
                         return
-                    with create_mcp_client_span("prompts/list", attributes=self._mcp_base_span_attributes()):
-                        prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span(
+                        "prompts/list", attributes=self._mcp_base_span_attributes()
+                    ) as list_span:
+                        try:
+                            prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
+                        except (Exception, asyncio.CancelledError) as list_ex:
+                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
+                            raise
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2570,8 +2584,12 @@ class MCPTool:
                     if not self._supports_tools:
                         logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
                         return
-                    with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()):
-                        tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                    with create_mcp_client_span("tools/list", attributes=self._mcp_base_span_attributes()) as list_span:
+                        try:
+                            tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
+                        except (Exception, asyncio.CancelledError) as list_ex:
+                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
+                            raise
                     break
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -2873,6 +2891,7 @@ class MCPTool:
         from mcp.shared.exceptions import McpError
 
         for attempt in range(2):
+            span_error_recorded = False
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
                 _capture_mcp_tool_result(result)
@@ -2886,9 +2905,12 @@ class MCPTool:
                     # Per OTel MCP semconv: set error.type="tool_error" for isError results
                     if span.is_recording():
                         set_mcp_span_error(span, "tool_error", text or str(parsed))
+                        span_error_recorded = True
                     raise ToolExecutionException(text or str(parsed))
                 return parser(result)
-            except ToolExecutionException:
+            except ToolExecutionException as tool_ex:
+                if span.is_recording() and not span_error_recorded:
+                    set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
                 raise
             except (ClosedResourceError, McpError) as call_ex:
                 is_session_terminated = (
@@ -2908,6 +2930,8 @@ class MCPTool:
                         await self.connect(reset=True)
                         continue
                     except Exception as reconn_ex:
+                        if span.is_recording():
+                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
                         raise ToolExecutionException(
                             "Failed to reconnect to MCP server.",
                             inner_exception=reconn_ex,
@@ -2925,7 +2949,10 @@ class MCPTool:
                 if span.is_recording():
                     set_mcp_span_error(span, type(ex).__name__, str(ex))
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
-        raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+        retries_exhausted = ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+        if span.is_recording():
+            set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
+        raise retries_exhausted
 
     def _resolved_extra_args(self, tool_name: str) -> set[str]:
         """Return the user-configured extra argument names allowed for a tool."""
@@ -3451,6 +3478,7 @@ class MCPTool:
                             await self.connect(reset=True)
                             continue  # Retry the operation
                         except Exception as reconn_ex:
+                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
                             raise ToolExecutionException(
                                 "Failed to reconnect to MCP server.",
                                 inner_exception=reconn_ex,
@@ -3470,7 +3498,9 @@ class MCPTool:
                 except Exception as ex:
                     set_mcp_span_error(span, type(ex).__name__, str(ex))
                     raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
-            raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+            retries_exhausted = ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+            set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
+            raise retries_exhausted
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.

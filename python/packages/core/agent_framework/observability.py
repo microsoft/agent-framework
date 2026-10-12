@@ -1006,8 +1006,8 @@ class ObservabilitySettings:
         metadata (e.g. token counts, operation names, durations) and does not include message
         content. Enabling ``enable_sensitive_data`` (env var ``ENABLE_SENSITIVE_DATA``) is an
         explicit, separate opt-in that additionally emits raw chat message content, function-call
-        arguments, and function-call results — treat that data as sensitive and ensure it is not sent
-        to, or retained by, a telemetry backend you have not secured appropriately.
+        arguments, function-call results, and exception messages — treat that data as sensitive and
+        ensure it is not sent to, or retained by, a telemetry backend you have not secured appropriately.
 
     Keyword Args:
         enable_instrumentation: Enable OpenTelemetry diagnostics. Default is True.
@@ -2753,11 +2753,12 @@ def create_mcp_client_span(
         attrs.update(attributes)
     tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
     span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
+    capture_sensitive_data = OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
     with trace.use_span(
         span=span,
         end_on_exit=True,
-        record_exception=True,
-        set_status_on_exception=True,
+        record_exception=capture_sensitive_data,
+        set_status_on_exception=capture_sensitive_data,
     ) as current_span:
         yield current_span
 
@@ -2775,7 +2776,10 @@ def set_mcp_span_error(
         description: Optional description (e.g. JSON-RPC error message).
     """
     span.set_attribute(OtelAttr.ERROR_TYPE, error_type)
-    span.set_status(trace.StatusCode.ERROR, description=description)
+    span.set_status(
+        trace.StatusCode.ERROR,
+        description=description if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None,
+    )
 
 
 # endregion
@@ -3188,11 +3192,14 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     return attributes
 
 
-def capture_exception(span: trace.Span, exception: Exception, timestamp: int | None = None) -> None:
+def capture_exception(span: trace.Span, exception: BaseException, timestamp: int | None = None) -> None:
     """Set an error for spans."""
     span.set_attribute(OtelAttr.ERROR_TYPE, type(exception).__name__)
-    span.record_exception(exception=exception, timestamp=timestamp)
-    span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        span.record_exception(exception=exception, timestamp=timestamp)
+        span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
+    else:
+        span.set_status(status=trace.StatusCode.ERROR)
 
 
 def _capture_system_instructions_latest_experimental(
@@ -3646,11 +3653,24 @@ def _workflow_span_attributes(
     return span_attributes or None
 
 
+@contextlib.contextmanager
+def _capture_span_exceptions(
+    context_manager: contextlib.AbstractContextManager[trace.Span],
+) -> Generator[trace.Span, None, None]:
+    """Apply the framework's sensitive-data policy to an OpenTelemetry span context."""
+    with context_manager as span:
+        try:
+            yield span
+        except BaseException as exception:
+            capture_exception(span, exception)
+            raise
+
+
 def create_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
-) -> _AgnosticContextManager[trace.Span]:
+) -> contextlib.AbstractContextManager[trace.Span]:
     """Create a generic workflow span attached as the current span.
 
     Do not use this from an async generator that yields to callers: attaching
@@ -3658,8 +3678,14 @@ def create_workflow_span(
     generator is later closed on GC from a different ``Context``. Streaming
     workflow runs should use :func:`start_workflow_span` instead.
     """
-    return workflow_tracer().start_as_current_span(
-        name, kind=kind, attributes=_workflow_span_attributes(name, attributes)
+    return _capture_span_exceptions(
+        workflow_tracer().start_as_current_span(
+            name,
+            kind=kind,
+            attributes=_workflow_span_attributes(name, attributes),
+            record_exception=False,
+            set_status_on_exception=False,
+        )
     )
 
 
@@ -3686,7 +3712,7 @@ def create_processing_span(
     payload_type: str,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> _AgnosticContextManager[trace.Span]:
+) -> contextlib.AbstractContextManager[trace.Span]:
     """Create an executor processing span with optional links to source spans.
 
     Processing spans are created as children of the current workflow span and
@@ -3726,16 +3752,20 @@ def create_processing_span(
                         )
                         links.append(trace.Link(span_context))
 
-    return workflow_tracer().start_as_current_span(
-        f"{OtelAttr.EXECUTOR_PROCESS_SPAN} {executor_id}",
-        kind=trace.SpanKind.INTERNAL,
-        attributes={
-            OtelAttr.EXECUTOR_ID: executor_id,
-            OtelAttr.EXECUTOR_TYPE: executor_type,
-            OtelAttr.MESSAGE_TYPE: message_type,
-            OtelAttr.MESSAGE_PAYLOAD_TYPE: payload_type,
-        },
-        links=links,
+    return _capture_span_exceptions(
+        workflow_tracer().start_as_current_span(
+            f"{OtelAttr.EXECUTOR_PROCESS_SPAN} {executor_id}",
+            kind=trace.SpanKind.INTERNAL,
+            attributes={
+                OtelAttr.EXECUTOR_ID: executor_id,
+                OtelAttr.EXECUTOR_TYPE: executor_type,
+                OtelAttr.MESSAGE_TYPE: message_type,
+                OtelAttr.MESSAGE_PAYLOAD_TYPE: payload_type,
+            },
+            links=links,
+            record_exception=False,
+            set_status_on_exception=False,
+        )
     )
 
 
@@ -3746,7 +3776,7 @@ def create_edge_group_processing_span(
     message_target_id: str | None = None,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
-) -> _AgnosticContextManager[trace.Span]:
+) -> contextlib.AbstractContextManager[trace.Span]:
     """Create an edge group processing span with optional links to source spans.
 
     Edge group processing spans track the processing operations in edge runners
@@ -3799,9 +3829,13 @@ def create_edge_group_processing_span(
                 # If linking fails, continue without link (graceful degradation)
                 pass
 
-    return workflow_tracer().start_as_current_span(
-        f"{OtelAttr.EDGE_GROUP_PROCESS_SPAN} {edge_group_type}",
-        kind=trace.SpanKind.INTERNAL,
-        attributes=attributes,
-        links=links,
+    return _capture_span_exceptions(
+        workflow_tracer().start_as_current_span(
+            f"{OtelAttr.EDGE_GROUP_PROCESS_SPAN} {edge_group_type}",
+            kind=trace.SpanKind.INTERNAL,
+            attributes=attributes,
+            links=links,
+            record_exception=False,
+            set_status_on_exception=False,
+        )
     )

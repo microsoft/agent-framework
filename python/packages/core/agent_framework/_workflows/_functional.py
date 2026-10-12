@@ -1700,12 +1700,16 @@ class FunctionalWorkflow:
             yield _framework_event(WorkflowEvent.failed, details)
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
 
+            from ..observability import OBSERVABILITY_SETTINGS
+
+            error_attributes = {
+                "error.type": type(exc).__name__,
+            }
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                error_attributes["error.message"] = str(exc)
             span.add_event(
                 name=OtelAttr.WORKFLOW_ERROR,
-                attributes={
-                    "error.message": str(exc),
-                    "error.type": type(exc).__name__,
-                },
+                attributes=error_attributes,
             )
             capture_exception(span, exception=exc)
             raise

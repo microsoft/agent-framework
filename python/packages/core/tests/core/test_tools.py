@@ -1077,10 +1077,14 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_tool_invoke_telemetry_with_exception(
-    span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
-):
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test the tool invoke method with telemetry when an exception occurs."""
+    private_error_detail = "founder-secret-token"
 
     @tool(
         name="exception_test_tool",
@@ -1088,7 +1092,7 @@ async def test_tool_invoke_telemetry_with_exception(
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
-        raise ValueError("Test exception for telemetry")
+        raise ValueError(f"Test exception for telemetry: {private_error_detail}")
 
     mock_histogram = Mock()
     exception_test_tool._invocation_duration_histogram = mock_histogram
@@ -1096,20 +1100,35 @@ async def test_tool_invoke_telemetry_with_exception(
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
-    assert "Function failed. Error: Test exception for telemetry" in caplog.text
+    if enable_sensitive_data:
+        assert f"Function failed. Error: Test exception for telemetry: {private_error_detail}" in caplog.text
+    else:
+        assert "Function exception_test_tool failed (ValueError)." in caplog.text
+        assert private_error_detail not in caplog.text
     assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "exception_test_tool" in span.name
+    assert span.attributes is not None
     assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    else:
+        assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
     assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.status.status_code == trace.StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
     # Verify histogram was called with error attributes
     mock_histogram.record.assert_called_once()
