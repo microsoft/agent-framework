@@ -1787,68 +1787,88 @@ class MCPTool:
             connection = self._connection
             return connection is not None and connection.client is mcp_client
 
-        async def reopen_subscription() -> tuple[Any, Any] | None:
-            retrying = AsyncRetrying(
-                wait=wait_exponential(
-                    multiplier=_MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY,
-                    max=_MCP_SUBSCRIPTION_RETRY_MAX_DELAY,
-                ),
-                retry=retry_if_exception(
-                    lambda exc: isinstance(exc, Exception) and not isinstance(exc, ListenNotSupportedError)
-                ),
-                before_sleep=before_sleep_log(logger, logging.WARNING),
-                reraise=True,
-            )
-            async for attempt in retrying:
-                with attempt:
+        class _SubscriptionRestart(Exception):
+            """Signal that the active subscription should be refreshed and reopened."""
+
+        async def consume_subscription(listen_context: Any, subscription: Any) -> None:
+            try:
+                try:
+                    async for event in subscription:
+                        if not connection_is_current():
+                            return
+                        match event:
+                            case ToolsListChanged():
+                                self._schedule_reload(self.load_tools())
+                            case PromptsListChanged():
+                                self._schedule_reload(self.load_prompts())
+                            case _:
+                                logger.debug("Unhandled event: %s", event)
+                except asyncio.CancelledError:
+                    raise
+                except SubscriptionLost as exc:
                     if not connection_is_current():
-                        return None
-                    next_context = mcp_client.listen(
-                        tools_list_changed=tools_changed,
-                        prompts_list_changed=prompts_changed,
-                    )
-                    next_subscription = await next_context.__aenter__()
-                    return next_context, next_subscription
-            return None
+                        return
+                    logger.warning("MCP catalog subscription was lost; refreshing and reopening it.")
+                    raise _SubscriptionRestart from exc
+                except Exception as exc:
+                    if not connection_is_current():
+                        return
+                    logger.warning("MCP catalog subscription failed; refreshing and reopening it.", exc_info=True)
+                    raise _SubscriptionRestart from exc
+                else:
+                    if not connection_is_current():
+                        return
+                    logger.debug("MCP catalog subscription ended; refreshing and reopening it.")
+                    raise _SubscriptionRestart
+            finally:
+                await listen_context.__aexit__(None, None, None)
 
         async def consume_with_recovery() -> None:
-            listen_context = initial_context
-            subscription = initial_subscription
+            pending_subscription: tuple[Any, Any] | None = (initial_context, initial_subscription)
             current_task = asyncio.current_task()
+
+            async def open_subscription() -> tuple[Any, Any] | None:
+                nonlocal pending_subscription
+                if pending_subscription is not None:
+                    opened = pending_subscription
+                    pending_subscription = None
+                    return opened
+                if not connection_is_current():
+                    return None
+                listen_context = mcp_client.listen(
+                    tools_list_changed=tools_changed,
+                    prompts_list_changed=prompts_changed,
+                )
+                subscription = await listen_context.__aenter__()
+                return listen_context, subscription
+
             try:
-                while connection_is_current():
-                    try:
-                        async for event in subscription:
-                            match event:
-                                case ToolsListChanged():
-                                    self._schedule_reload(self.load_tools())
-                                case PromptsListChanged():
-                                    self._schedule_reload(self.load_prompts())
-                                case _:
-                                    logger.debug("Unhandled event: %s", event)
-                    except asyncio.CancelledError:
-                        raise
-                    except SubscriptionLost:
-                        logger.warning("MCP catalog subscription was lost; refreshing and reopening it.")
-                    except Exception:
-                        logger.warning("MCP catalog subscription failed; refreshing and reopening it.", exc_info=True)
-                    else:
-                        logger.debug("MCP catalog subscription ended; refreshing and reopening it.")
-                    finally:
-                        await listen_context.__aexit__(None, None, None)
-
-                    if not connection_is_current():
-                        return
-                    await refresh_catalogs()
-
-                    try:
-                        reopened = await reopen_subscription()
-                    except ListenNotSupportedError:
-                        logger.debug("Listen not supported; falling back to legacy behaviour.")
-                        return
-                    if reopened is None:
-                        return
-                    listen_context, subscription = reopened
+                retrying = AsyncRetrying(
+                    wait=wait_exponential(
+                        multiplier=_MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY,
+                        max=_MCP_SUBSCRIPTION_RETRY_MAX_DELAY,
+                    ),
+                    retry=retry_if_exception(
+                        lambda exc: isinstance(exc, Exception) and not isinstance(exc, ListenNotSupportedError)
+                    ),
+                    before_sleep=before_sleep_log(logger, logging.WARNING),
+                    reraise=True,
+                )
+                try:
+                    async for attempt in retrying:
+                        with attempt:
+                            opened = await open_subscription()
+                            if opened is None:
+                                return
+                            try:
+                                await consume_subscription(*opened)
+                            except _SubscriptionRestart:
+                                if not connection_is_current():
+                                    return
+                                await refresh_catalogs()
+                                raise
+                except ListenNotSupportedError:
+                    logger.debug("Listen not supported; falling back to legacy behaviour.")
             finally:
                 if self._capability_list_subscription_task is current_task:
                     self._capability_list_subscription_task = None
