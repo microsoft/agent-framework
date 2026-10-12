@@ -36,7 +36,7 @@ from .conftest import MockAgent
 
 
 # Shared context for exercising skill sources where the agent/session are irrelevant.
-_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 SAMPLE_SKILL_MD = """\
 ---

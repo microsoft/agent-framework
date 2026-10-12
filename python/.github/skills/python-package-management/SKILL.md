@@ -24,6 +24,9 @@ python/
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages extend core with specific integrations
 - Root `agent-framework` depends on `agent-framework-core[all]`
+- Entries in `agent-framework-core[all]` carry lower and upper bounds. Workspace integrations use the version
+  released with the current Core cohort as their lower bound so pip does not backtrack across old cyclic
+  `core[all] -> integration -> core` combinations.
 - `packages/lab` is intentionally excluded from the root uv workspace. It has its own
   `pyproject.toml`, `uv.lock`, environment, CI matrix, and dependency updates so experimental
   dependencies cannot constrain released provider packages. Lab is also an explicit exception
@@ -156,6 +159,27 @@ Every new package starts as `alpha`.
 8. Add the package to `python/PACKAGE_STATUS.md` and keep that file updated when packages are added,
    removed, renamed, or promoted. If the package exposes individually staged APIs, keep the feature list
    there current too.
+9. Keep the `Typing :: Typed` classifier and the `py.typed` marker in step. The classifier alone is a
+   promise PEP 561 keeps through the `py.typed` file inside the package directory, and that file is
+   the signal checkers act on: a package that declares `Typing :: Typed` without shipping it is not
+   treated as typed, so its API falls back to whatever a checker does with an untyped import
+   (`Any`, `Unknown`, or a missing-stub diagnostic) instead of the inline annotations. Check both,
+   not one:
+
+   ```bash
+   # every package that claims to be typed must ship the marker
+   cd python/packages
+   for d in */; do
+     d=${d%/}
+     [ -f "$d/pyproject.toml" ] || continue
+     if grep -q "Typing :: Typed" "$d/pyproject.toml" && ! ls "$d"/agent_framework*/py.typed >/dev/null 2>&1; then
+       echo "missing py.typed: $d"
+     fi
+   done
+   ```
+
+   Note that `py.typed` only makes annotations that are already there visible; it adds none, so a
+   package that has not been type-checked may surface further errors once the marker lands.
 
 Recommended dependency workflow during connector implementation:
 
@@ -226,6 +250,10 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If package B is promoted to a different lifecycle stage, update package A's dependency
   declaration to the new versioning scheme for package B even when the only change is the stage
   transition itself.
+- When Core releases, advance each workspace package floor in `agent-framework-core[all]` to that package's
+  co-released version, including unchanged packages at their existing version. Keep an upper bound appropriate
+  for the package's current major version. This release-cohort metadata is independent of whether the package
+  itself needed a version bump.
 - Use this guidance both for ordinary version updates and for package promotion work.
 
 - All non-core packages declare a lower bound on `agent-framework-core`

@@ -455,7 +455,9 @@ def search_table(table: Any, value: Any, column: str) -> list[Any]:
         return []
 
     results: list[Any] = []
-    search_value = str(value).lower() if value else ""
+    # Only Blank (None) and "" mean "no search value, return every row"; a
+    # falsy 0 or False is still the value the caller asked to match.
+    search_value = str(value).lower() if value is not None else ""
 
     for item in cast(list[Any], table):
         item_value: Any = None

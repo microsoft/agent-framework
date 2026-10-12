@@ -188,13 +188,13 @@ def test_turn_rejects_invalid_shape(values: dict[str, Any]) -> None:
 
 async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     shared = _workflow()
-    resolver = WorkflowResolver(lambda request: shared)
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: shared)
     assert await resolver.resolve(object()) is shared
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
 
     executor = _Counter()
-    resolver = WorkflowResolver(lambda request: _workflow(executor))
+    resolver = WorkflowResolver[object](lambda request: _workflow(executor))
     first = await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
@@ -209,13 +209,14 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     def builder_factory(request: object) -> Any:
         return WorkflowBuilder(start_executor=_Counter())
 
-    resolver = WorkflowResolver(builder_factory)
+    resolver = WorkflowResolver[object](builder_factory)
     with pytest.raises(TypeError, match="built Workflow"):
         await resolver.resolve(object())
+    stored_resolver: WorkflowResolver[object] = WorkflowResolver(
+        WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
+    )
     with pytest.raises(RuntimeError, match="without a store"):
-        await WorkflowResolver(
-            WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
-        ).resolve(object())
+        await stored_resolver.resolve(object())
 
 
 async def test_request_aware_async_factory() -> None:
@@ -263,7 +264,7 @@ async def test_resolver_rejects_reused_registry_backed_agent_resources() -> None
             raise AssertionError("Ownership validation must not call the model.")
 
     shared = Agent(client=_UnusedClient(), name="registered")
-    resolver = WorkflowResolver(lambda request: _workflow(_RegistryExecutor(shared)))
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: _workflow(_RegistryExecutor(shared)))
 
     await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
@@ -288,11 +289,11 @@ async def test_resolver_tracks_non_weak_referenceable_resources_without_rejectin
         )
         return _workflow(AgentExecutor(agent, id="registered"))
 
-    fresh_resolver = WorkflowResolver(lambda request: create(SlottedProvider()))
+    fresh_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: create(SlottedProvider()))
     await fresh_resolver.resolve(object())
     await fresh_resolver.resolve(object())
 
-    shared_resolver = WorkflowResolver(lambda request: create(shared))
+    shared_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: create(shared))
     await shared_resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await shared_resolver.resolve(object())
@@ -400,6 +401,59 @@ async def test_exact_pairs_restore_state_and_reject_old_lineage() -> None:
     await recovered.commit()
     head, _ = await store.get_head("one", None)
     assert head is not None and head.binding == second.binding
+
+
+async def test_completed_response_replay_is_explicit_and_does_not_advance_the_head() -> None:
+    first = await _prepare("one", workflow=_workflow(_Review()))
+    await _finish(first, WorkflowTurn(input="review"))
+    store = FoundryWorkflowBindingStore(_scope())
+    before, before_etag = await store.get_head("one", None)
+    with pytest.raises(WorkflowConflictError, match="already exists"):
+        await _prepare("one", workflow=_workflow(_Review()))
+
+    replay = await _prepare("one", workflow=_workflow(_Review()), replay_completed=True)
+    assert replay.has_completed_output
+    assert replay.snapshot is not None
+    assert replay.snapshot["output"] == []
+    after, after_etag = await store.get_head("one", None)
+    assert (after, after_etag) == (before, before_etag)
+
+
+async def test_default_store_integrity_hashes_the_persisted_encoding_without_repickling() -> None:
+    first = await _prepare("one", workflow=_workflow(_Approval()))
+    with patch(
+        "agent_framework_foundry_hosting._workflow_state._checkpoint_hash",
+        side_effect=AssertionError("default storage must not re-pickle checkpoints for integrity"),
+    ):
+        await _finish(first, WorkflowTurn(input="/safe"))
+        second = await _prepare("two", workflow=_workflow(_Approval()), previous_response_id="one")
+    assert set(second.pending_requests) == {"approval-1"}
+
+
+async def test_superseded_cleanup_failure_is_retried_after_later_commit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = await _prepare("one", reclaim_superseded=True)
+    assert await _finish(first, WorkflowTurn(input=1)) == [1]
+    second = await _prepare("two", previous_response_id="one", reclaim_superseded=True)
+    with patch.object(
+        FoundryWorkflowBindingStore,
+        "delete_response",
+        AsyncMock(side_effect=RuntimeError("private cleanup detail")),
+    ):
+        assert await _finish(second, WorkflowTurn(input=1)) == [2]
+    store = FoundryWorkflowBindingStore(_scope())
+    old, _ = await store.get_response("one")
+    current, _ = await store.get_response("two")
+    assert old is not None and current is not None and current.status == "completed"
+    assert "Failed to reclaim superseded native workflow state" in caplog.text
+
+    third = await _prepare("three", previous_response_id="two", reclaim_superseded=True)
+    assert await _finish(third, WorkflowTurn(input=1)) == [3]
+    assert await store.get_response("one") == (None, None)
+    assert await store.get_response("two") == (None, None)
+    final, _ = await store.get_response("three")
+    assert final is not None and final.status == "completed"
 
 
 @pytest.mark.parametrize("scope", [_scope(user="other"), _scope(sandbox="other")])

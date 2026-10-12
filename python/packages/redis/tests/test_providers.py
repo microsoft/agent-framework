@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -693,7 +694,13 @@ class TestRedisResultHelper:
         async def _coro() -> int:
             return 7
 
-        assert await _redis_result(_coro()) == 7
+        # Annotated as the union redis-py actually declares (``int | Awaitable[int]``),
+        # which is the shape ``_redis_result`` exists to normalise. Handing it a bare
+        # coroutine is outside that contract: the single union parameter solves ``_T``
+        # from the non-awaitable arm alone, so mypy rejects the awaitable, exactly as
+        # the helper's own docstring says it only covers ``Awaitable[T] | T``.
+        pending: int | Awaitable[int] = _coro()
+        assert await _redis_result(pending) == 7
 
     async def test_passes_through_a_plain_result(self):
         assert await _redis_result(7) == 7

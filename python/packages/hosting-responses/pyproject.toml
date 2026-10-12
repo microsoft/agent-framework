@@ -4,7 +4,7 @@ description = "OpenAI Responses-shaped helpers for agent-framework-hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260918"
+version = "1.0.0a261008"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "agent-framework-hosting==1.0.0a260730",
+    "agent-framework-hosting==1.0.0a261008",
     "openai>=1.99.0,<4",
 ]
 

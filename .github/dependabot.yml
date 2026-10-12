@@ -156,6 +156,21 @@ updates:
     cooldown:
       default-days: 7
 
+  # Maintain npm dependencies for DevUI and sample frontends.
+  - package-ecosystem: "npm"
+    directories:
+      - "/python/packages/devui/frontend"
+      - "/python/samples/05-end-to-end/ag_ui_single_agent/frontend"
+      - "/python/samples/05-end-to-end/ag_ui_workflow_handoff/frontend"
+      - "/python/samples/05-end-to-end/chatkit-integration/frontend"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    labels:
+      - "dependencies"
+    cooldown:
+      default-days: 7
+
   # Maintain dependencies for github-actions
   - package-ecosystem: "github-actions"
     # Cover both the standard workflow location and our composite actions.

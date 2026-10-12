@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor
 from agent_framework_devui._mapper import MessageMapper
+from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
 
 
 @pytest.fixture
@@ -250,3 +251,168 @@ def test_multiple_approvals_independent(executor: AgentFrameworkExecutor) -> Non
     # req_b should still be pending
     assert "req_b" in executor._pending_approvals
     assert "req_a" not in executor._pending_approvals
+
+
+def test_approval_request_must_be_bound_to_originating_conversation(
+    executor: AgentFrameworkExecutor,
+) -> None:
+    """CWE-863: approval from one conversation must not be usable by another."""
+    # Simulate an approval request issued while handling conversation A.
+    executor._track_approval_request(
+        {
+            "type": "response.function_approval.requested",
+            "request_id": "req_cross_conversation",
+            "function_call": {
+                "id": "call_sensitive",
+                "occurrence_id": "af-call-sensitive",
+                "name": "sensitive_tool",
+                "arguments": {"resource": "conversation-a-secret"},
+            },
+        },
+        conversation_id="conversation-a",
+    )
+
+    # Conversation B submits an approval for conversation A's request.
+    conversation_b = AgentFrameworkRequest(
+        model="test-agent",
+        input=_make_approval_response_input(
+            request_id="req_cross_conversation",
+            approved=True,
+        ),
+        conversation="conversation-b",
+    )
+
+    # A pending approval must be scoped to the conversation that caused it.
+    # A response from a different conversation must be rejected.
+    with pytest.raises(ValueError, match="did not contain any supported message content"):
+        executor._convert_input_to_chat_message(
+            conversation_b.input,
+            conversation_id="conversation-b",
+        )
+
+    # A rejected response from another conversation must not consume the approval.
+    assert ("conversation-a", "req_cross_conversation") in executor._pending_approvals
+
+    # The originating conversation can still consume its approval.
+    conversation_a_input = _make_approval_response_input(
+        request_id="req_cross_conversation",
+        approved=True,
+    )
+    result = executor._convert_input_to_chat_message(
+        conversation_a_input,
+        conversation_id="conversation-a",
+    )
+
+    approval_contents = [c for c in result.contents if c.type == "function_approval_response"]
+    assert len(approval_contents) == 1
+    assert approval_contents[0].function_call.name == "sensitive_tool"
+    assert ("conversation-a", "req_cross_conversation") not in executor._pending_approvals
+
+
+def test_same_approval_request_id_is_scoped_per_conversation(
+    executor: AgentFrameworkExecutor,
+) -> None:
+    """Same request_id in different conversations must not collide."""
+    request_id = "req_shared"
+
+    executor._track_approval_request(
+        {
+            "type": "response.function_approval.requested",
+            "request_id": request_id,
+            "function_call": {
+                "id": "call_a",
+                "occurrence_id": "af-call-a",
+                "name": "tool_a",
+                "arguments": {"conversation": "a"},
+            },
+        },
+        conversation_id="conversation-a",
+    )
+    executor._track_approval_request(
+        {
+            "type": "response.function_approval.requested",
+            "request_id": request_id,
+            "function_call": {
+                "id": "call_b",
+                "occurrence_id": "af-call-b",
+                "name": "tool_b",
+                "arguments": {"conversation": "b"},
+            },
+        },
+        conversation_id="conversation-b",
+    )
+
+    assert ("conversation-a", request_id) in executor._pending_approvals
+    assert ("conversation-b", request_id) in executor._pending_approvals
+
+    result_a = executor._convert_input_to_chat_message(
+        _make_approval_response_input(request_id=request_id, approved=True),
+        conversation_id="conversation-a",
+    )
+
+    approval_a = [c for c in result_a.contents if c.type == "function_approval_response"]
+    assert len(approval_a) == 1
+    assert approval_a[0].function_call.name == "tool_a"
+    assert ("conversation-a", request_id) not in executor._pending_approvals
+    assert ("conversation-b", request_id) in executor._pending_approvals
+
+    result_b = executor._convert_input_to_chat_message(
+        _make_approval_response_input(request_id=request_id, approved=True),
+        conversation_id="conversation-b",
+    )
+
+    approval_b = [c for c in result_b.contents if c.type == "function_approval_response"]
+    assert len(approval_b) == 1
+    assert approval_b[0].function_call.name == "tool_b"
+    assert ("conversation-b", request_id) not in executor._pending_approvals
+
+
+def test_scoped_and_legacy_approval_with_same_request_id_is_rejected(
+    executor: AgentFrameworkExecutor,
+) -> None:
+    """Conflicting scoped and legacy approvals must fail closed."""
+    request_id = "req_mixed_scope"
+
+    # Legacy/unscoped pending approval.
+    executor._track_approval_request(
+        {
+            "type": "response.function_approval.requested",
+            "request_id": request_id,
+            "function_call": {
+                "id": "call_legacy",
+                "occurrence_id": "af-call-legacy",
+                "name": "legacy_tool",
+                "arguments": {"scope": "legacy"},
+            },
+        },
+    )
+
+    # Conversation-scoped pending approval with the same request ID.
+    executor._track_approval_request(
+        {
+            "type": "response.function_approval.requested",
+            "request_id": request_id,
+            "function_call": {
+                "id": "call_scoped",
+                "occurrence_id": "af-call-scoped",
+                "name": "scoped_tool",
+                "arguments": {"scope": "conversation-a"},
+            },
+        },
+        conversation_id="conversation-a",
+    )
+
+    assert request_id in executor._pending_approvals
+    assert ("conversation-a", request_id) in executor._pending_approvals
+
+    # The mixed scoped/unscoped state is ambiguous. Fail closed rather than
+    # selecting either approval and potentially allowing a replay.
+    with pytest.raises(ValueError, match="did not contain any supported message content"):
+        executor._convert_input_to_chat_message(
+            _make_approval_response_input(request_id=request_id, approved=True),
+            conversation_id="conversation-a",
+        )
+
+    # Rejection must not consume either pending approval.
+    assert request_id in executor._pending_approvals
+    assert ("conversation-a", request_id) in executor._pending_approvals

@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal, cast
 
@@ -51,6 +52,7 @@ from ._workflow_source import prepare_workflow_kwargs, validate_workflow_provide
 
 _CONFLICT = "Another request advanced this workflow. Reload its current response or start a fresh lineage."
 _BLOCKED = "This workflow turn was interrupted or failed; start a fresh workflow lineage to avoid replaying effects."
+logger = logging.getLogger(__name__)
 
 
 class WorkflowConflictError(RuntimeError):
@@ -254,6 +256,20 @@ class FoundryWorkflowBindingStore:
         )
         return await self._write(key, asdict(head), expected_etag)
 
+    async def delete_response(self, response_id: str, *, expected_etag: str) -> bool:
+        """Conditionally delete a superseded response record."""
+        store = await self._get_store()
+        async with store:
+            try:
+                deleted = await store.delete_item(
+                    _key("response", response_id),
+                    if_match=expected_etag,
+                    call_id=self.scope.call_id,
+                )
+            except (FoundryStorageConflictError, FoundryStoragePreconditionError) as exc:
+                raise WorkflowConflictError(_CONFLICT) from exc
+        return deleted.id is not None
+
     async def _write(self, key: str, value: dict[str, Any], expected_etag: str | None) -> str:
         store = await self._get_store()
         async with store:
@@ -298,6 +314,21 @@ class _CheckpointWrites:
             state[key] = fresh.get(key, {})
         return replace(checkpoint, state=state)
 
+    async def load_persisted(self, checkpoint_id: str) -> tuple[WorkflowCheckpoint, str]:
+        """Load a checkpoint with a process-stable integrity hash when supported."""
+        load_with_hash = getattr(cast(Any, self.storage), "load_with_hash", None)
+        if callable(load_with_hash):
+            loader = cast(
+                Callable[[str], Awaitable[tuple[WorkflowCheckpoint, str]]],
+                load_with_hash,
+            )
+            checkpoint, checkpoint_hash = await loader(checkpoint_id)
+            if not isinstance(checkpoint, WorkflowCheckpoint) or not isinstance(checkpoint_hash, str):
+                raise TypeError("Checkpoint storage returned an invalid checkpoint integrity pair.")
+            return checkpoint, checkpoint_hash
+        checkpoint = await self.storage.load(checkpoint_id)
+        return checkpoint, _checkpoint_hash(checkpoint)
+
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         return await self.storage.list_checkpoints(workflow_name=workflow_name)
 
@@ -327,12 +358,14 @@ class HostedWorkflowRun:
         stored: bool,
         recovery: bool,
         fresh_factory: bool,
+        reclaim_superseded: bool,
     ) -> None:
         self.workflow = workflow
         self.scope = scope
         self.stored = stored
         self.recovery = recovery
         self.fresh_factory = fresh_factory
+        self.reclaim_superseded = reclaim_superseded
         self.store = FoundryWorkflowBindingStore(scope)
         self.binding: WorkflowBinding
         self._head: WorkflowHead | None = None
@@ -364,7 +397,9 @@ class HostedWorkflowRun:
         lineage_id: str | None = None,
         stored: bool = True,
         recovery: bool = False,
+        replay_completed: bool = False,
         fresh_factory: bool = False,
+        reclaim_superseded: bool = False,
     ) -> HostedWorkflowRun:
         """Read exact continuation state without claiming, consuming replies, or executing."""
         if not workflow.name or not workflow.graph_signature_hash:
@@ -373,7 +408,14 @@ class HostedWorkflowRun:
             raise ValueError("A workflow turn cannot combine previous_response_id and conversation.")
         if not stored and (recovery or previous_response_id is not None or conversation_id is not None):
             raise ValueError("store=false workflow requests cannot continue stored state; start a one-shot turn.")
-        run = cls(workflow, scope, stored=stored, recovery=recovery, fresh_factory=fresh_factory)
+        run = cls(
+            workflow,
+            scope,
+            stored=stored,
+            recovery=recovery,
+            fresh_factory=fresh_factory,
+            reclaim_superseded=reclaim_superseded,
+        )
         run.binding = WorkflowBinding(
             response_id=response_id,
             checkpoint_id=None,
@@ -388,6 +430,9 @@ class HostedWorkflowRun:
             return run
 
         own, own_etag = await run.store.get_response(response_id)
+        if not recovery and replay_completed and own is not None and own.status == "completed":
+            recovery = True
+            run.recovery = True
         if recovery and own is not None:
             run._record, run._record_etag = own, own_etag
             run.binding = own.binding
@@ -511,12 +556,12 @@ class HostedWorkflowRun:
                 )
             if previous.checkpoint_id is None:
                 raise ValueError("The workflow response has no acknowledged checkpoint.")
-            checkpoint = await storage.load(previous.checkpoint_id)
+            checkpoint, checkpoint_hash = await run._storage.load_persisted(previous.checkpoint_id)
             if (
                 checkpoint.checkpoint_id != previous.checkpoint_id
                 or checkpoint.workflow_name != workflow.name
                 or checkpoint.graph_signature_hash != workflow.graph_signature_hash
-                or _checkpoint_hash(checkpoint) != previous.checkpoint_hash
+                or checkpoint_hash != previous.checkpoint_hash
             ):
                 raise ValueError("The exact workflow checkpoint does not match its response binding.")
             run._checkpoint = checkpoint
@@ -686,6 +731,7 @@ class HostedWorkflowRun:
         )
         self._record_etag = await self.store.save_response(record, expected_etag=self._record_etag)
         self._record = record
+        await self._reclaim_completed_ancestors()
 
     async def assert_claim(self) -> None:
         if not self._claimed:
@@ -755,7 +801,7 @@ class HostedWorkflowRun:
         if not self.stored:
             return
         snapshot_value = _json_object(snapshot)
-        checkpoint = await self.get_checkpoint(checkpoint_id or self.checkpoint_id)
+        checkpoint, checkpoint_hash = await self._get_checkpoint_with_hash(checkpoint_id or self.checkpoint_id)
         if checkpoint is None:
             raise RuntimeError("Output cannot be paired before a core checkpoint is acknowledged.")
         if approvals is not None and any(
@@ -765,9 +811,7 @@ class HostedWorkflowRun:
         await self.assert_claim()
         if self._record is None:
             raise RuntimeError("The workflow response pair has not been claimed.")
-        binding = replace(
-            self.binding, checkpoint_id=checkpoint.checkpoint_id, checkpoint_hash=_checkpoint_hash(checkpoint)
-        )
+        binding = replace(self.binding, checkpoint_id=checkpoint.checkpoint_id, checkpoint_hash=checkpoint_hash)
         pending_approvals = {
             wire_id: request_id
             for wire_id, request_id in (approvals if approvals is not None else self._record.approvals or {}).items()
@@ -785,14 +829,20 @@ class HostedWorkflowRun:
 
     async def get_checkpoint(self, checkpoint_id: str | None) -> WorkflowCheckpoint | None:
         """Read a checkpoint acknowledged in this run, including a producer-stamped stream boundary."""
+        checkpoint, _ = await self._get_checkpoint_with_hash(checkpoint_id)
+        return checkpoint
+
+    async def _get_checkpoint_with_hash(
+        self, checkpoint_id: str | None
+    ) -> tuple[WorkflowCheckpoint | None, str | None]:
         if checkpoint_id is None:
-            return None
+            return None, None
         if self._storage is None or (
             checkpoint_id not in self._storage.acknowledged_ids
             and (self._checkpoint is None or checkpoint_id != self._checkpoint.checkpoint_id)
         ):
             raise ValueError("Output pairing requires a checkpoint acknowledged by this exact workflow turn.")
-        checkpoint = await self._storage.storage.load(checkpoint_id)
+        checkpoint, checkpoint_hash = await self._storage.load_persisted(checkpoint_id)
         if (
             checkpoint.checkpoint_id != checkpoint_id
             or checkpoint.workflow_name != self.workflow.name
@@ -800,7 +850,7 @@ class HostedWorkflowRun:
         ):
             raise ValueError("The acknowledged workflow checkpoint identity changed.")
         validate_workflow_provider_state(self.workflow, checkpoint)
-        return checkpoint
+        return checkpoint, checkpoint_hash
 
     async def commit(self, snapshot: Mapping[str, Any] | None = None) -> None:
         """Commit only fully finalized, encoded output, before protocol success or done."""
@@ -822,6 +872,44 @@ class HostedWorkflowRun:
         self._head_etag = await self.store.save_head(head, expected_etag=self._head_etag)
         self._head = head
         self._claimed = False
+
+    async def _reclaim_completed_ancestors(self) -> None:
+        """Best-effort reclaim after the new head is durably committed.
+
+        Cleanup is oldest-first. If a deletion fails, newer records retain the
+        chain needed for a later successful commit to retry cleanup.
+        """
+        if not self.reclaim_superseded or self._storage is None:
+            return
+        response_id = self.binding.previous_response_id
+        records: list[tuple[WorkflowRecord, str]] = []
+        visited: set[str] = set()
+        try:
+            current_checkpoint_id = self.binding.checkpoint_id
+            checkpoint_ids = await self._storage.storage.list_checkpoint_ids(workflow_name=self.binding.workflow_name)
+            for checkpoint_id in checkpoint_ids:
+                if current_checkpoint_id is None or checkpoint_id != current_checkpoint_id:
+                    await self._storage.storage.delete(checkpoint_id)
+            while response_id is not None:
+                if response_id in visited:
+                    raise ValueError("Invalid cycle in superseded workflow response lineage.")
+                visited.add(response_id)
+                record, etag = await self.store.get_response(response_id)
+                if record is None or etag is None:
+                    break
+                if (
+                    record.status != "completed"
+                    or record.binding.scope_key != self.scope.storage_key
+                    or record.binding.lineage_id != self.binding.lineage_id
+                    or record.binding.conversation_id != self.binding.conversation_id
+                ):
+                    break
+                records.append((record, etag))
+                response_id = record.binding.previous_response_id
+            for record, etag in reversed(records):
+                await self.store.delete_response(record.binding.response_id, expected_etag=etag)
+        except Exception:
+            logger.exception("Failed to reclaim superseded native workflow state; a later commit can retry cleanup")
 
     async def abort(self) -> None:
         """Block interrupted/failed authority instead of permitting unsafe reply or effect replay."""

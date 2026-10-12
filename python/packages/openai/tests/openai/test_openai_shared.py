@@ -15,7 +15,8 @@ from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
 from agent_framework._telemetry import mark_feature_used
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai._models import FinalRequestOptions
 
 from agent_framework_openai._feature_usage import create_feature_usage_http_client
 from agent_framework_openai._shared import (
@@ -47,6 +48,11 @@ class _TokenCredentialStub(TokenCredential):
         raise NotImplementedError
 
 
+async def _build_request(client: AsyncOpenAI):
+    options = FinalRequestOptions.construct(method="GET", url="/models")
+    return client._build_request(await client._prepare_options(options))
+
+
 @pytest.mark.usefixtures("openai_unit_test_env")
 @pytest.mark.parametrize("api_key", ["test-secret-key", SecretString("test-secret-key")], ids=["str", "secret"])
 @pytest.mark.parametrize("route", ["openai", "azure"])
@@ -72,6 +78,169 @@ async def test_service_settings_unwrap_api_key_at_sdk_boundary(api_key: str | Se
         assert settings["api_key"].get_secret_value() == "test-secret-key"
         assert "test-secret-key" not in str(settings["api_key"])
         assert "test-secret-key" not in repr(settings)
+    finally:
+        await sdk_client.close()
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "credential"])
+async def test_azure_route_suppresses_openai_metadata_environment(monkeypatch, auth_mode: str) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-openai-key")
+    monkeypatch.setenv("OPENAI_ORG_ID", "ambient-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "ambient-project")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "ambient-azure-key")
+
+    _, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key="explicit-azure-key" if auth_mode == "api_key" else None,
+        credential=(lambda: "explicit-azure-token") if auth_mode == "credential" else None,
+        org_id=None,
+        base_url=None,
+        endpoint="https://test.openai.azure.com",
+        api_version="2024-12-01-preview",
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert use_azure
+        if auth_mode == "api_key":
+            assert request.headers["api-key"] == "explicit-azure-key"
+            assert "Authorization" not in request.headers
+        else:
+            assert request.headers["Authorization"] == "Bearer explicit-azure-token"
+            assert "api-key" not in request.headers
+        assert "OpenAI-Organization" not in request.headers
+        assert "OpenAI-Project" not in request.headers
+    finally:
+        await sdk_client.close()
+
+
+async def test_azure_openai_v1_bridge_suppresses_openai_metadata_environment(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-openai-key")
+    monkeypatch.setenv("OPENAI_ORG_ID", "ambient-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "ambient-project")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "ambient-azure-key")
+
+    _, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key=None,
+        credential=lambda: "explicit-azure-token",
+        org_id=None,
+        base_url="https://test.openai.azure.com/openai/v1/",
+        endpoint=None,
+        api_version=None,
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert use_azure
+        assert not isinstance(sdk_client, AsyncAzureOpenAI)
+        assert request.headers["Authorization"] == "Bearer explicit-azure-token"
+        assert "api-key" not in request.headers
+        assert "OpenAI-Organization" not in request.headers
+        assert "OpenAI-Project" not in request.headers
+    finally:
+        await sdk_client.close()
+
+
+async def test_azure_route_preserves_explicit_metadata_headers(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_ORG_ID", "ambient-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "ambient-project")
+
+    _, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key="explicit-azure-key",
+        credential=None,
+        org_id=None,
+        base_url=None,
+        endpoint="https://test.openai.azure.com",
+        api_version="2024-12-01-preview",
+        default_azure_api_version="2024-12-01-preview",
+        default_headers={
+            "authorization": "Bearer explicit-authorization",
+            "OpenAI-Organization": "explicit-org",
+            "openai-project": "explicit-project",
+            "X-Gateway-Token": "explicit-gateway-token",
+        },
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert use_azure
+        assert request.headers["Authorization"] == "Bearer explicit-authorization"
+        assert request.headers["OpenAI-Organization"] == "explicit-org"
+        assert request.headers["OpenAI-Project"] == "explicit-project"
+        assert request.headers["X-Gateway-Token"] == "explicit-gateway-token"
+    finally:
+        await sdk_client.close()
+
+
+async def test_openai_route_retains_metadata_environment_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_ORG_ID", "ambient-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "ambient-project")
+
+    _, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key="explicit-openai-key",
+        credential=None,
+        org_id=None,
+        base_url="https://example.test/v1/",
+        endpoint=None,
+        api_version=None,
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert not use_azure
+        assert request.headers["Authorization"] == "Bearer explicit-openai-key"
+        assert request.headers["OpenAI-Organization"] == "ambient-org"
+        assert request.headers["OpenAI-Project"] == "ambient-project"
+    finally:
+        await sdk_client.close()
+
+
+async def test_prebuilt_client_preserves_metadata_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_ORG_ID", "ambient-org")
+    monkeypatch.setenv("OPENAI_PROJECT_ID", "ambient-project")
+    prebuilt_client = AsyncOpenAI(
+        api_key="prebuilt-key",
+        organization="prebuilt-org",
+        project="prebuilt-project",
+        base_url="https://example.test/v1/",
+        default_headers={"X-Gateway-Token": "prebuilt-gateway-token"},
+    )
+
+    _, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key=None,
+        credential=None,
+        org_id=None,
+        base_url=None,
+        endpoint=None,
+        api_version=None,
+        default_azure_api_version="2024-12-01-preview",
+        client=prebuilt_client,
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert not use_azure
+        assert sdk_client is prebuilt_client
+        assert request.headers["OpenAI-Organization"] == "prebuilt-org"
+        assert request.headers["OpenAI-Project"] == "prebuilt-project"
+        assert request.headers["X-Gateway-Token"] == "prebuilt-gateway-token"
     finally:
         await sdk_client.close()
 

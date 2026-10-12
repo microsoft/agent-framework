@@ -52,7 +52,7 @@ from ._base_group_chat_orchestrator import (
 )
 from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor
-from ._orchestrator_helpers import clean_conversation_for_handoff
+from ._orchestrator_helpers import clean_conversation_for_handoff, extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -450,7 +450,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         Preferred path is structured output (`agent_response.value`) when available.
         If only text is available, first attempt strict JSON parsing and then apply a
-        temporary concatenated-JSON fallback as a stop-gap.
+        temporary concatenated-JSON fallback as a stop-gap. Providers that ignore
+        `response_format` often wrap the JSON in a Markdown code fence, so the body of
+        the last fenced block is tried as well.
         """
         try:
             structured_value = agent_response.value
@@ -469,6 +471,11 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         response_text = agent_response.text.strip()
         if response_text and response_text not in text_candidates:
             text_candidates.append(response_text)
+
+        for candidate in list(text_candidates):
+            fence_bodies = extract_markdown_fence_bodies(candidate)
+            if fence_bodies and fence_bodies[-1] not in text_candidates:
+                text_candidates.append(fence_bodies[-1])
 
         last_error: Exception | None = None
         for candidate in text_candidates:
@@ -512,8 +519,15 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             # Parse and validate the structured output
             agent_orchestration_output = self._parse_agent_output(agent_response)
 
-            if not agent_orchestration_output.terminate and not agent_orchestration_output.next_speaker:
-                raise ValueError("next_speaker must be provided if not terminating the conversation.")
+            if not agent_orchestration_output.terminate:
+                next_speaker = agent_orchestration_output.next_speaker
+                if not next_speaker:
+                    raise ValueError("next_speaker must be provided if not terminating the conversation.")
+                if next_speaker not in self._participant_registry.participants:
+                    raise ValueError(
+                        f"Orchestrator agent selected unknown participant '{next_speaker}'. "
+                        f"Valid participants: {', '.join(self._participant_registry.participants)}."
+                    )
 
             return agent_orchestration_output
 

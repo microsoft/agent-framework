@@ -147,7 +147,9 @@ def messages_from_responses_input(value: Any) -> list[Message]:
         if not isinstance(item, Mapping):
             raise ValueError("each `input` item must be an object")
         item_map = cast("Mapping[str, Any]", item)
-        if item_map.get("type") == "message":
+        # `type` is optional on message items (EasyInputMessage), e.g. {"role": "user", "content": "hi"}.
+        item_type = item_map.get("type")
+        if item_type == "message" or (item_type is None and "role" in item_map):
             flush()
             role = item_map.get("role")
             if not isinstance(role, str) or role not in _RESPONSES_INPUT_MESSAGE_ROLES:
