@@ -1112,6 +1112,37 @@ async def test_comprehensive_edge_groups_workflow():
     assert has_fan_in, "Workflow should contain FanInEdgeGroup"
 
 
+async def test_switch_case_cases_can_share_a_target():
+    """Test that two switch-case branches can route to the same executor."""
+    from agent_framework import Case, Default
+
+    class TaggingExecutor(Executor):
+        @handler
+        async def tag(self, message: NumberMessage, ctx: WorkflowContext[Any, str]) -> None:
+            await ctx.yield_output(f"{self.id}:{message.data}")
+
+    router = IncrementExecutor(id="router", limit=1000, increment=0)
+    shared = TaggingExecutor(id="shared")
+    fallback = TaggingExecutor(id="fallback")
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda msg: msg.data == 1, target=shared),
+                Case(condition=lambda msg: msg.data == 2, target=shared),
+                Default(target=fallback),
+            ],
+        )
+        .build()
+    )
+
+    assert (await workflow.run(NumberMessage(data=1))).get_outputs() == ["shared:1"]
+    assert (await workflow.run(NumberMessage(data=2))).get_outputs() == ["shared:2"]
+    assert (await workflow.run(NumberMessage(data=3))).get_outputs() == ["fallback:3"]
+
+
 async def test_workflow_with_simple_cycle_and_exit_condition():
     """Test a simpler workflow with a cycle that has a clear exit condition."""
 
