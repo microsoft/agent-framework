@@ -2065,6 +2065,7 @@ class MCPTool:
         call_meta_before_discovery = self._tool_call_meta_by_name
         task_support_before_discovery = self._tool_task_support_by_name
         param_names_before_discovery = self._tool_param_names_by_name
+        annotations_before_discovery = self._tool_annotations_by_name
         try:
             logger.debug("Connected to MCP server: %s", self.session)
             self.is_connected = True
@@ -2093,6 +2094,7 @@ class MCPTool:
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_task_support_by_name = task_support_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
+                self._tool_annotations_by_name = annotations_before_discovery
             raise
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:

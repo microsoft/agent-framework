@@ -2610,6 +2610,58 @@ async def test_mcp_regular_tool_call_does_not_duplicate_side_effect_after_discon
     assert server.state == 1
 
 
+async def test_connect_discovery_failure_rolls_back_annotations_snapshot():
+    """When load_tools succeeds but a later discovery step fails, the rollback in
+    _connect_on_owner must restore the pre-discovery annotations map along with the
+    other metadata, or a later replay decision reads hints from the failed session."""
+    tool = MCPStdioTool(name="test", command="test-command")
+    sentinel_annotations = {"prev_tool": types.ToolAnnotations(readOnlyHint=True)}
+    sentinel_meta = {"prev_tool": {"version": 0}}
+    sentinel_task = {"prev_tool": "optional"}
+    sentinel_params = {"prev_tool": {"q"}}
+    tool._tool_annotations_by_name = dict(sentinel_annotations)
+    tool._tool_call_meta_by_name = dict(sentinel_meta)
+    tool._tool_task_support_by_name = dict(sentinel_task)
+    tool._tool_param_names_by_name = dict(sentinel_params)
+    retained = FunctionTool(name="retained", func=lambda: "ok")
+    tool._functions.append(retained)
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session = AsyncMock()
+        mock_session._request_id = 1
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(
+                        name="fresh_tool",
+                        inputSchema={"type": "object", "properties": {}},
+                        annotations=types.ToolAnnotations(idempotentHint=True),
+                    )
+                ]
+            )
+        )
+        mock_session.list_prompts = AsyncMock(side_effect=RuntimeError("prompt boom"))
+        session_cm = AsyncMock()
+        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session_class.return_value = session_cm
+
+        with pytest.raises(RuntimeError, match="prompt boom"):
+            await tool.connect()
+
+    assert tool._tool_annotations_by_name == sentinel_annotations
+    assert tool._tool_call_meta_by_name == sentinel_meta
+    assert tool._tool_task_support_by_name == sentinel_task
+    assert tool._tool_param_names_by_name == sentinel_params
+    assert tool._functions == [retained]
+
+
 async def test_mcp_tool_call_tool_raises_on_is_error():
     """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
 
