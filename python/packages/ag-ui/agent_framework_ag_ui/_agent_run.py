@@ -1096,6 +1096,10 @@ def _approval_state_tool_call_ids(
     """Return server-owned approval call ids that are not abandoned."""
     call_ids: set[str] = set()
     for occurrence in approval_state_store.lifecycle.occurrences_for_thread(thread_id=thread_id):
+        # Terminal occurrences are retained only for replay. Their call ID no longer belongs to an
+        # open call, so a later turn reusing it can still be abandoned and needs a skipped result.
+        if occurrence.status.is_terminal:
+            continue
         call_ids.add(occurrence.identity.call_id)
         call_ids.add(occurrence.function_call_id)
         call_ids.update(occurrence.aliases)

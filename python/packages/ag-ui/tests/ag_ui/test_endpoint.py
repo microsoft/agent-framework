@@ -7098,6 +7098,106 @@ async def test_endpoint_approval_snapshot_pairs_result_with_later_turn_reusing_c
     ]
 
 
+async def test_endpoint_skips_abandoned_later_call_reusing_settled_approval_call_id(streaming_chat_client_stub):
+    """A settled approval retained for replay does not protect a later abandoned call that reuses its ID."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    executed: list[str] = []
+    messages_received: list[Message] = []
+
+    def lookup() -> str:
+        executed.append("lookup")
+        return "result 1"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        messages_received[:] = list(messages)
+        last = messages[-1]
+        if last.role == "user" and last.text == "First":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="lookup", arguments="{}")],
+                role="assistant",
+            )
+            return
+        if last.role == "user" and last.text == "Second":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="pick_color", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="lookup", description="Lookup", func=lookup, approval_mode="always_require")],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    client = TestClient(app)
+    thread_id = "thread-reused-call-id-abandoned"
+    client_tool = {"name": "pick_color", "description": "Pick a color", "parameters": {"type": "object"}}
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+            "tools": [client_tool],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    first_events = post("run-first", text="First")
+    first_finished = [event for event in first_events if event["type"] == "RUN_FINISHED"]
+    post("run-first-resume", approval_id=_run_finished_interrupts(first_finished[-1])[0]["id"])
+    assert executed == ["lookup"]
+
+    # The settled approval stays in the lifecycle for replay while the next turn reuses its call ID.
+    occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(
+        thread_id=approval_state_thread_id(scope="test", thread_id=thread_id)
+    )
+    assert [(occurrence.identity.call_id, occurrence.status.is_terminal) for occurrence in occurrences] == [
+        ("call_reused", True)
+    ]
+
+    post("run-second", text="Second")
+    # The client never answers the client tool call and moves on.
+    post("run-third", text="Never mind")
+
+    replayed = [
+        (content.type, content.call_id, content.result if content.type == "function_result" else None)
+        for message in messages_received
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ]
+    assert [entry[:2] for entry in replayed] == [
+        ("function_call", "call_reused"),
+        ("function_result", "call_reused"),
+        ("function_call", "call_reused"),
+        ("function_result", "call_reused"),
+    ]
+    assert replayed[1][2] == "result 1"
+    assert "Tool execution skipped" in str(replayed[3][2])
+
+
 @pytest.mark.parametrize("retry_time", [25.0, 33.0])
 async def test_endpoint_collected_approval_preserves_original_expiration(
     streaming_chat_client_stub, retry_time: float
