@@ -888,10 +888,13 @@ class MemoryFileStore(MemoryStore):
         # Absorb pre-digest files into the new name so the topic does not
         # list twice. The record's slug is already the derived stem, so the
         # legacy name has to be re-derived from the human-readable topic too.
+        # Never touch the file just written: an explicit slug can collide
+        # with the legacy stem re-derived from the topic.
         legacy_paths = {
             path
             for value in (record.topic, record.slug)
             if (path := self._legacy_topic_path(session, source_id=source_id, topic=value)) is not None
+            and path != topic_path
         }
         for legacy_path in legacy_paths:
             if legacy_path.exists() and self._topic_file_matches(legacy_path, topic=record.topic):

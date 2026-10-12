@@ -1116,6 +1116,17 @@ def test_memory_file_store_write_keeps_unrelated_stem_file(tmp_path) -> None:
     assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["accent fact"]
 
 
+def test_memory_file_store_write_with_explicit_slug_survives_legacy_cleanup(tmp_path) -> None:
+    """An explicit slug colliding with the legacy stem must not delete the file just written."""
+    store, session = _topic_store(tmp_path)
+    record = _record("café", ["accent fact"])
+    record.slug = "caf"
+
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["accent fact"]
+
+
 def test_memory_file_store_legacy_fallback_requires_matching_stored_topic(tmp_path) -> None:
     """A legacy-named file is a fallback alias only when its stored topic agrees."""
     store, session = _topic_store(tmp_path)
