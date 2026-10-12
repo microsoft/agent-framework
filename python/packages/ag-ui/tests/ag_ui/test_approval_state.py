@@ -15,7 +15,10 @@ from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
 
 
 def test_approval_state_thread_id_allows_unscoped_thread() -> None:
-    assert approval_state_thread_id(scope=None, thread_id="thread-1") == "thread-1"
+    thread_key = approval_state_thread_id(scope=None, thread_id="thread-1")
+
+    assert thread_key.startswith("u:")
+    assert "thread-1" in thread_key
 
 
 def test_approval_state_thread_id_scopes_thread() -> None:
@@ -31,6 +34,12 @@ def test_approval_state_thread_id_is_injective_across_separator_like_values() ->
         scope="tenant\x1fone",
         thread_id="two",
     )
+
+
+def test_approval_state_thread_id_separates_scoped_and_unscoped_namespaces() -> None:
+    scoped = approval_state_thread_id(scope="tenant", thread_id="foo")
+
+    assert approval_state_thread_id(scope=None, thread_id=scoped) != scoped
 
 
 @pytest.mark.parametrize("scope", ["", object()])

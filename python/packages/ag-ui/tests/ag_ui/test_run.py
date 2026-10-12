@@ -595,6 +595,39 @@ def test_emit_text_basic():
     assert flow.accumulated_text == "Hello world"
 
 
+async def test_client_a2ui_flag_without_backend_opt_in_does_not_import_optional_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client metadata alone cannot import or activate optional A2UI support."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "agent_framework_ag_ui._a2ui":
+            raise AssertionError("optional A2UI support must not be imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text("Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-no-a2ui",
+                "threadId": "thread-no-a2ui",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"injectA2UITool": True},
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    assert events[-1].type == "RUN_FINISHED"
+
+
 def test_emit_text_skip_empty():
     """Test _emit_text skips empty text."""
     flow = FlowState()

@@ -88,6 +88,10 @@ def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
     return [json.loads(line[6:]) for line in content.splitlines() if line.startswith("data: ")]
 
 
+def _unscoped_approval_thread_id(thread_id: str) -> str:
+    return approval_state_thread_id(scope=None, thread_id=thread_id)
+
+
 async def _post_until_sse_event_then_disconnect(
     app: FastAPI,
     path: str,
@@ -4553,9 +4557,10 @@ async def test_endpoint_agent_approval_batch_keeps_distinct_occurrences_for_reus
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
+    approval_thread_id = _unscoped_approval_thread_id("thread-shared-call")
     first = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-shared-call",
+        thread_id=approval_thread_id,
         interrupt_id="approval-first",
         call_id="call-shared",
         name="first_tool",
@@ -4563,7 +4568,7 @@ async def test_endpoint_agent_approval_batch_keeps_distinct_occurrences_for_reus
     )
     second = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-shared-call",
+        thread_id=approval_thread_id,
         interrupt_id="approval-second",
         call_id="call-shared",
         name="second_tool",
@@ -4605,9 +4610,10 @@ async def test_endpoint_agent_unavailable_local_executor_releases_every_unstarte
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
+    approval_thread_id = _unscoped_approval_thread_id("thread-unavailable-batch")
     local = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-unavailable-batch",
+        thread_id=approval_thread_id,
         interrupt_id="approval-local",
         call_id="call-local",
         name="missing_local_tool",
@@ -4615,7 +4621,7 @@ async def test_endpoint_agent_unavailable_local_executor_releases_every_unstarte
     )
     hosted = lifecycle.register(
         owner=ApprovalExecutionOwner.HOSTED,
-        thread_id="thread-unavailable-batch",
+        thread_id=approval_thread_id,
         interrupt_id="approval-hosted",
         call_id="call-hosted",
         name="hosted_tool",
@@ -5065,7 +5071,7 @@ async def test_endpoint_agent_legacy_tool_message_reuses_historical_confirm_chan
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-reused-confirm-id",
+        thread_id=_unscoped_approval_thread_id("thread-reused-confirm-id"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="guarded_tool",
@@ -5136,9 +5142,10 @@ async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
+    approval_thread_id = _unscoped_approval_thread_id("thread-legacy-reused")
     lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-legacy-reused",
+        thread_id=approval_thread_id,
         interrupt_id="approval-first",
         call_id="provider-reused",
         name="first_tool",
@@ -5146,7 +5153,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
     )
     lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-legacy-reused",
+        thread_id=approval_thread_id,
         interrupt_id="approval-second",
         call_id="provider-reused",
         name="second_tool",
@@ -5204,7 +5211,7 @@ async def test_endpoint_agent_legacy_tool_message_cannot_collide_with_interrupt_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-legacy-collision",
+        thread_id=_unscoped_approval_thread_id("thread-legacy-collision"),
         interrupt_id="af-call-secret",
         call_id="provider-real",
         name="guarded_tool",
@@ -5261,7 +5268,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_duplicate_decisions() 
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-legacy-duplicate",
+        thread_id=_unscoped_approval_thread_id("thread-legacy-duplicate"),
         interrupt_id="af-call-current",
         call_id="provider-call",
         name="guarded_tool",
@@ -5315,7 +5322,7 @@ async def test_endpoint_agent_historical_legacy_approval_cannot_authorize_newer_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-historical-legacy",
+        thread_id=_unscoped_approval_thread_id("thread-historical-legacy"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="dangerous_tool",
@@ -6074,16 +6081,17 @@ async def test_endpoint_agent_mixed_retry_reprojects_completed_sibling_without_r
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
+    approval_thread_id = _unscoped_approval_thread_id("thread-completed-sibling")
     completed = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-completed-sibling",
+        thread_id=approval_thread_id,
         interrupt_id="approval-seattle",
         call_id="call-seattle",
         name="record_city",
         arguments='{"city":"Seattle"}',
     )
     completed_intent = lifecycle.claim(
-        thread_id="thread-completed-sibling",
+        thread_id=approval_thread_id,
         decision=ResumeDecision(
             interrupt_id="approval-seattle",
             accepted=True,
@@ -6099,7 +6107,7 @@ async def test_endpoint_agent_mixed_retry_reprojects_completed_sibling_without_r
     )
     lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="thread-completed-sibling",
+        thread_id=approval_thread_id,
         interrupt_id="approval-portland",
         call_id="call-portland",
         name="record_city",
@@ -6314,7 +6322,9 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     }
     assert {event["toolCallId"] for event in tool_results} == {"provider-shared"}
 
-    occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(thread_id=thread_id)
+    occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(
+        thread_id=_unscoped_approval_thread_id(thread_id)
+    )
     assert {occurrence.identity.interrupt_id for occurrence in occurrences} == {
         "guarded-occurrence",
         "first-safe-occurrence",
@@ -7013,7 +7023,8 @@ async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_e
     approval_id = interrupts[0]["id"]
     assert approval_id.startswith("af-call-")
     assert interrupts[0]["toolCallId"] == "call_first"
-    stored_state = wrapped_agent._approval_state_store.get_tool_approval_state("thread-queued-cancel-evicted")
+    approval_thread_id = _unscoped_approval_thread_id("thread-queued-cancel-evicted")
+    stored_state = wrapped_agent._approval_state_store.get_tool_approval_state(approval_thread_id)
     assert stored_state is not None
     assert "call_second" in json.dumps(stored_state)
 
@@ -9071,6 +9082,37 @@ async def test_endpoint_builder_checkpoint_storage_rejects_different_thread_afte
         attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
         assert len(attacker_errors) == 1
         assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_endpoint_builder_checkpoint_storage_ignores_stale_runtime_owner():
+    """A stale runtime override cannot restamp a new request's checkpoints."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_flight_choice_workflow(storage)
+    workflow._runner.context.set_runtime_checkpoint_storage(  # pyright: ignore[reportPrivateUsage]
+        _OwnedWorkflowCheckpointStorage(storage, ("stale-scope", "stale-thread"))
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-current",
+                "threadId": "current-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
+        "snapshot_scope": None,
+        "thread_id": "current-thread",
+    }
 
 
 async def test_endpoint_workflow_checkpoint_resume_without_thread_remains_supported():
@@ -12306,7 +12348,9 @@ async def test_endpoint_canonical_resume_preserves_hosted_approval_for_provider(
     assert resume_response.status_code == 200
     assert not [event for event in _decode_sse_events(resume_response) if event.get("type") == "RUN_ERROR"]
     assert local_executions == []
-    assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(thread_id="thread-hosted-approval")
+    assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
+        thread_id=_unscoped_approval_thread_id("thread-hosted-approval")
+    )
     approval_responses = [
         content
         for message in provider_messages
@@ -12530,7 +12574,9 @@ async def test_endpoint_does_not_forward_resolved_local_approval_control_to_chat
 
     assert resume_response.status_code == 200
     assert local_executions == ["Approved draft"]
-    assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(thread_id="thread-local-approval")
+    assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
+        thread_id=_unscoped_approval_thread_id("thread-local-approval")
+    )
     state_snapshots = [
         event["snapshot"] for event in _decode_sse_events(resume_response) if event.get("type") == "STATE_SNAPSHOT"
     ]

@@ -94,15 +94,12 @@ def _checkpoint_request_owner(metadata: dict[str, Any]) -> WorkflowRequestOwner 
 
 
 def _workflow_checkpoint_storage(workflow: Workflow) -> CheckpointStorage | None:
-    """Return the workflow's effective builder/runtime checkpoint storage."""
+    """Return the workflow's build-time checkpoint storage."""
     runner = getattr(workflow, "_runner", None)
     context = getattr(runner, "context", None)
     if context is None:
         return None
-    get_storage = getattr(context, "_get_effective_checkpoint_storage", None)
-    if not callable(get_storage):
-        return None
-    return cast(CheckpointStorage | None, get_storage())
+    return cast(CheckpointStorage | None, getattr(context, "_checkpoint_storage", None))
 
 
 class _OwnedWorkflowCheckpointStorage:

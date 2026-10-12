@@ -72,6 +72,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   provider preparation fails explicitly instead of executing with a partial policy.
   Client `forwardedProps.injectA2UITool` is only a per-request request to use a capability the backend has already
   enabled with `a2ui_config["inject_a2ui_tool"]`; request metadata alone must never activate a server tool or sub-agent.
+  Resolve that backend opt-in before importing optional A2UI support so a client flag cannot make an otherwise
+  non-A2UI deployment fail on a missing optional dependency.
 - Local approval resume checks the current function-invocation configuration before any approved side effect begins.
   When invocation is disabled, grants remain pending under their original retention deadline and the endpoint emits
   `APPROVAL_INVOCATION_DISABLED`; only a later explicit retry after re-enablement can execute them. Rejections and

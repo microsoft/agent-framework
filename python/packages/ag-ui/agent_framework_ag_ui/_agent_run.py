@@ -3118,9 +3118,13 @@ async def _run_agent_stream(
     # importable without the optional ag-ui-a2ui-toolkit.
     _forwarded = input_data.get("forwarded_props") or input_data.get("forwardedProps")
     _a2ui_config = getattr(config, "a2ui_config", None)
-    _a2ui_flag = read_inject_a2ui_flag(_forwarded)
-    if _a2ui_flag is None and _a2ui_config:
-        _a2ui_flag = _a2ui_config.get("inject_a2ui_tool")
+    _runtime_a2ui_flag = read_inject_a2ui_flag(_forwarded)
+    _backend_a2ui_flag = _a2ui_config.get("inject_a2ui_tool") if _a2ui_config else None
+    _a2ui_flag = (
+        (_runtime_a2ui_flag if _runtime_a2ui_flag is not None else _backend_a2ui_flag)
+        if _backend_a2ui_flag and _runtime_a2ui_flag is not False
+        else None
+    )
     a2ui_runner: Any | None = None
     if _a2ui_flag:
         try:
