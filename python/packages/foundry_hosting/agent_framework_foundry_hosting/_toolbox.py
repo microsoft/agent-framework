@@ -143,7 +143,7 @@ class _ToolboxAuth(httpx.Auth):
                 close()
             raise RuntimeError(
                 "An async credential cannot be used with the synchronous auth flow; "
-                "use a synchronous TokenCredential or drive the toolbox with an httpx.AsyncClient."
+                "use a synchronous TokenCredential or drive the toolbox with an httpx2.AsyncClient."
             )
         self._apply_headers(request, token)
         yield request

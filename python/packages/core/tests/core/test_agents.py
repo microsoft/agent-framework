@@ -2946,6 +2946,55 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
         assert mcp_client.protocol_version == "2025-11-25"
 
 
+async def test_agent_as_mcp_server_registers_and_forwards_logging(client: SupportsChatGetResponse) -> None:
+    from mcp import types
+
+    import agent_framework._agents as agents_module
+
+    server = Agent(client=client, name="TestAgent").as_mcp_server()
+    context = MagicMock()
+    context.session.send_log_message = AsyncMock()
+
+    assert "logging/setLevel" in server._request_handlers
+
+    with (
+        patch.object(agents_module.logger, "setLevel") as set_level,
+        patch.object(agents_module.logger, "log") as local_log,
+    ):
+        result = await server._request_handlers["logging/setLevel"].handler(
+            context,
+            types.SetLevelRequestParams(level="warning"),
+        )
+
+    assert isinstance(result, types.EmptyResult)
+    set_level.assert_called_once_with(logging.WARNING)
+    local_log.assert_called_once_with(logging.WARNING, "Log level set to warning")
+    context.session.send_log_message.assert_awaited_once_with(
+        level="warning",
+        data="Log level set to warning",
+    )
+
+
+async def test_agent_as_mcp_server_legacy_client_receives_log_messages(client: SupportsChatGetResponse) -> None:
+    from mcp import Client
+
+    import agent_framework._agents as agents_module
+
+    received: list[Any] = []
+
+    async def logging_callback(params: Any) -> None:
+        received.append(params)
+
+    server = Agent(client=client, name="TestAgent").as_mcp_server()
+    with patch.object(agents_module.logger, "setLevel"):
+        async with Client(server, mode="legacy", logging_callback=logging_callback) as mcp_client:
+            await mcp_client.set_logging_level("notice")  # ty: ignore[deprecated]
+            await mcp_client.list_tools()
+
+    assert any(item.level == "notice" and item.data == "Log level set to notice" for item in received)
+    assert any(item.level == "debug" and str(item.data).startswith("Agent tool:") for item in received)
+
+
 async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
     captured_options: list[dict[str, Any]] = []
     original_inner = chat_client_base._inner_get_response

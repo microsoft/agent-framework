@@ -71,9 +71,9 @@ async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.P
 
 
 async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    """Run a fresh workflow instance with validated MCP arguments."""
     name = params.name
     arguments = params.arguments or {}
-    """Run a fresh workflow instance with validated MCP arguments."""
     return await workflow_tool.call_tool(name, arguments)
 
 

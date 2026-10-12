@@ -1905,13 +1905,19 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_tool = self.as_tool(name=self._get_agent_name())
 
-        def _log(level: types.LoggingLevel, data: Any) -> None:
-            """Log a message to logger."""
-            # Log to the local logger
+        async def _log(ctx: ServerRequestContext[dict[str, Any]], level: types.LoggingLevel, data: Any) -> None:
+            """Log locally and forward through the session handling this request."""
             logger.log(LOG_LEVEL_MAPPING[level], data)
+            try:
+                await ctx.session.send_log_message(  # pyright: ignore[reportDeprecated]
+                    level=level,
+                    data=data,
+                )
+            except Exception as exc:
+                logger.error("Failed to send log message to MCP client: %s", exc)
 
-        async def _list_tools(  # ruff:ignore[unused-async]
-            _ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+        async def _list_tools(
+            ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
         ) -> types.ListToolsResult:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
@@ -1922,16 +1928,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 input_schema=schema,
             )
 
-            _log(level="debug", data=f"Agent tool: {agent_tool}")
+            await _log(ctx, level="debug", data=f"Agent tool: {agent_tool}")
             return types.ListToolsResult(tools=[tool])
 
         async def _call_tool(
-            _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+            ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
         ) -> types.CallToolResult:
             """Call a tool in the agent."""
             arguments = params.arguments or {}
             name = params.name
-            _log(level="debug", data=f"Calling tool with args: {arguments}")
+            await _log(ctx, level="debug", data=f"Calling tool with args: {arguments}")
 
             if name != agent_tool.name:
                 raise MCPError(
@@ -1965,7 +1971,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     )
             return types.CallToolResult(content=mcp_content)
 
-        server: Server[Any] = Server(**server_args, on_list_tools=_list_tools, on_call_tool=_call_tool)
+        async def _set_logging_level(
+            ctx: ServerRequestContext[dict[str, Any]], params: types.SetLevelRequestParams
+        ) -> types.EmptyResult:
+            """Set the local threshold and confirm it through the requesting MCP session."""
+            logger.setLevel(LOG_LEVEL_MAPPING[params.level])
+            await _log(ctx, level=params.level, data=f"Log level set to {params.level}")
+            return types.EmptyResult()
+
+        server: Server[Any] = Server(  # pyright: ignore[reportDeprecated]
+            **server_args,
+            on_list_tools=_list_tools,
+            on_call_tool=_call_tool,
+            on_set_logging_level=_set_logging_level,
+        )
         return server
 
     def _get_agent_name(self) -> str:

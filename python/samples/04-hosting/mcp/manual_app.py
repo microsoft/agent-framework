@@ -72,10 +72,10 @@ async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.P
 
 
 async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    """Convert, run, and render without the agent-backed adapter."""
     name = params.name
     arguments = params.arguments or {}
 
-    """Convert, run, and render without the agent-backed adapter."""
     if name != "run_agent_manually":
         raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
     run = mcp_to_run(

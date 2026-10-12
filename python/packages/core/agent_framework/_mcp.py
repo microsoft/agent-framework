@@ -236,6 +236,8 @@ _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
+_MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
+_MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
 
 
@@ -1792,11 +1794,19 @@ class MCPTool:
         return tools
 
     async def _listen_capability_list_changes(self, mcp_client: Client) -> None:
-        """Tool and Prompt update handler for MCP Clients."""
-        from mcp.client.subscriptions import ListenNotSupportedError, PromptsListChanged, ToolsListChanged
+        """Start one recovering tool/prompt catalog subscription for the active Client."""
+        from mcp.client.subscriptions import (
+            ListenNotSupportedError,
+            PromptsListChanged,
+            SubscriptionLost,
+            ToolsListChanged,
+        )
 
-        if self._capability_list_subscription_task is not None:
-            return
+        existing_task = self._capability_list_subscription_task
+        if existing_task is not None:
+            if not existing_task.done():
+                return
+            self._capability_list_subscription_task = None
 
         capabilities = self._server_capabilities
         if capabilities is None:
@@ -1808,31 +1818,86 @@ class MCPTool:
         if not tools_changed and not prompts_changed:
             return
 
-        listen_context = mcp_client.listen(
-            tools_list_changed=tools_changed,
-            prompts_list_changed=prompts_changed,
-        )
-
         # v2 introduces `mcp_client.listen`, but messages are teed via the message_handler passed in
         # in the constructor anyway, so we check for the feature availability an fallback to legacy behaviour
+        initial_context = mcp_client.listen(tools_list_changed=tools_changed, prompts_list_changed=prompts_changed)
         try:
-            subscription = await self._exit_stack.enter_async_context(listen_context)
+            initial_subscription = await initial_context.__aenter__()
         except ListenNotSupportedError:
             logger.debug("Listen not supported, falling back to legacy behaviour.")
             return
 
-        async def consume() -> None:
-            async for event in subscription:
-                match event:
-                    case ToolsListChanged():
-                        self._schedule_reload(self.load_tools())
-                    case PromptsListChanged():
-                        self._schedule_reload(self.load_prompts())
-                    case _:
-                        logger.debug("Unhandled event: %s", event)
+        async def refresh_catalogs() -> None:
+            reloads: list[Coroutine[Any, Any, None]] = []
+            if tools_changed:
+                reloads.append(self.load_tools())
+            if prompts_changed:
+                reloads.append(self.load_prompts())
+            for result in await asyncio.gather(*reloads, return_exceptions=True):
+                if isinstance(result, BaseException):
+                    logger.warning("Failed to refresh MCP catalog after subscription loss: %s", result)
+
+        def connection_is_current() -> bool:
+            connection = self._connection
+            return connection is not None and connection.client is mcp_client
+
+        async def consume_with_recovery() -> None:
+            listen_context = initial_context
+            subscription = initial_subscription
+            retry_delay = _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY
+            current_task = asyncio.current_task()
+            try:
+                while connection_is_current():
+                    try:
+                        async for event in subscription:
+                            match event:
+                                case ToolsListChanged():
+                                    self._schedule_reload(self.load_tools())
+                                case PromptsListChanged():
+                                    self._schedule_reload(self.load_prompts())
+                                case _:
+                                    logger.debug("Unhandled event: %s", event)
+                    except asyncio.CancelledError:
+                        raise
+                    except SubscriptionLost:
+                        logger.warning("MCP catalog subscription was lost; refreshing and reopening it.")
+                    except Exception:
+                        logger.warning("MCP catalog subscription failed; refreshing and reopening it.", exc_info=True)
+                    else:
+                        logger.debug("MCP catalog subscription ended; refreshing and reopening it.")
+                    finally:
+                        await listen_context.__aexit__(None, None, None)
+
+                    if not connection_is_current():
+                        return
+                    await refresh_catalogs()
+
+                    while connection_is_current():
+                        await asyncio.sleep(retry_delay)
+                        if not connection_is_current():
+                            return
+                        listen_context = mcp_client.listen(
+                            tools_list_changed=tools_changed,
+                            prompts_list_changed=prompts_changed,
+                        )
+                        try:
+                            subscription = await listen_context.__aenter__()
+                            retry_delay = _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY
+                            break
+                        except asyncio.CancelledError:
+                            raise
+                        except ListenNotSupportedError:
+                            logger.debug("Listen no longer supported; falling back to legacy behaviour.")
+                            return
+                        except Exception:
+                            logger.warning("Failed to reopen MCP catalog subscription.", exc_info=True)
+                            retry_delay = min(retry_delay * 2, _MCP_SUBSCRIPTION_RETRY_MAX_DELAY)
+            finally:
+                if self._capability_list_subscription_task is current_task:
+                    self._capability_list_subscription_task = None
 
         self._capability_list_subscription_task = asyncio.create_task(
-            consume(),
+            consume_with_recovery(),
             name=f"mcp-capability-list-subscription:{self.name}",
         )
 
@@ -2309,11 +2374,6 @@ class MCPTool:
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             self._connection = _ClientMCPConnection(mcp_client)
-            try:
-                await self._listen_capability_list_changes(mcp_client)
-            except (Exception, asyncio.CancelledError):
-                await self._close_on_owner()
-                raise
         else:
             try:
                 if self.session.protocol_version is None:
@@ -2342,6 +2402,9 @@ class MCPTool:
         try:
             logger.debug("Connected to MCP server: %s", self.session)
             self.is_connected = True
+            connection = self._require_connection()
+            if connection.client is not None:
+                await self._listen_capability_list_changes(connection.client)
             if load_configured and self.load_tools_flag:
                 if self._supports_tools:
                     await self.load_tools()
@@ -3742,7 +3805,8 @@ class MCPStreamableHTTPTool(MCPTool):
         Note:
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
+            If an ``httpx2.AsyncClient`` is provided via ``http_client``, it will be used as the underlying transport
+            client.
             Otherwise, the tool creates and manages a default client without response-cookie persistence.
 
         Args:
@@ -3802,7 +3866,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
-            http_client: Optional asyncClient to use. If not provided, the tool creates and manages
+            http_client: Optional ``httpx2.AsyncClient`` to use. If not provided, the tool creates and manages
                 a client that does not persist response cookies, with or without a ``header_provider``.
                 Explicit ``Cookie`` headers from ``static_headers`` or a ``header_provider`` are supported.
                 Supplied clients retain their cookie behavior and remain caller-owned. Applications
@@ -3810,7 +3874,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 principal and manage its lifetime. Cookie rejection does not partition MCP protocol
                 sessions or other server-side state between principals.
                 Use ``static_headers`` for fixed headers. To configure timeouts or other
-                HTTP client settings, create and pass your own ``asyncClient`` instance.
+                HTTP client settings, create and pass your own ``httpx2.AsyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
                 via a custom ``http_client``, you are responsible for enforcing the same
                 origin-scoped header policy that the built-in ``header_provider`` hook
@@ -3835,7 +3899,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 caller-supplied kwargs. Model-over-runtime precedence applies only to
                 outbound tool arguments, not to authentication.
                 Use this to forward per-request context (e.g. authentication tokens set in
-                agent middleware) without creating a separate ``httpx.AsyncClient``.
+                agent middleware) without creating a separate ``httpx2.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
                 immutable effective identity. Header names are compared case-insensitively and
                 values case-sensitively. Before an Agent exposes a connected tool's functions for

@@ -58,9 +58,9 @@ async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.P
 
 
 async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    """Serialize calls per app-owned session before using ``AgentState``."""
     name = params.name
     arguments = params.arguments or {}
-    """Serialize calls per app-owned session before using ``AgentState``."""
     session_id = arguments.get("session_id") if arguments else None
     if not isinstance(session_id, str) or not session_id:
         raise MCPError(types.INVALID_PARAMS, "MCP tool argument 'session_id' must be a non-empty string.")

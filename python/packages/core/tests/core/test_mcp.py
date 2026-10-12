@@ -4009,6 +4009,7 @@ async def test_mcp_tool_refreshes_catalogs_from_modern_subscription() -> None:
     prompts_refreshed = asyncio.Event()
     listen_entered = asyncio.Event()
     listen_exited = asyncio.Event()
+    keep_subscription_open = asyncio.Event()
     tool_load_count = 0
     prompt_load_count = 0
 
@@ -4027,6 +4028,7 @@ async def test_mcp_tool_refreshes_catalogs_from_modern_subscription() -> None:
     async def events() -> AsyncIterator[ToolsListChanged | PromptsListChanged]:
         yield ToolsListChanged()
         yield PromptsListChanged()
+        await keep_subscription_open.wait()
 
     @contextlib.asynccontextmanager
     async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged | PromptsListChanged]]:
@@ -4121,6 +4123,98 @@ async def test_mcp_tool_reuses_and_closes_modern_catalog_subscription() -> None:
     assert tool._capability_list_subscription_task is None
     assert enter_count == 1
     assert exit_count == 1
+
+
+@pytest.mark.parametrize("termination", ["clean", "lost"])
+async def test_mcp_tool_reopens_catalog_subscription_after_stream_termination(
+    monkeypatch: pytest.MonkeyPatch,
+    termination: str,
+) -> None:
+    from mcp.client.subscriptions import SubscriptionLost, ToolsListChanged
+
+    second_listen_entered = asyncio.Event()
+    block_second_stream = asyncio.Event()
+    listen_count = 0
+
+    async def first_events() -> AsyncIterator[ToolsListChanged]:
+        if termination == "lost":
+            raise SubscriptionLost("connection dropped")
+        if False:
+            yield ToolsListChanged()  # pragma: no cover
+
+    async def blocking_events() -> AsyncIterator[ToolsListChanged]:
+        await block_second_stream.wait()
+        yield ToolsListChanged()
+
+    @contextlib.asynccontextmanager
+    async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged]]:
+        nonlocal listen_count
+        listen_count += 1
+        if listen_count == 2:
+            second_listen_entered.set()
+            yield blocking_events()
+        else:
+            yield first_events()
+
+    monkeypatch.setattr("agent_framework._mcp._MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY", 0)
+    capabilities = types.ServerCapabilities(tools=types.ToolsCapability(list_changed=True))
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(side_effect=lambda **_: listen_context())
+    tool = MCPStdioTool(name="test_tool", command="unused", load_prompts=False)
+    tool.load_tools = AsyncMock()  # type: ignore[method-assign]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        async with tool:
+            await asyncio.wait_for(second_listen_entered.wait(), timeout=1)
+            subscription_task = tool._capability_list_subscription_task
+            assert subscription_task is not None
+            assert not subscription_task.done()
+            assert tool.load_tools.await_count >= 2
+
+            await tool._listen_capability_list_changes(sdk_client)
+            assert tool._capability_list_subscription_task is subscription_task
+            assert listen_count == 2
+
+    assert subscription_task.done()
+    assert tool._capability_list_subscription_task is None
+
+
+async def test_mcp_tool_close_cancels_subscription_recovery_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp.client.subscriptions import SubscriptionLost, ToolsListChanged
+
+    refresh_finished = asyncio.Event()
+
+    async def lost_events() -> AsyncIterator[ToolsListChanged]:
+        raise SubscriptionLost("connection dropped")
+        yield ToolsListChanged()  # pragma: no cover
+
+    @contextlib.asynccontextmanager
+    async def listen_context() -> AsyncGenerator[AsyncIterator[ToolsListChanged]]:
+        yield lost_events()
+
+    async def load_tools() -> None:
+        refresh_finished.set()
+
+    monkeypatch.setattr("agent_framework._mcp._MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY", 60)
+    capabilities = types.ServerCapabilities(tools=types.ToolsCapability(list_changed=True))
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2026-07-28")
+    sdk_client.listen = Mock(side_effect=lambda **_: listen_context())
+    tool = MCPStdioTool(name="test_tool", command="unused", load_prompts=False)
+    tool.load_tools = load_tools  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    with patch("mcp.Client", return_value=sdk_client):
+        await tool.connect()
+        await asyncio.wait_for(refresh_finished.wait(), timeout=1)
+        subscription_task = tool._capability_list_subscription_task
+        assert subscription_task is not None
+        await tool.close()
+
+    assert subscription_task.done()
+    assert subscription_task.cancelled()
+    assert tool._capability_list_subscription_task is None
+    sdk_client.listen.assert_called_once()
 
 
 async def test_mcp_tool_replaces_modern_catalog_subscription_on_reset() -> None:
