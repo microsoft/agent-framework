@@ -31,11 +31,11 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import CheckpointID, CheckpointStorage, Workflow, WorkflowCheckpoint
+from agent_framework import CheckpointID, CheckpointStorage, Content, Message, Workflow, WorkflowCheckpoint
 from agent_framework._telemetry import mark_feature_used
 
 from ._feature_usage import FeatureIndex
-from ._message_adapters import agui_messages_to_snapshot_format
+from ._message_adapters import agent_framework_messages_to_agui, agui_messages_to_snapshot_format
 from ._run_common import (
     _cancelled_resume_interrupt_ids,
     _extract_resume_payload,
@@ -87,6 +87,18 @@ def _snapshot_messages_from_resume_value(
     ``user`` turns are projected so resume cannot
     forge assistant/system/tool history into the backend-owned snapshot.
     """
+    if isinstance(value, Content):
+        value = [value]
+    if isinstance(value, list) and value and all(isinstance(item, Content) for item in value):
+        # Reuse the user-content encoder for ordered text/media, excluding tool and
+        # approval controls before they can be reinterpreted as snapshot history.
+        contents = [item for item in value if item.type in {"text", "uri", "data"}]
+        if not contents:
+            return []
+        return agui_messages_to_snapshot_format(
+            agent_framework_messages_to_agui([Message(role="user", contents=contents)])
+        )
+    value = make_json_safe(value)
     if isinstance(value, bool) or value is None:
         return []
     if isinstance(value, str):
@@ -825,9 +837,7 @@ class AgentFrameworkWorkflow:
             # validated conversational values from its effective live/checkpoint requests.
             if snapshot_builder is None or resume_payload is None:
                 return
-            hitl_messages = [
-                message for value in values for message in _snapshot_messages_from_resume_value(make_json_safe(value))
-            ]
+            hitl_messages = [message for value in values for message in _snapshot_messages_from_resume_value(value)]
             current_turn_client_messages = _current_turn_client_messages(
                 stored_snapshot.messages if stored_snapshot is not None else [], client_request_messages
             )

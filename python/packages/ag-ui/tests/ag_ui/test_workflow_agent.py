@@ -691,6 +691,126 @@ async def test_workflow_hitl_resume_keeps_yes_when_messages_replay_prior_yes(rep
     assert len(yes_turns) == 2
 
 
+@pytest.mark.parametrize("workflow_mode", ["live", "factory", "cold-checkpoint"])
+@pytest.mark.parametrize("reply_kind", ["text", "text-list", "media-list", "audio", "control", "mixed-control"])
+async def test_workflow_hitl_content_reply_survives_snapshot_hydration(workflow_mode: str, reply_kind: str) -> None:
+    """Accepted Content replies survive hydration as one ordered user turn, without control parts."""
+    import msgspec
+
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    handled: list[list[Content]] = []
+
+    class ContentRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send a reply", Content, request_id="content-input")
+
+        @response_handler
+        async def respond(self, original_request: str, response: Content, ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append([response])
+            await ctx.yield_output("Reply received")
+
+    class ContentListRequestExecutor(Executor):
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+            del message
+            await ctx.request_info("Send a reply", list[Content], request_id="content-input")
+
+        @response_handler
+        async def respond(self, original_request: str, response: list[Content], ctx: WorkflowContext[Any, str]) -> None:
+            del original_request
+            handled.append(response)
+            await ctx.yield_output("Reply received")
+
+    text = Content.from_text("approved", raw_representation={"private": "not-chat-history"})
+    audio = Content.from_data(b"audio", "audio/wav")
+    image = Content.from_uri("https://example.com/reply.png", media_type="image/png")
+    control = Content.from_function_call(call_id="control-call", name="refund", arguments={"amount": 5})
+    replies = {
+        "text": [text],
+        "text-list": [text, Content.from_text(" again")],
+        "media-list": [text, image, Content.from_text(" after")],
+        "audio": [audio],
+        "control": [control],
+        "mixed-control": [control, text],
+    }[reply_kind]
+    is_list = reply_kind in {"text-list", "media-list", "mixed-control"}
+    executor_type = ContentListRequestExecutor if is_list else ContentRequestExecutor
+
+    def build_workflow() -> Workflow:
+        return WorkflowBuilder(start_executor=executor_type(id="content-requester")).build()
+
+    workflow = build_workflow()
+    store = InMemoryAGUIThreadSnapshotStore()
+    storage = InMemoryCheckpointStorage()
+    agent = AgentFrameworkWorkflow(
+        workflow=workflow if workflow_mode != "factory" else None,
+        workflow_factory=(lambda _thread_id: build_workflow()) if workflow_mode == "factory" else None,
+        snapshot_store=store,
+        checkpoint_storage=storage,
+    )
+    start = {"id": "start", "role": "user", "content": "start"}
+    setup = await _run(agent, {"thread_id": "content-thread", "messages": [start], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    assert not [event.model_dump() for event in setup if event.type == "RUN_ERROR"]
+    finished = next(event for event in setup if event.type == "RUN_FINISHED")
+    assert [interrupt["id"] for interrupt in _interrupts_from_finished(finished)] == ["content-input"]
+    # Exercise the wire format the public resume path coerces into Content objects.
+    wire_parts = [part.to_dict() for part in replies]
+    wire_with_raw = deepcopy(wire_parts)
+    raw_representation = {"private": "not-chat-history"}
+    wire_with_raw[0]["raw_representation"] = raw_representation
+    wire_value = msgspec.json.encode(wire_with_raw if is_list else wire_with_raw[0]).decode()
+    payload: dict[str, Any] = {
+        "thread_id": "content-thread",
+        "messages": [],
+        _SNAPSHOT_SCOPE_INPUT_KEY: "scope",
+        "resume": {"interrupts": [{"id": "content-input", "value": wire_value}]},
+    }
+    original_payload = deepcopy(payload)
+    if workflow_mode == "cold-checkpoint":
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        pending = next(
+            checkpoint for checkpoint in checkpoints if "content-input" in checkpoint.pending_request_info_events
+        )
+        payload["forwarded_props"] = {"checkpoint_id": pending.checkpoint_id}
+        original_payload = deepcopy(payload)
+        agent = AgentFrameworkWorkflow(workflow=build_workflow(), snapshot_store=store, checkpoint_storage=storage)
+    resumed = await _run(agent, payload)
+    assert not [event.model_dump() for event in resumed if event.type == "RUN_ERROR"]
+    assert [part.to_dict() for part in handled[0]] == wire_parts
+    assert handled[0][0].raw_representation == raw_representation
+    assert payload == original_payload
+
+    expected: Any = {
+        "text": "approved",
+        "text-list": "approved again",
+        "media-list": [
+            {"type": "text", "text": "approved"},
+            {"type": "binary", "mimeType": "image/png", "url": "https://example.com/reply.png"},
+            {"type": "text", "text": " after"},
+        ],
+        "audio": [{"type": "binary", "mimeType": "audio/wav", "data": "YXVkaW8="}],
+        "control": None,
+        "mixed-control": "approved",
+    }[reply_kind]
+    snapshot = await store.get(scope="scope", thread_id="content-thread")
+    assert snapshot is not None
+    user_replies = [
+        message for message in snapshot.messages if message.get("role") == "user" and message["id"] != "start"
+    ]
+    assert [message["content"] for message in user_replies] == ([] if expected is None else [expected])
+    assert all(set(message) == {"id", "role", "content"} for message in user_replies)
+    hydrated = await _run(agent, {"thread_id": "content-thread", "messages": [], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
+    replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
+    replay_replies = [message for message in replay.messages if message.role == "user" and message.id != "start"]
+    assert [message.model_dump(by_alias=True, exclude_none=True) for message in replay_replies] == user_replies
+    assert len(handled) == 1
+
+
 @pytest.mark.parametrize(
     "client_id",
     [None, "client-reply", "resume-1", "resume-2"],
