@@ -113,6 +113,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
         "BackgroundAgentsProvider",
         "BackgroundTaskInfo",
+        "BackgroundTaskRuntimeStore",
         "BackgroundTaskStatus",
     ),
     "._harness._file_access": (
@@ -453,6 +454,7 @@ __all__ = [
     "Annotation",
     "BackgroundAgentsProvider",
     "BackgroundTaskInfo",
+    "BackgroundTaskRuntimeStore",
     "BackgroundTaskStatus",
     "BaseAgent",
     "BaseChatClient",
