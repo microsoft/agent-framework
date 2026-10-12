@@ -21,7 +21,9 @@ def _content_items_text(items: Any) -> str:
     Covers the .NET record shape (``[{"type": "text", "value": ...}]``,
     capitalized keys included) and objects exposing a text attribute.
     Records declaring a non-text type (image URLs, files) are skipped:
-    their ``value`` is a payload reference, not displayable text.
+    their ``value`` is a payload reference, not displayable text. Object
+    items are gated the same way core ``Message.text`` gates contents, so
+    a reasoning block's ``.text`` does not leak into the extraction.
     """
     if not isinstance(items, list):
         return ""
@@ -38,8 +40,13 @@ def _content_items_text(items: Any) -> str:
                 if isinstance(item_dict.get(key), str):
                     parts.append(item_dict[key])
                     break
-        elif (item_text := getattr(item, "text", None)) is not None:
-            parts.append(str(item_text))
+        else:
+            declared_type = getattr(item, "type", None)
+            if isinstance(declared_type, str) and declared_type.lower() != "text":
+                continue
+            item_text = getattr(item, "text", None)
+            if item_text is not None:
+                parts.append(str(item_text))
     return " ".join(parts)
 
 

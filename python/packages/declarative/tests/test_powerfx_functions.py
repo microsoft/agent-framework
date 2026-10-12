@@ -96,6 +96,19 @@ class TestMessageText:
         msg = {"role": "user", "content": [{"type": "image", "value": "..."}]}
         assert message_text([msg]) == ""
 
+    def test_message_text_skips_reasoning_content_objects(self):
+        """Core Content objects gate on type == "text", like Message.text."""
+        from agent_framework import Content
+
+        msg = {
+            "role": "assistant",
+            "content": [
+                Content.from_text_reasoning(text="chain of thought"),
+                Content.from_text(text="final answer"),
+            ],
+        }
+        assert message_text([msg]) == "final answer"
+
     def test_message_text_mixed_shapes_join(self):
         """A list mixing both flat shapes extracts every entry."""
         msgs = [
