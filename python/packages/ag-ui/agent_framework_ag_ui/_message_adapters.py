@@ -416,6 +416,14 @@ def _extract_multimodal_source_fields(
     return url, data, binary_id, mime_type
 
 
+def _multimodal_uri_scheme(uri: str) -> str:
+    """Return a normalized URI scheme or raise a stable validation error."""
+    try:
+        return urlsplit(uri).scheme.lower()
+    except ValueError as exc:
+        raise ValueError("Invalid AG-UI multimodal URI.") from exc
+
+
 def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
     """Convert a multimodal media part into Agent Framework content."""
     part_type = str(part.get("type", "")).lower()
@@ -431,7 +439,7 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         }.get(part_type, "application/octet-stream")
 
     if isinstance(url, str) and url:
-        scheme = urlsplit(url).scheme.lower()
+        scheme = _multimodal_uri_scheme(url)
         if scheme not in _ALLOWED_MULTIMODAL_URI_SCHEMES:
             raise ValueError(f"Unsupported AG-UI multimodal URI scheme: {scheme or '<missing>'}.")
         return Content.from_uri(uri=url, media_type=mime_type)
@@ -487,7 +495,11 @@ def sanitize_legacy_snapshot_media(
             url, _, _, _ = _extract_multimodal_source_fields(part)
             if not isinstance(url, str) or not url:
                 continue
-            if urlsplit(url).scheme.lower() in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+            try:
+                scheme = _multimodal_uri_scheme(url)
+            except ValueError:
+                scheme = ""
+            if scheme in _ALLOWED_MULTIMODAL_URI_SCHEMES:
                 continue
             content[index] = {"type": "text", "text": _LEGACY_MEDIA_PLACEHOLDER}
             replacements += 1

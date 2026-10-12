@@ -10051,8 +10051,10 @@ async def test_agent_endpoint_prepends_stored_snapshot_for_new_user_turn(streami
     assert state_snapshots[0]["snapshot"] == {"recipe": "pasta"}
 
 
+@pytest.mark.parametrize("legacy_uri", ["file:///tmp/legacy-secret.png", "http://[::1"])
 async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
     streaming_chat_client_stub,
+    legacy_uri: str,
 ) -> None:
     """A legacy snapshot URI is replaced before provider replay and later persistence."""
     app = FastAPI()
@@ -10077,7 +10079,7 @@ async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
                         {"type": "text", "text": "Inspect this file"},
                         {
                             "type": "image",
-                            "source": {"type": "url", "url": "file:///tmp/legacy-secret.png"},
+                            "source": {"type": "url", "url": legacy_uri},
                         },
                     ],
                 }
@@ -10114,7 +10116,7 @@ async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
     )
     stored = await store.get(scope="tenant-a", thread_id="legacy-media-thread")
     assert stored is not None
-    assert "file:///tmp/legacy-secret.png" not in json.dumps(stored.messages)
+    assert legacy_uri not in json.dumps(stored.messages)
 
 
 async def test_agent_endpoint_keeps_request_thread_key_when_provider_returns_conversation_id(

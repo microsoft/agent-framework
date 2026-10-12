@@ -2620,6 +2620,13 @@ def test_convert_agui_content_rejects_unsafe_uri_schemes(uri: str) -> None:
         _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": uri}})
 
 
+def test_convert_agui_content_rejects_malformed_uri() -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Invalid AG-UI multimodal URI"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": "http://[::1"}})
+
+
 def test_convert_agui_content_data_uri_prefix():
     """base64 data starting with 'data:' is treated as data URI."""
     from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
