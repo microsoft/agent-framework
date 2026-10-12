@@ -10430,7 +10430,7 @@ async def test_streaming_function_loop_sums_usage_across_provider_turns(
     ]
 
     stream = chat_client_base.get_response(
-        "hello",  # type: ignore[arg-type]
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [get_value]},
         stream=True,
     )
