@@ -28,6 +28,7 @@ else:
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
+from tenacity import AsyncRetrying, before_sleep_log, retry_if_exception, wait_exponential
 
 from ._feature_stage import (
     ExperimentalFeature,
@@ -1786,10 +1787,33 @@ class MCPTool:
             connection = self._connection
             return connection is not None and connection.client is mcp_client
 
+        async def reopen_subscription() -> tuple[Any, Any] | None:
+            retrying = AsyncRetrying(
+                wait=wait_exponential(
+                    multiplier=_MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY,
+                    max=_MCP_SUBSCRIPTION_RETRY_MAX_DELAY,
+                ),
+                retry=retry_if_exception(
+                    lambda exc: isinstance(exc, Exception) and not isinstance(exc, ListenNotSupportedError)
+                ),
+                before_sleep=before_sleep_log(logger, logging.WARNING),
+                reraise=True,
+            )
+            async for attempt in retrying:
+                with attempt:
+                    if not connection_is_current():
+                        return None
+                    next_context = mcp_client.listen(
+                        tools_list_changed=tools_changed,
+                        prompts_list_changed=prompts_changed,
+                    )
+                    next_subscription = await next_context.__aenter__()
+                    return next_context, next_subscription
+            return None
+
         async def consume_with_recovery() -> None:
             listen_context = initial_context
             subscription = initial_subscription
-            retry_delay = _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY
             current_task = asyncio.current_task()
             try:
                 while connection_is_current():
@@ -1817,26 +1841,14 @@ class MCPTool:
                         return
                     await refresh_catalogs()
 
-                    while connection_is_current():
-                        await asyncio.sleep(retry_delay)
-                        if not connection_is_current():
-                            return
-                        listen_context = mcp_client.listen(
-                            tools_list_changed=tools_changed,
-                            prompts_list_changed=prompts_changed,
-                        )
-                        try:
-                            subscription = await listen_context.__aenter__()
-                            retry_delay = _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY
-                            break
-                        except asyncio.CancelledError:
-                            raise
-                        except ListenNotSupportedError:
-                            logger.debug("Listen not supported; falling back to legacy behaviour.")
-                            return
-                        except Exception:
-                            logger.warning("Failed to reopen MCP catalog subscription.", exc_info=True)
-                            retry_delay = min(retry_delay * 2, _MCP_SUBSCRIPTION_RETRY_MAX_DELAY)
+                    try:
+                        reopened = await reopen_subscription()
+                    except ListenNotSupportedError:
+                        logger.debug("Listen not supported; falling back to legacy behaviour.")
+                        return
+                    if reopened is None:
+                        return
+                    listen_context, subscription = reopened
             finally:
                 if self._capability_list_subscription_task is current_task:
                     self._capability_list_subscription_task = None
