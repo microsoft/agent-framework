@@ -18,15 +18,20 @@ driver's async Thin-mode API; it does not initialize the Thick client or
 provision a database.
 It does not create or alter schemas, vector indexes, or existing tables.
 
-Set `ORACLE_DSN` (for example `localhost:1521/FREEPDB1`), `ORACLE_USER`, and
-`ORACLE_PASSWORD`, or pass `dsn`, `user`, and `password` to either constructor.
-Typed driver settings can also be supplied with the `pool_parameters` mapping.
-Settings are resolved in order: **named `dsn`/`user`/`password` argument >
-`pool_parameters` > selected `.env` file > process environment > connector
-pool defaults**. A `.env` file is read only when `env_file_path` is specified;
-the selected file must exist, and `env_file_encoding` overrides UTF-8.
-`password` accepts `str` or Agent Framework `SecretString` and is unwrapped only
-when opening a connection. Missing or empty credentials are errors.
+For username/password authentication, set `ORACLE_DSN` (for example
+`localhost:1521/FREEPDB1`), `ORACLE_USER`, and `ORACLE_PASSWORD`, or pass
+`dsn`, `user`, and `password` to either constructor. Typed driver settings can
+also be supplied with the `pool_parameters` mapping. Settings are resolved in
+order: **named `dsn`/`user`/`password` argument > `pool_parameters` > selected
+`.env` file > process environment > connector pool defaults**. A `.env` file is
+read only when `env_file_path` is specified; the selected file must exist, and
+`env_file_encoding` overrides UTF-8. `password` accepts `str` or Agent Framework
+`SecretString` and is unwrapped only when opening a connection.
+
+Named connection values must be nonempty when supplied, but their presence is
+not required by the connector. Authentication and connection-descriptor
+completeness are validated by python-oracledb, allowing alternatives such as
+`access_token`, `externalauth`, or `host` with `service_name`/`sid`.
 
 Explicit `pool_parameters` keys are forwarded when they are accepted by the
 installed `python-oracledb` version, including newly added driver options not
@@ -55,7 +60,7 @@ ORACLE_HOMOGENEOUS=false
 The connector uses `min=0` and `max=4` when those options are not configured.
 Unrecognized `ORACLE_` variables are ignored. Options that require callbacks,
 classes, collections, or SSL context objects are not loaded from text settings;
-use a configured client for those cases.
+pass them through `pool_parameters` or use a configured client.
 
 Alternatively, pass a configured `oracledb.AsyncConnection` or
 `oracledb.AsyncConnectionPool` as `client` for advanced authentication. A

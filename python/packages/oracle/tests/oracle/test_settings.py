@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from typing import Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -40,6 +41,7 @@ def test_public_settings_mask_password(monkeypatch):
     assert hints["password"] == SecretString | None
     assert hints["wallet_location"] == str | None
     assert hints["wallet_password"] == SecretString | None
+    assert hints["access_token"] == SecretString | tuple[str, str] | Callable[[], str | tuple[str, str]] | None
     assert hints["min"] == int | None
     settings = load_settings(OracleSettings, env_prefix="ORACLE_")
     assert settings["dsn"] == "localhost/service"
@@ -142,10 +144,10 @@ def test_unknown_explicit_pool_parameter_fails_without_connecting():
     create.assert_not_called()
 
 
-@pytest.mark.parametrize("missing", ["dsn", "user", "password"])
-def test_missing_or_empty_credentials_fail_without_connecting(constructor, missing):
+@pytest.mark.parametrize("empty", ["dsn", "user", "password"])
+def test_empty_named_connection_values_fail_without_connecting(constructor, empty):
     settings = {"dsn": "dsn", "user": "user", "password": "password"}
-    settings[missing] = ""
+    settings[empty] = ""
     with patch.object(module.oracledb, "create_pool_async") as create, pytest.raises(ValueError):
         constructor(**settings)
     create.assert_not_called()
@@ -211,6 +213,60 @@ async def test_owned_pool_is_lazy_and_closed_once():
     pool.close.assert_awaited_once()
     with pytest.raises(RuntimeError, match="closed"):
         await store._client._get_client()
+
+
+async def test_absent_named_connection_values_are_deferred_to_driver():
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    store = OracleStore()
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+    create.assert_called_once_with(min=0, max=4)
+
+
+async def test_access_token_auth_does_not_require_user_or_password(monkeypatch):
+    monkeypatch.setenv("ORACLE_DSN", "dsn")
+    monkeypatch.setenv("ORACLE_ACCESS_TOKEN", "environment-token")
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    store = OracleStore()
+    token = store._client._pool_parameters["access_token"]
+    assert isinstance(token, SecretString)
+    assert token.get_secret_value() == "environment-token"
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+    create.assert_called_once_with(dsn="dsn", access_token="environment-token", min=0, max=4)
+
+
+async def test_explicit_access_token_preserves_tuple_and_callable_forms():
+    token_tuple = ("token", "private-key")
+
+    def token_provider() -> tuple[str, str]:
+        return token_tuple
+
+    for access_token in (token_tuple, token_provider):
+        pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+        store = OracleStore(dsn="dsn", pool_parameters={"access_token": access_token})
+        with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+            assert await store._client._get_client() is pool
+        create.assert_called_once_with(dsn="dsn", access_token=access_token, min=0, max=4)
+
+
+async def test_host_and_service_name_do_not_require_dsn():
+    pool = MagicMock(spec=oracledb.AsyncConnectionPool)
+    store = OracleStore(
+        user="user",
+        password="password",
+        pool_parameters={"host": "db.example.com", "service_name": "service"},
+    )
+    with patch.object(module.oracledb, "create_pool_async", return_value=pool) as create:
+        assert await store._client._get_client() is pool
+    create.assert_called_once_with(
+        user="user",
+        password="password",
+        host="db.example.com",
+        service_name="service",
+        min=0,
+        max=4,
+    )
 
 
 async def test_public_pool_parameters_precedence(monkeypatch):

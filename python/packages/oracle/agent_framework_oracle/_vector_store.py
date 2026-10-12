@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import math
 from array import array
-from collections.abc import AsyncGenerator, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from inspect import signature
@@ -87,7 +87,7 @@ class OracleSettings(TypedDict, total=False, extra_items=Any):
     proxy_user: str | None
     newpassword: SecretString | None
     wallet_password: SecretString | None
-    access_token: SecretString | None
+    access_token: SecretString | tuple[str, str] | Callable[[], str | tuple[str, str]] | None
     host: str | None
     port: int | None
     protocol: str | None
@@ -290,12 +290,12 @@ class _Client:
             if any(value is not None for value in (dsn, user, password)) or pool_parameters:
                 raise ValueError("An Oracle client cannot be combined with connection settings.")
         else:
-            if not isinstance(dsn, str) or not dsn.strip():
-                raise ValueError("A nonempty Oracle DSN is required.")
-            if not isinstance(user, str) or not user.strip():
-                raise ValueError("A nonempty Oracle user is required.")
-            if not isinstance(password, SecretString) or not password.get_secret_value():
-                raise ValueError("A nonempty Oracle password is required.")
+            if dsn is not None and (not isinstance(dsn, str) or not dsn.strip()):
+                raise ValueError("Oracle dsn must be a nonempty string when provided.")
+            if user is not None and (not isinstance(user, str) or not user.strip()):
+                raise ValueError("Oracle user must be a nonempty string when provided.")
+            if password is not None and (not isinstance(password, SecretString) or not password.get_secret_value()):
+                raise ValueError("Oracle password must be a nonempty string when provided.")
         self._client = client
         self._dsn = dsn
         self._user = user
@@ -316,8 +316,11 @@ class _Client:
         async with self._lock:
             self.ensure_open()
             if self._pool is None:
-                if self._user is None or self._dsn is None or self._password is None:
-                    raise RuntimeError("Oracle connection settings are missing.")
+                named_parameters = {
+                    name: value.get_secret_value() if isinstance(value, SecretString) else value
+                    for name, value in (("user", self._user), ("password", self._password), ("dsn", self._dsn))
+                    if value is not None
+                }
                 pool_parameters = {
                     "min": 0,
                     "max": 4,
@@ -325,9 +328,7 @@ class _Client:
                         name: value.get_secret_value() if isinstance(value, SecretString) else value
                         for name, value in self._pool_parameters.items()
                     },
-                    "user": self._user,
-                    "password": self._password.get_secret_value(),
-                    "dsn": self._dsn,
+                    **named_parameters,
                 }
                 self._pool = oracledb.create_pool_async(**pool_parameters)
             return self._pool
