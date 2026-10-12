@@ -3,7 +3,7 @@ name = "agent-framework-foundry-local"
 description = "Foundry Local integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 version = "1.0.0b260730"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
