@@ -2466,17 +2466,21 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
-                # Encode and check the whole batch first so a record the reader would reject
-                # never reaches the file and the existing history stays loadable.
-                records = [_DEFAULT_MSGPACK_ENCODER.encode(message.to_dict()) for message in new_messages]
-                for record in records:
+                # Check the whole batch first so a record the reader would reject never reaches
+                # the file and the existing history stays loadable. Records are encoded into one
+                # reused buffer, once to check and once to write, so memory is bounded by the
+                # largest record rather than the batch.
+                record = bytearray()
+                for message in new_messages:
+                    _DEFAULT_MSGPACK_ENCODER.encode_into(message.to_dict(), record)
                     if len(record) > self._MAX_MSGPACK_RECORD_BYTES:
                         raise ValueError(
                             f"Message encodes to {len(record)} bytes, which exceeds the "
                             f"{self._MAX_MSGPACK_RECORD_BYTES}-byte MessagePack history record limit."
                         )
                 with file_path.open("ab") as file_handle:
-                    for record in records:
+                    for message in new_messages:
+                        _DEFAULT_MSGPACK_ENCODER.encode_into(message.to_dict(), record)
                         file_handle.write(len(record).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
                         file_handle.write(record)
 

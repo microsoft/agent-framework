@@ -5,6 +5,7 @@ import json
 import math
 import threading
 import time
+import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -2014,6 +2015,22 @@ class TestFileHistoryProvider:
         await provider.save_messages("limit", [message])
 
         assert [loaded.text for loaded in await provider.get_messages("limit")] == ["at the limit"]
+
+    async def test_msgpack_batch_save_memory_does_not_grow_with_batch_length(self, tmp_path: Path) -> None:
+        record_text_bytes = 1024 * 1024
+        batch = [Message(role="assistant", contents=[str(index) * record_text_bytes]) for index in range(16)]
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        tracemalloc.start()
+        try:
+            await provider.save_messages("large-batch", batch)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        # Holding every encoded record at once would need about 16 MiB; one record at a time stays near 1 MiB.
+        assert peak_bytes < 6 * record_text_bytes
+        assert len(await provider.get_messages("large-batch")) == len(batch)
 
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path)
