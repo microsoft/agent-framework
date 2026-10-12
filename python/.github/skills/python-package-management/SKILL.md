@@ -180,6 +180,19 @@ def __getattr__(name: str) -> Any:
             ) from exc
 ```
 
+### Namespace compatibility
+
+The core namespace module and the objects it re-exports have different compatibility rules:
+
+- While an owning package is `alpha`, `beta`, or `rc`, imports for objects from that package may be added, removed,
+  or moved between approved lazy-loading namespaces by explicit core-team decision. Those object paths follow the
+  owning package's prerelease lifecycle.
+- Do not remove a core namespace module unless it is empty after the change and is used exclusively by packages
+  that have not reached `released`.
+- If a namespace exposes objects from any released package, keep the namespace. Changing import paths for released
+  objects requires a deprecated forwarding path where feasible; otherwise the agreed issue must include migration
+  guidance, explicit breaking-change acknowledgement, and the required Core and root meta-package version changes.
+
 ## Adding a New Connector Package
 
 **Important:** Do not create a new package unless approved by the core team.
@@ -240,7 +253,8 @@ The issue must record:
 - whether the package should be included in the root meta-package, with rationale based on the criteria above; and
 - the lazy-loading namespace decision for the transition: `alpha` -> `beta` selects whether and where to expose the
   package, while `beta` -> `rc` and `rc` -> `released` preserve the existing namespace by default and may change
-  it only by explicit core-team decision.
+  the package's prerelease object imports only by explicit core-team decision and under the namespace compatibility
+  rules above.
 
 Record an explicit `no` or `none` when the package should remain outside the meta-package or should not have a
 lazy-loading namespace. Do not infer either decision from the target lifecycle stage.
@@ -276,8 +290,9 @@ Move a package to `rc` when its API is close to the final released shape.
 3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
    or using the membership-change process above when an addition or removal is explicitly approved; the stage
    transition alone does not add it to `core[all]`
-4. Preserve the existing lazy-loading namespace by default. Changing or removing it at the RC boundary is
-   discouraged and requires explicit core-team approval recorded in the promotion issue
+4. Preserve the existing lazy-loading namespace by default. Changes to the package's prerelease object imports are
+   discouraged and require explicit core-team approval recorded in the promotion issue; apply the namespace
+   compatibility rules above
 5. Keep samples only in the root `samples/` tree
 6. Update `python/PACKAGE_STATUS.md` to show the package as `rc` and keep its membership value current
 
@@ -290,8 +305,9 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
    or using the membership-change process above when an addition or removal is explicitly approved; release does
    not imply inclusion in `core[all]`
-4. Preserve the lazy-loading namespace used at RC by default. Adding, removing, or moving the namespace requires
-   explicit core-team approval recorded in the promotion issue
+4. Preserve the lazy-loading namespace used at RC by default. Any final changes to the package's prerelease object
+   imports require explicit core-team approval recorded in the promotion issue; apply the namespace compatibility
+   rules above
 5. Keep samples only in the root `samples/` tree
 6. Update `python/PACKAGE_STATUS.md` to show the package as `released` and keep its membership value current
 7. Update all `README.md` files that install that package with
