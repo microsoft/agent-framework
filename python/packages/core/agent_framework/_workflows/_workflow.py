@@ -682,7 +682,12 @@ class Workflow(DictConvertible):
                     yield event
 
                 # Surface structured failure details before propagating exception
-                details = WorkflowErrorDetails.from_exception(exc)
+                from ..observability import OBSERVABILITY_SETTINGS
+
+                details = WorkflowErrorDetails.from_exception(
+                    exc,
+                    include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                )
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
                 yield failed_event
@@ -690,8 +695,6 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
                 yield failed_status
-                from ..observability import OBSERVABILITY_SETTINGS
-
                 error_attributes = {
                     "error.type": type(exc).__name__,
                 }

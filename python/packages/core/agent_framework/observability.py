@@ -2734,6 +2734,8 @@ def create_mcp_client_span(
     method_name: str,
     target: str | None = None,
     attributes: dict[str, Any] | None = None,
+    *,
+    capture_unhandled_exceptions: bool = True,
 ) -> Generator[trace.Span, Any, Any]:
     """Create an MCP client span per OTel MCP semantic conventions.
 
@@ -2746,6 +2748,9 @@ def create_mcp_client_span(
         method_name: The MCP method name (e.g. ``initialize``, ``tools/call``).
         target: Optional low-cardinality target (tool name, prompt name).
         attributes: Additional span attributes.
+        capture_unhandled_exceptions: Whether exceptions escaping the context should be
+            recorded using the framework's sensitive-data policy. Internal MCP operations
+            that set protocol-specific error types disable this fallback.
     """
     span_name = f"{method_name} {target}" if target else method_name
     attrs: dict[str, Any] = {OtelAttr.MCP_METHOD_NAME: method_name}
@@ -2753,14 +2758,20 @@ def create_mcp_client_span(
         attrs.update(attributes)
     tracer = get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
     span = tracer.start_span(span_name, kind=trace.SpanKind.CLIENT, attributes=attrs)
-    capture_sensitive_data = OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
     with trace.use_span(
         span=span,
         end_on_exit=True,
-        record_exception=capture_sensitive_data,
-        set_status_on_exception=capture_sensitive_data,
+        record_exception=False,
+        set_status_on_exception=False,
     ) as current_span:
-        yield current_span
+        try:
+            yield current_span
+        except Exception as exception:
+            if capture_unhandled_exceptions:
+                capture_exception(current_span, exception)
+            elif OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                current_span.record_exception(exception)
+            raise
 
 
 def set_mcp_span_error(
@@ -3192,7 +3203,7 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     return attributes
 
 
-def capture_exception(span: trace.Span, exception: BaseException, timestamp: int | None = None) -> None:
+def capture_exception(span: trace.Span, exception: Exception, timestamp: int | None = None) -> None:
     """Set an error for spans."""
     span.set_attribute(OtelAttr.ERROR_TYPE, type(exception).__name__)
     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
@@ -3656,12 +3667,12 @@ def _workflow_span_attributes(
 @contextlib.contextmanager
 def _capture_span_exceptions(
     context_manager: contextlib.AbstractContextManager[trace.Span],
-) -> Generator[trace.Span, None, None]:
+) -> Generator[trace.Span]:
     """Apply the framework's sensitive-data policy to an OpenTelemetry span context."""
     with context_manager as span:
         try:
             yield span
-        except BaseException as exception:
+        except Exception as exception:
             capture_exception(span, exception)
             raise
 

@@ -1056,7 +1056,13 @@ class StepWrapper(Generic[R]):
             # from BaseException, NOT Exception, so it propagates past this handler
             # without emitting a spurious executor_failed event.  This is intentional
             # — request_info is fully supported inside @step functions.
-            await ctx.add_event(WorkflowEvent.executor_failed(self.name, WorkflowErrorDetails.from_exception(exc)))
+            from ..observability import OBSERVABILITY_SETTINGS
+
+            details = WorkflowErrorDetails.from_exception(
+                exc,
+                include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+            )
+            await ctx.add_event(WorkflowEvent.executor_failed(self.name, details))
             raise
         ctx._set_cached_step_auto_request_info_count(
             cache_key,
@@ -1696,11 +1702,14 @@ class FunctionalWorkflow:
             for event in ctx._get_events():
                 yield event
 
-            details = WorkflowErrorDetails.from_exception(exc)
+            from ..observability import OBSERVABILITY_SETTINGS
+
+            details = WorkflowErrorDetails.from_exception(
+                exc,
+                include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+            )
             yield _framework_event(WorkflowEvent.failed, details)
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
-
-            from ..observability import OBSERVABILITY_SETTINGS
 
             error_attributes = {
                 "error.type": type(exc).__name__,

@@ -20,7 +20,7 @@ from opentelemetry.trace import SpanKind, StatusCode
 from agent_framework import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import ToolExecutionException
-from agent_framework.observability import OtelAttr
+from agent_framework.observability import OtelAttr, create_mcp_client_span
 
 # region helpers
 
@@ -100,6 +100,31 @@ def _assert_error_detail_policy(span: Any, private_error_detail: str, enable_sen
     assert bool(exception_events) is enable_sensitive_data
     if enable_sensitive_data:
         assert private_error_detail in str(exception_events[0].attributes.get("exception.message"))
+
+
+# endregion
+
+
+# region client span error policy
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_mcp_client_span_unhandled_exception_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """External MCP span callers should retain error classification without leaking details."""
+    private_error_detail = "founder-secret-token"
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="MCP operation failed"), create_mcp_client_span("test/operation"):
+        raise RuntimeError(f"MCP operation failed: {private_error_detail}")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    _assert_error_detail_policy(span, private_error_detail, enable_sensitive_data)
 
 
 # endregion
