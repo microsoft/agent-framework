@@ -950,7 +950,8 @@ class MCPTool:
             individual ``FunctionTool`` instances.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
-            request_timeout: Timeout in seconds for MCP requests.
+            request_timeout: Timeout in seconds for MCP requests. Must be positive, or None to
+                leave requests without a timeout.
             client: A chat client for sampling callbacks.
             sampling_approval_callback: Optional gate invoked before each server-initiated
                 ``sampling/createMessage`` request is forwarded to ``client``. It receives the
@@ -997,6 +998,8 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        if request_timeout is not None and request_timeout <= 0:
+            raise ValueError("request_timeout must be positive or None.")
         allowed_modes = {
             "structured_first",
             "content_first",
@@ -2004,7 +2007,7 @@ class MCPTool:
                         read_stream=transport[0],
                         write_stream=transport[1],
                         read_timeout_seconds=(
-                            timedelta(seconds=self.request_timeout) if self.request_timeout else None
+                            timedelta(seconds=self.request_timeout) if self.request_timeout is not None else None
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
