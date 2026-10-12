@@ -704,8 +704,8 @@ public sealed class AgentMcpListedSkillsTests
                 {
                     Contents =
                     [
-                        new TextResourceContents { Uri = root + "unrelated.md", Text = "Additional instructions." },
                         new TextResourceContents { Uri = uri, Text = SkillContent },
+                        new TextResourceContents { Uri = root + "unrelated.md", Text = "Additional instructions." },
                     ],
                 });
             });
@@ -719,7 +719,7 @@ public sealed class AgentMcpListedSkillsTests
         string cached = await skill.GetContentAsync();
 
         // Assert
-        Assert.Equal("Additional instructions.\n" + SkillContent, content);
+        Assert.Equal(SkillContent + "\nAdditional instructions.", content);
         Assert.Equal(content, cached);
         Assert.Equal(root + "SKILL.md", Assert.Single(reads));
         Assert.Null(skill.Frontmatter.License);
@@ -772,7 +772,7 @@ public sealed class AgentMcpListedSkillsTests
             {
                 Contents =
                 [
-                    new TextResourceContents { Uri = uri, Text = "First text block." },
+                    new TextResourceContents { Uri = uri, Text = SkillContent },
                     BlobResourceContents.FromBytes(bytes, uri, "text/markdown"),
                     new TextResourceContents { Uri = "skill://other/SKILL.md", Text = "Second text block." },
                 ],
@@ -785,7 +785,7 @@ public sealed class AgentMcpListedSkillsTests
         string content = await skill.GetContentAsync();
 
         // Assert
-        Assert.Equal("First text block.\nSecond text block.", content);
+        Assert.Equal(SkillContent + "\nSecond text block.", content);
     }
 
     [Fact]
@@ -793,9 +793,9 @@ public sealed class AgentMcpListedSkillsTests
     {
         // Arrange
         await using var firstServer = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
-            (uri, _) => ValueTask.FromResult(Text(uri, "First server.")));
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nFirst server.")));
         await using var secondServer = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
-            (uri, _) => ValueTask.FromResult(Text(uri, "Second server.")));
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nSecond server.")));
         await using var firstClient = await firstServer.CreateClientAsync();
         await using var secondClient = await secondServer.CreateClientAsync();
         using var firstSource = new AgentMcpSkillsSource(firstClient);
@@ -804,8 +804,122 @@ public sealed class AgentMcpListedSkillsTests
         var secondSkill = Assert.Single(await secondSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act & Assert
-        Assert.Equal("First server.", await firstSkill.GetContentAsync());
-        Assert.Equal("Second server.", await secondSkill.GetContentAsync());
+        Assert.Equal(SkillContent + "\nFirst server.", await firstSkill.GetContentAsync());
+        Assert.Equal(SkillContent + "\nSecond server.", await secondSkill.GetContentAsync());
+    }
+
+    [Theory]
+    [InlineData("name")]
+    [InlineData("description")]
+    public async Task GetContentAsync_FetchedFrontmatterDiffersFromListing_ThrowsAsync(string field)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["frontmatter"]![field] = field == "name" ? "other-skill" : "Changed description.";
+        entry["resources"] = new JsonArray();
+        if (field == "name")
+        {
+            entry["uri"] = "skill://other-skill/SKILL.md";
+        }
+
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Contains($"frontmatter {field}", exception.Message);
+        Assert.Contains(entry["uri"]!.GetValue<string>(), exception.Message);
+    }
+
+    [Theory]
+    [InlineData("|", "Convert units.\n")]
+    [InlineData(">", "Convert units.\n")]
+    [InlineData("|-", "Convert units.")]
+    [InlineData(">-", "Convert units.")]
+    [InlineData("|+", "Convert units.\n\n")]
+    [InlineData(">+", "Convert units.\n\n")]
+    [InlineData("|2-", "Convert units.")]
+    [InlineData(">2-", "Convert units.")]
+    [InlineData("|2+", "Convert units.\n\n")]
+    [InlineData(">2+", "Convert units.\n\n")]
+    public async Task GetContentAsync_BlockScalarMatchesListing_ReturnsAndCachesContentAsync(string indicator, string description)
+    {
+        // Arrange
+        string content = $"---\nname: unit-converter\ndescription: {indicator}\n  Convert units.\n\n---\nInstructions.";
+        JsonObject entry = Entry();
+        entry["frontmatter"]!["description"] = description;
+        int reads = 0;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, content));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        string loaded = await skill.GetContentAsync();
+        string cached = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal(content, loaded);
+        Assert.Equal(content, cached);
+        Assert.Equal(description, skill.Frontmatter.Description);
+        Assert.Equal(1, reads);
+    }
+
+    [Theory]
+    [InlineData("|", "Convert units.")]
+    [InlineData(">", "Convert units.")]
+    [InlineData("|-", "Convert units.\n")]
+    [InlineData(">-", "Convert units.\n")]
+    [InlineData("|+", "Convert units.\n")]
+    [InlineData(">+", "Convert units.\n")]
+    public async Task GetContentAsync_BlockScalarTrailingNewlinesDifferFromListing_ThrowsAsync(string indicator, string description)
+    {
+        // Arrange
+        string content = $"---\nname: unit-converter\ndescription: {indicator}\n  Convert units.\n\n---\nInstructions.";
+        JsonObject entry = Entry();
+        entry["frontmatter"]!["description"] = description;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, content)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Contains("frontmatter description", exception.Message);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_InvalidFrontmatter_LogsParserDiagnosticAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (uri, _) => ValueTask.FromResult(Text(uri, "No frontmatter.")));
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        using var source = new AgentMcpSkillsSource(client, loggerFactory: loggerFactory.Object);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(SkillUri)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
     }
 
     [Theory]

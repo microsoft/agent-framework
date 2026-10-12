@@ -41,4 +41,7 @@
   <ItemGroup Condition="'$(InjectSharedHttpHeaderValidation)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Http\*.cs" LinkBase="Shared\Http" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedSkills)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Skills\*.cs" LinkBase="Shared\Skills" />
+  </ItemGroup>
 </Project>

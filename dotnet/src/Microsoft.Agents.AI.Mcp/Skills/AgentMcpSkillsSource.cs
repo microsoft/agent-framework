@@ -119,7 +119,7 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
-        this._listedSkillsLoader = new McpListedSkillsLoader(this._client);
+        this._listedSkillsLoader = new McpListedSkillsLoader(this._client, this._logger);
 
         IMcpSkillEntryLoader[] loaders =
         [
