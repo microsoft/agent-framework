@@ -566,6 +566,12 @@ class RunContext:
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # Reference counts for tasks currently executing one or more nested @steps.
         self._active_step_tasks: dict[asyncio.Task[Any], int] = {}
+        # Step tasks active when request_info interrupted this run.
+        self._interrupted_step_tasks: set[asyncio.Task[Any]] = set()
+        # Whether newly started step tasks belong to the current pause settlement.
+        self._capture_interrupted_step_tasks = False
+        # First internal interruption raised during this run, even if user concurrency swallows it.
+        self._workflow_interruption: WorkflowInterrupted | None = None
         # The task executing the workflow body; gather/task-group children differ from this task.
         self._root_task: asyncio.Task[Any] | None = None
         # Deterministic call counter for auto-generated request_info IDs
@@ -646,7 +652,13 @@ class RunContext:
         )
         await self.add_event(event)
         self._pending_requests[rid] = event
-        raise WorkflowInterrupted(rid, request_data, response_type)
+        current_task = asyncio.current_task()
+        self._capture_interrupted_step_tasks = True
+        self._interrupted_step_tasks.update(task for task in self._active_step_tasks if task is not current_task)
+        interruption = WorkflowInterrupted(rid, request_data, response_type)
+        if self._workflow_interruption is None:
+            self._workflow_interruption = interruption
+        raise interruption
 
     async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a custom event to the workflow event stream.
@@ -726,26 +738,31 @@ class RunContext:
     async def _settle_workflow_tasks(self) -> None:
         """Wait for active steps, cancel detached tasks, and surface real failures."""
         current_task = asyncio.current_task()
+        settled_tasks = self._interrupted_step_tasks
 
         def _pending_step_tasks() -> list[asyncio.Task[Any]]:
-            return [task for task in self._active_step_tasks if task is not current_task and not task.done()]
+            settled_tasks.update(task for task in self._active_step_tasks if task is not current_task)
+            return [task for task in settled_tasks if task is not current_task and not task.done()]
 
         try:
-            while pending := _pending_step_tasks():
-                await asyncio.gather(*pending, return_exceptions=True)
-            await self._cancel_workflow_tasks()
-        except BaseException:
-            await self._cancel_workflow_tasks()
-            raise
+            try:
+                while pending := _pending_step_tasks():
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await self._cancel_workflow_tasks()
+            except BaseException:
+                await self._cancel_workflow_tasks()
+                raise
 
-        for task in self._workflow_tasks:
-            if task is current_task or task.cancelled():
-                continue
-            error = task.exception()
-            if error is not None:
-                _, remaining = _split_workflow_interruption(error)
-                if remaining is not None:
-                    raise remaining from None
+            for task in settled_tasks:
+                if task is current_task or task.cancelled():
+                    continue
+                error = task.exception()
+                if error is not None:
+                    _, remaining = _split_workflow_interruption(error)
+                    if remaining is not None:
+                        raise remaining from None
+        finally:
+            self._capture_interrupted_step_tasks = False
 
     def _get_legacy_step_cache_key(self, step_name: str) -> str:
         idx = self._step_call_counters.get(step_name, 0)
@@ -1111,6 +1128,8 @@ class StepWrapper(Generic[R]):
         step_task = asyncio.current_task()
         if step_task is not None:
             ctx._active_step_tasks[step_task] = ctx._active_step_tasks.get(step_task, 0) + 1
+            if ctx._capture_interrupted_step_tasks and step_task is not ctx._root_task:
+                ctx._interrupted_step_tasks.add(step_task)
         try:
             # Inject RunContext if the step function declares it
             call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
@@ -1860,7 +1879,7 @@ class FunctionalWorkflow:
                     message_injected = True
 
             try:
-                return await self._func(*call_args)
+                result = await self._func(*call_args)
             except BaseException as exc:
                 interruption, remaining = _split_workflow_interruption(exc)
                 if interruption is None:
@@ -1873,6 +1892,10 @@ class FunctionalWorkflow:
                 if isinstance(exc, WorkflowInterrupted):
                     raise
                 raise interruption from None
+            if ctx._workflow_interruption is not None:
+                await ctx._settle_workflow_tasks()
+                raise ctx._workflow_interruption
+            return result
         finally:
             release_task_tracking()
             _active_run_ctx.reset(token)
