@@ -152,6 +152,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
 - AG-UI multimodal request URLs accept only web/data schemes. Do not pass file, FTP, or application-defined URI
   schemes from request content into provider clients; broader outbound access requires an application-owned policy.
+  Backend-loaded legacy Thread Snapshots replace previously accepted unsupported media parts with inert placeholder
+  text before hydration or provider replay, so strict current-request validation does not brick an existing thread.
 
 ## Usage
 

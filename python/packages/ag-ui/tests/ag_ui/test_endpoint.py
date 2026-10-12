@@ -10051,6 +10051,72 @@ async def test_agent_endpoint_prepends_stored_snapshot_for_new_user_turn(streami
     assert state_snapshots[0]["snapshot"] == {"recipe": "pasta"}
 
 
+async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
+    streaming_chat_client_stub,
+) -> None:
+    """A legacy snapshot URI is replaced before provider replay and later persistence."""
+    app = FastAPI()
+    captured_messages: list[list[Message]] = []
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any):
+        del options, kwargs
+        captured_messages.append(list(messages))
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Reply")])
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="tenant-a",
+        thread_id="legacy-media-thread",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {
+                    "id": "legacy-user",
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Inspect this file"},
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": "file:///tmp/legacy-secret.png"},
+                        },
+                    ],
+                }
+            ]
+        ),
+    )
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/snapshots",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+
+    response = TestClient(app).post(
+        "/snapshots",
+        json={
+            "thread_id": "legacy-media-thread",
+            "messages": [{"id": "current-user", "role": "user", "content": "Continue"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_messages
+    replayed_contents = [content for message in captured_messages[0] for content in message.contents]
+    assert not [
+        content
+        for content in replayed_contents
+        if content.type == "uri" and isinstance(content.uri, str) and content.uri.startswith("file:")
+    ]
+    assert any(
+        content.type == "text" and content.text == "[Unsupported legacy media omitted by AG-UI URI policy.]"
+        for content in replayed_contents
+    )
+    stored = await store.get(scope="tenant-a", thread_id="legacy-media-thread")
+    assert stored is not None
+    assert "file:///tmp/legacy-secret.png" not in json.dumps(stored.messages)
+
+
 async def test_agent_endpoint_keeps_request_thread_key_when_provider_returns_conversation_id(
     streaming_chat_client_stub: Any,
 ) -> None:

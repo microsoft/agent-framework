@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import json
 import logging
 from typing import Any, cast, get_args
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 _VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
 _ALLOWED_MULTIMODAL_URI_SCHEMES = frozenset({"data", "http", "https"})
 _APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
+_LEGACY_MEDIA_PLACEHOLDER = "[Unsupported legacy media omitted by AG-UI URI policy.]"
 
 
 def _append_synthetic_tool_results(
@@ -461,6 +463,35 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         return Content.from_uri(uri=f"ag-ui://binary/{binary_id}", media_type=mime_type)
 
     return None
+
+
+def sanitize_legacy_snapshot_media(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Replace unsupported media URIs in backend-owned legacy snapshot history."""
+    sanitized = copy.deepcopy(messages)
+    replacements = 0
+    for message in sanitized:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for index, item in enumerate(content):
+            if not isinstance(item, dict):
+                continue
+            part = cast(dict[str, Any], item)
+            part_type = str(part.get("type", "")).lower()
+            if part_type.startswith("input_"):
+                part_type = part_type.removeprefix("input_")
+            if part_type not in {"audio", "binary", "document", "image", "video"}:
+                continue
+            url, _, _, _ = _extract_multimodal_source_fields(part)
+            if not isinstance(url, str) or not url:
+                continue
+            if urlsplit(url).scheme.lower() in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+                continue
+            content[index] = {"type": "text", "text": _LEGACY_MEDIA_PLACEHOLDER}
+            replacements += 1
+    return sanitized, replacements
 
 
 def _convert_agui_content_to_framework(content: Any) -> list[Content]:
