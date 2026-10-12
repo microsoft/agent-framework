@@ -238,8 +238,9 @@ The issue must record:
 
 - the current and target lifecycle stages;
 - whether the package should be included in the root meta-package, with rationale based on the criteria above; and
-- whether the package should be exposed through a core lazy-loading namespace and, if so, the exact namespace to
-  use.
+- the lazy-loading namespace decision for the transition: `alpha` -> `beta` selects whether and where to expose the
+  package; `beta` -> `rc` should preserve that namespace but may change it by explicit core-team exception; and
+  `rc` -> `released` must preserve the RC namespace unchanged.
 
 Record an explicit `no` or `none` when the package should remain outside the meta-package or should not have a
 lazy-loading namespace. Do not infer either decision from the target lifecycle stage.
@@ -275,8 +276,8 @@ Move a package to `rc` when its API is close to the final released shape.
 3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
    or using the membership-change process above when an addition or removal is explicitly approved; the stage
    transition alone does not add it to `core[all]`
-4. Apply the lazy-loading decision recorded in the promotion issue, preserving the existing namespace when
-   unchanged or updating/removing it when explicitly approved
+4. Preserve the existing lazy-loading namespace by default. Changing or removing it at the RC boundary is
+   discouraged and requires explicit core-team approval recorded in the promotion issue
 5. Keep samples only in the root `samples/` tree
 6. Update `python/PACKAGE_STATUS.md` to show the package as `rc` and keep its membership value current
 
@@ -289,8 +290,8 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
    or using the membership-change process above when an addition or removal is explicitly approved; release does
    not imply inclusion in `core[all]`
-4. Apply the lazy-loading decision recorded in the promotion issue, preserving the existing namespace when
-   unchanged or updating/removing it when explicitly approved
+4. Keep the lazy-loading namespace unchanged from RC; do not add, remove, or move the package's namespace as part
+   of release promotion
 5. Keep samples only in the root `samples/` tree
 6. Update `python/PACKAGE_STATUS.md` to show the package as `released` and keep its membership value current
 7. Update all `README.md` files that install that package with
