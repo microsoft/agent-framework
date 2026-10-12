@@ -2,11 +2,15 @@
 
 Integration with Microsoft Foundry Local for local model inference.
 
+Uses `foundry_local_sdk` (SDK 2.1+, below 3.0) on Python 3.11+. Clients share
+`FoundryLocalManager.instance` and use its built-in web service with the existing
+OpenAI transport. Model lifecycle operations live on catalog model objects.
+
 ## Main Classes
 
 - **`FoundryLocalClient`** - Chat client for Foundry Local models
 - **`FoundryLocalChatOptions`** - Options TypedDict for Foundry Local parameters
-- **`FoundryLocalSettings`** - Pydantic settings for configuration
+- **`FoundryLocalSettings`** - Settings TypedDict for model configuration
 
 ## Usage
 

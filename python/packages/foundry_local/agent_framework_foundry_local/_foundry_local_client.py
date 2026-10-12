@@ -22,9 +22,8 @@ from agent_framework import (
 from agent_framework._settings import load_settings
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
-from foundry_local import FoundryLocalManager
-from foundry_local.models import DeviceType, FoundryModelInfo
-from openai import AsyncOpenAI
+from foundry_local_sdk import Configuration, DeviceType, FoundryLocalManager
+from openai import DEFAULT_TIMEOUT, AsyncOpenAI
 from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
@@ -222,7 +221,8 @@ class FoundryLocalClient(
         bootstrap: bool = True,
         timeout: float | None = None,
         prepare_model: bool = True,
-        device: DeviceType | None = None,
+        device: DeviceType | Literal["CPU", "GPU", "NPU"] | None = None,
+        configuration: Configuration | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -234,10 +234,11 @@ class FoundryLocalClient(
         Keyword Args:
             model: The Foundry Local model ID or alias to use. If not provided,
                 it will be loaded from the FoundryLocalSettings.
-            bootstrap: Whether to start the Foundry Local service if not already running.
-                Default is True.
-            timeout: Optional timeout for requests to Foundry Local.
-                This timeout is applied to any call to the Foundry Local service.
+            bootstrap: Whether to initialize the SDK singleton and start its built-in web
+                service if needed. Default is True. When False, the manager and web
+                service must already be running in this process.
+            timeout: Optional timeout for HTTP inference requests. Uses the OpenAI
+                client's default when omitted; does not apply to native model preparation.
             prepare_model: Whether to download the model into the cache, and load the model into
                 the inferencing service upon initialization. Default is True.
                 If false, the first call to generate a completion will load the model,
@@ -245,7 +246,10 @@ class FoundryLocalClient(
             device: The device type to use for model inference.
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
-                The values are in the foundry_local.models.DeviceType enum.
+                Accepts "CPU", "GPU", "NPU", or foundry_local_sdk.DeviceType.
+            configuration: SDK configuration used when initializing a new manager.
+                Defaults to Configuration(app_name="agent-framework"). To share a manager,
+                initialize it before creating clients and omit this parameter.
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
@@ -261,7 +265,10 @@ class FoundryLocalClient(
 
                 client = FoundryLocalClient(model="phi-4-mini")
 
-                agent = client.as_agent(
+                from agent_framework import Agent
+
+                agent = Agent(
+                    client=client,
                     name="LocalAgent",
                     instructions="You are a helpful agent.",
                     tools=get_weather,
@@ -272,14 +279,13 @@ class FoundryLocalClient(
                 os.environ["FOUNDRY_LOCAL_MODEL"] = "phi-4-mini"
                 client = FoundryLocalClient()
 
-                # A FoundryLocalManager is created and if set, the service is started.
-                # The FoundryLocalManager is available via the `manager` property.
+                # The SDK singleton is shared by all clients in this process.
                 # For instance to find out which models are available:
-                for model in client.manager.list_catalog_models():
-                    print(f"- {model.alias} for {model.task} - id={model.id}")
+                for model in client.manager.catalog.list_models():
+                    print(f"- {model.alias} for {model.info.task} - id={model.id}")
 
                 # Other options include specifying the device type:
-                from foundry_local.models import DeviceType
+                from foundry_local_sdk import DeviceType
 
                 client = FoundryLocalClient(
                     model="phi-4-mini",
@@ -292,28 +298,28 @@ class FoundryLocalClient(
                 )
                 # Beware, in this case the first request to generate a completion
                 # will take a long time as the model is loaded then.
-                # Alternatively, you could call the `download_model` and `load_model` methods
-                # on the `manager` property manually.
-                client.manager.download_model("phi-4-mini", device=DeviceType.CPU)
-                client.manager.load_model("phi-4-mini", device=DeviceType.CPU)
-
-                # You can also use the CLI:
-                `foundry model load phi-4-mini --device Auto`
+                # Alternatively, prepare the exact resolved variant manually.
+                model = client.manager.catalog.get_model_variant(client.model)
+                if model is not None:
+                    model.download()
+                    model.load()
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
                 from agent_framework.foundry import FoundryLocalChatOptions
 
+
                 class MyOptions(FoundryLocalChatOptions, total=False):
                     my_custom_option: str
+
 
                 client: FoundryLocalClient[MyOptions] = FoundryLocalClient(model="phi-4-mini")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         Raises:
-            ValueError: If the specified model ID or alias is not found.
-                Sometimes a model might be available but if you have specified a device
-                type that is not supported by the model, it will not be found.
+            ValueError: If the model or requested device is unavailable, bootstrap is
+                disabled without a running manager/service, or configuration is supplied
+                for an already initialized manager.
 
         """
         settings = load_settings(
@@ -324,29 +330,74 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        model_setting: str = settings["model"]  # type: ignore[assignment]
+        model_setting = cast(str, settings.get("model"))
+        device_type = DeviceType(device) if device is not None else None
 
-        manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
-        model_info: FoundryModelInfo | None = manager.get_model_info(
-            model_setting,
-            device=device,
-        )
-        if model_info is None:
-            message = (
-                f"Model with ID or alias '{model_setting}:{device.value}' not found in Foundry Local."
-                if device
-                else (f"Model with ID or alias '{model_setting}' for your current device not found in Foundry Local.")
+        manager = FoundryLocalManager.instance
+        owns_manager = manager is None
+        if manager is None:
+            if not bootstrap:
+                raise ValueError(
+                    "bootstrap=False requires an initialized Foundry Local manager and running web service."
+                )
+            FoundryLocalManager.initialize(configuration or Configuration(app_name="agent-framework"))
+            manager = FoundryLocalManager.instance
+            if manager is None:
+                raise RuntimeError("Foundry Local manager initialization did not create a singleton.")
+        elif configuration is not None:
+            raise ValueError(
+                "Foundry Local is already initialized; configure the shared manager before creating clients."
             )
-            raise ValueError(message)
-        if prepare_model:
-            manager.download_model(model_info.id, device=device)
-            manager.load_model(model_info.id, device=device)
 
-        super().__init__(
-            model=model_info.id,
-            async_client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
-            additional_properties=additional_properties,
-            middleware=middleware,
-            function_invocation_configuration=function_invocation_configuration,
-        )
-        self.manager = manager
+        initialized = False
+        try:
+            if not manager.urls:
+                if not bootstrap:
+                    raise ValueError("bootstrap=False requires a running Foundry Local web service.")
+                manager.start_web_service()
+            if not manager.urls:
+                raise ValueError("Foundry Local web service did not provide a bound URL.")
+
+            is_variant_id = ":" in model_setting
+            model_handle = (
+                manager.catalog.get_model_variant(model_setting)
+                if is_variant_id
+                else manager.catalog.get_model(model_setting)
+            )
+            if model_handle is not None and device_type is not None:
+                model_handle = next(
+                    (
+                        variant
+                        for variant in ([model_handle] if is_variant_id else model_handle.variants)
+                        if (runtime := variant.info.runtime) is not None and runtime.device_type == device_type
+                    ),
+                    None,
+                )
+            elif model_handle is not None and not is_variant_id:
+                # Pin the alias's chosen variant before download changes the cached preference.
+                model_handle = manager.catalog.get_model_variant(model_handle.id)
+            if model_handle is None:
+                target = f"{model_setting}:{device_type.value}" if device_type is not None else model_setting
+                raise ValueError(f"Model with ID or alias '{target}' not found in Foundry Local.")
+
+            model_id = model_handle.id
+            if prepare_model:
+                model_handle.download()
+                model_handle.load()
+
+            super().__init__(
+                model=model_id,
+                async_client=AsyncOpenAI(
+                    base_url=f"{manager.urls[0].rstrip('/')}/v1",
+                    api_key="foundry-local",
+                    timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
+                ),
+                additional_properties=additional_properties,
+                middleware=middleware,
+                function_invocation_configuration=function_invocation_configuration,
+            )
+            self.manager = manager
+            initialized = True
+        finally:
+            if owns_manager and not initialized:
+                manager.close()
