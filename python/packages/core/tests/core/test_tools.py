@@ -4,6 +4,7 @@ import copy
 import logging
 import threading
 from contextvars import ContextVar
+from datetime import date, datetime
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -455,6 +456,95 @@ async def test_invoke_omitted_optional_uses_function_default():
 
     result = await get_weather.invoke(arguments={"location": "Seattle"})
     assert result[0].text == "Seattle:C"
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (tuple[int, int], [1, 2], (1, 2)),
+    ],
+    ids=["datetime", "set", "tuple"],
+)
+async def test_invoke_converts_json_values_to_annotated_python_types(annotation: Any, raw_value: Any, expected: Any):
+    """Values pydantic converts from JSON must reach the function instead of failing the schema type check.
+
+    Regression for #8661: the lightweight JSON schema checks ran on the pydantic output, so a
+    ``datetime``/``set``/``tuple`` value was rejected against its ``string``/``array`` schema.
+    """
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture)
+
+    await capture_tool.invoke(arguments={"value": raw_value})
+
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+async def test_invoke_still_rejects_invalid_value_for_pydantic_tool():
+    """Pydantic still rejects values it cannot convert to the annotated type."""
+
+    @tool
+    def when(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'when'"):
+        await when.invoke(arguments={"moment": "not a date"})
+
+
+async def test_invoke_accepts_input_model_instance_with_converted_values():
+    """An input model instance is checked in its JSON form, so converted values pass (#8661)."""
+
+    @tool
+    def when(moment: datetime, tags: set[str]) -> str:
+        return f"{type(moment).__name__}:{type(tags).__name__}"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_validate({"moment": "2026-01-02T03:04:05", "tags": ["b", "a"]})
+
+    assert (await when.invoke(arguments=arguments))[0].text == "datetime:set"
+
+
+async def test_invoke_still_checks_unvalidated_input_model_instance():
+    """Skipping the checks for model-validated arguments must not let an unvalidated instance through."""
+
+    @tool
+    def count_tool(count: int) -> str:
+        return str(count)
+
+    assert count_tool.input_model is not None
+    arguments = count_tool.input_model.model_construct(count="not a number")
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'count_tool'"):
+        await count_tool.invoke(arguments=arguments)
+
+
+async def test_invoke_revalidates_constructed_input_model_instance():
+    """A constructed instance can hold a wrong Python type whose JSON form still matches the schema.
+
+    Its data is validated through the input model, so the function receives the annotated type.
+    """
+    received: list[Any] = []
+
+    @tool
+    def when(moment: datetime) -> str:
+        received.append(moment)
+        return "ok"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_construct(moment=date(2026, 9, 30))
+
+    await when.invoke(arguments=arguments)
+
+    assert received == [datetime(2026, 9, 30)]
+    assert type(received[0]) is datetime
 
 
 async def test_auto_invoke_preserves_explicit_null_argument():

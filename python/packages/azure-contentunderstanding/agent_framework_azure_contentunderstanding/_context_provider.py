@@ -299,6 +299,8 @@ class ContentUnderstandingContextProvider(ContextProvider):
             upload_timeout = getattr(self, "max_wait", None)
             remaining_uploads: list[tuple[str, DocumentEntry]] = []
             for upload_key, upload_entry in pending_uploads:
+                # Restoring session state does not preserve shared document references.
+                upload_entry = documents.get(upload_key, upload_entry)
                 try:
                     if upload_timeout is not None:
                         await asyncio.wait_for(
