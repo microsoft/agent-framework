@@ -120,7 +120,8 @@ Package lifecycle and membership in the root `agent-framework` meta-package are 
 starts outside `agent-framework-core[all]`, and promotion to `beta`, `rc`, or `released` does not add it
 automatically.
 
-Adding a package to the standard install set requires an explicit core-team decision. Consider:
+Adding a package to or removing a package from the standard install set requires an agreed GitHub issue and an
+explicit core-team decision. For additions, consider:
 
 - whether the package is useful across common Agent Framework workloads rather than for one specialized storage
   backend, hosting adapter, channel, or deployment target;
@@ -133,8 +134,14 @@ Adding a package to the standard install set requires an explicit core-team deci
 Default to a separate install when the case is unclear. Existing membership is not precedent for every package in
 the same lifecycle stage or category.
 
+For removals, the issue must also assess compatibility for existing `pip install agent-framework` and
+`agent-framework-core[all]` users, document any migration or replacement path, determine whether the change is
+breaking, and identify the required Core and root meta-package version changes. Do not treat removal as ordinary
+dependency cleanup.
+
 Track the decision in the `Meta package` column of `python/PACKAGE_STATUS.md`. When membership changes, update
-`packages/core/pyproject.toml` `[project.optional-dependencies].all` and the status table in the same change.
+`packages/core/pyproject.toml` `[project.optional-dependencies].all`, the Core and root package versions as required,
+and the status table in the same change.
 
 ## Lazy Loading Pattern
 
@@ -265,10 +272,13 @@ Move a package to `rc` when its API is close to the final released shape.
 1. Update the package version to the release-candidate pattern: `1.0.0rc<number>`
 2. Keep the classifier at `Development Status :: 4 - Beta` because PyPI does not have a separate
    release-candidate classifier
-3. Preserve the package's current meta-package membership unless it is reconsidered separately; the stage
+3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
+   or using the membership-change process above when an addition or removal is explicitly approved; the stage
    transition alone does not add it to `core[all]`
-4. Keep samples only in the root `samples/` tree
-5. Update `python/PACKAGE_STATUS.md` to show the package as `rc` and keep its membership value current
+4. Apply the lazy-loading decision recorded in the promotion issue, preserving the existing namespace when
+   unchanged or updating/removing it when explicitly approved
+5. Keep samples only in the root `samples/` tree
+6. Update `python/PACKAGE_STATUS.md` to show the package as `rc` and keep its membership value current
 
 #### RC -> Released
 
@@ -276,11 +286,14 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 
 1. Update the package version to the stable pattern: `1.0.0`
 2. Update the classifier to `Development Status :: 5 - Production/Stable`
-3. Preserve the package's current meta-package membership unless it is reconsidered separately; release does not
-   imply inclusion in `core[all]`
-4. Keep samples only in the root `samples/` tree
-5. Update `python/PACKAGE_STATUS.md` to show the package as `released` and keep its membership value current
-6. Update all `README.md` files that install that package with
+3. Apply the meta-package decision recorded in the promotion issue, preserving current membership when unchanged
+   or using the membership-change process above when an addition or removal is explicitly approved; release does
+   not imply inclusion in `core[all]`
+4. Apply the lazy-loading decision recorded in the promotion issue, preserving the existing namespace when
+   unchanged or updating/removing it when explicitly approved
+5. Keep samples only in the root `samples/` tree
+6. Update `python/PACKAGE_STATUS.md` to show the package as `released` and keep its membership value current
+7. Update all `README.md` files that install that package with
    `pip install agent-framework-... --pre` so they use `pip install agent-framework-...` without
    the `--pre` suffix
 
