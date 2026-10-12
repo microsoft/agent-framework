@@ -194,6 +194,10 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "chat_middleware",
         "function_middleware",
     ),
+    "._rate_limit": (
+        "ToolRateLimit",
+        "ToolRateLimitMiddleware",
+    ),
     "._sessions": (
         "AgentSession",
         "ContextProvider",
@@ -638,6 +642,8 @@ __all__ = [
     "ToolApprovalRuleCallback",
     "ToolApprovalState",
     "ToolMode",
+    "ToolRateLimit",
+    "ToolRateLimitMiddleware",
     "ToolResultCompactionStrategy",
     "ToolTypes",
     "TruncationStrategy",

@@ -19,6 +19,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`function_based_middleware.py`](./function_based_middleware.py) | Shows function-based agent and function middleware. |
 | [`middleware_termination.py`](./middleware_termination.py) | Demonstrates stopping a middleware pipeline early. |
 | [`message_injection_middleware.py`](./message_injection_middleware.py) | Demonstrates `MessageInjectionMiddleware` with a real Foundry chat client: enqueueing a follow-up message into the active session while a long-running async tool is awaiting. |
+| [`per_tool_rate_limiting.py`](./per_tool_rate_limiting.py) | Demonstrates opt-in, per-tool token-bucket admission control, independent burst quotas, and fail-fast rejection without external services. |
 | [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware registers result transforms and buffered re-derivation on its context before execution, then post-processes regular and streaming responses. |
 | [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating arguments with runtime context data. |
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
