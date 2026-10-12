@@ -2553,13 +2553,14 @@ async def test_mcp_tool_call_not_replayed_without_idempotency_hint():
         def __init__(self, **kwargs: Any) -> None:
             super().__init__(**kwargs)
             self.connect_count = 0
+            self.call_tool_mock = AsyncMock(
+                side_effect=McpError(types.ErrorData(code=-32000, message="Session terminated"))
+            )
 
         async def connect(self, *, reset: bool = False) -> None:
             self.connect_count += 1
             self.session = Mock(spec=ClientSession)
-            self.session.call_tool = AsyncMock(
-                side_effect=McpError(types.ErrorData(code=-32000, message="Session terminated"))
-            )
+            self.session.call_tool = self.call_tool_mock
             self.is_connected = True
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -2573,7 +2574,7 @@ async def test_mcp_tool_call_not_replayed_without_idempotency_hint():
 
     assert isinstance(exc_info.value.__cause__, McpError)
     assert server.connect_count == 1
-    assert server.session.call_tool.await_count == 1
+    assert server.call_tool_mock.await_count == 1
 
 
 async def test_mcp_regular_tool_call_does_not_duplicate_side_effect_after_disconnect():
