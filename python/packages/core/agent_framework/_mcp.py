@@ -548,7 +548,10 @@ class _MCPHeaderScopedClient:
 class _MCPConnection(Protocol):
     """Normalized MCP connection surface used by MCPTool."""
 
-    client: Client | None
+    @property
+    def client(self) -> Client | None:
+        """Return the high-level Client when this connection has one."""
+        ...
 
     @property
     def session(self) -> ClientSession:
