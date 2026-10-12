@@ -2,21 +2,23 @@
 
 import inspect
 import json
+from importlib import import_module
 from types import SimpleNamespace
-from typing import Literal
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from agent_framework import Agent, SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.foundry import FoundryLocalClient
 from foundry_local_sdk import Configuration, DeviceType, IModel
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from agent_framework_foundry_local._feature_usage import FeatureIndex
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 
 def test_foundry_local_owns_foundry_local_feature() -> None:
@@ -278,9 +280,9 @@ def test_foundry_local_client_does_not_hide_web_service_failure(mock_foundry_loc
 
 @pytest.mark.parametrize("stream", [False, True])
 async def test_foundry_local_client_uses_openai_transport(mock_foundry_local_manager: MagicMock, stream: bool) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[Any] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
+    def respond(request: Any) -> Any:
         requests.append(request)
         completion = {
             "id": "completion-1",
@@ -290,18 +292,18 @@ async def test_foundry_local_client_uses_openai_transport(mock_foundry_local_man
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}],
         }
         if not stream:
-            return httpx.Response(200, json=completion)
+            return _OPENAI_HTTPX.Response(200, json=completion)
         completion["object"] = "chat.completion.chunk"
         completion["choices"] = [
             {"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": "stop"}
         ]
-        return httpx.Response(
+        return _OPENAI_HTTPX.Response(
             200,
             headers={"content-type": "text/event-stream"},
             text=f"data: {json.dumps(completion)}\n\ndata: [DONE]\n\n",
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http_client:
+    async with DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(respond)) as http_client:
         async_client = AsyncOpenAI(
             base_url="http://localhost:5272/v1", api_key="foundry-local", http_client=http_client
         )
