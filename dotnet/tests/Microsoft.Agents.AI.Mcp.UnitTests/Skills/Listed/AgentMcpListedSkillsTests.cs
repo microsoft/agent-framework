@@ -12,6 +12,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Moq;
 
@@ -105,6 +106,22 @@ public sealed class AgentMcpListedSkillsTests
         await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
     }
 
+    [Fact]
+    public async Task DiscoverAsync_MissingResult_ThrowsAsync()
+    {
+        // Arrange
+        var client = new Mock<McpClient>();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = null });
+        var loader = new McpListedSkillsLoader(client.Object);
+
+        // Act
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
+
+        // Assert
+        Assert.Equal("The server returned no skills/list result.", exception.Message);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("unknown")]
@@ -119,7 +136,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act & Assert
-        JsonException exception = await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         Assert.Equal(
             $"A skills/list result must have resultType 'complete'. Received resultType '{resultType}'.",
             exception.Message);
@@ -344,33 +361,33 @@ public sealed class AgentMcpListedSkillsTests
     }
 
     [Theory]
-    [InlineData("uri", "null")]
-    [InlineData("uri", "\"skill://other/SKILL.md\"")]
-    [InlineData("uri", "\"relative/SKILL.md\"")]
-    [InlineData("frontmatter", "null")]
-    [InlineData("frontmatter", "[]")]
-    [InlineData("frontmatter", "\"metadata\"")]
-    [InlineData("frontmatter", "{}")]
-    [InlineData("frontmatter", """{"name":"unit-converter"}""")]
-    [InlineData("frontmatter", """{"description":"Convert units."}""")]
-    [InlineData("frontmatter", """{"name":null,"description":"Convert units."}""")]
-    [InlineData("frontmatter", """{"name":42,"description":"Convert units."}""")]
-    [InlineData("frontmatter", """{"name":"INVALID","description":"Description."}""")]
-    [InlineData("frontmatter", """{"name":"unit-converter","description":null}""")]
-    [InlineData("frontmatter", """{"name":"unit-converter","description":false}""")]
-    [InlineData("resources", "null")]
-    [InlineData("resources", "false")]
-    [InlineData("resources", "\"other\"")]
-    [InlineData("resources", "\"dynamic\"")]
-    [InlineData("resources", "{}")]
-    [InlineData("resources", "[null]")]
-    [InlineData("resources", "[42]")]
-    [InlineData("resources", "[[]]")]
-    [InlineData("resources", "[{}]")]
-    [InlineData("resources", """[{"uri":null}]""")]
-    [InlineData("resources", """[{"uri":42}]""")]
-    [InlineData("resources", """[{"uri":true}]""")]
-    public async Task GetSkillsAsync_InvalidEntry_ThrowsAsync(string field, string value)
+    [InlineData("uri", "null", typeof(JsonException))]
+    [InlineData("uri", "\"skill://other/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"relative/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("frontmatter", "null", typeof(JsonException))]
+    [InlineData("frontmatter", "[]", typeof(JsonException))]
+    [InlineData("frontmatter", "\"metadata\"", typeof(JsonException))]
+    [InlineData("frontmatter", "{}", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter"}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":null,"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":42,"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"INVALID","description":"Description."}""", typeof(InvalidOperationException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":null}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":false}""", typeof(JsonException))]
+    [InlineData("resources", "null", typeof(JsonException))]
+    [InlineData("resources", "false", typeof(JsonException))]
+    [InlineData("resources", "\"other\"", typeof(JsonException))]
+    [InlineData("resources", "\"dynamic\"", typeof(JsonException))]
+    [InlineData("resources", "{}", typeof(JsonException))]
+    [InlineData("resources", "[null]", typeof(InvalidOperationException))]
+    [InlineData("resources", "[42]", typeof(JsonException))]
+    [InlineData("resources", "[[]]", typeof(JsonException))]
+    [InlineData("resources", "[{}]", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":null}]""", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":42}]""", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":true}]""", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidEntry_ThrowsAsync(string field, string value, Type exceptionType)
     {
         // Arrange
         JsonObject entry = Entry();
@@ -380,7 +397,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
     }
 
     [Theory]
@@ -398,7 +415,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act
-        JsonException exception = await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Assert
         Assert.Equal($"Skill '{SkillUri}' has invalid frontmatter: {reason}", exception.Message);
@@ -422,12 +439,12 @@ public sealed class AgentMcpListedSkillsTests
     }
 
     [Theory]
-    [InlineData("uri", "\"skill://other/checklist.md\"")]
-    [InlineData("uri", "\"skill://unit-converter/../escape.md\"")]
-    [InlineData("uri", "\"skill://unit-converter/%252e%252e/escape.md\"")]
-    [InlineData("uri", "\"skill://unit-converter/\"")]
-    [InlineData("uri", "null")]
-    public async Task GetSkillsAsync_InvalidManifestEntry_ThrowsAsync(string field, string value)
+    [InlineData("uri", "\"skill://other/checklist.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/../escape.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/%252e%252e/escape.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "null", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidManifestEntry_ThrowsAsync(string field, string value, Type exceptionType)
     {
         // Arrange
         JsonObject entry = Entry();
@@ -437,7 +454,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
     }
 
     [Theory]
@@ -515,11 +532,11 @@ public sealed class AgentMcpListedSkillsTests
     }
 
     [Theory]
-    [InlineData("null")]
-    [InlineData("42")]
-    [InlineData("\"skill://other/SKILL.md\"")]
-    [InlineData("\"skill://unit-converter/../SKILL.md\"")]
-    public async Task GetSkillsAsync_InvalidInstructionUri_ThrowsBeforeSkippingAsync(string value)
+    [InlineData("null", typeof(JsonException))]
+    [InlineData("42", typeof(JsonException))]
+    [InlineData("\"skill://other/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("\"skill://unit-converter/../SKILL.md\"", typeof(InvalidOperationException))]
+    public async Task GetSkillsAsync_InvalidInstructionUri_ThrowsBeforeSkippingAsync(string value, Type exceptionType)
     {
         // Arrange
         JsonObject entry = Entry();
@@ -534,7 +551,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
         Assert.Empty(reads);
     }
 
@@ -615,7 +632,7 @@ public sealed class AgentMcpListedSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
     }
 
     [Theory]

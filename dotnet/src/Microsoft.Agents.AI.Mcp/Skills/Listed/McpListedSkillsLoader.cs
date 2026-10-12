@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -29,6 +30,7 @@ internal sealed class McpListedSkillsLoader
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
     /// </summary>
     /// <param name="client">The MCP client used to discover skills and fetch their content.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     public McpListedSkillsLoader(McpClient client)
     {
         this._client = Throw.IfNull(client);
@@ -39,6 +41,10 @@ internal sealed class McpListedSkillsLoader
     /// </summary>
     /// <param name="cancellationToken">The token used to cancel discovery.</param>
     /// <returns>The skills discovered through <c>skills/list</c>.</returns>
+    /// <exception cref="JsonException">The response cannot be deserialized into a skill list.</exception>
+    /// <exception cref="InvalidOperationException">The response is missing or contains an unsupported result type or invalid skill metadata or resource manifests.</exception>
+    /// <exception cref="McpException">The MCP request fails.</exception>
+    /// <exception cref="OperationCanceledException">Discovery is canceled.</exception>
     public async Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -50,11 +56,11 @@ internal sealed class McpListedSkillsLoader
         }, cancellationToken).ConfigureAwait(false);
 
         McpSkillsListResult result = response.Result?.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult)
-            ?? throw new JsonException("The server returned no skills/list result.");
+            ?? throw new InvalidOperationException("The server returned no skills/list result.");
 
         if (result.ResultType != CompleteResultType)
         {
-            throw new JsonException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
+            throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
         }
 
         List<AgentSkill> skills = [];
@@ -66,7 +72,7 @@ internal sealed class McpListedSkillsLoader
             // Nullable annotations do not reject null collection elements during deserialization.
             if (entry is null)
             {
-                throw new JsonException("The skills/list result contains a null skill entry.");
+                throw new InvalidOperationException("The skills/list result contains a null skill entry.");
             }
 
             AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
@@ -86,14 +92,14 @@ internal sealed class McpListedSkillsLoader
             !entry.Uri.EndsWith("/SKILL.md", StringComparison.Ordinal) ||
             entry.Uri.Contains('\\') || entry.Uri.Any(char.IsControl))
         {
-            throw new JsonException("A skill entry must specify an absolute SKILL.md resource URI.");
+            throw new InvalidOperationException("A skill entry must specify an absolute SKILL.md resource URI.");
         }
 
         // Validate the metadata needed to advertise the skill.
         if (!AgentSkillFrontmatter.ValidateName(entry.Frontmatter.Name, out string? reason) ||
             !AgentSkillFrontmatter.ValidateDescription(entry.Frontmatter.Description, out reason))
         {
-            throw new JsonException($"Skill '{entry.Uri}' has invalid frontmatter: {reason}");
+            throw new InvalidOperationException($"Skill '{entry.Uri}' has invalid frontmatter: {reason}");
         }
 
         // skill://unit-converter/SKILL.md -> skill://unit-converter
@@ -112,7 +118,7 @@ internal sealed class McpListedSkillsLoader
         // directory[segmentStart..] extracts "unit-converter", which must match the advertised skill name.
         if (!string.Equals(directory[segmentStart..], entry.Frontmatter.Name, StringComparison.Ordinal))
         {
-            throw new JsonException($"Skill URI '{entry.Uri}' must end with its frontmatter name followed by /SKILL.md.");
+            throw new InvalidOperationException($"Skill URI '{entry.Uri}' must end with its frontmatter name followed by /SKILL.md.");
         }
 
         // Project the fields used to advertise the skill.
@@ -133,7 +139,7 @@ internal sealed class McpListedSkillsLoader
             // Reject null entries, e.g. "resources": [null], which deserialization can accept.
             if (resource is null)
             {
-                throw new JsonException($"Skill '{skillUri}' contains a null manifest entry.");
+                throw new InvalidOperationException($"Skill '{skillUri}' contains a null manifest entry.");
             }
 
             // Resources must stay under the skill root, e.g. skill://unit-converter/references/rates.md.
@@ -141,7 +147,7 @@ internal sealed class McpListedSkillsLoader
                 resource.Uri.Length == skillRootUri.Length ||
                 !AgentMcpListedSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
             {
-                throw new JsonException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
+                throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
             }
 
             // The server also supplies SKILL.md as a resource. Skip it here because we read it separately
