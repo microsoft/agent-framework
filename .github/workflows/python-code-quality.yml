@@ -46,7 +46,7 @@ jobs:
         with:
           path: ~/.cache/prek
           key: prek|${{ matrix.python-version }}|${{ hashFiles('python/.pre-commit-config.yaml') }}
-      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
+      - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
         name: Run Pre-commit Hooks (excluding poe-check)
         env:
           SKIP: poe-check
