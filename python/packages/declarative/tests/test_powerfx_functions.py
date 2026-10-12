@@ -776,6 +776,11 @@ class TestWholeCallArgs:
         """``""`` is an escaped quote, so the literal does not end there."""
         assert whole_call_args('Concat("a"")", "b")', "Concat") == '"a"")", "b"'
 
+    def test_paren_inside_an_interpolation_string_does_not_close_the_call(self):
+        """A ``)`` in a quoted string inside a ``$"{...}"`` expression is data, not the terminator."""
+        formula = 'UserMessage($"x {If(true, ")", "x")}")'
+        assert whole_call_args(formula, "UserMessage") == '$"x {If(true, ")", "x")}"'
+
 
 class TestEvalCustomFunctionExtent:
     """A custom-function handler must only claim a formula that is one whole call.

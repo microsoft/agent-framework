@@ -47,7 +47,7 @@ from agent_framework._workflows._state import State
 
 from ._errors import DeclarativeWorkflowError
 from ._powerfx_functions import (
-    _skip_powerfx_opaque_token,  # pyright: ignore[reportPrivateUsage]
+    _iter_powerfx_expression_indices,  # pyright: ignore[reportPrivateUsage]
     whole_call_args,
 )
 from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
@@ -70,49 +70,6 @@ logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
-
-
-def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
-    """Yield code positions, excluding literals/comments but including interpolation expressions."""
-    # None denotes interpolated text; integers track record braces in expression sections.
-    scopes: list[int | None] = [0]
-    cursor = 0
-    while cursor < len(formula):
-        depth = scopes[-1]
-        char = formula[cursor]
-        if depth is None:
-            if formula.startswith(('""', "{{", "}}"), cursor):
-                cursor += 2
-                continue
-            if char == "{":
-                scopes.append(0)
-            elif char == '"':
-                scopes.pop()
-            cursor += 1
-            continue
-
-        if formula.startswith('$"', cursor):
-            scopes.append(None)
-            cursor += 2
-            continue
-
-        token_end = _skip_powerfx_opaque_token(formula, cursor)
-        if token_end != cursor:
-            cursor = token_end
-            continue
-
-        if char == "{":
-            scopes[-1] = depth + 1
-        elif char == "}":
-            if depth > 0:
-                scopes[-1] = depth - 1
-            elif len(scopes) > 1:
-                scopes.pop()
-                cursor += 1
-                continue
-
-        yield cursor
-        cursor += 1
 
 
 @dataclass(frozen=True)
