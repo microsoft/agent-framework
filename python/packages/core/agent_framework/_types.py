@@ -469,6 +469,15 @@ class ComputerSafetyCheck(TypedDict, total=False):
 ContentT = TypeVar("ContentT", bound="Content")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+# Marks a streamed nested content item (e.g. a code interpreter call's `inputs`/`outputs`
+# text) as a full resend of everything streamed so far, rather than an incremental delta
+# to append. Some providers follow up a run of true deltas with one event that repeats the
+# complete value (e.g. the OpenAI Responses API's `code_interpreter_call_code.done`, sent
+# after a series of `.delta` events for the same call). Text content alone can't reliably
+# tell that apart from a delta that merely happens to start with what came before - e.g. a
+# delta of "(" followed by a delta of "()" is two chunks that combine into "(()", not a
+# resend of "()" - so providers must set this explicitly on a full resend.
+_CONTENT_ITEM_SNAPSHOT_KEY = "content_item_snapshot"
 
 # endregion
 
@@ -2524,21 +2533,55 @@ def _content_items_text(items: Any) -> str | None:
     return "".join(text_parts)
 
 
+def _is_content_item_snapshot(items: Any) -> bool:
+    """Whether a nested content list is tagged as a full resend, see `_CONTENT_ITEM_SNAPSHOT_KEY`."""
+    if not isinstance(items, list):
+        return False
+    return any(
+        isinstance(item, Content) and item.additional_properties.get(_CONTENT_ITEM_SNAPSHOT_KEY)
+        for item in cast("list[object]", items)
+    )
+
+
+def _strip_snapshot_marker(items: Any) -> None:
+    """Remove the merge-only snapshot marker from a nested content list, in place.
+
+    The marker is only an instruction for the merge step that reads it; stripping it
+    keeps it from persisting into finalized content that gets serialized into history
+    or passed to middleware.
+    """
+    if isinstance(items, list):
+        for item in cast("list[object]", items):
+            if isinstance(item, Content):
+                item.additional_properties.pop(_CONTENT_ITEM_SNAPSHOT_KEY, None)
+
+
+def _copy_without_snapshot_marker(items: Any) -> Any:
+    """Deep-copy a nested content list, stripping the merge-only snapshot marker."""
+    copied = deepcopy(items)
+    _strip_snapshot_marker(copied)
+    return copied
+
+
 def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     """Merge streamed nested content lists, replacing deltas with a later full value when present."""
     if incoming is None:
         return existing
-    if existing is None:
+    # A snapshot can be the very first (or only) chunk seen for this call - not just one
+    # that arrives after prior deltas - so strip the marker here too, not only below.
+    if existing is None or _is_content_item_snapshot(incoming):
+        return _copy_without_snapshot_marker(incoming)
+
+    # An empty list has no item to fold a delta into (and nothing to add from one),
+    # so hand back whichever side actually has content before indexing into it below.
+    if not existing:
         return deepcopy(incoming)
+    if not incoming:
+        return existing
 
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:
-        if incoming_text.startswith(existing_text):
-            return deepcopy(incoming)
-        if existing_text.startswith(incoming_text):
-            return existing
-
         existing_items = cast(list[Content], existing)
         merged = deepcopy(existing_items[0])
         merged.text = existing_text + incoming_text
@@ -2585,7 +2628,13 @@ def _coalesce_code_interpreter_content(contents: list[Content]) -> None:
 
         existing = seen.get(key)
         if existing is None:
+            # The call_id's first chunk can itself be a tagged snapshot (a call that
+            # never streams incremental deltas, just one done-style chunk), so this
+            # copy needs the same stripping `_merge_code_interpreter_content` does for
+            # later chunks.
             copied = deepcopy(content)
+            _strip_snapshot_marker(copied.inputs)
+            _strip_snapshot_marker(copied.outputs)
             seen[key] = copied
             coalesced_contents.append(copied)
             continue

@@ -47,6 +47,7 @@ from agent_framework._sessions import (
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
+from agent_framework._types import _CONTENT_ITEM_SNAPSHOT_KEY
 from agent_framework.exceptions import MiddlewareException
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
@@ -673,7 +674,12 @@ class TestHistoryProviderBase:
                 contents=[
                     Content.from_code_interpreter_tool_call(
                         call_id="ci_123",
-                        inputs=[Content.from_text(text="import pandas as pd")],
+                        inputs=[
+                            Content.from_text(
+                                text="import pandas as pd",
+                                additional_properties={_CONTENT_ITEM_SNAPSHOT_KEY: True},
+                            )
+                        ],
                         additional_properties={"sequence_number": 3},
                     )
                 ],
