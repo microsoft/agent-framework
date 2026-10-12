@@ -29,6 +29,7 @@ from agent_framework._tools import (
     _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
+from agent_framework.exceptions import CodeActFidesCoverageError
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
@@ -112,6 +113,7 @@ class _RunConfig:
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
     max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
     max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
+    require_fides: bool = False
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -135,6 +137,7 @@ class _RunConfig:
             self.max_output_files,
             self.max_output_file_bytes,
             self.max_output_total_bytes,
+            self.require_fides,
         )
 
 
@@ -411,6 +414,16 @@ def _load_sandbox_class() -> type[Any]:
         ) from exc
 
     return Sandbox
+
+
+def _ensure_fides_coverage(*, require_fides: bool, tools: Sequence[FunctionTool]) -> None:
+    """Reject unsupported nested host tools before any guest callback runs."""
+    if require_fides and tools:
+        raise CodeActFidesCoverageError(
+            "CodeAct host tools cannot execute with require_fides=True: "
+            "per-host-tool FIDES middleware enforcement is unavailable. "
+            "Remove the CodeAct host tools or disable CodeAct host-tool access."
+        )
 
 
 def _collect_tools(*tool_groups: Any) -> list[FunctionTool]:
@@ -1257,10 +1270,15 @@ def _build_execution_contents(
     return outputs
 
 
-def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
+def _make_sandbox_callback(tool_obj: FunctionTool, *, require_fides: bool = False) -> Callable[..., Any]:
     sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
+        if require_fides:
+            raise CodeActFidesCoverageError(
+                "CodeAct nested host-tool execution refused: required FIDES enforcement is unavailable."
+            )
+
         async def _invoke() -> Any:
             return await sandbox_tool.invoke(arguments=kwargs, skip_parsing=True)
 
@@ -1408,6 +1426,7 @@ class _SandboxRegistry(SandboxRuntime):
         objects never escape the worker; this method returns only sendable plain Python data.
         Entries whose output cannot be cleaned safely are evicted before another invocation.
         """
+        _ensure_fides_coverage(require_fides=config.require_fides, tools=config.tools)
         cache_key = config.cache_key()
         entry = self._get_or_create_entry(config)
         try:
@@ -1459,6 +1478,7 @@ class _SandboxRegistry(SandboxRuntime):
             del entries
 
     def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
+        _ensure_fides_coverage(require_fides=config.require_fides, tools=config.tools)
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
         output_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
 
@@ -1487,7 +1507,9 @@ class _SandboxRegistry(SandboxRuntime):
 
         def _configure_sandbox(*, sandbox: Any, expand_missing_scheme: bool) -> None:
             for tool_obj in config.tools:
-                sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+                sandbox.register_tool(
+                    tool_obj.name, _make_sandbox_callback(tool_obj, require_fides=config.require_fides)
+                )
 
             for allowed_domain in config.allowed_domains:
                 for target in _allowed_domain_registration_targets(
@@ -1535,6 +1557,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Hyperlight sandbox.
 
     Keyword Args:
+        require_fides: Opt-in, trusted host requirement for nested FIDES coverage. Unsupported
+            host-tool registration and execution are refused; code without host tools may run.
         tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
             or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
             compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
@@ -1557,7 +1581,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
+        require_fides: bool = False,
     ) -> None:
+        if not isinstance(require_fides, bool):
+            raise TypeError("require_fides must be a bool.")
         normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
@@ -1570,6 +1597,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._state_lock = threading.RLock()
+        self._require_fides = require_fides
         self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
@@ -1600,6 +1628,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             return str(self.__dict__.get("description", EXECUTE_CODE_TOOL_DESCRIPTION))
 
         with state_lock:
+            _ensure_fides_coverage(require_fides=self._require_fides, tools=self._managed_tools)
             allowed_domains = sorted(self._allowed_domains.values(), key=lambda value: value.target)
             return build_execute_code_description(
                 tools=self._managed_tools,
@@ -1614,6 +1643,11 @@ class HyperlightExecuteCodeTool(FunctionTool):
     def description(self, value: str) -> None:
         self.__dict__["description"] = value
 
+    @property
+    def require_fides(self) -> bool:
+        """Whether nested host-tool calls require unavailable FIDES enforcement."""
+        return self._require_fides
+
     def add_tools(
         self,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
@@ -1622,6 +1656,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         with self._state_lock:
             new_tools = _collect_tools(tools)
             combined_tools = _collect_tools(self._managed_tools, new_tools)
+            _ensure_fides_coverage(require_fides=self._require_fides, tools=combined_tools)
             self._managed_tools = combined_tools
             for tool_obj in new_tools:
                 if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
@@ -1735,6 +1770,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        with self._state_lock:
+            _ensure_fides_coverage(require_fides=self._require_fides, tools=self._managed_tools)
         file_mounts = self.get_file_mounts()
         allowed_domains = self.get_allowed_domains()
 
@@ -1752,6 +1789,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             module=self._module,
             module_path=self._module_path,
             _registry=self._registry,
+            require_fides=self._require_fides,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -1762,6 +1800,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "require_fides": config.require_fides,
             "max_output_files": config.max_output_files,
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
@@ -1803,6 +1842,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
     def _build_run_config(self) -> _RunConfig:
         with self._state_lock:
             managed_tools = tuple(self._managed_tools)
+            _ensure_fides_coverage(require_fides=self._require_fides, tools=managed_tools)
             workspace_root = self._workspace_root
             stored_mounts = tuple(self._file_mounts.values())
             allowed_domains = tuple(sorted(self._allowed_domains.values(), key=lambda value: value.target))
@@ -1830,6 +1870,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             module_path=self._module_path,
             approval_mode=approval_mode,
             tools=managed_tools,
+            require_fides=self._require_fides,
             workspace_root=workspace_root,
             workspace_signature=workspace_signature,
             file_mounts=normalized_mounts,

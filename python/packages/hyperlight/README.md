@@ -19,6 +19,34 @@ Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 > Sandbox isolation does not supply FIDES enforcement.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+### Opt-in fail-closed host-tool protection
+
+Applications that **explicitly require** FIDES coverage can set `require_fides=True`
+on `HyperlightCodeActProvider` or `HyperlightExecuteCodeTool`. CodeAct cannot currently
+mediate nested host-tool calls through FIDES, so this option **refuses any
+nonempty managed host-tool registry**, regardless of FIDES metadata. Both initial
+registration and dynamic additions fail with `CodeActFidesCoverageError` before
+any host-tool body can run. The requirement carries into run-scoped snapshots.
+Code execution without registered host tools remains available.
+
+```python
+from agent_framework.exceptions import CodeActFidesCoverageError
+from agent_framework_hyperlight import HyperlightCodeActProvider
+
+# Strict CodeAct may execute Python, but cannot call nested host functions.
+provider = HyperlightCodeActProvider(require_fides=True)
+
+# A nonempty `tools=` argument or later provider.add_tools(...) raises
+# CodeActFidesCoverageError, preventing an unsupported security boundary.
+```
+
+Pass the option from **trusted host configuration** alongside your FIDES setup.
+There is no automatic detection of middleware, and the option does not enforce
+FIDES on filesystem/network access or intermediate program values. If nested
+host tools are needed, register security-sensitive functions as direct agent
+tools under their ordinary FIDES middleware instead. With the default
+`require_fides=False`, existing behavior and diagnostic warnings are unchanged.
+
 ## Installation
 
 ```bash

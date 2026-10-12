@@ -50,6 +50,7 @@ class HyperlightCodeActProvider(ContextProvider):
         module: str | None = "python_guest.path",
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
+        require_fides: bool = False,
     ) -> None:
         super().__init__(source_id)
         self._execute_code_tool = HyperlightExecuteCodeTool(
@@ -66,6 +67,7 @@ class HyperlightCodeActProvider(ContextProvider):
             module=module,
             module_path=module_path,
             _registry=_registry,
+            require_fides=require_fides,
         )
 
     def add_tools(

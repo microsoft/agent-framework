@@ -141,6 +141,13 @@ class IntegrationInvalidRequestException(IntegrationException):
     pass
 
 
+class CodeActFidesCoverageError(IntegrationInvalidRequestException):
+    """Required FIDES policy coverage is unavailable for nested CodeAct host tools.
+
+    This is an opt-in refusal, not evidence that CodeAct provides FIDES mediation.
+    """
+
+
 class IntegrationInvalidResponseException(IntegrationException):
     """An invalid or unexpected response was received from an external integration."""
 

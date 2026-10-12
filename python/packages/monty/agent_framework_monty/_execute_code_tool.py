@@ -28,6 +28,7 @@ from agent_framework._tools import (
     _ToolDescriptionFormat,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
+from agent_framework.exceptions import CodeActFidesCoverageError
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
@@ -212,6 +213,12 @@ class MontyExecuteCodeTool(FunctionTool):
     names use compact; rich schemas fall back to full JSON Schema. Mappings
     are copied and retain entries for tools registered later.
 
+    ``require_fides=True`` requires FIDES-compatible enforcement for all nested
+    host-tool calls. Because this integration cannot mediate those calls through
+    FIDES, it refuses nonempty host-tool surfaces instead of merely warning.
+    Generated code without registered host tools remains available. This option
+    must be wired by the trusted application alongside its FIDES configuration.
+
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
     the same task/thread that owns the tool. Monty itself runs on the event
     loop, so no internal locking is needed.
@@ -226,6 +233,7 @@ class MontyExecuteCodeTool(FunctionTool):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        require_fides: bool = False,
     ) -> None:
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
@@ -234,6 +242,9 @@ class MontyExecuteCodeTool(FunctionTool):
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
+        if not isinstance(require_fides, bool):
+            raise TypeError("require_fides must be a bool.")
+        self._require_fides = require_fides
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
         self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
             tool_description_format
@@ -257,6 +268,7 @@ class MontyExecuteCodeTool(FunctionTool):
         # During FunctionTool.__init__, ``_managed_tools`` is not yet set.
         if not hasattr(self, "_managed_tools"):
             return str(self.__dict__.get("description", EXECUTE_CODE_TOOL_DESCRIPTION))
+        self._ensure_fides_coverage(self._managed_tools)
         return build_execute_code_description(
             tools=self._managed_tools,
             mounts=self._effective_mounts(),
@@ -267,13 +279,28 @@ class MontyExecuteCodeTool(FunctionTool):
     def description(self, value: str) -> None:
         self.__dict__["description"] = value
 
+    @property
+    def require_fides(self) -> bool:
+        """Whether nested host-tool calls require unavailable FIDES enforcement."""
+        return self._require_fides
+
+    def _ensure_fides_coverage(self, tools: Sequence[FunctionTool]) -> None:
+        if self._require_fides and tools:
+            raise CodeActFidesCoverageError(
+                "CodeAct host tools cannot execute with require_fides=True: "
+                "per-host-tool FIDES middleware enforcement is unavailable. "
+                "Remove the CodeAct host tools or disable CodeAct host-tool access."
+            )
+
     def add_tools(
         self,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
     ) -> None:
         """Add Monty-side tools to this execute_code surface."""
         new_tools = _collect_tools(tools)
-        self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        combined_tools = _collect_tools(self._managed_tools, new_tools)
+        self._ensure_fides_coverage(combined_tools)
+        self._managed_tools = combined_tools
         for tool_obj in new_tools:
             if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
                 tool_obj.additional_properties
@@ -345,6 +372,7 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def build_instructions(self, *, tools_visible_to_model: bool) -> str:
         """Build the current CodeAct instructions for this execute_code surface."""
+        self._ensure_fides_coverage(self._managed_tools)
         return build_codeact_instructions(
             tools=list(self._managed_tools),
             tools_visible_to_model=tools_visible_to_model,
@@ -354,6 +382,7 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        self._ensure_fides_coverage(self._managed_tools)
         return MontyExecuteCodeTool(
             tools=self.get_tools(),
             approval_mode=self._default_approval_mode,
@@ -361,10 +390,12 @@ class MontyExecuteCodeTool(FunctionTool):
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
+            require_fides=self._require_fides,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
         """Return a JSON-serializable snapshot of the effective run state."""
+        self._ensure_fides_coverage(self._managed_tools)
         approval_mode = _resolve_execute_code_approval_mode(
             base_approval_mode=self._default_approval_mode,
             tools=self._managed_tools,
@@ -373,6 +404,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return {
             "runtime": "monty",
             "approval_mode": approval_mode,
+            "require_fides": self._require_fides,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
             "tool_description_format": (
                 dict(self._tool_description_format)
@@ -404,6 +436,7 @@ class MontyExecuteCodeTool(FunctionTool):
         )
 
     def _build_tool_map(self, tools: Sequence[FunctionTool]) -> dict[str, Callable[..., Any]]:
+        self._ensure_fides_coverage(tools)
         return {tool_obj.name: _make_tool_callback(tool_obj) for tool_obj in tools}
 
     def _build_type_stub_map(self, tools: Sequence[FunctionTool]) -> dict[str, Callable[..., Any]]:
@@ -438,6 +471,7 @@ class MontyExecuteCodeTool(FunctionTool):
 
     async def _run_code(self, *, code: str) -> list[Content]:
         tools = list(self._managed_tools)
+        self._ensure_fides_coverage(tools)
         mounts = self._effective_mounts()
 
         tool_map = self._build_tool_map(tools)

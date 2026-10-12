@@ -45,6 +45,7 @@ class MontyCodeActProvider(ContextProvider):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        require_fides: bool = False,
     ) -> None:
         super().__init__(source_id)
         self._execute_code_tool = MontyExecuteCodeTool(
@@ -54,6 +55,7 @@ class MontyCodeActProvider(ContextProvider):
             file_mounts=file_mounts,
             resource_limits=resource_limits,
             tool_description_format=tool_description_format,
+            require_fides=require_fides,
         )
 
     def add_tools(
