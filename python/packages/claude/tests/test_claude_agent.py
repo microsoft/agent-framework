@@ -1157,6 +1157,25 @@ class TestPrepareClientOptions:
             assert call_kwargs.get("model") == "opus"
             assert call_kwargs.get("max_turns") == 15
 
+    def test_prepare_client_options_preserves_explicit_zero_limits(self) -> None:
+        """Test that explicit zero limit values are preserved."""
+        agent = ClaudeAgent(
+            default_options={
+                "max_turns": 0,
+                "max_budget_usd": 0.0,
+            }
+        )
+
+        with patch("agent_framework_claude._agent.SDKOptions") as mock_opts:
+            mock_opts.return_value = MagicMock()
+            agent._prepare_client_options()  # type: ignore[reportPrivateUsage]
+            call_kwargs = mock_opts.call_args[1]
+
+            assert "max_turns" in call_kwargs
+            assert call_kwargs["max_turns"] == 0
+            assert "max_budget_usd" in call_kwargs
+            assert call_kwargs["max_budget_usd"] == 0.0
+
     def test_prepare_client_options_with_instructions(self) -> None:
         """Test building options with instructions parameter."""
         agent = ClaudeAgent(instructions="Be helpful")
