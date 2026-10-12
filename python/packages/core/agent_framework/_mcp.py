@@ -548,14 +548,11 @@ class _MCPHeaderScopedClient:
 class _MCPConnection(Protocol):
     """Normalized MCP connection surface used by MCPTool."""
 
+    client: Client | None
+
     @property
     def session(self) -> ClientSession:
         """Return the low-level compatibility session."""
-        ...
-
-    @property
-    def client(self) -> Client | None:
-        """Return the high-level Client when this connection has one."""
         ...
 
     @property
@@ -594,11 +591,11 @@ class _MCPConnection(Protocol):
         ...
 
 
-@dataclass(frozen=True)
 class _ClientMCPConnection:
     """MCP connection backed by a high-level Client."""
 
-    client: Client
+    def __init__(self, client: Client) -> None:
+        self.client = client
 
     @property
     def session(self) -> ClientSession:
@@ -649,12 +646,13 @@ class _ClientMCPConnection:
         return await self.client.read_resource(uri, cache_mode="use")
 
 
-@dataclass(frozen=True)
 class _SessionMCPConnection:
     """MCP connection backed by a low-level ClientSession."""
 
-    session: ClientSession
     client: None = None
+
+    def __init__(self, session: ClientSession) -> None:
+        self.session = session
 
     @property
     def is_framework_owned(self) -> bool:
@@ -1087,6 +1085,7 @@ class MCPTool:
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
+        task_options: Any = None,
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
@@ -1095,71 +1094,14 @@ class MCPTool:
 
         Note:
             Do not use this method directly. Use MCPStreamableHTTPTool or MCPStdioTool.
-
-        Args:
-            name: The name of the MCP tool.
-            description: A description of the MCP tool.
-            approval_mode: Whether approval is required to run tools.
-            allowed_tools: Optional allow-list of MCP tool names to expose as functions.
-                ``None`` (the default) exposes every tool advertised by the MCP server.
-                A non-empty collection exposes only the raw remote tools whose names appear in it. For
-                compatibility, the prefixed local function name is also accepted when the raw remote name already
-                matches its normalized form; normalized aliases do not authorize a different raw remote tool.
-                A configured name matching multiple raw remote names raises ``ToolExecutionException``.
-                An empty collection (``[]``) exposes no tools — if you simply want to
-                disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
-                useful as a runtime guard or when you want to load tool metadata for
-                inspection without exposing the tools for invocation.
-            tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
-            load_tools: Whether to load tools from the MCP server.
-            parse_tool_results: An optional callable with signature
-                ``Callable[[types.CallToolResult], str]`` that overrides the default result
-                parsing. When ``None`` (the default), the built-in parser converts MCP types
-                directly to a string. If you need per-function result parsing, access the
-                ``.functions`` list after connecting and set ``result_parser`` on individual
-                ``FunctionTool`` instances.
-            load_prompts: Whether to load prompts from the MCP server.
-            parse_prompt_results: An optional callable with signature
-                ``Callable[[types.GetPromptResult], str]`` that overrides the default prompt
-                result parsing. When ``None`` (the default), the built-in parser converts
-                MCP prompt results to a string. If you need per-function result parsing,
-            access the ``.functions`` list after connecting and set ``result_parser`` on
-            individual ``FunctionTool`` instances.
-            session: An existing MCP client session to use. The caller retains ownership;
-                closing or resetting this wrapper does not close or replace that session.
-            request_timeout: Timeout in seconds for MCP requests.
-            client: A chat client for sampling callbacks.
-            sampling_approval_callback: Optional gate invoked before each server-initiated
-                ``sampling/createMessage`` request is forwarded to ``client``. It receives the
-                raw ``CreateMessageRequestParams`` and may be synchronous or asynchronous;
-                returning a truthy value approves the request and a falsy value denies it. When
-                ``None`` (the default), every sampling request is **denied** because MCP servers
-                are untrusted third parties (confused-deputy risk). To restore the legacy
-                auto-approve behavior, pass ``lambda params: True`` as an explicit, conscious
-                opt-in.
-            sampling_max_tokens: Upper bound applied to the server-requested ``maxTokens`` for an
-                approved sampling request. The effective value is ``min(requested, cap)``. Set to
-                ``None`` to disable the cap. Defaults to ``_DEFAULT_SAMPLING_MAX_TOKENS``.
-            sampling_max_requests: Maximum number of sampling requests allowed per session
-                connection; further requests are rejected. The counter resets on reconnect. Set
-                to ``None`` to disable the limit. Defaults to ``_DEFAULT_SAMPLING_MAX_REQUESTS``.
-            additional_properties: Additional properties for the tool.
-            additional_tool_argument_names: Extra argument names to forward to the MCP server
-                in addition to each tool's declared parameters. A ``Sequence[str]`` applies to
-                every tool; a ``Mapping[str, Sequence[str]]`` is keyed by remote tool name with
-                ``"*"`` as a global key. See the transport subclasses for full details.
-            use_progressive_disclosure: When ``True``, expose discovery and loader tools plus
-                ``always_load`` tools initially, and let the model load and unload other allowed MCP tools on demand.
-            always_load: MCP tool names to keep visible from the start when progressive disclosure
-                is enabled. Names use the same safe matching rules as ``allowed_tools``; unmatched
-                entries are ignored.
-            max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
-                for Host transports. Oversized payloads are omitted from the Host channel while
-                the parsed model result is preserved. Set to ``None`` to disable the limit.
-            tool_result_content: How to choose model-visible text when both ``content`` and
-                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
-                Ignored when ``parse_tool_results`` is set. Default ``structured_first``.
         """
+        if task_options is not None:
+            warnings.warn(
+                "`task_options` is deprecated and ignored because the MCP Python SDK does not expose the 2026 "
+                "Tasks extension runtime.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
         if use_progressive_disclosure:
@@ -1887,7 +1829,7 @@ class MCPTool:
                         except asyncio.CancelledError:
                             raise
                         except ListenNotSupportedError:
-                            logger.debug("Listen no longer supported; falling back to legacy behaviour.")
+                            logger.debug("Listen not supported; falling back to legacy behaviour.")
                             return
                         except Exception:
                             logger.warning("Failed to reopen MCP catalog subscription.", exc_info=True)
@@ -3591,6 +3533,7 @@ class MCPStdioTool(MCPTool):
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        task_options: Any = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3683,6 +3626,7 @@ class MCPStdioTool(MCPTool):
                 Treat those keys as visible to this server, and source credentials outside
                 ``function_invocation_kwargs`` - for example through ``env`` - for servers whose
                 process you do not control.
+            task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -3709,6 +3653,7 @@ class MCPStdioTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -3796,6 +3741,7 @@ class MCPStreamableHTTPTool(MCPTool):
         static_headers: Mapping[str, str] | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        task_options: Any = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3959,6 +3905,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``function_invocation_kwargs``: read a ``ContextVar`` inside the provider (which
                 still allows a different value per request), or configure a custom
                 ``http_client``.
+            task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -3985,6 +3932,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4407,6 +4355,7 @@ class MCPWebsocketTool(MCPTool):
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        task_options: Any = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4496,6 +4445,7 @@ class MCPWebsocketTool(MCPTool):
                 The same dict is shared with every MCP server attached to the run. This
                 transport has no header hook, so source credentials outside
                 ``function_invocation_kwargs`` for servers you do not control.
+            task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4522,6 +4472,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )

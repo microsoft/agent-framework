@@ -2949,8 +2949,6 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
 async def test_agent_as_mcp_server_registers_and_forwards_logging(client: SupportsChatGetResponse) -> None:
     from mcp import types
 
-    import agent_framework._agents as agents_module
-
     server = Agent(client=client, name="TestAgent").as_mcp_server()
     context = MagicMock()
     context.session.send_log_message = AsyncMock()
@@ -2958,8 +2956,8 @@ async def test_agent_as_mcp_server_registers_and_forwards_logging(client: Suppor
     assert "logging/setLevel" in server._request_handlers
 
     with (
-        patch.object(agents_module.logger, "setLevel") as set_level,
-        patch.object(agents_module.logger, "log") as local_log,
+        patch("agent_framework._agents.logger.setLevel") as set_level,
+        patch("agent_framework._agents.logger.log") as local_log,
     ):
         result = await server._request_handlers["logging/setLevel"].handler(
             context,
@@ -2978,15 +2976,13 @@ async def test_agent_as_mcp_server_registers_and_forwards_logging(client: Suppor
 async def test_agent_as_mcp_server_legacy_client_receives_log_messages(client: SupportsChatGetResponse) -> None:
     from mcp import Client
 
-    import agent_framework._agents as agents_module
-
     received: list[Any] = []
 
     async def logging_callback(params: Any) -> None:
         received.append(params)
 
     server = Agent(client=client, name="TestAgent").as_mcp_server()
-    with patch.object(agents_module.logger, "setLevel"):
+    with patch("agent_framework._agents.logger.setLevel"):
         async with Client(server, mode="legacy", logging_callback=logging_callback) as mcp_client:
             await mcp_client.set_logging_level("notice")  # ty: ignore[deprecated]
             await mcp_client.list_tools()

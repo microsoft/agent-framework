@@ -32,6 +32,7 @@ from agent_framework import (
     FunctionTool,
     MCPStdioTool,
     MCPStreamableHTTPTool,
+    MCPWebsocketTool,  # ty: ignore[deprecated]
     Message,
     SupportsChatGetResponse,
 )
@@ -178,6 +179,32 @@ class _TransportBoundClientContext:
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda value: MCPTool(name="compat", task_options=value),  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        lambda value: MCPStdioTool(name="compat", command="python", task_options=value),
+        lambda value: MCPStreamableHTTPTool(name="compat", url="https://example.com/mcp", task_options=value),
+        lambda value: MCPWebsocketTool(name="compat", url="wss://example.com/mcp", task_options=value),
+    ],
+)
+@pytest.mark.parametrize("task_options", [None, object()])
+def test_mcp_task_options_compatibility(factory: Callable[[Any], MCPTool], task_options: Any) -> None:
+    expected = (
+        "`task_options` is deprecated and ignored because the MCP Python SDK does not expose the 2026 "
+        "Tasks extension runtime."
+    )
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        factory(task_options)
+
+    task_warnings = [item for item in captured if str(item.message) == expected]
+    assert len(task_warnings) == (0 if task_options is None else 1)
+    if task_warnings:
+        assert task_warnings[0].category is DeprecationWarning
 
 
 def _raise_result_parser(_: Any) -> str:
