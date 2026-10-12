@@ -911,15 +911,30 @@ class TestStateTypeRegistry:
 
         register_state_type(PydanticMessageState, type_id="pydantic_message_state_test")
         session = AgentSession(session_id="nested-message")
-        session.state["value"] = PydanticMessageState(
-            message=Message(role="user", contents=["persisted"])
-        )
+        session.state["value"] = PydanticMessageState(message=Message(role="user", contents=["persisted"]))
 
         restored = AgentSession.from_dict(session.to_dict())
 
         assert isinstance(restored.state["value"], PydanticMessageState)
         assert isinstance(restored.state["value"].message, Message)
         assert restored.state["value"].message.text == "persisted"
+
+    def test_registered_pydantic_state_keeps_tag_shaped_dict_fields_raw(self) -> None:
+        from pydantic import BaseModel
+
+        class PydanticDictState(BaseModel):
+            data: dict[str, Any]
+
+        register_state_type(PydanticDictState, type_id="pydantic_dict_state_test")
+        session = AgentSession(session_id="dict-tag-shaped")
+        # Ordinary dict data whose "type" happens to name a registered state
+        # type is data, not an encoded nested value.
+        session.state["value"] = PydanticDictState(data={"type": "message", "note": "plain data"})
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticDictState)
+        assert restored.state["value"].data == {"type": "message", "note": "plain data"}
 
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
@@ -1176,9 +1191,7 @@ class TestFileSessionStore:
 
         register_state_type(PydanticFileMessageState, type_id="pydantic_file_message_state_test")
         session = AgentSession(session_id="file-nested-message")
-        session.state["value"] = PydanticFileMessageState(
-            message=Message(role="user", contents=["persisted"])
-        )
+        session.state["value"] = PydanticFileMessageState(message=Message(role="user", contents=["persisted"]))
 
         await FileSessionStore(tmp_path).set("tenant_file-nested-message", session)
         restored = await FileSessionStore(tmp_path).get("tenant_file-nested-message")
