@@ -10392,6 +10392,53 @@ async def test_streaming_multiple_function_calls_parallel_execution(chat_client_
     assert len(results) == 2
 
 
+async def test_streaming_function_loop_sums_usage_across_provider_turns(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="get_value", approval_mode="never_require")
+    def get_value() -> str:
+        return "value"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="get_value", arguments="{}")],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_usage(
+                        {"input_token_count": 3, "output_token_count": 2},
+                        merge_mode="replace",
+                    )
+                ],
+                role="assistant",
+            ),
+        ],
+        [
+            ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant"),
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_usage(
+                        {"input_token_count": 5, "output_token_count": 4},
+                        merge_mode="replace",
+                    )
+                ],
+                role="assistant",
+            ),
+        ],
+    ]
+
+    stream = chat_client_base.get_response(
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [get_value]},
+        stream=True,
+    )
+    response = await stream.get_final_response()
+
+    assert response.usage_details == {"input_token_count": 8, "output_token_count": 6}
+
+
 async def test_streaming_approval_requests_in_assistant_message(chat_client_base: SupportsChatGetResponse):
     """Approval requests should be added to assistant updates in streaming mode."""
     exec_counter = 0

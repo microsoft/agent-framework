@@ -1062,7 +1062,7 @@ def _content_item_id(content: Content, result_content: Content | None = None) ->
         result_item_id = _openai_value(result_content, "item_id", "item_id")
         if isinstance(result_item_id, str) and result_item_id:
             return result_item_id
-    return content.call_id or (result_content.call_id if result_content is not None else None)
+    return None
 
 
 def _content_property(content: Content, result_content: Content | None, key: str) -> Any:
@@ -1243,6 +1243,18 @@ async def responses_from_streaming_run(
         if part_type == "refusal":
             return {"type": "refusal", "refusal": text}
         return {"type": "output_text", "text": text, "annotations": []}
+
+    def consume_text_update(text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        nonlocal content_text
+        if merge_mode != "replace":
+            content_text += text
+            return text
+
+        previous = content_text
+        content_text = text
+        if text.startswith(previous):
+            return text[len(previous) :]
+        return text if not previous else ""
 
     def close_content_part() -> list[str]:
         nonlocal content_type, content_text
@@ -1445,8 +1457,8 @@ async def responses_from_streaming_run(
                     for stream_event in close_content_part():
                         yield stream_event
                     yield open_content_part(requested_content_type)
-                content_text += text
-                if not text:
+                delta = consume_text_update(text, content.merge_mode)
+                if not delta:
                     continue
                 delta_type = (
                     "response.refusal.delta" if requested_content_type == "refusal" else "response.output_text.delta"
@@ -1455,7 +1467,7 @@ async def responses_from_streaming_run(
                     "item_id": message_id,
                     "output_index": output_index,
                     "content_index": content_index,
-                    "delta": text,
+                    "delta": delta,
                 }
                 if requested_content_type == "output_text":
                     delta_payload["logprobs"] = []

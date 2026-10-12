@@ -2660,10 +2660,16 @@ def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reaso
     the aggregate.
     """
     head = run[0]
-    merged_props: dict[str, Any] = {}
-    for content in reversed(run):
-        properties = deepcopy(content.additional_properties) if content is head else content.additional_properties
-        merged_props = merge_additional_properties(merged_props, properties, incoming_wins=True)
+    merged_props: dict[str, Any] = deepcopy(head.additional_properties)
+    for content in run[1:]:
+        for key, value in content.additional_properties.items():
+            current = merged_props.get(key)
+            if isinstance(current, dict) and isinstance(value, Mapping):
+                current_mapping = cast("dict[str, Any]", current)
+                for nested_key, nested_value in cast("Mapping[str, Any]", value).items():
+                    current_mapping.setdefault(nested_key, nested_value)
+            elif key not in merged_props:
+                merged_props[key] = dict(cast("Mapping[str, Any]", value)) if isinstance(value, Mapping) else value
     annotation_seqs = [
         deepcopy(c.annotations) if c is head else c.annotations for c in run if c.annotations is not None
     ]

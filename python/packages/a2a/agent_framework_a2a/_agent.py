@@ -1309,6 +1309,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         handling text, url, raw, and data parts with metadata preservation.
         """
         contents: list[Content] = []
+        next_text_merge_mode = merge_mode
         for part in parts:
             part_metadata = MessageToDict(part.metadata) if part.metadata else None
             content_type = part.WhichOneof("content")
@@ -1317,11 +1318,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents.append(
                         Content.from_text(
                             text=part.text,
-                            merge_mode=merge_mode,
+                            merge_mode=next_text_merge_mode,
                             additional_properties=part_metadata,
                             raw_representation=part,
                         )
                     )
+                    if next_text_merge_mode == "replace":
+                        next_text_merge_mode = "append"
                 case "url":
                     contents.append(
                         Content.from_uri(

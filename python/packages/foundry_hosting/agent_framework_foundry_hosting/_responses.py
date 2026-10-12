@@ -2407,6 +2407,18 @@ class _OutputItemTracker:
             return
         self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
+    def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        """Update the authoritative text buffer and return the wire delta still needed."""
+        if merge_mode != "replace":
+            self._accumulated.append(text)
+            return text
+
+        previous = "".join(self._accumulated)
+        self._accumulated[:] = [text]
+        if text.startswith(previous):
+            return text[len(previous) :]
+        return text if not previous else ""
+
     async def handle_update(
         self,
         update: AgentResponseUpdate,
@@ -2445,17 +2457,17 @@ class _OutputItemTracker:
             for event in self._ensure_message_content("refusal", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._refusal_content is not None:
-                yield self._refusal_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
             for event in self._ensure_message_content("text", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._text_content is not None:
-                yield self._text_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._text_content is not None:
+                yield self._text_content.emit_delta(delta)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -2466,9 +2478,9 @@ class _OutputItemTracker:
             if encrypted_content := _reasoning_encrypted_content(content):
                 self._reasoning_encrypted_content = encrypted_content
             if content.text:
-                self._accumulated.append(content.text)
-                if self._summary_part is not None:
-                    yield self._summary_part.emit_text_delta(content.text)
+                delta = self._consume_text_update(content.text, content.merge_mode)
+                if delta and self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(delta)
 
         elif content.type == "function_call" and content.call_id is not None:
             # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the

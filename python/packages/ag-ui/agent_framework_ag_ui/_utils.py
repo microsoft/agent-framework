@@ -318,8 +318,9 @@ def _function_call_is_hosted(function_call: Any) -> bool:
     """Return whether the provider, rather than Agent Framework, executes the call."""
     if function_call is None:
         return False
-    if getattr(function_call, "hosted", False):
-        return True
+    hosted = getattr(function_call, "hosted", None)
+    if type(hosted) is bool:
+        return hosted
     return _function_call_server_label(function_call) is not None
 
 

@@ -443,6 +443,22 @@ def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     assert contents[1].text == "Second part"
 
 
+def test_parse_snapshot_contents_replaces_once_then_appends_text_parts(a2a_agent: A2AAgent) -> None:
+    contents = a2a_agent._parse_contents_from_a2a(
+        [Part(text="Choose "), Part(text="blue")],
+        merge_mode="replace",
+    )
+
+    assert [content.merge_mode for content in contents] == ["replace", "append"]
+
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("old")], role="assistant"),
+        AgentResponseUpdate(contents=contents, role="assistant"),
+    ])
+
+    assert response.text == "Choose blue"
+
+
 def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with ErrorContent."""
 

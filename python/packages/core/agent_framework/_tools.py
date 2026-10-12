@@ -5918,6 +5918,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
+        from ._types import ChatResponseUpdate, Content, add_usage_details
 
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
@@ -5925,8 +5926,62 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
         prepared_messages = _copy_messages_for_function_invocation(messages)
         response: ChatResponse[Any] | None = None
+        completed_usage: UsageDetails | None = None
+        turn_usage: UsageDetails | None = None
+        last_projected_usage: UsageDetails | None = None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+
+        def project_cumulative_usage(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            """Project one provider turn's usage as a cumulative outer-stream snapshot."""
+            nonlocal turn_usage, last_projected_usage
+            projected_contents: list[Content] | None = None
+            for index, content in enumerate(update.contents):
+                if content.type != "usage":
+                    continue
+                if content.merge_mode == "replace":
+                    turn_usage = copy.deepcopy(content.usage_details)
+                else:
+                    turn_usage = add_usage_details(turn_usage, content.usage_details)
+                if completed_usage is None:
+                    continue
+                if projected_contents is None:
+                    projected_contents = list(update.contents)
+                cumulative_usage = add_usage_details(completed_usage, turn_usage)
+                projected_content = copy.copy(content)
+                projected_content.usage_details = copy.deepcopy(cumulative_usage)
+                projected_content.merge_mode = "replace"
+                projected_contents[index] = projected_content
+                last_projected_usage = cumulative_usage
+            if projected_contents is None:
+                return update
+            projected_update = copy.copy(update)
+            projected_update.contents = projected_contents
+            return projected_update
+
+        def finish_usage_turn(final_usage: UsageDetails | None) -> ChatResponseUpdate | None:
+            """Complete one provider turn and emit a correction if its final usage was not streamed."""
+            nonlocal completed_usage, turn_usage, last_projected_usage
+            turn_total = final_usage if final_usage is not None else turn_usage
+            if turn_total is None:
+                turn_usage = None
+                last_projected_usage = None
+                return None
+            had_completed_usage = completed_usage is not None
+            completed_usage = add_usage_details(completed_usage, turn_total)
+            correction = None
+            if had_completed_usage and completed_usage != last_projected_usage:
+                correction = ChatResponseUpdate(
+                    contents=[
+                        Content.from_usage(
+                            copy.deepcopy(completed_usage),
+                            merge_mode="replace",
+                        )
+                    ]
+                )
+            turn_usage = None
+            last_projected_usage = None
+            return correction
 
         async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
             await self._settle_dangling_service_function_calls(
@@ -6065,9 +6120,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         update = _drop_unexecutable_tool_contents_from_update(update)
                         if update is None:
                             continue
-                    yield update
+                    yield project_cumulative_usage(update)
 
                 response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
+            if usage_correction := finish_usage_turn(response.usage_details):
+                yield usage_correction
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -6163,13 +6220,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
+        turn_usage = None
+        last_projected_usage = None
         async with final_inner_stream:
             async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
                 update = _drop_unexecutable_tool_contents_from_update(update)
                 if update is None:
                     continue
-                yield update
+                yield project_cumulative_usage(update)
             final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
+        if usage_correction := finish_usage_turn(final_response.usage_details):
+            yield usage_correction
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,

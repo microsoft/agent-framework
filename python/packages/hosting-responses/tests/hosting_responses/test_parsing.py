@@ -390,8 +390,24 @@ class TestResponsesRunHelpers:
         assert len(payload["output"]) == 1
         assert payload["output"][0]["type"] == "function_call_output"
         assert payload["output"][0]["call_id"] == "call_1"
+        assert payload["output"][0]["id"].startswith("fcout_")
+        assert payload["output"][0]["id"] != "call_1"
         assert payload["output"][0]["output"] == [{"type": "input_text", "text": "sunny"}]
         assert payload["output"][0]["status"] == "completed"
+
+    def test_responses_from_run_generates_distinct_output_ids_for_reused_call_id(self) -> None:
+        result = AgentResponse(
+            messages=[
+                Message(role="tool", contents=[Content.from_function_result("reused", result="first")]),
+                Message(role="tool", contents=[Content.from_function_result("reused", result="second")]),
+            ]
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert [item["call_id"] for item in payload["output"]] == ["reused", "reused"]
+        assert all(item["id"].startswith("fcout_") for item in payload["output"])
+        assert payload["output"][0]["id"] != payload["output"][1]["id"]
 
     def test_responses_from_run_omits_internal_function_exception(self) -> None:
         diagnostic = "test-token-value at /srv/private/tool.py"
@@ -1000,6 +1016,39 @@ class TestResponsesRunHelpers:
         output = cast("list[dict[str, object]]", response["output"])
         content = cast("list[dict[str, object]]", output[0]["content"])
         assert content == [{"type": "refusal", "refusal": "I cannot help."}]
+
+    async def test_responses_from_streaming_run_consumes_text_snapshot(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello ", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id="resp_new",
+            )
+        ]
+
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+
+        assert deltas == ["Hello ", "world"]
+        assert done["text"] == "Hello world"
 
     async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
         marker = {"model_output_kind": "refusal"}
