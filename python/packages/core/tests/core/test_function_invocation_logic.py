@@ -2095,6 +2095,34 @@ async def test_informational_only_function_call_is_not_invoked(chat_client_base:
     assert response.messages[0].contents == [informational_call]
 
 
+async def test_hosted_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="provider_tool", approval_mode="never_require")
+    def provider_tool(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    hosted_call = Content.from_function_call(
+        call_id="1",
+        name="provider_tool",
+        arguments='{"arg1": "value1"}',
+        hosted=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [provider_tool]},
+    )
+
+    assert exec_counter == 0
+    assert response.messages[0].contents == [hosted_call]
+
+
 async def test_only_actionable_function_calls_are_invoked(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
@@ -12895,8 +12923,10 @@ async def test_hosted_approval_response_passes_through_without_session(
         name="hosted_tool",
         arguments={},
         id="hosted-occurrence",
+        hosted=True,
+        server_name="hosted_server",
+        additional_properties={"server_label": "hosted_server"},
     )
-    hosted_call.additional_properties["server_label"] = "hosted_server"
     hosted_response = Content.from_function_approval_response(
         id="hosted-occurrence",
         function_call=hosted_call,

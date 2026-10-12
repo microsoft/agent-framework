@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: approved
 contact: eavanvalkenburg
 date: 2026-09-30
 deciders: eavanvalkenburg
@@ -25,7 +25,7 @@ more than 25 metadata keys, and several cross package boundaries:
 | Core behavior depends on provider keys | Core treats a function call as hosted whenever `additional_properties["server_label"]` is truthy. That one check controls approval handling, session resumption, skills and file-access auto-approval rules, and continuation error results. The same key is also persisted as the hosted server boundary in harness always-approve rules. Core streaming aggregation falls back to `additional_properties["item_id"]` to correlate code-interpreter fragments. |
 | One concept, inconsistent representations | Function-call `status` is stored as metadata although `Content.status` exists. File names are stored as `filename` although `Content.name` exists. A hosted MCP server's name is `server_name` on MCP call content but `server_label` metadata on the call nested in a hosted approval. |
 | Inconsistent key naming | `openai.responses.shell.output_type`, `openai.local_shell_command_parts`, `__foundry_reasoning_replay_item__`, `openai_content_type`, `computer_action_format`, and AG-UI's underscore-prefixed `_agui_collected_approval_occurrence`. |
-| Stream merge semantics are partial and stored as metadata | Providers know whether an event is an incremental delta or a complete snapshot. Current unreleased code preserves that distinction only for code-interpreter content, using the flat `stream_complete` marker and the ambiguous alias `complete`; other mergeable content keeps type-specific implicit behavior. |
+| Stream merge semantics are implicit and inconsistent | Providers know whether an event is an incremental delta or a complete snapshot, but `Content` has no first-class way to preserve that distinction. Core therefore relies on type-specific implicit behavior instead of one documented contract. |
 | Replay depends on non-persisted objects | OpenAI shell replay, Gemini tool-call parts, Hosting Responses output reuse, and a Foundry hosting OAuth fallback read `raw_representation`, which is absent after history is reloaded. |
 
 Each new provider feature adds another key, and consolidating the duplicated Responses conversions is not possible
@@ -35,7 +35,7 @@ while every adapter decides placement independently.
 `function_call.Content.id` identifies one locally actionable Agent Framework occurrence, while `call_id` is the
 provider's call/result correlation. [ADR 0039](0039-python-refusal-content.md) defines the flat
 `model_output_kind="refusal"` marker. This decision keeps spec 004's identity semantics and the meaning of ADR
-0039's marker unchanged, but moves that marker into the `generic` namespace described below. It also changes which
+0039's marker unchanged, but moves that marker into the `core` namespace described below. It also changes which
 field marks the hosted server boundary in spec 004's approval scenarios; the implementing change updates spec 004's
 hosted-server-boundary scenario row and its authoritative test mapping.
 
@@ -62,11 +62,11 @@ Grouping metadata in nested mappings therefore requires changing how core merges
 1. Document the current keys without changing them.
 2. Add first-class provider identity fields, such as `provider_item_id`, to `Content`.
 3. Use flat prefixed keys in `additional_properties`, such as `openai.item_id`.
-4. Group metadata in nested namespaces in `additional_properties`: one per provider, plus `generic`.
+4. Group metadata in nested namespaces in `additional_properties`: one per provider, plus `core`.
 
 ## Decision Outcome
 
-Chosen option: **"Group metadata in nested namespaces in `additional_properties`: one per provider, plus `generic`"**,
+Chosen option: **"Group metadata in nested namespaces in `additional_properties`: one per provider, plus `core`"**,
 combined with using existing first-class fields first. It gives each provider's data one explicit, typed home and
 gives provider-neutral semantics a documented place instead of bare top-level names, without adding provider concepts
 to core. In exchange, core must merge and copy namespaces one level deep.
@@ -147,14 +147,6 @@ every first-class field this decision relies on:
 - `status` on function calls and reasoning: preserved; the latest non-empty value wins, because status progresses
   during a stream, for example from `in_progress` to `completed`.
 
-PR [#8953](https://github.com/microsoft/agent-framework/pull/8953) already makes text and reasoning coalescing
-linear; this decision standardizes merge meaning rather than adding another performance mechanism.
-PR [#9142](https://github.com/microsoft/agent-framework/pull/9142) also removed code-interpreter prefix inference:
-ordinary fragments now append, while `additional_properties["stream_complete"]` or the compatibility alias
-`additional_properties["complete"]` marks a replacement snapshot. Those flat keys are the current narrow mechanism
-that `merge_mode` replaces and generalizes. They merged after the previous release and are replaced before the next
-release, so they do not become persisted compatibility formats.
-
 All content types that core can aggregate get an explicit first-class
 `merge_mode: Literal["append", "replace"] | None` field. This initially covers `text`, `text_reasoning`,
 `function_call`, `usage`, `code_interpreter_tool_call`, and `code_interpreter_tool_result`.
@@ -167,13 +159,13 @@ All content types that core can aggregate get an explicit first-class
 - `append` uses the content type's existing incremental merge. `replace` treats the incoming semantic payload as a
   complete snapshot and replaces the accumulated payload for that logical item. Stable identity and correlation
   fields are still validated, while status and namespaced metadata follow their separate merge rules.
-- Providers set a mode on every mergeable streamed item they produce. Delta events use `append`; complete or
-  `*.done` snapshots use `replace`. Core does not use prefix comparison or another payload heuristic when a mode is
+- Providers set a mode on every mergeable streamed item they produce. Delta events use `append`; authoritative
+  payload snapshots use `replace`. A `*.done` event that carries only final metadata and omits earlier streamed
+  payload remains incremental. Core does not use prefix comparison or another payload heuristic when a mode is
   present.
-- `None` means legacy behavior, not `append`. This keeps older provider packages working on a newer core: text,
-  reasoning, function calls, and usage retain their current type-specific behavior. Code-interpreter content appends;
-  a provider that emits a complete snapshot must mark it `replace`. The unreleased `stream_complete` and `complete`
-  metadata forms are removed rather than retained as compatibility paths.
+- `None` means existing type-specific behavior, not `append`. This keeps older provider packages working on a newer
+  core. Removing an implicit fallback is a separate compatibility decision after supported providers mark their
+  fragments explicitly.
 - The field is serialized so individually persisted updates retain their merge semantics. Aggregation consumes it;
   finalized `ChatResponse` and `AgentResponse` content has `merge_mode=None`, so an operational stream instruction
   does not become part of persisted logical history.
@@ -184,7 +176,7 @@ All content types that core can aggregate get an explicit first-class
 
 ```python
 content.additional_properties == {
-    "generic": {"model_output_kind": "refusal"},     # provider-neutral, documented by core
+    "core": {"model_output_kind": "refusal"},        # provider-neutral, documented by core
     "openai": {"item_id": "fc_123"},                 # owned by agent-framework-openai
     "foundry": {"reasoning_item": {...}},            # owned by agent-framework-foundry
     "_approval_request_id": "...",                   # core-private, unchanged
@@ -203,9 +195,9 @@ content.additional_properties == {
    and the hosts that implement Responses read and write `openai` for Responses data, and Foundry keeps Foundry-only
    data under `foundry`. Each owner documents its keys in its package README and may publish a `TypedDict` for its
    namespace and small accessor functions.
-3. **Provider-neutral data lives in `generic`.** `additional_properties["generic"]` holds semantics documented by
+3. **Provider-neutral data lives in `core`.** `additional_properties["core"]` holds semantics documented by
    core that any package may read or write: `model_output_kind` from ADR 0039 and the caller-facing
-   `prompt_cache_breakpoint`. Only core adds keys to `generic`. File names use the first-class `Content.name` field.
+   `prompt_cache_breakpoint`. Only core adds keys to `core`. File names use the first-class `Content.name` field.
 4. **Namespaces are exactly one level deep.** A namespace maps flat key names to plain JSON values (mappings, lists,
    strings, numbers, booleans, and `None`), never dataclass or Pydantic instances, because `Content.from_dict()` does
    not reconstruct arbitrary types. An owner that implements several protocols qualifies key names where needed rather
@@ -213,7 +205,7 @@ content.additional_properties == {
 5. **Other top-level keys.** Leading-underscore keys remain core-private at the top level. Keys defined by other
    decisions, such as the security labels of ADR 0024, are not moved by this decision. Markers that exist only while
    building a request are never stored on Agent Framework objects. All other top-level keys belong to applications;
-   `generic` and the namespace names are reserved.
+   `core` and the namespace names are reserved.
 6. **Persisted replay data is defined per key.** Data that must survive persistence uses `protected_data` for opaque
    provider payloads or a namespace key whose owner documents its exact shape. The documentation states whether the
    value can contain encrypted or protected data, what is sanitized or excluded, and that only adapters write it.
@@ -241,7 +233,7 @@ from another producer. Core therefore changes how `additional_properties` are co
 - Compaction's token estimation strips opaque values inside namespaces as well as at the top level. Today it removes
   only a top-level `encrypted_content`, so the encrypted payload inside Foundry's persisted reasoning item is counted.
 
-Core documents `generic`, the namespace rules, and the merge behavior in its package documentation. There is no
+Core documents `core`, the namespace rules, and the merge behavior in its package documentation. There is no
 central allowlist and no runtime validation; `additional_properties` remains open to applications outside the
 reserved names.
 
@@ -260,12 +252,9 @@ reserved names.
   version. This keeps independently versioned packages in one process working, for example an older Hosting
   Responses reading `fc_id`, or older AG-UI, Foundry hosting, and Hosting Responses reading `server_label` from
   content that a newer provider package produced.
-- `model_output_kind` and `prompt_cache_breakpoint` move into `generic`; their meaning is unchanged. Readers accept the
+- `model_output_kind` and `prompt_cache_breakpoint` move into `core`; their meaning is unchanged. Readers accept the
   flat keys indefinitely, writers write both until their next major version, and applications that set the flat keys
   keep working. ADR 0039 remains the record of the refusal decision.
-- `stream_complete` and `complete` are removed before release rather than migrated or dual-written. No released
-  history contains them, so retaining either spelling would create compatibility work without preserving a supported
-  format.
 - A package that writes namespaces requires, as its minimum core version, the core release that merges them. On an
   older core, streamed fragments would lose namespace fields during aggregation.
 - Keys used only for display, diagnostics, or a single request switch directly.
@@ -293,7 +282,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 - Bad, because core gains public helper functions, and writer packages must raise their minimum core version.
 - Bad, because ADR 0039's marker and the caller-facing `prompt_cache_breakpoint` move, so samples and documentation
   change, although the flat keys remain readable.
-- Bad, because `generic` and every namespace name become reserved top-level keys. No collisions exist in this
+- Bad, because `core` and every namespace name become reserved top-level keys. No collisions exist in this
   repository, but applications outside it could already use those names.
 - Bad, because writers carry duplicated legacy keys until their next major version.
 - Bad, because runtimes that predate either new field cannot read records that still contain that field, although
@@ -302,9 +291,8 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
   finalized content keeps that concern from leaking further.
 - Bad, because every provider that emits mergeable stream content must classify its events, and a wrong `replace`
   marker discards accumulated payload while a wrong `append` marker can duplicate a snapshot.
-- Bad, because older provider packages that emit an unmarked final code-interpreter snapshot still have that snapshot
-  appended on current core; only the explicit mode or the legacy flat replacement markers distinguish it from a
-  delta.
+- Bad, because unmarked fragments retain their existing type-specific behavior during compatibility, including any
+  ambiguity that the explicit mode is intended to remove.
 - Bad, because a provider adapter that forgets to set `hosted` makes a hosted call look local; only adapter tests
   catch this.
 - Neutral, because existing `Content.id` exceptions remain, although they are now documented and closed.
@@ -312,7 +300,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 ### Validation
 
 - Each package's tests assert that converting its fixture corpus writes only keys in its own namespace, documented
-  `generic` keys, core-private keys it intentionally sets, and legacy keys it still dual-writes.
+  `core` keys, core-private keys it intentionally sets, and legacy keys it still dual-writes.
 - Core tests cover namespace merging at each merge site with both conflict rules, one-level depth, non-mapping values
   under a namespace name, constructor copying, the helpers' copy-on-write behavior, and compaction stripping opaque
   values inside namespaces.
@@ -329,7 +317,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
   follow them with a replace snapshot, and assert exact reconstruction through both `ChatResponse.from_updates()` and
   streaming `get_final_response()`. Tests include repetitive and prefix-shaped fragments, serialization of
   unaggregated updates, rejection of invalid modes and unsupported content types, clearing the mode on finalized
-  content, rejection of the removed `stream_complete` and `complete` forms, and unmarked behavior.
+  content, and unmarked compatibility behavior.
 - Harness tests load standing `ToolApprovalRule` state written before the change and confirm it still matches hosted
   calls from the same server, and never matches a local call with the same name and arguments.
 - Every adapter that parses provider-executed calls or approvals asserts that it sets `hosted=True`. Approval tests in
@@ -358,7 +346,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
   typed, inspected, or stripped as a unit.
 - Bad, because provider-neutral keys would stay as bare top-level names that compete with application keys.
 
-### Group metadata in nested namespaces, one per provider plus `generic`
+### Group metadata in nested namespaces, one per provider plus `core`
 
 - Good, because each provider's metadata is explicit, typed, and separable from application data.
 - Good, because provider-neutral semantics have a documented home.
@@ -368,46 +356,18 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 
 ## More Information
 
-### Current keys and targets
+### Implementation specification
 
-This mapping is guidance for implementation and is not exhaustive. `openai["item_id"]` is short for
-`additional_properties["openai"]["item_id"]`. "Replay" marks keys covered by the dual-write rule.
-
-| Current key | Current use | Target | Replay |
-| --- | --- | --- | --- |
-| `fc_id` | OpenAI function-call item ID; Hosting Responses output item ID | `openai["item_id"]` | Yes |
-| `item_id` | OpenAI hosted custom, tool-search, and function-output item IDs | `openai["item_id"]` | Yes |
-| `item_id` | OpenAI code-interpreter streaming correlation; core fallback | `call_id` | No |
-| `status` | OpenAI function-call and reasoning status | `Content.status`, with new constructor parameters | Yes |
-| `reasoning_text`, `summary` | OpenAI reasoning replay parts | `openai["reasoning_text"]`, `openai["summary"]` | Yes |
-| `server_label` | Hosted marker and hosted server name on a `function_call` | `hosted=True` and `server_name`; `ToolApprovalRule.server_label` is unchanged | Yes |
-| `model_output_kind` | Refusal marker from ADR 0039 | `generic["model_output_kind"]` | Yes |
-| `prompt_cache_breakpoint` | Caller-set prompt-cache boundary | `generic["prompt_cache_breakpoint"]`, with the flat key still read | Yes |
-| `__foundry_reasoning_replay_item__` | Foundry reasoning item persisted for replay | `foundry["reasoning_item"]` | Yes |
-| `computer_action_format` | OpenAI preview computer-action shape | `openai["computer_action_format"]` | Yes |
-| `openai_content_type` | OpenAI and DevUI input file versus image | `openai["content_type"]` | Yes |
-| `detail` | Image detail written by hosts and read by OpenAI | `openai["image_detail"]` | Yes |
-| `file_id` | Provider file ID on image and screenshot content | `Content.file_id` | Yes |
-| `filename` | File name on data and URI content | `Content.name`, with the flat key still read | Yes |
-| `openai.responses.shell.output_type` | OpenAI shell output type | `openai["shell_output_type"]` | Yes |
-| `openai.responses.local_shell.call_item_id` | OpenAI local shell call item ID | `openai["local_shell_call_item_id"]` | Yes |
-| `openai.local_shell_command_parts` | OpenAI local shell command | `openai["local_shell_command_parts"]` | Yes |
-| `reasoning_details` | Chat Completions reasoning replay on `Message` | `openai["reasoning_details"]` | Yes |
-| `tool_call_index`, `tool_call_choice_index` | Chat Completions streaming aggregation | `openai[...]` if persisted; otherwise removed after aggregation | No |
-| `stream_complete`, `complete` | Unreleased core code-interpreter replacement-snapshot markers | Remove before release; use `Content.merge_mode="replace"` | No |
-| AG-UI and A2A keys | Approval occurrence, state, display, and metadata | `ag_ui[...]` and `a2a[...]` if persisted; otherwise not stored on Agent Framework objects | Per key |
-
-Unchanged: core-private underscore keys, the security keys defined by ADR 0024, and the legacy `encrypted_content`
-read that now falls back to `protected_data`.
-
-Raw-dependent replay in OpenAI shell handling, Gemini tool-call parts, and the Foundry hosting OAuth fallback moves to
-documented replay data under rule 5. Hosting Responses may keep raw output reuse as a fast path.
+[Spec 005](../specs/005-python-content-identity-and-protocol-metadata.md) contains the exact source-to-target mapping
+for every field and metadata key, its owning package, serialized shape, compatibility rule, and authoritative tests.
+This ADR records the placement and identity rules, not an inventory of implementation details. Unreleased intermediate
+forms are removed during implementation rather than documented as compatibility formats.
 
 ### Related documents
 
 - [Spec 004: Python function-calling loop](../specs/004-python-function-calling-loop.md)
+- [Spec 005: Python content identity and protocol metadata](../specs/005-python-content-identity-and-protocol-metadata.md)
 - [ADR 0039: Preserve model refusals with marked Python text content](0039-python-refusal-content.md)
 - [ADR 0043: Preserve host runtime context through MCP invocation and approval](0043-python-mcp-runtime-context.md)
 - [Issue 8910: Explicit append/replace semantics for streamed content merging](https://github.com/microsoft/agent-framework/issues/8910)
 - [Issue 8903: Streamed code-interpreter code can be corrupted by prefix inference](https://github.com/microsoft/agent-framework/issues/8903)
-- [PR 9142: Concatenate code-interpreter stream deltas with prefix overlap](https://github.com/microsoft/agent-framework/pull/9142)

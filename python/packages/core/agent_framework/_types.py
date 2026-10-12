@@ -433,6 +433,14 @@ ContentType = Literal[
     "function_approval_response",
     "oauth_consent_request",
 ]
+_MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
+    "text",
+    "text_reasoning",
+    "function_call",
+    "usage",
+    "code_interpreter_tool_call",
+    "code_interpreter_tool_result",
+})
 
 
 class TextSpanRegion(TypedDict, total=False):
@@ -469,6 +477,7 @@ class ComputerSafetyCheck(TypedDict, total=False):
 ContentT = TypeVar("ContentT", bound="Content")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_REASONING_TEXT_KEY = "reasoning_text"
 
 # endregion
 
@@ -495,6 +504,83 @@ class UsageDetails(TypedDict, total=False, extra_items=int):
     cache_creation_input_token_count: int | None
     cache_read_input_token_count: int | None
     reasoning_output_token_count: int | None
+
+
+def get_namespaced_value(
+    additional_properties: Mapping[str, Any] | None,
+    namespace: str,
+    key: str,
+    default: Any = None,
+) -> Any:
+    """Read one value from a namespaced additional-properties mapping."""
+    if not additional_properties:
+        return default
+    namespace_values = additional_properties.get(namespace)
+    if not isinstance(namespace_values, Mapping):
+        return default
+    return cast("Mapping[str, Any]", namespace_values).get(key, default)
+
+
+def with_namespaced_value(
+    additional_properties: Mapping[str, Any] | None,
+    namespace: str,
+    key: str,
+    value: Any,
+) -> dict[str, Any]:
+    """Return a copy with one namespaced additional-properties value updated."""
+    updated = dict(additional_properties or {})
+    namespace_values = updated.get(namespace)
+    updated_namespace = (
+        dict(cast("Mapping[str, Any]", namespace_values)) if isinstance(namespace_values, Mapping) else {}
+    )
+    updated_namespace[key] = value
+    updated[namespace] = updated_namespace
+    return updated
+
+
+def merge_additional_properties(
+    existing: Mapping[str, Any] | None,
+    incoming: Mapping[str, Any] | None,
+    *,
+    incoming_wins: bool = True,
+) -> dict[str, Any]:
+    """Merge additional properties one level deep while preserving the site's conflict rule."""
+    first, second = (existing, incoming) if incoming_wins else (incoming, existing)
+    merged = _copy_additional_properties(first)
+    for key, value in (second or {}).items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = {**current, **value}
+        else:
+            merged[key] = dict(cast("Mapping[str, Any]", value)) if isinstance(value, Mapping) else value
+    return merged
+
+
+def _copy_additional_properties(additional_properties: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Copy an additional-properties mapping and its top-level mapping values."""
+    copied = dict(additional_properties or {})
+    for key, value in copied.items():
+        if isinstance(value, Mapping):
+            copied[key] = dict(cast("Mapping[str, Any]", value))
+    return copied
+
+
+def _model_output_kind(additional_properties: Mapping[str, Any]) -> Any:
+    """Read the canonical model-output kind with legacy flat-key compatibility."""
+    return get_namespaced_value(
+        additional_properties,
+        "core",
+        _MODEL_OUTPUT_KIND_KEY,
+        additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+    )
+
+
+def _has_reasoning_text_marker(additional_properties: Mapping[str, Any]) -> bool:
+    """Check the canonical OpenAI reasoning-text marker and its legacy location."""
+    if _REASONING_TEXT_KEY in additional_properties:
+        return True
+    openai_properties = additional_properties.get("openai")
+    return isinstance(openai_properties, Mapping) and _REASONING_TEXT_KEY in openai_properties
 
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
@@ -610,6 +696,7 @@ class Content:
         tool_name: str | None = None,
         server_name: str | None = None,
         output: Any = None,
+        hosted: bool | None = None,
         # Function approval fields
         id: str | None = None,
         function_call: Content | None = None,
@@ -618,6 +705,7 @@ class Content:
         # OAuth consent fields
         consent_link: str | None = None,
         # Common fields
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -626,12 +714,40 @@ class Content:
 
         Prefer using the classmethod constructors like `Content.from_text()` instead of calling __init__ directly.
         """
+        if merge_mode not in (None, "append", "replace"):
+            raise ValueError(f"Invalid merge mode: {merge_mode!r}")
+        if merge_mode is not None and type not in _MERGEABLE_CONTENT_TYPES:
+            raise ValueError(f"Content type {type!r} does not support merge_mode.")
+
+        restored_properties = _restore_compaction_annotation_in_additional_properties(additional_properties)
+        copied_properties = _copy_additional_properties(restored_properties)
+        legacy_server_label = copied_properties.get("server_label")
+        if legacy_server_label is not None and not isinstance(legacy_server_label, str):
+            raise ValueError("Legacy function-call server_label must be a string or None.")
+        if type == "function_call":
+            if hosted is not None and not isinstance(hosted, bool):
+                raise ValueError("Function-call hosted must be true or false.")
+            if hosted is None:
+                hosted = bool(legacy_server_label)
+                if hosted:
+                    warnings.warn(
+                        "Function-call content inferred hosted=True from legacy additional_properties['server_label']. "
+                        "Set hosted explicitly; the legacy inference will be removed in a future release.",
+                        FutureWarning,
+                        stacklevel=2,
+                    )
+            if server_name is None and legacy_server_label:
+                server_name = legacy_server_label
+            elif server_name is not None and legacy_server_label is not None and server_name != legacy_server_label:
+                raise ValueError("Function-call server_name conflicts with legacy server_label.")
+        elif hosted is not None:
+            raise ValueError("hosted is only valid for function_call content.")
+
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = (
-            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
-        )
+        self.additional_properties = copied_properties
         self.raw_representation = raw_representation
+        self.merge_mode: Literal["append", "replace"] | None = merge_mode
 
         # Set all content-specific attributes. A text content always carries a string, so
         # concatenation and `Message.text` never see None.
@@ -670,6 +786,7 @@ class Content:
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
+        self.hosted = hosted
         self.id = id
         self.function_call = function_call
         self.user_input_request = user_input_request
@@ -716,12 +833,39 @@ class Content:
     def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
         """Restore pickle state and reset runtime-only shallow-copy fields."""
         restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
+        if not hasattr(self, "merge_mode"):
+            self.merge_mode = None
+        if self.type != "function_call":
+            if not hasattr(self, "hosted"):
+                self.hosted = None
+            return
+        legacy_server_label = self.additional_properties.get("server_label")
+        if legacy_server_label is not None and not isinstance(legacy_server_label, str):
+            raise ValueError("Legacy function-call server_label must be a string or None.")
+        if not hasattr(self, "hosted"):
+            self.hosted = bool(legacy_server_label)
+            if self.hosted:
+                warnings.warn(
+                    "Function-call content inferred hosted=True from legacy additional_properties['server_label']. "
+                    "Set hosted explicitly; the legacy inference will be removed in a future release.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+        elif type(self.hosted) is not bool:
+            raise ValueError("Function-call hosted must be true or false.")
+        if self.server_name is None and legacy_server_label:
+            self.server_name = legacy_server_label
+        elif (
+            self.server_name is not None and legacy_server_label is not None and self.server_name != legacy_server_label
+        ):
+            raise ValueError("Function-call server_name conflicts with legacy server_label.")
 
     @classmethod
     def from_text(
         cls: type[ContentT],
         text: str,
         *,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -730,6 +874,7 @@ class Content:
         return cls(
             "text",
             text=text,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -742,6 +887,8 @@ class Content:
         id: str | None = None,
         text: str | None = None,
         protected_data: str | None = None,
+        status: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -752,6 +899,8 @@ class Content:
             id=id,
             text=text,
             protected_data=protected_data,
+            status=status,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -763,6 +912,8 @@ class Content:
         data: bytes,
         media_type: str,
         *,
+        name: str | None = None,
+        file_id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -790,6 +941,8 @@ class Content:
                     content = Content.from_data(data=data_bytes, media_type=media_type)
 
         Keyword Args:
+            name: Optional filename or display name for the data.
+            file_id: Optional provider file identifier associated with the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from an underlying implementation.
@@ -828,6 +981,8 @@ class Content:
             "data",
             uri=f"data:{media_type};base64,{encoded_data}",
             media_type=media_type,
+            name=name,
+            file_id=file_id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -839,6 +994,8 @@ class Content:
         uri: str,
         *,
         media_type: str | None = None,
+        name: str | None = None,
+        file_id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -857,6 +1014,8 @@ class Content:
         Keyword Args:
             media_type: The MIME type of the data (e.g., "image/png", "application/pdf").
                 This is optional but recommended for external URIs.
+            name: Optional filename or display name for the resource.
+            file_id: Optional provider file identifier associated with the resource.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from an underlying implementation.
@@ -890,6 +1049,8 @@ class Content:
         """
         return cls(
             **_validate_uri(uri, media_type),
+            name=name,
+            file_id=file_id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -927,6 +1088,10 @@ class Content:
         exception: str | None = None,
         informational_only: bool = False,
         id: str | None = None,
+        hosted: bool | None = None,
+        server_name: str | None = None,
+        status: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -947,6 +1112,10 @@ class Content:
                 executed by Agent Framework function invocation.
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
                 assigns one before a locally actionable call is processed.
+            hosted: Whether the provider or service, rather than Agent Framework, executes this call.
+            server_name: Descriptive identity of the server that owns a hosted call.
+            status: Provider-reported function-call status.
+            merge_mode: How this streaming update combines with an earlier update for the same occurrence.
             annotations: Optional annotations attached to this content item.
             additional_properties: Extra provider-specific properties to preserve with the content item.
             raw_representation: The original provider-specific object or payload this content item was created from.
@@ -962,6 +1131,10 @@ class Content:
             exception=exception,
             informational_only=informational_only,
             id=id,
+            hosted=hosted,
+            server_name=server_name,
+            status=status,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -972,8 +1145,10 @@ class Content:
         cls: type[ContentT],
         call_id: str,
         *,
+        id: str | None = None,
         result: Any = None,
         exception: str | None = None,
+        status: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -991,9 +1166,11 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
+            id: Stable Agent Framework identity of the function-call occurrence this result settles.
             exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
                 sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
                 replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
+            status: Provider-reported function-result status.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1019,10 +1196,12 @@ class Content:
 
         return cls(
             "function_result",
+            id=id,
             call_id=call_id,
             result=text_result,
             items=items_list,
             exception=exception,
+            status=status,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1083,6 +1262,7 @@ class Content:
         cls: type[ContentT],
         usage_details: UsageDetails,
         *,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -1091,6 +1271,7 @@ class Content:
         return cls(
             "usage",
             usage_details=usage_details,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1142,6 +1323,8 @@ class Content:
         *,
         call_id: str | None = None,
         inputs: Sequence[Content] | None = None,
+        status: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -1151,6 +1334,8 @@ class Content:
             "code_interpreter_tool_call",
             call_id=call_id,
             inputs=list(inputs) if inputs is not None else None,
+            status=status,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1162,6 +1347,8 @@ class Content:
         *,
         call_id: str | None = None,
         outputs: Sequence[Content] | None = None,
+        status: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -1171,6 +1358,8 @@ class Content:
             "code_interpreter_tool_result",
             call_id=call_id,
             outputs=list(outputs) if outputs is not None else None,
+            status=status,
+            merge_mode=merge_mode,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1477,7 +1666,7 @@ class Content:
             function_call.type == "function_call"
             and function_call.id is not None
             and id != function_call.id
-            and function_call.additional_properties.get("server_label") is None
+            and not function_call.hosted
             and not (additional_properties or {}).get("_replacement_approval_request", False)
         ):
             warnings.warn(
@@ -1620,11 +1809,13 @@ class Content:
             "tool_name",
             "server_name",
             "output",
+            "hosted",
             "function_call",
             "user_input_request",
             "approved",
             "id",
             "consent_link",
+            "merge_mode",
             "additional_properties",
         )
 
@@ -1689,6 +1880,8 @@ class Content:
             return cls.from_data(
                 remaining["data"],
                 remaining["media_type"],
+                name=remaining.get("name"),
+                file_id=remaining.get("file_id"),
                 annotations=annotations,
                 additional_properties=additional_properties,
                 raw_representation=raw_representation,
@@ -1735,6 +1928,10 @@ class Content:
             return self._add_function_call_content(other)
         if self.type == "usage":
             return self._add_usage_content(other)
+        if self.type in ("code_interpreter_tool_call", "code_interpreter_tool_result"):
+            merged = deepcopy(self)
+            _merge_code_interpreter_content(merged, other)
+            return merged
         raise ContentError(f"Addition not supported for content type: {self.type}")
 
     def _add_text_content(self, other: Content) -> Content:
@@ -1745,7 +1942,8 @@ class Content:
         """
         return Content(
             "text",
-            text=self.text + other.text,  # type: ignore[attr-defined, operator]
+            text=other.text if other.merge_mode == "replace" else self.text + other.text,  # type: ignore[attr-defined, operator]
+            merge_mode=other.merge_mode,
             annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
@@ -1775,19 +1973,31 @@ class Content:
         if (
             self_text
             and other_text
-            and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
+            and _has_reasoning_text_marker(self.additional_properties)
+            != _has_reasoning_text_marker(other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        combined_text = None if self.text is None and other.text is None else self_text + other_text
+        if other.merge_mode == "replace":
+            combined_text = other.text
+        elif self.text is None and other.text is None:
+            combined_text = None
+        else:
+            combined_text = self_text + other_text
 
         # Handle protected_data replacement
-        protected_data = other.protected_data if other.protected_data is not None else self.protected_data
+        protected_data = (
+            other.protected_data
+            if other.merge_mode == "replace" or other.protected_data is not None
+            else self.protected_data
+        )
 
         return Content(
             "text_reasoning",
             id=combined_id,
             text=combined_text,
             protected_data=protected_data,
+            status=other.status if other.status is not None else self.status,
+            merge_mode=other.merge_mode,
             annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
@@ -1805,7 +2015,9 @@ class Content:
         self_arguments = getattr(self, "arguments", None)
         other_arguments = getattr(other, "arguments", None)
 
-        if not self_arguments:
+        if other.merge_mode == "replace":
+            arguments = other_arguments
+        elif not self_arguments:
             arguments: str | Mapping[str, Any] | None = other_arguments
         elif not other_arguments:
             arguments = self_arguments
@@ -1816,16 +2028,26 @@ class Content:
         else:
             raise TypeError("Incompatible argument types")
 
+        self_server_name = getattr(self, "server_name", None)
+        other_server_name = getattr(other, "server_name", None)
+        if self_server_name and other_server_name and self_server_name != other_server_name:
+            raise AdditionItemMismatch("Cannot merge function calls from different servers")
+
         return Content(
             "function_call",
             call_id=self_call_id or other_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             id=self.id or other.id,
+            hosted=bool(self.hosted or other.hosted),
+            server_name=self_server_name or other_server_name,
+            status=other.status if other.status is not None else self.status,
+            merge_mode=other.merge_mode,
             user_input_request=self.user_input_request or other.user_input_request,
-            exception=getattr(self, "exception", None) or getattr(other, "exception", None),
+            exception=other.exception if other.exception is not None else self.exception,
             informational_only=getattr(self, "informational_only", False)
             or getattr(other, "informational_only", False),
+            annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
@@ -1834,7 +2056,13 @@ class Content:
         """Add two UsageContent instances by combining their usage details."""
         return Content(
             "usage",
-            usage_details=add_usage_details(self.usage_details, other.usage_details),
+            usage_details=(
+                deepcopy(other.usage_details)
+                if other.merge_mode == "replace"
+                else add_usage_details(self.usage_details, other.usage_details)
+            ),
+            merge_mode=other.merge_mode,
+            annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
@@ -1917,10 +2145,11 @@ def _combine_additional_props(
     self_additional_properties: dict[str, Any], other_additional_properties: dict[str, Any]
 ) -> dict[str, Any]:
     """Combine additional properties for addition operations."""
-    return {
-        **other_additional_properties,
-        **self_additional_properties,
-    }
+    return merge_additional_properties(
+        self_additional_properties,
+        other_additional_properties,
+        incoming_wins=False,
+    )
 
 
 def _combine_raw_representations(
@@ -2087,8 +2316,8 @@ class Message(SerializationMixin):
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
-        self.additional_properties = (
-            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        self.additional_properties = _copy_additional_properties(
+            _restore_compaction_annotation_in_additional_properties(additional_properties)
         )
         self.raw_representation = raw_representation
 
@@ -2255,10 +2484,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             case "function_call":
                 _merge_function_call_content(message, content)
             case "usage":
-                if response.usage_details is None:
+                if content.merge_mode == "replace":
+                    response.usage_details = deepcopy(content.usage_details)
+                elif response.usage_details is None:
                     response.usage_details = UsageDetails()
-                # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
+                else:
+                    # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                    response.usage_details = add_usage_details(response.usage_details, content.usage_details)
             case _:
                 message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -2267,7 +2500,11 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     if update.created_at is not None:
         response.created_at = update.created_at
     if update.additional_properties is not None:
-        response.additional_properties.update(update.additional_properties)
+        response.additional_properties = merge_additional_properties(
+            response.additional_properties,
+            update.additional_properties,
+            incoming_wins=True,
+        )
     if response.raw_representation is None:
         response.raw_representation = []
     if not isinstance(response.raw_representation, list):
@@ -2360,9 +2597,11 @@ def _apply_response_tail_to_update(
     update.continuation_token = response.continuation_token
     _copy_operation_state(response, update)
     if response.additional_properties:
-        merged = dict(update.additional_properties) if update.additional_properties else {}
-        merged.update(response.additional_properties)
-        update.additional_properties = merged
+        update.additional_properties = merge_additional_properties(
+            update.additional_properties,
+            response.additional_properties,
+            incoming_wins=True,
+        )
     if response.usage_details is not None:
         update.contents.append(Content.from_usage(response.usage_details))
 
@@ -2422,9 +2661,9 @@ def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reaso
     """
     head = run[0]
     merged_props: dict[str, Any] = {}
-    for content in reversed(run[1:]):
-        merged_props.update(content.additional_properties)
-    merged_props.update(deepcopy(head.additional_properties))
+    for content in reversed(run):
+        properties = deepcopy(content.additional_properties) if content is head else content.additional_properties
+        merged_props = merge_additional_properties(merged_props, properties, incoming_wins=True)
     annotation_seqs = [
         deepcopy(c.annotations) if c is head else c.annotations for c in run if c.annotations is not None
     ]
@@ -2440,18 +2679,35 @@ def _merge_content_run(run: list[Content], type_str: Literal["text", "text_reaso
         for raw in non_null_raws:
             raw_representation.extend(raw if isinstance(raw, list) else [raw])
     if type_str == "text":
+        text = ""
+        for content in run:
+            text = (content.text or "") if content.merge_mode == "replace" else text + (content.text or "")
         return Content(
             "text",
-            text="".join(c.text or "" for c in run),
+            text=text,
+            merge_mode=run[-1].merge_mode,
             annotations=annotations,
             additional_properties=merged_props,
             raw_representation=raw_representation,
         )
+    text: str | None = None
+    protected_data: str | None = None
+    for content in run:
+        if content.merge_mode == "replace":
+            text = content.text
+            protected_data = content.protected_data
+            continue
+        if content.text is not None:
+            text = (text or "") + content.text
+        if content.protected_data is not None:
+            protected_data = content.protected_data
     return Content(
         "text_reasoning",
         id=next((c.id for c in run if c.id), run[-1].id),
-        text=None if all(c.text is None for c in run) else "".join(c.text or "" for c in run),
-        protected_data=next((c.protected_data for c in reversed(run) if c.protected_data is not None), None),
+        text=text,
+        protected_data=protected_data,
+        status=next((c.status for c in reversed(run) if c.status is not None), None),
+        merge_mode=run[-1].merge_mode,
         annotations=annotations,
         additional_properties=merged_props,
         raw_representation=raw_representation,
@@ -2489,8 +2745,8 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
             if type_str == "text":
                 # A folded run keeps the first chunk's value for this key, so the
                 # run head alone decides whether the next chunk joins or splits.
-                if run[0].additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != content.additional_properties.get(
-                    _MODEL_OUTPUT_KIND_KEY
+                if _model_output_kind(run[0].additional_properties) != _model_output_kind(
+                    content.additional_properties
                 ):
                     flush()
             else:
@@ -2498,14 +2754,14 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
                 if (run_id and other_id and run_id != other_id) or (
                     run_has_text
                     and getattr(content, "text", None)
-                    and (run_has_reasoning_text != ("reasoning_text" in content.additional_properties))
+                    and (run_has_reasoning_text != _has_reasoning_text_marker(content.additional_properties))
                 ):
                     flush()
         run.append(content)
         if type_str == "text_reasoning":
             run_id = run_id or getattr(content, "id", None)
             run_has_text = run_has_text or bool(getattr(content, "text", None))
-            run_has_reasoning_text = run_has_reasoning_text or "reasoning_text" in content.additional_properties
+            run_has_reasoning_text = run_has_reasoning_text or _has_reasoning_text_marker(content.additional_properties)
     flush()
     contents.clear()
     contents.extend(coalesced_contents)
@@ -2524,39 +2780,17 @@ def _content_items_text(items: Any) -> str | None:
     return "".join(text_parts)
 
 
-def _content_items_are_complete_value(items: Any) -> bool:
-    """Return True when items are marked as an authoritative full value.
-
-    Providers that resend a complete snapshot after incremental deltas should set
-    ``additional_properties["stream_complete"]`` (or ``"complete"``) on the text
-    content. Core only looks at that generic flag -- not provider event shapes --
-    so ordinary deltas always concatenate even when one text is a string prefix of
-    the other (see #8955 / #8903).
-    """
-    if not isinstance(items, list):
-        return False
-    for item in cast(list[object], items):
-        if not isinstance(item, Content):
-            continue
-        props = item.additional_properties or {}
-        if props.get("stream_complete") or props.get("complete"):
-            return True
-    return False
-
-
-def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
+def _merge_content_item_lists(existing: Any, incoming: Any, *, replace: bool) -> Any:
     """Merge streamed nested content lists.
 
-    Incremental text deltas are always concatenated. A later complete/full value
-    (``stream_complete`` / ``complete`` on ``additional_properties``) replaces the
-    accumulation.
+    Incremental values append. A content update with ``merge_mode="replace"``
+    supplies an authoritative snapshot.
     """
+    if replace:
+        return deepcopy(incoming)
     if incoming is None:
         return existing
     if existing is None:
-        return deepcopy(incoming)
-
-    if _content_items_are_complete_value(incoming):
         return deepcopy(incoming)
 
     # Empty accumulation (e.g. initial outputs=[]) keeps the first real payload.
@@ -2566,10 +2800,8 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
     existing_text = _content_items_text(existing)
     incoming_text = _content_items_text(incoming)
     if existing_text is not None and incoming_text is not None:
-        existing_items = cast(list[Content], existing)
-        merged = deepcopy(existing_items[0])
-        merged.text = existing_text + incoming_text
-        return [merged]
+        text_items = [*cast(list[Content], existing), *cast(list[Content], incoming)]
+        return [_merge_content_run(text_items, "text")]
 
     if isinstance(existing, list) and isinstance(incoming, list):
         existing_list = cast(list[object], existing)
@@ -2580,10 +2812,20 @@ def _merge_content_item_lists(existing: Any, incoming: Any) -> Any:
 
 def _merge_code_interpreter_content(existing: Content, incoming: Content) -> None:
     """Merge two code interpreter content items for the same logical call."""
-    existing.inputs = _merge_content_item_lists(existing.inputs, incoming.inputs)
-    existing.outputs = _merge_content_item_lists(existing.outputs, incoming.outputs)
+    if existing.call_id and incoming.call_id and existing.call_id != incoming.call_id:
+        raise AdditionItemMismatch("Cannot merge code interpreter content with different call_ids")
+    replace = incoming.merge_mode == "replace"
+    existing.call_id = existing.call_id or incoming.call_id
+    existing.inputs = _merge_content_item_lists(existing.inputs, incoming.inputs, replace=replace)
+    existing.outputs = _merge_content_item_lists(existing.outputs, incoming.outputs, replace=replace)
+    existing.status = incoming.status if incoming.status is not None else existing.status
+    existing.merge_mode = incoming.merge_mode
     existing.annotations = _combine_annotations(existing.annotations, incoming.annotations)
-    existing.additional_properties = {**existing.additional_properties, **incoming.additional_properties}
+    existing.additional_properties = merge_additional_properties(
+        existing.additional_properties,
+        incoming.additional_properties,
+        incoming_wins=True,
+    )
     existing.raw_representation = _combine_raw_representations(existing.raw_representation, incoming.raw_representation)
 
 
@@ -2591,7 +2833,12 @@ def _code_interpreter_key(content: Content) -> tuple[str, str] | None:
     """Return the aggregation key for code interpreter call/result content."""
     if content.type not in {"code_interpreter_tool_call", "code_interpreter_tool_result"}:
         return None
-    call_id = content.call_id or content.additional_properties.get("item_id")
+    call_id = content.call_id or get_namespaced_value(
+        content.additional_properties,
+        "openai",
+        "item_id",
+        content.additional_properties.get("item_id"),
+    )
     if not isinstance(call_id, str) or not call_id:
         return None
     return content.type, call_id
@@ -2630,6 +2877,23 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
     _coalesce_function_call_occurrences(response)
+    for message in response.messages:
+        for content in message.contents:
+            _clear_merge_mode(content)
+
+
+def _clear_merge_mode(content: Content) -> None:
+    """Clear update-only merge state from finalized response content."""
+    content.merge_mode = None
+    for value in (content.items, content.inputs, content.outputs):
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in cast("Sequence[Any]", value):
+                if isinstance(item, Content):
+                    _clear_merge_mode(item)
+    if isinstance(content.function_call, Content):
+        _clear_merge_mode(content.function_call)
+    if isinstance(content.screenshot, Content):
+        _clear_merge_mode(content.screenshot)
 
 
 def _coalesce_function_call_occurrences(response: ChatResponse | AgentResponse) -> None:
@@ -2716,16 +2980,14 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
         if message.role != "assistant":
             continue
         if any(
-            content.type == "text"
-            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+            content.type == "text" and _model_output_kind(content.additional_properties) == _MODEL_OUTPUT_REFUSAL
             for content in message.contents
         ):
             return ""
         text = "".join(
             (content.text or "")
             for content in message.contents
-            if content.type == "text"
-            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != _MODEL_OUTPUT_REFUSAL
+            if content.type == "text" and _model_output_kind(content.additional_properties) != _MODEL_OUTPUT_REFUSAL
         )
         if text.strip():
             return text

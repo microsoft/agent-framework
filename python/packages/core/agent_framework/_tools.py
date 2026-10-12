@@ -2006,6 +2006,7 @@ def _function_execution_error_result(
         message = f"{message} Exception: {exception}"
     return _finalize_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
+        id=function_call.id,
         result=message,
         exception=str(exception),
         base_additional_properties=function_call.additional_properties,
@@ -2032,6 +2033,7 @@ def _function_argument_validation_error_result(
         message = f"{message} Exception: {exception_message}"
     return Content.from_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
+        id=function_call.id,
         result=message,
         exception=exception_message,
         additional_properties=function_call.additional_properties,
@@ -2109,13 +2111,14 @@ def _replacement_approval_request(
 def _finalize_function_result(
     *,
     call_id: str,
+    id: str | None = None,
     result: Any,
     base_additional_properties: Mapping[str, Any] | None = None,
     exception: str | None = None,
     context: FunctionInvocationContext | None = None,
 ) -> Content:
     """Build the stable function-result wrapper and apply private Host metadata."""
-    from ._types import Content
+    from ._types import Content, merge_additional_properties
 
     carrier: _FunctionResultCarrier | None = None
     if context is not None:
@@ -2127,10 +2130,14 @@ def _finalize_function_result(
     if carrier is not None:
         for key in carrier.exclusive_outer_keys:
             additional_properties.pop(key, None)
-        additional_properties.update(carrier.additional_properties)
+        additional_properties = merge_additional_properties(
+            additional_properties,
+            carrier.additional_properties,
+        )
 
     function_result = Content.from_function_result(
         call_id=call_id,
+        id=id,
         result=result,
         exception=exception,
         additional_properties=additional_properties,
@@ -2144,7 +2151,10 @@ def _finalize_function_result(
         updated_item.additional_properties = dict(updated_item.additional_properties)
         for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
             updated_item.additional_properties.pop(key, None)
-        updated_item.additional_properties.update(carrier.item_additional_properties)
+        updated_item.additional_properties = merge_additional_properties(
+            updated_item.additional_properties,
+            carrier.item_additional_properties,
+        )
         updated_items[index] = updated_item
     function_result.items = updated_items
     return function_result
@@ -2283,6 +2293,7 @@ async def _auto_invoke_function(
             )
             return _finalize_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
+                id=function_call_content.id,
                 result=function_result,
                 base_additional_properties=function_call_content.additional_properties,
                 context=direct_context,
@@ -2383,6 +2394,7 @@ async def _auto_invoke_function(
 
         return _finalize_function_result(
             call_id=call_id,
+            id=function_call_content.id,
             result=function_result,
             base_additional_properties=function_call_content.additional_properties,
             context=middleware_context,
@@ -2409,6 +2421,7 @@ async def _auto_invoke_function(
                 # Store result in exception for caller to extract
                 term_exc.result = _finalize_function_result(
                     call_id=call_id,
+                    id=function_call_content.id,
                     result=middleware_context.result,
                     base_additional_properties=function_call_content.additional_properties,
                     context=middleware_context,
@@ -2441,7 +2454,7 @@ def _get_tool_map(
 
 
 def _is_actionable_function_call(content: Content) -> bool:
-    return content.type == "function_call" and not content.informational_only
+    return content.type == "function_call" and not content.informational_only and not content.hosted
 
 
 def _underlying_function_call(content: Content) -> Content:
@@ -2506,6 +2519,7 @@ async def _execute_single_function_call(
         return [
             Content.from_function_result(
                 call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                id=source_function_call.id,
                 result=exc.result,
             )
         ], True
@@ -2516,12 +2530,13 @@ async def _execute_single_function_call(
         for item in propagated_contents:
             item.call_id = call_id
             if not item.id:
-                item.id = call_id
+                item.id = source_function_call.id or call_id
         if propagated_contents:
             return propagated_contents, False
         return [
             Content.from_function_result(
                 call_id=call_id,  # type: ignore[arg-type]
+                id=source_function_call.id,
                 result="Tool requires user input but no request details were provided.",
                 exception="UserInputRequiredException",
             )
@@ -2861,14 +2876,11 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
 def _is_hosted_tool_approval(content: Any) -> bool:
     """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
 
-    Hosted tool approvals have a server_label in function_call.additional_properties
-    and should be passed through to the API untouched rather than processed locally.
+    Hosted tool approvals are provider-executed and should be passed through to
+    the API untouched rather than processed locally.
     """
     fc = getattr(content, "function_call", None)
-    if fc is None:
-        return False
-    ap = getattr(fc, "additional_properties", None)
-    return bool(ap and ap.get("server_label"))
+    return bool(fc is not None and getattr(fc, "hosted", False))
 
 
 def _is_approval_granted(value: Any) -> bool:
@@ -4534,6 +4546,7 @@ def _replace_approval_contents_with_results(
                     replacements = [
                         Content.from_function_result(
                             call_id=call_id,
+                            id=occurrence.function_call.id if occurrence is not None else content.function_call.id,
                             result="Error: Tool call invocation was rejected by user.",
                             additional_properties=content.function_call.additional_properties,
                         )
@@ -5089,6 +5102,7 @@ async def _resolve_deferred_mixed_pause_calls(
             [
                 Content.from_function_result(
                     call_id=function_call.call_id,  # type: ignore[arg-type]
+                    id=function_call.id,
                     result="Error: Function invocation limit reached before the deferred tool could run.",
                     exception="FunctionInvocationLimit",
                     additional_properties=function_call.additional_properties,
@@ -5614,6 +5628,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 error_results.append(
                     Content.from_function_result(
                         call_id=underlying_call.call_id,
+                        id=underlying_call.id,
                         result=error_result,
                         exception=error_exception,
                         additional_properties=underlying_call.additional_properties,

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import pickle
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from copy import copy, deepcopy
@@ -32,8 +33,11 @@ from agent_framework import (
     ToolMode,
     UsageDetails,
     detect_media_type_from_base64,
+    get_namespaced_value,
+    merge_additional_properties,
     merge_chat_options,
     tool,
+    with_namespaced_value,
 )
 from agent_framework._compaction import (
     GROUP_ANNOTATION_KEY,
@@ -157,6 +161,26 @@ def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
                     Content.from_text(
                         '{"should_not": "parse"}',
                         additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.text == '{"should_not": "parse"}'
+    assert response.value is None
+
+
+def test_namespaced_refusal_text_is_excluded_from_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        '{"should_not": "parse"}',
+                        additional_properties={"core": {"model_output_kind": "refusal"}},
                     )
                 ],
             )
@@ -454,7 +478,7 @@ def test_code_interpreter_tool_call_stream_concatenates_indent_prefix_deltas() -
 
 
 def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() -> None:
-    """A stream_complete snapshot is authoritative and replaces prior delta text."""
+    """An explicit replace snapshot is authoritative over prior deltas."""
     updates = [
         ChatResponseUpdate(
             contents=[
@@ -465,12 +489,8 @@ def test_code_interpreter_tool_call_stream_done_replaces_accumulated_deltas() ->
             contents=[
                 Content.from_code_interpreter_tool_call(
                     call_id="ci_1",
-                    inputs=[
-                        Content.from_text(
-                            text="import os\nimport sys",
-                            additional_properties={"stream_complete": True},
-                        )
-                    ],
+                    inputs=[Content.from_text(text="import os\nimport sys")],
+                    merge_mode="replace",
                 )
             ]
         ),
@@ -512,6 +532,46 @@ def test_code_interpreter_tool_result_content_outputs():
     assert result.outputs is not None
     assert result.outputs[0].type == "text"
     assert result.outputs[1].type == "uri"
+
+
+def test_code_interpreter_tool_result_replace_snapshot() -> None:
+    first = Content.from_code_interpreter_tool_result(
+        call_id="ci_1",
+        outputs=[Content.from_text("delta")],
+        status="in_progress",
+        additional_properties={"openai": {"left": 1, "item_id": "old"}},
+    )
+    replacement = Content.from_code_interpreter_tool_result(
+        call_id="ci_1",
+        outputs=[Content.from_text("snapshot", merge_mode="replace")],
+        status="completed",
+        merge_mode="replace",
+        additional_properties={"openai": {"right": 2, "item_id": "new"}},
+    )
+
+    result = first + replacement
+    assert [item.text for item in result.outputs or []] == ["snapshot"]
+    assert result.status == "completed"
+    assert result.additional_properties["openai"] == {"left": 1, "right": 2, "item_id": "new"}
+
+
+def test_finalized_response_clears_merge_modes_recursively() -> None:
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(
+            contents=[
+                Content.from_code_interpreter_tool_call(
+                    call_id="ci_1",
+                    inputs=[Content.from_text("print('ok')", merge_mode="replace")],
+                    merge_mode="replace",
+                )
+            ]
+        )
+    ])
+
+    content = response.messages[0].contents[0]
+    assert content.merge_mode is None
+    assert content.inputs is not None
+    assert content.inputs[0].merge_mode is None
 
 
 # region: Image generation content
@@ -791,6 +851,77 @@ def test_function_call_content():
     assert isinstance(content, Content)
 
 
+def test_content_merge_mode_validation_and_serialization() -> None:
+    content = Content.from_text("snapshot", merge_mode="replace")
+
+    assert content.to_dict()["merge_mode"] == "replace"
+    assert Content.from_dict(content.to_dict()).merge_mode == "replace"
+
+    with pytest.raises(ValueError, match="Invalid merge mode"):
+        Content("text", merge_mode=cast(Any, "invalid"))
+    with pytest.raises(ValueError, match="does not support merge_mode"):
+        Content("function_result", call_id="call", result="done", merge_mode="append")
+
+
+def test_function_call_hosted_serialization_and_legacy_inference() -> None:
+    local = Content.from_function_call(call_id="local", name="f")
+    assert local.hosted is False
+    assert local.to_dict()["hosted"] is False
+
+    hosted = Content.from_function_call(
+        call_id="hosted",
+        name="f",
+        hosted=True,
+        server_name="provider",
+        additional_properties={"server_label": "provider"},
+    )
+    restored = Content.from_dict(hosted.to_dict())
+    assert restored.hosted is True
+    assert restored.server_name == "provider"
+
+    with pytest.warns(FutureWarning, match="legacy.*server_label"):
+        legacy = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy",
+            "name": "f",
+            "additional_properties": {"server_label": "provider"},
+        })
+    assert legacy.hosted is True
+    assert legacy.server_name == "provider"
+
+    with pytest.raises(ValueError, match="hosted must be true or false"):
+        Content.from_dict({
+            "type": "function_call",
+            "call_id": "invalid",
+            "name": "f",
+            "hosted": "yes",
+        })
+    with pytest.raises(ValueError, match="conflicts"):
+        Content.from_function_call(
+            call_id="conflict",
+            name="f",
+            hosted=True,
+            server_name="one",
+            additional_properties={"server_label": "two"},
+        )
+
+
+def test_function_call_legacy_hosted_inference_when_unpickling() -> None:
+    content = Content.from_function_call(call_id="legacy", name="f")
+    state = content.__getstate__()
+    state.pop("hosted")
+    state["server_name"] = None
+    state["additional_properties"] = {"server_label": "provider"}
+
+    restored = Content.__new__(Content)
+    with pytest.warns(FutureWarning, match="legacy.*server_label"):
+        restored.__setstate__(state)
+
+    assert restored.hosted is True
+    assert restored.server_name == "provider"
+    assert pickle.loads(pickle.dumps(restored)).hosted is True
+
+
 def test_function_call_content_informational_only_serialization():
     content = Content.from_function_call(
         call_id="1",
@@ -877,6 +1008,32 @@ def test_function_call_content_add_merging_and_errors():
     b = Content("function_call", call_id="1", name=None, arguments="")
     assert (a + b).name is None
 
+    # Hosted routing is fail-safe across fragments, and the descriptive boundary is retained.
+    a = Content.from_function_call(call_id="1", name="f", arguments="", hosted=False)
+    b = Content.from_function_call(
+        call_id="1",
+        name="f",
+        arguments="{}",
+        hosted=True,
+        server_name="provider",
+    )
+    c = a + b
+    assert c.hosted is True
+    assert c.server_name == "provider"
+
+    # A complete snapshot replaces streamed arguments while retaining stable identity.
+    a = Content.from_function_call(call_id="1", name="f", arguments='{"x":', id="occurrence")
+    b = Content.from_function_call(
+        call_id="1",
+        name="f",
+        arguments='{"x": 1}',
+        id="occurrence",
+        merge_mode="replace",
+    )
+    c = a + b
+    assert c.arguments == '{"x": 1}'
+    assert c.id == "occurrence"
+
 
 # region FunctionResultContent
 
@@ -896,6 +1053,20 @@ def test_function_result_content():
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
+
+
+def test_function_result_occurrence_identity_and_status_roundtrip() -> None:
+    content = Content.from_function_result(
+        call_id="provider-call",
+        id="occurrence",
+        result="done",
+        status="completed",
+    )
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.call_id == "provider-call"
+    assert restored.id == "occurrence"
+    assert restored.status == "completed"
 
 
 # region UsageDetails
@@ -1072,6 +1243,8 @@ def test_hosted_function_approval_request_allows_provider_request_identity_witho
         call_id="provider-call",
         name="hosted",
         id="af-call-occurrence",
+        hosted=True,
+        server_name="provider",
         additional_properties={"server_label": "provider"},
     )
 
@@ -2457,6 +2630,59 @@ def test_text_content_add_comprehensive_coverage():
     assert result.raw_representation == ["raw1", "raw2", "raw3"]
 
 
+def test_namespaced_additional_properties_helpers_copy_and_merge_one_level() -> None:
+    source: dict[str, Any] = {
+        "openai": {"item_id": "item-1"},
+        "application": {"left": 1},
+    }
+    content = Content.from_text("hello", additional_properties=source)
+    source["openai"]["item_id"] = "mutated"
+
+    assert get_namespaced_value(content.additional_properties, "openai", "item_id") == "item-1"
+    assert get_namespaced_value(content.additional_properties, "missing", "key", "fallback") == "fallback"
+
+    updated = with_namespaced_value(content.additional_properties, "openai", "status", "completed")
+    assert updated["openai"] == {"item_id": "item-1", "status": "completed"}
+    assert content.additional_properties["openai"] == {"item_id": "item-1"}
+
+    existing_wins = merge_additional_properties(
+        {"openai": {"item_id": "old", "left": 1}, "flat": "old"},
+        {"openai": {"item_id": "new", "right": 2}, "flat": "new"},
+        incoming_wins=False,
+    )
+    assert existing_wins == {
+        "openai": {"item_id": "old", "left": 1, "right": 2},
+        "flat": "old",
+    }
+
+    incoming_wins = merge_additional_properties(
+        {"openai": {"item_id": "old", "left": 1}, "flat": "old"},
+        {"openai": {"item_id": "new", "right": 2}, "flat": "new"},
+    )
+    assert incoming_wins == {
+        "openai": {"item_id": "new", "left": 1, "right": 2},
+        "flat": "new",
+    }
+
+
+def test_text_content_merge_modes_and_metadata_winner() -> None:
+    first = Content.from_text(
+        "delta",
+        merge_mode="append",
+        additional_properties={"openai": {"item_id": "old", "left": 1}},
+    )
+    replacement = Content.from_text(
+        "snapshot",
+        merge_mode="replace",
+        additional_properties={"openai": {"item_id": "new", "right": 2}},
+    )
+
+    result = first + replacement
+    assert result.text == "snapshot"
+    assert result.merge_mode == "replace"
+    assert result.additional_properties["openai"] == {"item_id": "old", "left": 1, "right": 2}
+
+
 def test_text_content_iadd_coverage():
     """Test TextContent += operator for better coverage."""
 
@@ -2538,6 +2764,21 @@ def test_text_reasoning_content_add_coverage():
 
     result = t1 + t2
     assert result.text == "Thinking 1 Thinking 2"
+
+
+def test_text_reasoning_replace_resets_semantic_payload() -> None:
+    first = Content.from_text_reasoning(text="delta", protected_data="old", status="in_progress")
+    replacement = Content.from_text_reasoning(
+        text="snapshot",
+        protected_data="new",
+        status="completed",
+        merge_mode="replace",
+    )
+
+    result = first + replacement
+    assert result.text == "snapshot"
+    assert result.protected_data == "new"
+    assert result.status == "completed"
 
 
 def test_text_reasoning_content_iadd_coverage():
@@ -2889,6 +3130,26 @@ def test_agent_response_from_updates_preserves_refusal_marker() -> None:
     assert response.messages[0].contents[0].text == "I cannot help."
     assert response.messages[0].contents[0].additional_properties == marker
     assert response.text == "I cannot help."
+
+
+def test_canonical_reasoning_marker_preserves_summary_boundary() -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(
+            contents=[
+                Content.from_text_reasoning(
+                    text="summary",
+                    additional_properties={"openai": {"reasoning_text": True}},
+                )
+            ],
+            role="assistant",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text_reasoning(text="private reasoning")],
+            role="assistant",
+        ),
+    ])
+
+    assert [content.text for content in response.messages[0].contents] == ["summary", "private reasoning"]
 
 
 @pytest.mark.parametrize(
@@ -4355,6 +4616,46 @@ def test_content_add_usage_content():
     assert isinstance(result.raw_representation, list)
     assert "raw1" in result.raw_representation
     assert "raw2" in result.raw_representation
+
+
+def test_content_replace_usage_content():
+    usage1 = Content.from_usage(
+        {"input_token_count": 100, "output_token_count": 50},
+        merge_mode="append",
+    )
+    usage2 = Content.from_usage(
+        {"input_token_count": 20, "output_token_count": 10},
+        merge_mode="replace",
+    )
+
+    result = usage1 + usage2
+
+    assert result.usage_details == {"input_token_count": 20, "output_token_count": 10}
+    assert result.merge_mode == "replace"
+
+
+def test_response_usage_replace_snapshot() -> None:
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[Content.from_usage({"input_token_count": 100}, merge_mode="append")]),
+        ChatResponseUpdate(contents=[Content.from_usage({"input_token_count": 20}, merge_mode="replace")]),
+    ])
+
+    assert response.usage_details == {"input_token_count": 20}
+
+
+def test_response_metadata_merges_namespaces_with_incoming_values_winning() -> None:
+    response = ChatResponse.from_updates([
+        ChatResponseUpdate(
+            contents=[Content.from_text("one")],
+            additional_properties={"openai": {"item_id": "old", "left": 1}},
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_text("two")],
+            additional_properties={"openai": {"item_id": "new", "right": 2}},
+        ),
+    ])
+
+    assert response.additional_properties["openai"] == {"item_id": "new", "left": 1, "right": 2}
 
 
 def test_content_add_usage_content_with_none_raw_representation():

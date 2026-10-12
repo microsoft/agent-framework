@@ -596,7 +596,7 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
     message = Message(
         role="user",
         contents=[Content.from_text(text="Continue the task")],
-        additional_properties={"a2a_metadata": {"trace_id": "trace-456"}},
+        additional_properties={"a2a": {"trace_id": "trace-456"}},
     )
 
     session = A2AAgentSession(context_id="ctx-123")
@@ -1977,6 +1977,8 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     updates: list[AgentResponseUpdate] = []
     async for update in stream:
         updates.append(update)
+    assert updates[0].contents[0].merge_mode == "replace"
+    assert updates[1].contents[0].merge_mode == "append"
     response = await stream.get_final_response()
 
     assert [update.text for update in updates] == ["Hello ", "world"]
@@ -2137,6 +2139,8 @@ async def test_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client:
     mock_a2a_client.responses.append(StreamResponse(message=msg))
 
     response = await a2a_agent.run("hello")
+    assert response.additional_properties["a2a"]["source"] == "server"
+    assert response.additional_properties["a2a"]["trace_id"] == "abc"
     assert response.additional_properties["a2a_metadata"]["source"] == "server"
     assert response.additional_properties["a2a_metadata"]["trace_id"] == "abc"
 
@@ -2210,6 +2214,10 @@ async def test_task_artifact_update_event_metadata_merged(a2a_agent: A2AAgent, m
 
     artifact_update = updates[0]
     assert artifact_update.additional_properties is not None
+    assert artifact_update.additional_properties["a2a"] == {
+        "from_artifact": True,
+        "from_event": True,
+    }
     metadata = artifact_update.additional_properties["a2a_metadata"]
     assert metadata["from_artifact"] is True
     assert metadata["from_event"] is True

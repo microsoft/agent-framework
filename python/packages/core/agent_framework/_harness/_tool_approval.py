@@ -59,8 +59,7 @@ def _serialize_arguments(function_call: Content) -> dict[str, str]:
 
 def _server_label(function_call: Content) -> str | None:
     """Return the hosted-tool server boundary for a function call, if present."""
-    value = function_call.additional_properties.get("server_label")
-    return value if isinstance(value, str) else None
+    return function_call.server_name if function_call.hosted else None
 
 
 def _content_from_state(value: Any) -> Content:

@@ -111,7 +111,10 @@ class TestMessagesFromResponsesInput:
 
         assert msgs[0].contents[0].type == "text"
         assert msgs[0].contents[0].text == "I cannot help."
-        assert msgs[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
+        assert msgs[0].contents[0].additional_properties == {
+            "core": {"model_output_kind": "refusal"},
+            "model_output_kind": "refusal",
+        }
 
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
@@ -145,8 +148,12 @@ class TestMessagesFromResponsesInput:
         assert msgs[0].contents[0].uri == "https://example.com/report.pdf"
 
     def test_input_file_via_file_id(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123"}])
-        assert msgs[0].contents[0].file_id == "file_123"
+        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123", "filename": "report.pdf"}])
+        content = msgs[0].contents[0]
+        assert content.file_id == "file_123"
+        assert content.name == "report.pdf"
+        assert content.additional_properties["openai"]["content_type"] == "input_file"
+        assert content.additional_properties["openai_content_type"] == "input_file"
 
     def test_input_file_missing_anchor_raises(self) -> None:
         with pytest.raises(ValueError, match="input_file"):
@@ -162,10 +169,18 @@ class TestMessagesFromResponsesInput:
         assert msgs[1].text == "second"
 
     def test_image_url_via_string(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        msgs = messages_from_responses_input([
+            {"type": "input_image", "image_url": "https://example.com/cat.png", "detail": "high"}
+        ])
         assert len(msgs) == 1
-        # Image content present.
-        assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
+        content = msgs[0].contents[0]
+        assert content.uri == "https://example.com/cat.png"
+        assert content.additional_properties["openai"] == {
+            "content_type": "input_image",
+            "image_detail": "high",
+        }
+        assert content.additional_properties["openai_content_type"] == "input_image"
+        assert content.additional_properties["detail"] == "high"
 
     def test_image_url_via_object(self) -> None:
         msgs = messages_from_responses_input([
