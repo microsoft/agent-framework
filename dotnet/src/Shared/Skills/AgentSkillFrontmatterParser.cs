@@ -153,7 +153,8 @@ internal static partial class AgentSkillFrontmatterParser
         }
 
         if (!AgentSkillFrontmatter.ValidateName(name, out string? validationReason) ||
-            !AgentSkillFrontmatter.ValidateDescription(description, out validationReason))
+            !AgentSkillFrontmatter.ValidateDescription(description, out validationReason) ||
+            !AgentSkillFrontmatter.ValidateCompatibility(compatibility, out validationReason))
         {
             LogInvalidFieldValue(logger, skillLocation, "frontmatter", validationReason);
             return false;

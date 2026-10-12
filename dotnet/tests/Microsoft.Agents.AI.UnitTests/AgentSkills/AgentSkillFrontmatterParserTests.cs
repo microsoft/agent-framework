@@ -389,6 +389,34 @@ public sealed class AgentSkillFrontmatterParserTests
     }
 
     [Theory]
+    [InlineData(500, true)]
+    [InlineData(501, false)]
+    public void TryParse_CompatibilityLength_ValidatesBeforeConstructingFrontmatter(int length, bool expected)
+    {
+        // Arrange
+        string compatibility = new('a', length);
+        string content = $"---\nname: test-skill\ndescription: Read files\ncompatibility: {compatibility}\n---\nBody.";
+        var logger = CreateLogger();
+
+        // Act
+        bool result = AgentSkillFrontmatterParser.TryParse(content, SkillLocation, logger.Object, out var frontmatter);
+
+        // Assert
+        Assert.Equal(expected, result);
+        if (expected)
+        {
+            Assert.NotNull(frontmatter);
+            Assert.Equal(compatibility, frontmatter.Compatibility);
+        }
+        else
+        {
+            Assert.Null(frontmatter);
+        }
+
+        VerifyDiagnostic(logger, LogLevel.Error, "Skill compatibility must be 500 characters or fewer.", expected ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
     [MemberData(nameof(ExistingMetadataScalarFormats))]
     public void TryParse_ExistingMetadataScalarFormats_Preserved(string value, string expected, string newline)
     {

@@ -288,15 +288,20 @@ public sealed class AgentMcpListedSkillTests
         Assert.Equal("Convert units.", skill.Frontmatter.Description);
     }
 
-    [Fact]
-    public async Task GetContentAsync_InvalidFrontmatter_ThrowsWithoutCachingAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_InvalidFrontmatter_ThrowsWithoutCachingAsync(bool overlengthCompatibility)
     {
         // Arrange
+        string content = overlengthCompatibility
+            ? SkillContent.Replace("\n---\n", $"\ncompatibility: {new string('a', 501)}\n---\n")
+            : "Instructions without frontmatter.";
         int reads = 0;
         await using var server = CreateServer((uri, _) =>
         {
             reads++;
-            return ValueTask.FromResult(Text(uri, "Instructions without frontmatter."));
+            return ValueTask.FromResult(Text(uri, content));
         });
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client);
