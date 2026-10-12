@@ -793,6 +793,31 @@ class TestClaudeAgentToolConversion:
         # Verify the nested reference exists in properties
         assert "person" in input_schema["properties"]
 
+    async def test_function_tool_to_sdk_mcp_tool_uses_json_schema(self) -> None:
+        """Test that a tool declared with a JSON schema keeps its parameters."""
+
+        @tool(
+            schema={
+                "type": "object",
+                "properties": {"city": {"type": "string", "description": "City name"}},
+                "required": ["city"],
+            }
+        )
+        def get_weather(city: str) -> str:
+            """Get the weather."""
+            return f"Sunny in {city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(get_weather)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == {
+            "type": "object",
+            "properties": {"city": {"type": "string", "description": "City name"}},
+            "required": ["city"],
+        }
+        result = await sdk_tool.handler({"city": "Paris"})
+        assert result["content"][0]["text"] == "Sunny in Paris"
+
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
 

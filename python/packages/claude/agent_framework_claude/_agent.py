@@ -706,8 +706,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
-        # Get JSON schema from pydantic model
-        schema: dict[str, Any] = func_tool.input_model.model_json_schema() if func_tool.input_model else {}
+        # Get JSON schema from the pydantic model or the JSON schema the tool was declared with
+        schema: dict[str, Any] = func_tool.parameters()
         input_schema: dict[str, Any] = {
             "type": "object",
             "properties": schema.get("properties", {}),
