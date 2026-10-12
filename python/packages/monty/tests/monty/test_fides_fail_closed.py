@@ -100,3 +100,13 @@ async def test_concurrent_refusals_have_no_side_effects() -> None:
     )
     assert all(isinstance(item, CodeActFidesCoverageError) for item in results)
     assert not sensitive_tool_calls
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_executes_code_without_host_tools() -> None:
+    """Strict FIDES coverage must permit code with no host-tool surface."""
+    codeact = MontyExecuteCodeTool(require_fides=True)
+
+    result = await codeact._run_code(code="print(2 + 3)")
+
+    assert any(item.type == "text" and item.text.strip() == "5" for item in result)
