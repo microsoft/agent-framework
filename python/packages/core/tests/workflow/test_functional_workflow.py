@@ -2930,6 +2930,48 @@ class TestHITLInStepWithCaching:
         with pytest.raises(RuntimeError, match="boom"):
             await wf.run(1)
 
+    async def test_concurrent_unhandled_plain_failure_replaces_pause(self):
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            return await ctx.request_info("y?", int, request_id="y")
+
+        async def fail() -> None:
+            await asyncio.sleep(0)
+            raise RuntimeError("boom")
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), fail()))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await wf.run(1)
+
+    async def test_concurrent_plain_failure_cancels_hanging_sibling(self):
+        hanging_finished = asyncio.Event()
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            return await ctx.request_info("y?", int, request_id="y")
+
+        async def fail() -> None:
+            await asyncio.sleep(0)
+            raise RuntimeError("boom")
+
+        async def hang() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                hanging_finished.set()
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), fail(), hang()))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await asyncio.wait_for(wf.run(1), timeout=5)
+
+        assert hanging_finished.is_set()
+
     async def test_step_failure_spawned_during_settlement_replaces_pause(self):
         sibling_started = asyncio.Event()
         interrupting = asyncio.Event()
@@ -2966,6 +3008,40 @@ class TestHITLInStepWithCaching:
 
         with pytest.raises(RuntimeError, match="boom"):
             await run_task
+
+    async def test_handled_child_failure_during_settlement_does_not_replace_pause(self):
+        sibling_started = asyncio.Event()
+        interrupting = asyncio.Event()
+        release_sibling = asyncio.Event()
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await sibling_started.wait()
+            interrupting.set()
+            return await ctx.request_info("y?", int, request_id="y")
+
+        async def child() -> None:
+            raise RuntimeError("handled child")
+
+        @step(replay_key=lambda: "sibling")
+        async def sibling() -> str:
+            sibling_started.set()
+            await release_sibling.wait()
+            child_task = asyncio.create_task(child())
+            with suppress(RuntimeError):
+                await child_task
+            return "done"
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), sibling()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await interrupting.wait()
+        release_sibling.set()
+        paused = await run_task
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
     async def test_gather_return_exceptions_does_not_expose_interruption(self):
         @step(replay_key=lambda: "ask")

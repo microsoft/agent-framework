@@ -53,7 +53,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mappin
 from contextvars import Context, ContextVar
 from copy import deepcopy
 from types import CodeType
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
@@ -583,12 +583,12 @@ class RunContext:
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
         # Parent task for each tracked workflow task.
         self._workflow_task_parents: dict[asyncio.Future[Any], asyncio.Task[Any] | None] = {}
-        # Tasks executing @step wrappers.
-        self._step_tasks: set[asyncio.Task[Any]] = set()
         # Reference counts for tasks currently executing one or more nested @steps.
         self._active_step_tasks: dict[asyncio.Task[Any], int] = {}
         # Task ownership tree rooted at steps active when request_info interrupted.
         self._pause_owned_tasks: set[asyncio.Future[Any]] = set()
+        # Pause-owned tasks whose errors can be masked by the internal interruption.
+        self._pause_failure_boundaries: set[asyncio.Future[Any]] = set()
         # First internal interruption raised during this run, even if user concurrency swallows it.
         self._workflow_interruption: WorkflowInterrupted | None = None
         # First internal interruption raised in each task.
@@ -675,6 +675,8 @@ class RunContext:
         await self.add_event(event)
         self._pending_requests[rid] = event
         self._pause_owned_tasks.update(self._active_step_tasks)
+        self._pause_failure_boundaries.update(self._active_step_tasks)
+        self._capture_root_gather_tasks()
         self._expand_pause_owned_tasks()
         interruption = WorkflowInterrupted(rid, request_data, response_type)
         if self._workflow_interruption is None:
@@ -785,6 +787,16 @@ class RunContext:
             if len(self._pause_owned_tasks) == owned_count:
                 return
 
+    def _capture_root_gather_tasks(self) -> None:
+        """Include children of the gather currently awaited by the workflow root."""
+        waiter = getattr(self._root_task, "_fut_waiter", None)
+        children = cast(Iterable[Any], getattr(waiter, "_children", ()))
+        for task in children:
+            if isinstance(task, asyncio.Future):
+                child = cast(asyncio.Future[Any], task)
+                self._pause_owned_tasks.add(child)
+                self._pause_failure_boundaries.add(child)
+
     async def _cancel_workflow_tasks(self) -> None:
         """Cancel and drain all tracked workflow tasks."""
         current_task = asyncio.current_task()
@@ -800,33 +812,52 @@ class RunContext:
         """Wait for pause-associated steps, then cancel and drain detached tasks."""
         current_task = asyncio.current_task()
         settled_tasks = self._pause_owned_tasks
+        inspected_tasks: set[asyncio.Future[Any]] = set()
 
-        def _pending_step_tasks() -> list[asyncio.Task[Any]]:
+        def _pending_owned_tasks() -> list[asyncio.Future[Any]]:
             self._expand_pause_owned_tasks()
             return [
                 task
-                for task in self._step_tasks
-                if task in settled_tasks and task is not current_task and not task.done()
+                for task in settled_tasks
+                if task is not current_task and task is not self._root_task and not task.done()
             ]
+
+        def _raise_completed_failure() -> None:
+            for task in settled_tasks:
+                if task in inspected_tasks or not task.done():
+                    continue
+                if task is current_task or task is self._root_task or task.cancelled():
+                    inspected_tasks.add(task)
+                    continue
+                if task not in self._pause_failure_boundaries:
+                    if not getattr(task, "_log_traceback", False):
+                        inspected_tasks.add(task)
+                        continue
+                    parent = self._workflow_task_parents.get(task)
+                    if parent is not None and not parent.done():
+                        continue
+                inspected_tasks.add(task)
+                error = task.exception()
+                if error is not None:
+                    _, remaining = _split_workflow_interruption(error)
+                    if remaining is not None:
+                        raise remaining from None
 
         try:
             try:
-                while pending := _pending_step_tasks():
-                    await asyncio.gather(*pending, return_exceptions=True)
+                while True:
+                    if propagate_failures:
+                        _raise_completed_failure()
+                    pending = _pending_owned_tasks()
+                    if not pending:
+                        break
+                    await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                if propagate_failures:
+                    _raise_completed_failure()
                 await self._cancel_workflow_tasks()
             except BaseException:
                 await self._cancel_workflow_tasks()
                 raise
-
-            if propagate_failures:
-                for task in settled_tasks:
-                    if task not in self._step_tasks or task is current_task or task.cancelled():
-                        continue
-                    error = task.exception()
-                    if error is not None:
-                        _, remaining = _split_workflow_interruption(error)
-                        if remaining is not None:
-                            raise remaining from None
         finally:
             self._capture_interrupted_step_tasks = False
 
@@ -1198,7 +1229,6 @@ class StepWrapper(Generic[R]):
         step_task = asyncio.current_task()
         task_interruption_before = ctx._task_interruptions.get(step_task) if step_task is not None else None
         if step_task is not None:
-            ctx._step_tasks.add(step_task)
             ctx._active_step_tasks[step_task] = ctx._active_step_tasks.get(step_task, 0) + 1
         try:
             # Inject RunContext if the step function declares it
