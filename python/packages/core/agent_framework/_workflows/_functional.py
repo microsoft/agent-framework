@@ -441,6 +441,45 @@ class WorkflowInterrupted(BaseException):
         super().__init__(f"Workflow interrupted by request_info (request_id={request_id})")
 
 
+def _get_workflow_interruption(exc: BaseException) -> WorkflowInterrupted | None:
+    """Return an interruption when every leaf in *exc* is an internal interruption."""
+    if isinstance(exc, WorkflowInterrupted):
+        return exc
+    if type(exc).__name__ not in ("ExceptionGroup", "BaseExceptionGroup"):
+        return None
+
+    nested = getattr(exc, "exceptions", ())
+    if not nested:
+        return None
+
+    first: WorkflowInterrupted | None = None
+    for child in nested:
+        interruption = _get_workflow_interruption(child)
+        if interruption is None:
+            return None
+        if first is None:
+            first = interruption
+    return first
+
+
+def _split_workflow_interruption(
+    exc: BaseException,
+) -> tuple[WorkflowInterrupted | None, BaseException | None]:
+    """Separate internal workflow interruptions from any real failures."""
+    if isinstance(exc, WorkflowInterrupted):
+        return exc, None
+    if type(exc).__name__ not in ("ExceptionGroup", "BaseExceptionGroup"):
+        return None, exc
+
+    split = getattr(exc, "split", None)
+    if split is None:
+        return None, exc
+    interruptions, remaining = split(WorkflowInterrupted)
+    if interruptions is None:
+        return None, exc
+    return _get_workflow_interruption(interruptions), remaining
+
+
 # ---------------------------------------------------------------------------
 # RunContext
 # ---------------------------------------------------------------------------
@@ -525,6 +564,8 @@ class RunContext:
         self._used_explicit_step_cache_keys: set[str] = set()
         # Tasks created while this workflow context is active.
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
+        # Reference counts for tasks currently executing one or more nested @steps.
+        self._active_step_tasks: dict[asyncio.Task[Any], int] = {}
         # The task executing the workflow body; gather/task-group children differ from this task.
         self._root_task: asyncio.Task[Any] | None = None
         # Deterministic call counter for auto-generated request_info IDs
@@ -673,6 +714,38 @@ class RunContext:
 
     def _get_events(self) -> list[WorkflowEvent[Any]]:
         return list(self._events)
+
+    async def _cancel_workflow_tasks(self) -> None:
+        """Cancel and drain all tracked workflow tasks."""
+        current_task = asyncio.current_task()
+        while pending := [task for task in self._workflow_tasks if task is not current_task and not task.done()]:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _settle_workflow_tasks(self) -> None:
+        """Wait for active steps, cancel detached tasks, and surface real failures."""
+        current_task = asyncio.current_task()
+
+        def _pending_step_tasks() -> list[asyncio.Task[Any]]:
+            return [task for task in self._active_step_tasks if task is not current_task and not task.done()]
+
+        try:
+            while pending := _pending_step_tasks():
+                await asyncio.gather(*pending, return_exceptions=True)
+            await self._cancel_workflow_tasks()
+        except BaseException:
+            await self._cancel_workflow_tasks()
+            raise
+
+        for task in self._workflow_tasks:
+            if task is current_task or task.cancelled():
+                continue
+            error = task.exception()
+            if error is not None:
+                _, remaining = _split_workflow_interruption(error)
+                if remaining is not None:
+                    raise remaining from None
 
     def _get_legacy_step_cache_key(self, step_name: str) -> str:
         idx = self._step_call_counters.get(step_name, 0)
@@ -1035,47 +1108,58 @@ class StepWrapper(Generic[R]):
                 "Use @step(replay_key=...) to identify each logical invocation."
             )
 
-        # Inject RunContext if the step function declares it
-        call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
-
-        # Defensive deepcopy for the event log only; fall back to the live
-        # reference so non-deepcopyable args (locks, sockets) don't fail.
-        if args or kwargs:
-            try:
-                invocation_data: Any = deepcopy({"args": args, "kwargs": kwargs})
-            except Exception:
-                invocation_data = {"args": args, "kwargs": kwargs}
-        else:
-            invocation_data = None
-        await ctx.add_event(WorkflowEvent.executor_invoked(self.name, invocation_data))
-        auto_request_info_index_before = ctx._auto_request_info_index
+        step_task = asyncio.current_task()
+        if step_task is not None:
+            ctx._active_step_tasks[step_task] = ctx._active_step_tasks.get(step_task, 0) + 1
         try:
-            result = await self._func(*call_args, **call_kwargs)
-        except Exception as exc:
-            # NOTE: WorkflowInterrupted (from request_info inside a step) inherits
-            # from BaseException, NOT Exception, so it propagates past this handler
-            # without emitting a spurious executor_failed event.  This is intentional
-            # — request_info is fully supported inside @step functions.
-            from ..observability import OBSERVABILITY_SETTINGS
+            # Inject RunContext if the step function declares it
+            call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
 
-            details = WorkflowErrorDetails.from_exception(
-                exc,
-                include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+            # Defensive deepcopy for the event log only; fall back to the live
+            # reference so non-deepcopyable args (locks, sockets) don't fail.
+            if args or kwargs:
+                try:
+                    invocation_data: Any = deepcopy({"args": args, "kwargs": kwargs})
+                except Exception:
+                    invocation_data = {"args": args, "kwargs": kwargs}
+            else:
+                invocation_data = None
+            await ctx.add_event(WorkflowEvent.executor_invoked(self.name, invocation_data))
+            auto_request_info_index_before = ctx._auto_request_info_index
+            try:
+                result = await self._func(*call_args, **call_kwargs)
+            except Exception as exc:
+                # NOTE: WorkflowInterrupted (from request_info inside a step) inherits
+                # from BaseException, NOT Exception, so it propagates past this handler
+                # without emitting a spurious executor_failed event.  This is intentional
+                # — request_info is fully supported inside @step functions.
+                from ..observability import OBSERVABILITY_SETTINGS
+
+                details = WorkflowErrorDetails.from_exception(
+                    exc,
+                    include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                )
+                await ctx.add_event(WorkflowEvent.executor_failed(self.name, details))
+                raise
+            ctx._set_cached_step_auto_request_info_count(
+                cache_key,
+                ctx._auto_request_info_index - auto_request_info_index_before,
             )
-            await ctx.add_event(WorkflowEvent.executor_failed(self.name, details))
-            raise
-        ctx._set_cached_step_auto_request_info_count(
-            cache_key,
-            ctx._auto_request_info_index - auto_request_info_index_before,
-        )
-        copied, cached_result = _try_snapshot_step_cache_value(result)
-        identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
-        ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
-        _, event_data = _try_snapshot_step_cache_value(result)
-        await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
-        if ctx._on_step_completed is not None:
-            await ctx._on_step_completed()
-        return result
+            copied, cached_result = _try_snapshot_step_cache_value(result)
+            identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
+            ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
+            _, event_data = _try_snapshot_step_cache_value(result)
+            await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
+            if ctx._on_step_completed is not None:
+                await ctx._on_step_completed()
+            return result
+        finally:
+            if step_task is not None:
+                remaining_depth = ctx._active_step_tasks[step_task] - 1
+                if remaining_depth:
+                    ctx._active_step_tasks[step_task] = remaining_depth
+                else:
+                    del ctx._active_step_tasks[step_task]
 
 
 # ---------------------------------------------------------------------------
@@ -1775,7 +1859,20 @@ class FunctionalWorkflow:
                     call_args.append(message)
                     message_injected = True
 
-            return await self._func(*call_args)
+            try:
+                return await self._func(*call_args)
+            except BaseException as exc:
+                interruption, remaining = _split_workflow_interruption(exc)
+                if interruption is None:
+                    await ctx._cancel_workflow_tasks()
+                    raise
+                if remaining is not None:
+                    await ctx._cancel_workflow_tasks()
+                    raise remaining from None
+                await ctx._settle_workflow_tasks()
+                if isinstance(exc, WorkflowInterrupted):
+                    raise
+                raise interruption from None
         finally:
             release_task_tracking()
             _active_run_ctx.reset(token)
