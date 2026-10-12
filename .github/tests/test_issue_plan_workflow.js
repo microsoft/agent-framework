@@ -88,7 +88,10 @@ describe('Issue planning workflow', () => {
     const config = JSON.parse(JSON.parse(configLine));
     assert.deepEqual(config.add_comment, { hide_older_comments: false, max: 1, target: 'triggering' });
     const safeTools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
-    assert.deepEqual(safeTools.filter(tool => !['missing_data', 'missing_tool', 'noop'].includes(tool)), ['add_comment']);
+    assert.deepEqual(
+      safeTools.filter(tool => !['missing_data', 'missing_tool', 'noop'].includes(tool)),
+      ['add_comment', 'report_incomplete'],
+    );
     assert.match(source, /status-comment: false/);
   });
 
