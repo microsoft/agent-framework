@@ -25,7 +25,7 @@ more than 25 metadata keys, and several cross package boundaries:
 | Core behavior depends on provider keys | Core treats a function call as hosted whenever `additional_properties["server_label"]` is truthy. That one check controls approval handling, session resumption, skills and file-access auto-approval rules, and continuation error results. The same key is also persisted as the hosted server boundary in harness always-approve rules. Core streaming aggregation falls back to `additional_properties["item_id"]` to correlate code-interpreter fragments. |
 | One concept, inconsistent representations | Function-call `status` is stored as metadata although `Content.status` exists. File names are stored as `filename` although `Content.name` exists. A hosted MCP server's name is `server_name` on MCP call content but `server_label` metadata on the call nested in a hosted approval. |
 | Inconsistent key naming | `openai.responses.shell.output_type`, `openai.local_shell_command_parts`, `__foundry_reasoning_replay_item__`, `openai_content_type`, `computer_action_format`, and AG-UI's underscore-prefixed `_agui_collected_approval_occurrence`. |
-| Stream merge semantics are partial and stored as metadata | Providers know whether an event is an incremental delta or a complete snapshot. Core now preserves that distinction only for code-interpreter content, using the flat `stream_complete` marker and the ambiguous compatibility alias `complete`; other mergeable content keeps type-specific implicit behavior. |
+| Stream merge semantics are partial and stored as metadata | Providers know whether an event is an incremental delta or a complete snapshot. Current unreleased code preserves that distinction only for code-interpreter content, using the flat `stream_complete` marker and the ambiguous alias `complete`; other mergeable content keeps type-specific implicit behavior. |
 | Replay depends on non-persisted objects | OpenAI shell replay, Gemini tool-call parts, Hosting Responses output reuse, and a Foundry hosting OAuth fallback read `raw_representation`, which is absent after history is reloaded. |
 
 Each new provider feature adds another key, and consolidating the duplicated Responses conversions is not possible
@@ -152,7 +152,8 @@ linear; this decision standardizes merge meaning rather than adding another perf
 PR [#9142](https://github.com/microsoft/agent-framework/pull/9142) also removed code-interpreter prefix inference:
 ordinary fragments now append, while `additional_properties["stream_complete"]` or the compatibility alias
 `additional_properties["complete"]` marks a replacement snapshot. Those flat keys are the current narrow mechanism
-that `merge_mode` replaces and generalizes.
+that `merge_mode` replaces and generalizes. They merged after the previous release and are replaced before the next
+release, so they do not become persisted compatibility formats.
 
 All content types that core can aggregate get an explicit first-class
 `merge_mode: Literal["append", "replace"] | None` field. This initially covers `text`, `text_reasoning`,
@@ -170,9 +171,9 @@ All content types that core can aggregate get an explicit first-class
   `*.done` snapshots use `replace`. Core does not use prefix comparison or another payload heuristic when a mode is
   present.
 - `None` means legacy behavior, not `append`. This keeps older provider packages working on a newer core: text,
-  reasoning, function calls, and usage retain their current type-specific behavior. Code-interpreter content appends
-  unless its nested content carries the legacy `stream_complete` or `complete` replacement marker. Core continues
-  reading those markers indefinitely; removing that fallback is a separate compatibility decision.
+  reasoning, function calls, and usage retain their current type-specific behavior. Code-interpreter content appends;
+  a provider that emits a complete snapshot must mark it `replace`. The unreleased `stream_complete` and `complete`
+  metadata forms are removed rather than retained as compatibility paths.
 - The field is serialized so individually persisted updates retain their merge semantics. Aggregation consumes it;
   finalized `ChatResponse` and `AgentResponse` content has `merge_mode=None`, so an operational stream instruction
   does not become part of persisted logical history.
@@ -262,9 +263,9 @@ reserved names.
 - `model_output_kind` and `prompt_cache_breakpoint` move into `generic`; their meaning is unchanged. Readers accept the
   flat keys indefinitely, writers write both until their next major version, and applications that set the flat keys
   keep working. ADR 0039 remains the record of the refusal decision.
-- `stream_complete` and `complete` remain readable as legacy `merge_mode="replace"` markers for code-interpreter
-  content. New writers use `merge_mode`; until their next major version, code-interpreter snapshot writers also
-  dual-write `stream_complete`. They do not write the ambiguous `complete` alias.
+- `stream_complete` and `complete` are removed before release rather than migrated or dual-written. No released
+  history contains them, so retaining either spelling would create compatibility work without preserving a supported
+  format.
 - A package that writes namespaces requires, as its minimum core version, the core release that merges them. On an
   older core, streamed fragments would lose namespace fields during aggregation.
 - Keys used only for display, diagnostics, or a single request switch directly.
@@ -328,7 +329,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
   follow them with a replace snapshot, and assert exact reconstruction through both `ChatResponse.from_updates()` and
   streaming `get_final_response()`. Tests include repetitive and prefix-shaped fragments, serialization of
   unaggregated updates, rejection of invalid modes and unsupported content types, clearing the mode on finalized
-  content, the legacy `stream_complete` and `complete` markers, and unmarked behavior.
+  content, rejection of the removed `stream_complete` and `complete` forms, and unmarked behavior.
 - Harness tests load standing `ToolApprovalRule` state written before the change and confirm it still matches hosted
   calls from the same server, and never matches a local call with the same name and arguments.
 - Every adapter that parses provider-executed calls or approvals asserts that it sets `hosted=True`. Approval tests in
@@ -393,7 +394,7 @@ This mapping is guidance for implementation and is not exhaustive. `openai["item
 | `openai.local_shell_command_parts` | OpenAI local shell command | `openai["local_shell_command_parts"]` | Yes |
 | `reasoning_details` | Chat Completions reasoning replay on `Message` | `openai["reasoning_details"]` | Yes |
 | `tool_call_index`, `tool_call_choice_index` | Chat Completions streaming aggregation | `openai[...]` if persisted; otherwise removed after aggregation | No |
-| `stream_complete`, `complete` | Core code-interpreter replacement-snapshot markers | `Content.merge_mode="replace"`; `stream_complete` remains the dual-write key and `complete` is read-only compatibility | Yes |
+| `stream_complete`, `complete` | Unreleased core code-interpreter replacement-snapshot markers | Remove before release; use `Content.merge_mode="replace"` | No |
 | AG-UI and A2A keys | Approval occurrence, state, display, and metadata | `ag_ui[...]` and `a2a[...]` if persisted; otherwise not stored on Agent Framework objects | Per key |
 
 Unchanged: core-private underscore keys, the security keys defined by ADR 0024, and the legacy `encrypted_content`
