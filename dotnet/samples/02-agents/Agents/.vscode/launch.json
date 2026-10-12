@@ -1,0 +1,180 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Agent_Step01_UsingFunctionToolsWithApprovals",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step01_UsingFunctionToolsWithApprovals/Agent_Step01_UsingFunctionToolsWithApprovals.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step02_StructuredOutput",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step02_StructuredOutput/Agent_Step02_StructuredOutput.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step03_PersistedConversations",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step03_PersistedConversations/Agent_Step03_PersistedConversations.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step04_3rdPartyChatHistoryStorage",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step04_3rdPartyChatHistoryStorage/Agent_Step04_3rdPartyChatHistoryStorage.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step05_Observability",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step05_Observability/Agent_Step05_Observability.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step06_DependencyInjection",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step06_DependencyInjection/Agent_Step06_DependencyInjection.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step07_AsMcpTool",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step07_AsMcpTool/Agent_Step07_AsMcpTool.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step08_UsingImages",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step08_UsingImages/Agent_Step08_UsingImages.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step09_AsFunctionTool",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step09_AsFunctionTool/Agent_Step09_AsFunctionTool.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step10_BackgroundResponsesWithToolsAndPersistence",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step10_BackgroundResponsesWithToolsAndPersistence/Agent_Step10_BackgroundResponsesWithToolsAndPersistence.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step11_Middleware",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step11_Middleware/Agent_Step11_Middleware.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step12_Plugins",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step12_Plugins/Agent_Step12_Plugins.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step13_ChatReduction",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step13_ChatReduction/Agent_Step13_ChatReduction.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step14_BackgroundResponses",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step14_BackgroundResponses/Agent_Step14_BackgroundResponses.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step15_DeepResearch",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step15_DeepResearch/Agent_Step15_DeepResearch.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step16_Declarative",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step16_Declarative/Agent_Step16_Declarative.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step17_AdditionalAIContext",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step17_AdditionalAIContext/Agent_Step17_AdditionalAIContext.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step18_CompactionPipeline",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step18_CompactionPipeline/Agent_Step18_CompactionPipeline.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step19_InFunctionLoopCheckpointing",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step19_InFunctionLoopCheckpointing/Agent_Step19_InFunctionLoopCheckpointing.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step20_DynamicFunctionTools",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step20_DynamicFunctionTools/Agent_Step20_DynamicFunctionTools.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step21_ShellWithEnvironment",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step21_ShellWithEnvironment/Agent_Step21_ShellWithEnvironment.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step22_AgentMode",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step22_AgentMode/Agent_Step22_AgentMode.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step23_TodoList",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step23_TodoList/Agent_Step23_TodoList.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Agent_Step24_MultiModelRouting",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Agent_Step24_MultiModelRouting/Agent_Step24_MultiModelRouting.csproj",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Common",
+			"type": "dotnet",
+			"request": "launch",
+			"projectPath": "${workspaceFolder}/Common/Common.csproj",
+			"preLaunchTask": "build"
+		}
+	]
+}

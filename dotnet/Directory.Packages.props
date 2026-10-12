@@ -35,6 +35,7 @@
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.AI.OpenAI" Version="2.1.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageVersion Include="DotNetEnv" Version="3.2.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.9.0" />
@@ -43,6 +44,11 @@
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="3.1.0" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.63.0" />
+    <!-- Microsoft.Agents.* -->
+    <PackageVersion Include="Microsoft.Agents.AI.OpenAI" Version="1.23.0" />
+    <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.23.0" />
+    <!-- JetBrains -->
+    <PackageVersion Include="JetBrains.Annotations" Version="2026.2.0" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- Newtonsoft.Json -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />

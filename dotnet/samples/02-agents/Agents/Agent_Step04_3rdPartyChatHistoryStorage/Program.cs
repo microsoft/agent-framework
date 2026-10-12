@@ -9,18 +9,28 @@
 // is stored in AgentSession.StateBag so conversations can be resumed later.
 
 using System.Text.Json;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.Identity;
+using Common;
 using CommunityToolkit.VectorData.InMemory;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.VectorData;
 using SampleApp;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
-var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+IConfiguration configuration = new ConfigurationBuilder().AddAppSettings();
+
+var llm = configuration.GetSection(ModelSettings.SectionName).Get<ModelSettings>()
+    ?? throw new InvalidOperationException("缺少配置节 Llm");
+
+if (string.IsNullOrWhiteSpace(llm.ApiKey))
+{
+    Console.WriteLine("请配置 ApiKey");
+    return;
+}
+
+var chatClient = llm.CreateAIChatClient(); // Validate the model settings and create a chat client to ensure the configuration is correct.
 
 // Create a vector store to store the chat messages in.
 // Replace this with a vector store implementation of your choice if you want to persist the chat history to disk.
@@ -30,19 +40,13 @@ VectorStore vectorStore = new InMemoryVectorStore();
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AIProjectClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetProjectOpenAIClient()
-    .GetProjectResponsesClient()
-    .AsIChatClientWithStoredOutputDisabled(deploymentName)
-    .AsAIAgent(new ChatClientAgentOptions
-    {
-        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are good at telling jokes." },
-        Name = "Joker",
-        // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
-        ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore),
-    });
+AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
+{
+    ChatOptions = new() { ModelId = llm.Model, Instructions = "You are good at telling jokes." },
+    Name = "Joker",
+    // Create a new ChatHistoryProvider for this agent that stores chat history in a vector store.
+    ChatHistoryProvider = new VectorChatHistoryProvider(vectorStore),
+});
 
 // Start a new session for the agent conversation.
 AgentSession session = await agent.CreateSessionAsync();

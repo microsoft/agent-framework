@@ -236,6 +236,10 @@ python/scripts/dependencies/dependency-*-results.json
 # Azure Functions local settings
 local.settings.json
 
+# Common project settings
+**/appsettings.json
+**/appsettings.Development.json
+
 # Frontend
 **/frontend/node_modules/
 **/frontend/.vite/
