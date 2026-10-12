@@ -4319,6 +4319,40 @@ def test_function_result_items_roundtrip_via_dict():
     assert restored.items[1].type == "data"
 
 
+def test_tool_result_nested_content_roundtrips_via_dict():
+    """Test that nested Content in image generation and MCP server tool results survives a round trip."""
+    message = Message(
+        "assistant",
+        [
+            Content.from_image_generation_tool_result(
+                image_id="ig_1", outputs=Content.from_uri("data:image/png;base64,iVBORw0KGgo=")
+            ),
+            Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("42")]),
+        ],
+    )
+
+    restored_image, restored_mcp = Message.from_dict(message.to_dict()).contents
+
+    assert isinstance(restored_image.outputs, Content)
+    assert restored_image.outputs.type == "data"
+    assert restored_image.outputs.uri == "data:image/png;base64,iVBORw0KGgo="
+    assert restored_mcp.output is not None
+    assert isinstance(restored_mcp.output[0], Content)
+    assert restored_mcp.output[0].text == "42"
+
+
+def test_tool_result_plain_outputs_roundtrip_via_dict():
+    """Test that output values that are not serialized Content stay unchanged in a round trip."""
+    output = ["plain", {"type": "object", "value": 1}, {"type": ["x"]}, {"answer": 42}]
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=output)
+    image_result = Content.from_image_generation_tool_result(
+        image_id="ig_1", outputs={"url": "https://example.com/a.png"}
+    )
+
+    assert Content.from_dict(mcp_result.to_dict()).output == output
+    assert Content.from_dict(image_result.to_dict()).outputs == {"url": "https://example.com/a.png"}
+
+
 def test_from_function_result_with_non_content_list():
     """Test Content.from_function_result with a list of non-Content objects falls back to str."""
     result = Content.from_function_result(call_id="test-789", result=["hello", "world"])

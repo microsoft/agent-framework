@@ -24,7 +24,20 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Generic,
+    Literal,
+    NamedTuple,
+    NewType,
+    TypeAlias,
+    cast,
+    get_args,
+    overload,
+)
 
 from typing_extensions import Required, TypedDict
 
@@ -433,6 +446,16 @@ ContentType = Literal[
     "function_approval_response",
     "oauth_consent_request",
 ]
+
+_CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
+
+
+def _is_serialized_content(value: Any) -> bool:
+    """Check whether a value is a serialized Content with a known content type."""
+    if not isinstance(value, dict):
+        return False
+    content_type = cast(dict[str, Any], value).get("type")
+    return isinstance(content_type, str) and content_type in _CONTENT_TYPES
 
 
 class TextSpanRegion(TypedDict, total=False):
@@ -1710,6 +1733,15 @@ class Content:
             remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
         if (content_items := remaining.get("items")) and isinstance(content_items, list):
             remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
+        # A single nested Content (e.g., outputs in image_generation_tool_result) and Content items in a tool output
+        # (e.g., output in mcp_server_tool_result). These fields can also hold plain values, so only serialized
+        # Content with a known content type is rebuilt.
+        if (single_output := remaining.get("outputs")) and _is_serialized_content(single_output):
+            remaining["outputs"] = cls.from_dict(single_output)
+        if (tool_output := remaining.get("output")) and isinstance(tool_output, list):
+            remaining["output"] = [
+                cls.from_dict(item) if _is_serialized_content(item) else item for item in cast(list[Any], tool_output)
+            ]
 
         return cls(
             type=content_type,
