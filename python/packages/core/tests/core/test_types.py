@@ -4319,26 +4319,63 @@ def test_function_result_items_roundtrip_via_dict():
     assert restored.items[1].type == "data"
 
 
-def test_tool_result_nested_content_roundtrips_via_dict():
+@pytest.mark.parametrize("serialization", ["dict", "dict_with_none", "json"])
+def test_tool_result_nested_content_roundtrips(serialization: str):
     """Test that nested Content in image generation and MCP server tool results survives a round trip."""
+    image = Content.from_uri("data:image/png;base64,iVBORw0KGgo=")
+    output = [
+        Content.from_text("42", annotations=[{"type": "citation", "url": "https://example.com/source"}]),
+        Content.from_uri("https://example.com/report.pdf", media_type="application/pdf"),
+        Content.from_hosted_file("file_1"),
+        Content.from_function_result(call_id="call_1", result=[Content.from_text("done")]),
+    ]
     message = Message(
         "assistant",
         [
-            Content.from_image_generation_tool_result(
-                image_id="ig_1", outputs=Content.from_uri("data:image/png;base64,iVBORw0KGgo=")
-            ),
-            Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("42")]),
+            Content.from_image_generation_tool_result(image_id="ig_1", outputs=image),
+            Content.from_mcp_server_tool_result("mcp_1", output=output),
         ],
     )
 
-    restored_image, restored_mcp = Message.from_dict(message.to_dict()).contents
+    if serialization == "dict":
+        restored = Message.from_dict(message.to_dict())
+    elif serialization == "dict_with_none":
+        restored = Message.from_dict(message.to_dict(exclude_none=False))
+    else:
+        restored = Message.from_json(message.to_json())
+    restored_image, restored_mcp = restored.contents
 
     assert isinstance(restored_image.outputs, Content)
-    assert restored_image.outputs.type == "data"
-    assert restored_image.outputs.uri == "data:image/png;base64,iVBORw0KGgo="
+    assert restored_image.outputs == image
     assert restored_mcp.output is not None
-    assert isinstance(restored_mcp.output[0], Content)
-    assert restored_mcp.output[0].text == "42"
+    assert all(isinstance(item, Content) for item in restored_mcp.output)
+    assert restored_mcp.output == output
+
+
+@pytest.mark.parametrize(
+    "tool_json",
+    [
+        {"type": "text", "value": 1},
+        {"type": "text", "text": "x"},
+        {"type": "data", "data": "AAAA", "media_type": "image/png"},
+        {"type": "text", "text": "x", "annotations": {"audience": ["user"]}},
+        {"type": "text", "function_call": {"a": 1}},
+    ],
+    ids=["unknown_field", "text_shape", "data_with_str_data", "mcp_annotations", "invalid_nested_content"],
+)
+def test_tool_result_json_with_content_type_name_roundtrips(tool_json: dict[str, Any]):
+    """Test that tool JSON whose type is a content type name is kept as it is in a round trip."""
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("42"), tool_json])
+    image_result = Content.from_image_generation_tool_result(image_id="ig_1", outputs=tool_json)
+
+    restored_mcp = Content.from_dict(mcp_result.to_dict())
+    restored_image = Content.from_dict(image_result.to_dict())
+
+    assert restored_mcp.output == [Content.from_text("42"), tool_json]
+    assert isinstance(restored_mcp.output[1], dict)
+    assert restored_image.outputs == tool_json
+    assert restored_mcp.to_dict()["output"][1] == tool_json
+    assert restored_image.to_dict()["outputs"] == tool_json
 
 
 def test_tool_result_plain_outputs_roundtrip_via_dict():

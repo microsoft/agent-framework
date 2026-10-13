@@ -450,14 +450,6 @@ ContentType = Literal[
 _CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 
 
-def _is_serialized_content(value: Any) -> bool:
-    """Check whether a value is a serialized Content with a known content type."""
-    if not isinstance(value, dict):
-        return False
-    content_type = cast(dict[str, Any], value).get("type")
-    return isinstance(content_type, str) and content_type in _CONTENT_TYPES
-
-
 class TextSpanRegion(TypedDict, total=False):
     """TypedDict representation of a text span region annotation."""
 
@@ -1734,14 +1726,12 @@ class Content:
         if (content_items := remaining.get("items")) and isinstance(content_items, list):
             remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
         # A single nested Content (e.g., outputs in image_generation_tool_result) and Content items in a tool output
-        # (e.g., output in mcp_server_tool_result). These fields can also hold plain values, so only serialized
-        # Content with a known content type is rebuilt.
-        if (single_output := remaining.get("outputs")) and _is_serialized_content(single_output):
-            remaining["outputs"] = cls.from_dict(single_output)
+        # (e.g., output in mcp_server_tool_result). These fields can also hold plain values such as tool JSON.
+        # A list in outputs was converted above and passes through unchanged.
+        if (single_output := remaining.get("outputs")) is not None:
+            remaining["outputs"] = cls._from_serialized_value(single_output)
         if (tool_output := remaining.get("output")) and isinstance(tool_output, list):
-            remaining["output"] = [
-                cls.from_dict(item) if _is_serialized_content(item) else item for item in cast(list[Any], tool_output)
-            ]
+            remaining["output"] = [cls._from_serialized_value(item) for item in cast(list[Any], tool_output)]
 
         return cls(
             type=content_type,
@@ -1750,6 +1740,30 @@ class Content:
             raw_representation=raw_representation,
             **remaining,
         )
+
+    @classmethod
+    def _from_serialized_value(cls: type[ContentT], value: Any) -> Any:
+        """Rebuild a Content from its serialized mapping, or return the value unchanged.
+
+        A mapping is rebuilt only when it has a known content type and the rebuilt Content serializes back to the
+        same mapping, with or without ``None`` values. Any other value, such as tool JSON that only shares a
+        content type name, is kept as it is. A mapping identical to a serialized Content (including its
+        ``additional_properties``) cannot be told apart from one and is rebuilt.
+        """
+        if not isinstance(value, dict):
+            return value
+        mapping = cast(dict[str, Any], value)
+        content_type = mapping.get("type")
+        if not isinstance(content_type, str) or content_type not in _CONTENT_TYPES:
+            return mapping
+        try:
+            content = cls.from_dict(mapping)
+            if content.to_dict() == mapping or content.to_dict(exclude_none=False) == mapping:
+                return content
+        except Exception:
+            # The mapping is not a serialized Content (for example tool JSON with other fields), so keep it.
+            return mapping
+        return mapping
 
     def __add__(self, other: Content) -> Content:
         """Concatenate or merge two Content instances."""
