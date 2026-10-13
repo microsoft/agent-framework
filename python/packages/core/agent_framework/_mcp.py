@@ -98,6 +98,8 @@ def _log_mcp_exception(
 
     if level == logging.DEBUG:
         logger.debug(message, *args, exc_info=exc_info)
+    elif level == logging.WARNING:
+        logger.warning(message, *args, exc_info=exc_info)
     elif level == logging.ERROR:
         logger.error(message, *args, exc_info=exc_info)
     else:
@@ -1817,8 +1819,13 @@ class MCPTool:
                     if not future.done():
                         future.set_exception(ex)
                     else:
-                        logger.warning(
-                            "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
+                        _log_mcp_exception(
+                            logging.WARNING,
+                            ex,
+                            "MCP lifecycle action %s failed after its caller stopped waiting.",
+                            action,
+                            redacted_message="MCP lifecycle action failed after its caller stopped waiting",
+                            sensitive_exc_info=ex,
                         )
                     # A connect that failed without leaving a session behind has nothing for this
                     # owner to hold, so stop instead of blocking on the queue forever. Mirrors the
@@ -1902,10 +1909,13 @@ class MCPTool:
         except RuntimeError as e:
             error_msg = str(e).lower()
             if "cancel scope" in error_msg:
-                logger.warning(
+                _log_mcp_exception(
+                    logging.WARNING,
+                    e,
                     "Could not cleanly close MCP exit stack due to cancel scope error. "
                     "This indicates MCP lifecycle ownership was lost. Error: %s",
                     e,
+                    redacted_message="Could not cleanly close MCP exit stack due to cancel scope error",
                 )
                 return e
             raise
@@ -1914,7 +1924,13 @@ class MCPTool:
             return e
         except Exception as e:
             if type(e).__name__ == "ExceptionGroup":
-                logger.warning("Could not cleanly close MCP exit stack due to cleanup error group. Error: %s", e)
+                _log_mcp_exception(
+                    logging.WARNING,
+                    e,
+                    "Could not cleanly close MCP exit stack due to cleanup error group. Error: %s",
+                    e,
+                    redacted_message="Could not cleanly close MCP exit stack due to cleanup error group",
+                )
                 return e
             raise
         return None
@@ -2181,7 +2197,14 @@ class MCPTool:
                     )
                     await self.session.set_logging_level(level_name)
                 except Exception as exc:
-                    logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+                    _log_mcp_exception(
+                        logging.WARNING,
+                        exc,
+                        "Failed to set log level to %s",
+                        logger.level,
+                        redacted_message="Failed to set MCP server log level",
+                        sensitive_exc_info=exc,
+                    )
         except (Exception, asyncio.CancelledError):
             try:
                 await self._close_on_owner()
@@ -2222,11 +2245,14 @@ class MCPTool:
             if isawaitable(outcome):
                 outcome = await outcome
         except Exception as ex:
-            logger.warning(
+            _log_mcp_exception(
+                logging.WARNING,
+                ex,
                 "Denying MCP sampling request from '%s': approval callback raised %s.",
                 self.name,
                 ex,
-                exc_info=True,
+                redacted_message="Denied MCP sampling request because the approval callback failed",
+                sensitive_exc_info=True,
             )
             return False
         approved = bool(outcome)
@@ -2499,8 +2525,14 @@ class MCPTool:
                 await coro
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.warning("Background MCP reload failed", exc_info=True)
+            except Exception as ex:
+                _log_mcp_exception(
+                    logging.WARNING,
+                    ex,
+                    "Background MCP reload failed",
+                    redacted_message="Background MCP reload failed",
+                    sensitive_exc_info=True,
+                )
 
         task = asyncio.create_task(_safe_reload(), name=reload_name)
         self._pending_reload_tasks.add(task)
@@ -3545,11 +3577,14 @@ class MCPTool:
                 task_id,
                 _MCP_TASK_CANCEL_TIMEOUT.total_seconds(),
             )
-        except Exception:
-            logger.warning(
+        except Exception as ex:
+            _log_mcp_exception(
+                logging.WARNING,
+                ex,
                 "Best-effort tasks/cancel for '%s' failed; remote task may still be running.",
                 task_id,
-                exc_info=True,
+                redacted_message="Best-effort MCP task cancellation failed",
+                sensitive_exc_info=True,
             )
 
     @staticmethod
@@ -4258,18 +4293,21 @@ class MCPStreamableHTTPTool(MCPTool):
                         else:
                             try:
                                 dynamic_headers = self._header_provider(self._connection_kwargs or {})
-                            except KeyError:
+                            except KeyError as ex:
                                 # Unavoidable only when no run seeded this connection: the provider
                                 # wants per-call values a connection-lifetime request cannot have. Once
                                 # a run has seeded kwargs a missing key is a misconfiguration, and
                                 # silently dropping it would send the handshake unauthenticated.
                                 if self._connection_kwargs is not None:
                                     raise
-                                logger.debug(
+                                _log_mcp_exception(
+                                    logging.DEBUG,
+                                    ex,
                                     "header_provider raised KeyError for MCP server %r on an ambient "
                                     "request (no connection kwargs available); proceeding without headers.",
                                     self.name,
-                                    exc_info=True,
+                                    redacted_message="MCP header provider lacked ambient connection data",
+                                    sensitive_exc_info=True,
                                 )
                                 dynamic_headers = {}
                     if dynamic_headers is not None:
@@ -4352,13 +4390,16 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         try:
             headers = self._effective_headers(kwargs)
-        except KeyError:
+        except KeyError as ex:
             # Invocation middleware may supply runtime values unavailable during
             # preparation. Strict invocation-time resolution reconciles the session later.
-            logger.debug(
+            _log_mcp_exception(
+                logging.DEBUG,
+                ex,
                 "Deferring MCP header identity reconciliation for %r until invocation.",
                 self.name,
-                exc_info=True,
+                redacted_message="Deferred MCP header identity reconciliation after header provider failure",
+                sensitive_exc_info=True,
             )
             return
         async with self._call_headers_lock:

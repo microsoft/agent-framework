@@ -268,10 +268,13 @@ async def test_load_tools_rejects_ambiguous_policy_names(
     ids=["allowed", "always_require", "never_require"],
 )
 @pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_ambiguous_policy_reload_preserves_previous_discovery(
     allowed_tools: list[str] | None,
     approval_mode: MCPSpecificApproval | None,
     remote_names: tuple[str, str],
+    span_exporter: Any,
+    enable_sensitive_data: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
@@ -304,7 +307,10 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
         await tool.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
         await asyncio.gather(*tool._pending_reload_tasks)
 
-    assert "configuration name 'docs_search' is ambiguous" in caplog.text
+    private_error_detail = "configuration name 'docs_search' is ambiguous"
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    if not enable_sensitive_data:
+        assert "Background MCP reload failed (ToolExecutionException)." in caplog.text
     assert tool._functions == original_functions
     assert tool.functions == original_functions
     assert tool._tool_call_meta_by_name == original_meta
@@ -3738,10 +3744,18 @@ async def test_mcp_tool_message_handler_does_not_block_receive_loop():
     assert len(tool._pending_reload_tasks) == 0
 
 
-async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.LogCaptureFixture):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tool_message_handler_reload_failure_is_logged(
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Background reload errors are logged, not raised into the receive loop."""
+    private_error_detail = "founder-secret-token"
     tool = MCPStdioTool(name="test_tool", command="python")
-    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]
+    tool.load_tools = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError(f"connection lost: {private_error_detail}")
+    )
 
     tools_notification = Mock(spec=types.ServerNotification)
     tools_notification.root = Mock()
@@ -3756,11 +3770,14 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.
     tool.load_tools.assert_called_once()
     assert len(tool._pending_reload_tasks) == 0
 
-    # Verify the warning was actually logged with exception info.
+    # Verify the warning was logged with exception info only after opt-in.
     reload_warnings = [r for r in caplog.records if "Background MCP reload failed" in r.message]
     assert len(reload_warnings) == 1
     assert reload_warnings[0].levelname == "WARNING"
-    assert reload_warnings[0].exc_info is not None
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    assert bool(reload_warnings[0].exc_info) is enable_sensitive_data
+    if not enable_sensitive_data:
+        assert reload_warnings[0].message == "Background MCP reload failed (RuntimeError)."
 
 
 async def test_mcp_tool_message_handler_cancel_and_replace():
@@ -6572,8 +6589,14 @@ async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
         mock_session.set_logging_level.assert_not_called()
 
 
-async def test_connect_handles_set_logging_level_exception():
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_connect_handles_set_logging_level_exception(
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test that connect() handles exceptions from set_logging_level gracefully."""
+    private_error_detail = "founder-secret-token"
 
     tool = MCPStdioTool(
         name="test_server",
@@ -6593,7 +6616,9 @@ async def test_connect_handles_set_logging_level_exception():
     mock_session._request_id = 1
     mock_session.initialize = AsyncMock()
     # Make set_logging_level raise an exception
-    mock_session.set_logging_level = AsyncMock(side_effect=RuntimeError("Server doesn't support logging level"))
+    mock_session.set_logging_level = AsyncMock(
+        side_effect=RuntimeError(f"Server doesn't support logging level: {private_error_detail}")
+    )
 
     mock_session_context = AsyncMock()
     mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
@@ -6603,7 +6628,6 @@ async def test_connect_handles_set_logging_level_exception():
         patch.object(tool, "get_mcp_client", return_value=mock_context),
         patch("mcp.client.session.ClientSession", return_value=mock_session_context),
         patch.object(logger, "level", logging.INFO),  # Set logger level to INFO
-        patch.object(logger, "warning") as mock_warning,
     ):
         # Should NOT raise - the exception should be caught and logged
         await tool.connect()
@@ -6611,10 +6635,11 @@ async def test_connect_handles_set_logging_level_exception():
         # Verify set_logging_level was called
         mock_session.set_logging_level.assert_called_once_with("info")
 
-        # Verify warning was logged
-        mock_warning.assert_called_once()
-        call_args = mock_warning.call_args
-        assert "Failed to set log level" in call_args[0][0]
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    if enable_sensitive_data:
+        assert "Failed to set log level" in caplog.text
+    else:
+        assert "Failed to set MCP server log level (RuntimeError)." in caplog.text
 
 
 async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompts() -> None:
