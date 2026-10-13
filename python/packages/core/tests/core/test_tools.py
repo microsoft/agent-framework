@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
 import copy
+import json
 import logging
 import threading
 from contextvars import ContextVar
@@ -2027,6 +2028,101 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
+
+
+def test_to_json_schema_spec_canonicalizes_reordered_top_level_keywords() -> None:
+    """Verify that to_json_schema_spec canonicalizes top-level and nested keyword order for prompt caching."""
+    # Two tools with differently ordered top-level keywords and properties
+    schema_1 = {
+        "title": "SearchTool",
+        "type": "object",
+        "description": "Searches items",
+        "properties": {
+            "z_query": {"description": "Query string", "type": "string"},
+            "a_limit": {"default": 10, "type": "integer"},
+        },
+        "required": ["z_query"],
+    }
+    schema_2 = {
+        "description": "Searches items",
+        "properties": {
+            "a_limit": {"type": "integer", "default": 10},
+            "z_query": {"type": "string", "description": "Query string"},
+        },
+        "type": "object",
+        "required": ["z_query"],
+        "title": "SearchTool",
+    }
+
+    tool_1 = FunctionTool(name="search", description="Search tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="search", description="Search tool", input_model=schema_2)
+
+    spec_1 = tool_1.to_json_schema_spec()
+    spec_2 = tool_2.to_json_schema_spec()
+
+    # Top-level parameters dictionary keys must be sorted deterministically
+    assert list(spec_1["function"]["parameters"].keys()) == ["description", "properties", "required", "title", "type"]
+    assert list(spec_2["function"]["parameters"].keys()) == ["description", "properties", "required", "title", "type"]
+
+    # Properties dictionary keys must be sorted deterministically
+    assert list(spec_1["function"]["parameters"]["properties"].keys()) == ["a_limit", "z_query"]
+    assert list(spec_2["function"]["parameters"]["properties"].keys()) == ["a_limit", "z_query"]
+
+    # Wire-level serialization must be identical
+    wire_1 = json.dumps(spec_1)
+    wire_2 = json.dumps(spec_2)
+    assert wire_1 == wire_2
+
+
+def test_to_json_schema_spec_canonicalizes_root_schema_without_properties() -> None:
+    """Regression: root schemas without 'properties' are canonicalized deterministically."""
+    schema_1 = {
+        "description": "A scalar or empty tool schema",
+        "type": "string",
+        "title": "ScalarInput",
+    }
+    schema_2 = {
+        "title": "ScalarInput",
+        "description": "A scalar or empty tool schema",
+        "type": "string",
+    }
+
+    tool_1 = FunctionTool(name="scalar_tool", description="Scalar tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="scalar_tool", description="Scalar tool", input_model=schema_2)
+
+    spec_1 = tool_1.to_json_schema_spec()
+    spec_2 = tool_2.to_json_schema_spec()
+
+    assert list(spec_1["function"]["parameters"].keys()) == ["description", "title", "type"]
+    assert list(spec_2["function"]["parameters"].keys()) == ["description", "title", "type"]
+    assert json.dumps(spec_1) == json.dumps(spec_2)
+
+
+def test_to_json_schema_spec_canonicalizes_nested_and_defs_deterministically() -> None:
+    """Verify that nested objects, $defs, and arrays are recursively sorted deterministically."""
+    schema = {
+        "type": "object",
+        "$defs": {
+            "ZItem": {"type": "string"},
+            "AItem": {"type": "integer"},
+        },
+        "properties": {
+            "metadata": {
+                "type": "object",
+                "properties": {
+                    "tag_z": {"type": "string"},
+                    "tag_a": {"type": "string"},
+                },
+            },
+        },
+    }
+    tool = FunctionTool(name="complex_tool", description="Complex tool", input_model=schema)
+    spec = tool.to_json_schema_spec()
+    params = spec["function"]["parameters"]
+
+    assert list(params.keys()) == ["$defs", "properties", "type"]
+    assert list(params["$defs"].keys()) == ["AItem", "ZItem"]
+    assert list(params["properties"]["metadata"]["properties"].keys()) == ["tag_a", "tag_z"]
 
 
 # endregion

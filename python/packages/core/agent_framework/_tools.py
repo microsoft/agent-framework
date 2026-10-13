@@ -436,6 +436,28 @@ def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
     return normalized
 
 
+def _canonicalize_schema(schema: Any) -> Any:
+    """Recursively sort schema dictionary keys deterministically to preserve prompt cache stability.
+
+    Sorts all object-level keyword keys alphabetically, and recursively canonicalizes nested
+    schemas in mappings (properties, patternProperties, $defs, definitions, dependentSchemas)
+    and sequences (items, allOf, anyOf, oneOf). Non-dict/list values are returned unmodified.
+    """
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[str, Any], schema)
+        result: dict[str, Any] = {}
+        for key, val in sorted(schema_dict.items(), key=lambda pair: pair[0]):
+            if isinstance(val, (dict, list)):
+                result[key] = _canonicalize_schema(val)
+            else:
+                result[key] = val
+        return result
+    if isinstance(schema, list):
+        schema_list = cast(list[Any], schema)
+        return [_canonicalize_schema(item) for item in schema_list]
+    return schema
+
+
 def _format_tool_parameters(  # pyright: ignore[reportUnusedFunction]
     parameters: dict[str, Any],
     *,
@@ -1309,14 +1331,19 @@ class FunctionTool(SerializationMixin):
         """Convert a FunctionTool to the JSON Schema function specification format.
 
         Returns:
-            A dictionary containing the function specification in JSON Schema format.
+            A dictionary containing the function specification in JSON Schema format,
+            with canonicalized deterministic schema sorting to preserve LLM prompt caching.
         """
+        raw_parameters = self.parameters()
+        canonical_parameters = (
+            _canonicalize_schema(raw_parameters) if isinstance(raw_parameters, dict) else raw_parameters
+        )
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters(),
+                "parameters": canonical_parameters,
             },
         }
 
