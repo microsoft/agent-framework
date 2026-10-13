@@ -998,7 +998,20 @@ class TestResponseBodyLimits:
             assert stream.closed
             assert not client.is_closed
 
-    @pytest.mark.parametrize(("method", "status"), [("HEAD", 200), ("GET", 204), ("GET", 205), ("GET", 304)])
+    @pytest.mark.parametrize(
+        ("method", "status"),
+        [
+            ("HEAD", 200),
+            ("GET", 100),
+            ("GET", 101),
+            ("GET", 199),
+            ("GET", 204),
+            ("GET", 205),
+            ("GET", 304),
+            ("CONNECT", 200),
+            ("CONNECT", 299),
+        ],
+    )
     async def test_empty_bodyless_response_does_not_require_encoded_body(self, method: str, status: int) -> None:
         stream = _ResponseStream([])
         response = httpx.Response(status, headers={"Content-Encoding": "gzip"}, stream=stream)
@@ -1011,15 +1024,16 @@ class TestResponseBodyLimits:
         assert stream.closed
 
     @pytest.mark.parametrize("encoding", ["gzip", "deflate"])
-    async def test_empty_encoded_get_response_is_rejected(self, encoding: str) -> None:
+    @pytest.mark.parametrize(("method", "status"), [("GET", 200), ("CONNECT", 300)])
+    async def test_empty_encoded_response_with_body_is_rejected(self, encoding: str, method: str, status: int) -> None:
         stream = _ResponseStream([])
-        response = httpx.Response(200, headers={"Content-Encoding": encoding}, stream=stream)
+        response = httpx.Response(status, headers={"Content-Encoding": encoding}, stream=stream)
         async with (
             httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
             DefaultHttpRequestHandler(client=client) as handler,
         ):
             with pytest.raises(httpx.DecodingError, match="Incomplete"):
-                await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+                await handler.send(HttpRequestInfo(method=method, url="https://api.example.test/items"))
         assert stream.closed
 
     @pytest.mark.parametrize("chunk_size", [1, 166])

@@ -370,7 +370,12 @@ async def _read_bounded_response(response: httpx.Response, limit: int) -> None:
             for encoding in response.headers.get("content-encoding", "").split(",")
             if encoding.strip().lower() != "identity" and encoding.strip()
         ]
-        if response.request.method == "HEAD" or response.status_code in {204, 205, 304}:
+        if (
+            response.request.method == "HEAD"
+            or 100 <= response.status_code < 200
+            or response.status_code in {204, 205, 304}
+            or (response.request.method == "CONNECT" and 200 <= response.status_code < 300)
+        ):
             encodings = []
         if len(encodings) > 4:
             raise httpx.DecodingError("HTTP response has too many content encoding stages.", request=response.request)
