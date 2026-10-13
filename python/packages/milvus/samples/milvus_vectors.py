@@ -6,9 +6,10 @@ Run from python/:
     export MILVUS_URI=http://localhost:19530   # or a local ".db" path for Milvus Lite
     uv run --package agent-framework-milvus python packages/milvus/samples/milvus_vectors.py
 
-Use a development server or a local Milvus Lite file, not production. No embedding
-model, inference service, or OpenAI credentials are used: the vectors are deliberately
-small and deterministic.
+Use a development server or a local Milvus Lite file, not production. A local ".db" path
+requires the Milvus Lite extra: pip install "pymilvus[milvus_lite]" (Linux/macOS only).
+No embedding model, inference service, or OpenAI credentials are used: the vectors are
+deliberately small and deterministic.
 """
 
 from __future__ import annotations

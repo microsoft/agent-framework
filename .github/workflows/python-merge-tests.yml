@@ -41,6 +41,7 @@ jobs:
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
       duckdbChanged: ${{ steps.filter.outputs.duckdb }}
       qdrantChanged: ${{ steps.filter.outputs.qdrant }}
+      milvusChanged: ${{ steps.filter.outputs.milvus }}
       mongodbChanged: ${{ steps.filter.outputs.mongodb }}
       redisChanged: ${{ steps.filter.outputs.redis }}
       githubCopilotChanged: ${{ steps.filter.outputs.github_copilot }}
@@ -98,6 +99,9 @@ jobs:
               - 'python/packages/qdrant/**'
               - '.github/workflows/python-merge-tests.yml'
               - '.github/workflows/python-integration-tests.yml'
+            milvus:
+              - 'python/packages/milvus/**'
+              - '.github/workflows/python-merge-tests.yml'
             mongodb:
               - 'python/packages/mongodb/**'
               - '.github/workflows/python-merge-tests.yml'
@@ -143,6 +147,27 @@ jobs:
           os: ${{ runner.os }}
       - name: Test DuckDB package
         run: uv run poe test -P duckdb
+
+  python-tests-milvus:
+    name: Python Tests - Milvus
+    needs: paths-filter
+    if: >
+      github.event_name == 'pull_request' &&
+      (needs.paths-filter.outputs.milvusChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test Milvus package
+        run: uv run poe test -P milvus
 
   python-tests-qdrant:
     name: Python Integration Tests - Qdrant
@@ -980,6 +1005,7 @@ jobs:
     needs:
       [
         python-tests-duckdb,
+        python-tests-milvus,
         python-tests-unit,
         python-tests-openai,
         python-tests-azure-openai,

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Final, Generic, cast
 
@@ -78,7 +80,8 @@ class MilvusSettings(TypedDict, total=False):
 
     Keys:
         uri: Server URI from ``MILVUS_URI`` (e.g. ``http://localhost:19530``), or a local
-            ``.db`` path for Milvus Lite. When unset, defaults to ``http://localhost:19530``.
+            ``.db`` path for Milvus Lite (requires the ``pymilvus[milvus_lite]`` extra).
+            When unset, defaults to ``http://localhost:19530``.
         token: Optional access token from ``MILVUS_TOKEN``, stored as an AF ``SecretString``.
         user: Optional username from ``MILVUS_USER``.
         password: Optional password from ``MILVUS_PASSWORD``, stored as an AF ``SecretString``.
@@ -145,8 +148,9 @@ def _format_scalar(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        # json.dumps escapes quotes, backslashes and control characters (newlines, tabs, …),
+        # producing a valid double-quoted Milvus string literal for any stored value.
+        return json.dumps(value)
     if isinstance(value, (int, float)):
         return repr(value)
     raise NotImplementedError(f"Milvus filters support only scalar operands, not {type(value).__name__}.")
@@ -254,6 +258,16 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         for field in self.definition.data_fields:
             if (field.type_ or "str") not in _SCALAR_TYPES:
                 raise NotImplementedError(f"Milvus data field type '{field.type_}' is not supported.")
+            # Scalar and full-text indexing are not created by this connector yet; rejecting the
+            # flags avoids silently reporting success for an index that was never built.
+            if field.is_indexed:
+                raise NotImplementedError(
+                    f"Scalar indexing (is_indexed) is not supported by this Milvus connector; field '{field.name}'."
+                )
+            if field.is_full_text_indexed:
+                raise NotImplementedError(
+                    f"Full-text indexing is not supported by this Milvus connector; field '{field.name}'."
+                )
 
     def _output_fields(self, include_vectors: bool) -> list[str]:
         fields = [field.storage_name or field.name for field in self.definition.data_fields]
@@ -308,13 +322,20 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         if await self.collection_exists():
             return
         schema, index_params = self._build_schema_and_index()
-        await asyncio.to_thread(
-            self._client.create_collection,
-            collection_name=self.collection_name,
-            schema=schema,
-            index_params=index_params,
-            **options,
-        )
+        try:
+            await asyncio.to_thread(
+                self._client.create_collection,
+                collection_name=self.collection_name,
+                schema=schema,
+                index_params=index_params,
+                **options,
+            )
+        except Exception:
+            # The check-then-create sequence is not atomic: a concurrent worker may have
+            # created the collection between the existence check and this call. Treat an
+            # already-created collection as success (ensure semantics); otherwise re-raise.
+            if not await self.collection_exists():
+                raise
 
     async def ensure_collection_deleted(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Delete this collection if it exists."""
@@ -461,6 +482,12 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         field = self.definition.try_get_vector_field(vector_property_name)
         if field is None:
             raise ValueError("Milvus search requires a declared vector field.")
+        if score_threshold is not None:
+            if isinstance(score_threshold, bool) or not isinstance(score_threshold, (int, float)):
+                raise ValueError("Milvus score_threshold must be a finite number.")
+            score_threshold = float(score_threshold)
+            if not math.isfinite(score_threshold):
+                raise ValueError("Milvus score_threshold must be a finite number.")
         metric = _METRICS[cast(str, field.distance_function)]
         search_params: dict[str, Any] = {"metric_type": metric}
         search_params.update(options.pop("search_params", {}) or {})

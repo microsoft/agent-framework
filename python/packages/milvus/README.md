@@ -11,6 +11,13 @@ other vector-store connectors.
 pip install agent-framework-milvus
 ```
 
+This connects to a Milvus server. To use a local `.db` file (Milvus Lite) instead, also
+install the Milvus Lite extra, which is published for Linux and macOS only:
+
+```bash
+pip install "pymilvus[milvus_lite]"
+```
+
 ## Usage
 
 ```python
@@ -20,18 +27,19 @@ from agent_framework_milvus import MilvusStore
 definition = VectorStoreCollectionDefinition([
     VectorStoreField("key", name="id", type_="int"),
     VectorStoreField("data", name="text", type_="str"),
-    VectorStoreField("vector", name="embedding", dimensions=1536, distance_function="cosine_similarity"),
+    VectorStoreField("vector", name="embedding", dimensions=3, distance_function="cosine_similarity"),
 ])
 
 # Connects to a Milvus server; set MILVUS_URI or pass uri=...
-# A local ".db" path uses Milvus Lite.
+# A local ".db" path uses Milvus Lite (requires the pymilvus[milvus_lite] extra).
 async with MilvusStore(uri="http://localhost:19530") as store:
     collection = store.get_collection(dict, definition=definition, collection_name="docs")
     await collection.ensure_collection_exists()
-    await collection.upsert({"id": 1, "text": "hello", "embedding": [...]})
-    results = await collection.search(vector=[...], top=5)
-    async for hit in results:
-        print(hit.record, hit.score)
+    # upsert takes a sequence; pass generate_vectors=False when vectors are supplied.
+    await collection.upsert([{"id": 1, "text": "hello", "embedding": [0.1, 0.2, 0.3]}], generate_vectors=False)
+    results = await collection.search(vector=[0.1, 0.2, 0.3], top=5)
+    async for hit in results:  # each hit is a SearchResponse mapping
+        print(hit["record"], hit["score"])
 ```
 
 ## Configuration
@@ -41,7 +49,7 @@ environment variables prefixed with `MILVUS_`:
 
 | Setting    | Environment variable | Notes                                              |
 | ---------- | -------------------- | -------------------------------------------------- |
-| `uri`      | `MILVUS_URI`         | Server URI or a local `.db` path (Milvus Lite).    |
+| `uri`      | `MILVUS_URI`         | Server URI, or a local `.db` path (Milvus Lite extra). |
 | `token`    | `MILVUS_TOKEN`       | Access token (API key or `user:password`).         |
 | `user`     | `MILVUS_USER`        | Username.                                          |
 | `password` | `MILVUS_PASSWORD`    | Password.                                          |

@@ -26,6 +26,11 @@ def test_bool_literals(collection):
     assert collection._prepare_filter(Filter("flag", "eq", False)) == "(flag == false)"
 
 
+def test_string_control_characters_are_escaped(collection):
+    # Newlines/quotes/backslashes must not break out of the string literal.
+    assert collection._prepare_filter(Filter("text", "eq", 'a"b\nc')) == '(body == "a\\"b\\nc")'
+
+
 def test_and_or_not_groups(collection):
     expr = FilterGroup("and", [Filter("text", "eq", "a"), Filter("number", "gt", 1)])
     assert collection._prepare_filter(expr) == '((body == "a") and (price > 1))'

@@ -97,6 +97,27 @@ async def test_search_requires_query(collection):
         await collection.search(top=1)
 
 
+@pytest.mark.parametrize("bad", [True, float("nan"), float("inf")])
+async def test_search_rejects_invalid_score_threshold(collection, bad):
+    with pytest.raises(ValueError, match="score_threshold must be a finite number"):
+        await collection.search(vector=[1.0, 0.0, 0.0], score_threshold=bad)
+
+
+async def test_ensure_collection_exists_swallows_concurrent_create(collection, mock_client):
+    # Absent at the check, then another worker wins the race: create fails but the
+    # collection now exists, so ensure semantics should treat it as success.
+    mock_client.has_collection.side_effect = [False, True]
+    mock_client.create_collection.side_effect = RuntimeError("collection already exists")
+    await collection.ensure_collection_exists()  # must not raise
+
+
+async def test_ensure_collection_exists_reraises_real_create_error(collection, mock_client):
+    mock_client.has_collection.side_effect = [False, False]
+    mock_client.create_collection.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        await collection.ensure_collection_exists()
+
+
 def test_serialize_round_trip(collection):
     # The handler serializes a model to a storage-keyed dict before calling this method.
     storage_record = {"point_key": 7, "body": "hello", "price": 7.0, "flag": True, "dense": [1.0, 0.0, 0.0]}
@@ -121,6 +142,16 @@ def test_auto_generated_key_rejected(mock_client):
         VectorStoreField("vector", name="v", dimensions=3, distance_function="cosine_similarity"),
     ])
     with pytest.raises(NotImplementedError, match="application-provided primary keys"):
+        MilvusCollection(dict, definition=definition, collection_name="docs", client=mock_client)
+
+
+def test_is_indexed_rejected(mock_client):
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("data", name="text", type_="str", is_indexed=True),
+        VectorStoreField("vector", name="v", dimensions=3, distance_function="cosine_similarity"),
+    ])
+    with pytest.raises(NotImplementedError, match="is_indexed"):
         MilvusCollection(dict, definition=definition, collection_name="docs", client=mock_client)
 
 
