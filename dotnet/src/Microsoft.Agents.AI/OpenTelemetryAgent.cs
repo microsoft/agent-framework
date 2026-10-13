@@ -311,7 +311,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
-            return response.AsChatResponse();
+            return ExcludeSubAgentUsage(response.AsChatResponse(), response);
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -327,8 +327,91 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
-                yield return update.AsChatResponseUpdate();
+                yield return ExcludeSubAgentUsage(update.AsChatResponseUpdate(), update);
             }
+        }
+
+        /// <summary>
+        /// Returns <paramref name="chatResponse"/>, or, when the agent's usage includes usage rolled up from sub-agents, a
+        /// copy of it that reports the agent's own usage only, since the sub-agents report their usage on their own spans.
+        /// </summary>
+        /// <remarks>
+        /// The copy keeps <paramref name="response"/> as its raw representation, so that <see cref="RunCoreAsync"/> hands
+        /// the inner agent's response, including the rolled-up usage, back to the caller unchanged.
+        /// </remarks>
+        private static ChatResponse ExcludeSubAgentUsage(ChatResponse chatResponse, AgentResponse response)
+        {
+            UsageDetails? ownUsage = SubAgentUsageScope.GetOwnUsage(chatResponse.Usage);
+            if (ReferenceEquals(ownUsage, chatResponse.Usage))
+            {
+                return chatResponse;
+            }
+
+            return new(chatResponse.Messages)
+            {
+                AdditionalProperties = chatResponse.AdditionalProperties,
+                ContinuationToken = chatResponse.ContinuationToken,
+                ConversationId = chatResponse.ConversationId,
+                CreatedAt = chatResponse.CreatedAt,
+                FinishReason = chatResponse.FinishReason,
+                ModelId = chatResponse.ModelId,
+                RawRepresentation = response,
+                ResponseId = chatResponse.ResponseId,
+                Usage = ownUsage,
+            };
+        }
+
+        /// <summary>
+        /// Returns <paramref name="chatUpdate"/>, or, when it carries usage rolled up from sub-agents, a copy of it without
+        /// that usage, so that the span reports the agent's own usage only.
+        /// </summary>
+        /// <remarks>
+        /// The copy keeps <paramref name="update"/> as its raw representation, so that <see cref="RunCoreStreamingAsync"/>
+        /// hands the inner agent's update, including the rolled-up usage, back to the caller unchanged.
+        /// </remarks>
+        private static ChatResponseUpdate ExcludeSubAgentUsage(ChatResponseUpdate chatUpdate, AgentResponseUpdate update)
+        {
+            List<AIContent>? filtered = null;
+            for (int i = 0; i < chatUpdate.Contents.Count; i++)
+            {
+                AIContent content = chatUpdate.Contents[i];
+                if (SubAgentUsageScope.IsSubAgentUsageContent(content))
+                {
+                    if (filtered is null)
+                    {
+                        filtered = new(chatUpdate.Contents.Count - 1);
+                        for (int j = 0; j < i; j++)
+                        {
+                            filtered.Add(chatUpdate.Contents[j]);
+                        }
+                    }
+                }
+                else
+                {
+                    filtered?.Add(content);
+                }
+            }
+
+            if (filtered is null)
+            {
+                return chatUpdate;
+            }
+
+            return new()
+            {
+                AdditionalProperties = chatUpdate.AdditionalProperties,
+                AuthorName = chatUpdate.AuthorName,
+                Contents = filtered,
+                ContinuationToken = chatUpdate.ContinuationToken,
+                ConversationId = chatUpdate.ConversationId,
+                CreatedAt = chatUpdate.CreatedAt,
+                FinishReason = chatUpdate.FinishReason,
+                MessageId = chatUpdate.MessageId,
+                ModelId = chatUpdate.ModelId,
+                RawRepresentation = update,
+                ResponseId = chatUpdate.ResponseId,
+                Role = chatUpdate.Role,
+            };
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>

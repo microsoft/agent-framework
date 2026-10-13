@@ -119,11 +119,19 @@ public sealed class LoopAgentOptions
     /// <summary>Gets or sets the maximum total LLM token spend across all iterations, or <see langword="null"/> for unconstrained.</summary>
     /// <remarks>
     /// <para>
-    /// Counts the input and output tokens used by the inner agent, including any sub-agents whose usage the inner agent
-    /// reports in its response. For each iteration, the loop reads <c>TotalTokenCount</c> from the inner agent's
-    /// <c>AgentResponse.Usage</c>, falling back to <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c>
-    /// is absent. Tokens spent by <see cref="LoopEvaluator"/> instances, including judge model calls made by
-    /// <see cref="AIJudgeLoopEvaluator"/>, are not counted. What is counted cannot be configured.
+    /// Counts the input and output tokens used by the inner agent. For each iteration, the loop reads
+    /// <c>TotalTokenCount</c> from the inner agent's <c>AgentResponse.Usage</c>, falling back to
+    /// <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c> is absent. What is counted cannot be configured.
+    /// </para>
+    /// <para>
+    /// A <see cref="ChatClientAgent"/> includes in its <c>AgentResponse.Usage</c> the usage of the sub-agents it invokes
+    /// through <see cref="AIAgentExtensions.AsAIFunction"/> tools and through <see cref="BackgroundAgentsProvider"/>, so
+    /// those tokens count toward this budget. A background task's usage is counted once, in the run that first observes
+    /// that the task finished; tasks that finish after the last run, or are only finalized when the session is released,
+    /// are not counted. Also not counted: sub-agents that fail or are cancelled (they produce no response), agents that
+    /// custom tools invoke directly through <c>RunAsync</c>, sub-agent usage that another kind of inner agent does not
+    /// report in its response, and tokens spent by <see cref="LoopEvaluator"/> instances, including judge model calls made
+    /// by <see cref="AIJudgeLoopEvaluator"/>.
     /// </para>
     /// <para>
     /// If the inner agent reports no token usage, the budget cannot be enforced, and the loop logs a warning (once per run).
