@@ -45,6 +45,7 @@ from agent_framework import (
     ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UsageDetails,
     VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
@@ -4807,22 +4808,22 @@ async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
 # region as_tool sub-agent usage roll-up
 
 
-def _usage(input_tokens: int, output_tokens: int) -> dict[str, int]:
-    return {
-        "input_token_count": input_tokens,
-        "output_token_count": output_tokens,
-        "total_token_count": input_tokens + output_tokens,
-    }
+def _usage(input_tokens: int, output_tokens: int) -> UsageDetails:
+    return UsageDetails(
+        input_token_count=input_tokens,
+        output_token_count=output_tokens,
+        total_token_count=input_tokens + output_tokens,
+    )
 
 
-def _script_turns(client: MockBaseChatClient, *turns: tuple[list[Content], dict[str, int]]) -> None:
+def _script_turns(client: MockBaseChatClient, *turns: tuple[list[Content], UsageDetails]) -> None:
     """Script the same model turns for streaming and non-streaming calls, each turn with its usage."""
     client.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=list(contents)), usage_details=usage)  # type: ignore[arg-type]
+        ChatResponse(messages=Message(role="assistant", contents=list(contents)), usage_details=usage)
         for contents, usage in turns
     ]
     client.streaming_responses = [
-        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(usage)])]  # type: ignore[arg-type]
+        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(usage)])]
         for contents, usage in turns
     ]
 
@@ -4831,7 +4832,7 @@ def _delegate_call(call_id: str, name: str = "delegate") -> Content:
     return Content.from_function_call(call_id=call_id, name=name, arguments={"task": "work"})
 
 
-async def _run_agent(agent: Agent, stream: bool) -> AgentResponse:
+async def _run_agent(agent: Agent[Any], stream: bool) -> AgentResponse:
     if stream:
         return await agent.run("Go.", stream=True).get_final_response()
     return await agent.run("Go.")

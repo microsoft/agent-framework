@@ -6663,18 +6663,39 @@ async def test_agent_invoke_span_usage_fallback_excludes_sub_agent_usage(
 ) -> None:
     """Without chat spans, the invoke_agent span falls back to response usage minus sub-agent usage."""
     from agent_framework import ChatMiddlewareLayer, FunctionInvocationLayer
-    from tests.core.conftest import MockBaseChatClient
 
     class _NoChatTelemetryClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+        """Replays scripted responses like MockBaseChatClient, but without ChatTelemetryLayer."""
+
         def __init__(self) -> None:
             super().__init__(middleware=[])
             self.run_responses: list[ChatResponse] = []
             self.streaming_responses: list[list[ChatResponseUpdate]] = []
-            self.call_count = 0
 
-        _inner_get_response = MockBaseChatClient._inner_get_response
-        _get_non_streaming_response = MockBaseChatClient._get_non_streaming_response
-        _get_streaming_response = MockBaseChatClient._get_streaming_response
+        def _inner_get_response(
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            if stream:
+                scripted = self.streaming_responses.pop(0)
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    for update in scripted:
+                        yield update
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse.from_updates(updates)
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                return self.run_responses.pop(0)
+
+            return _get()
 
     span_exporter.clear()
     usage = await _run_parent_with_sub_agent(_NoChatTelemetryClient, stream)

@@ -32,6 +32,7 @@ from agent_framework import (
     ResponseInvalidatedException,
     ResponseStream,
     SupportsChatGetResponse,
+    UsageDetails,
     chat_middleware,
     tool,
 )
@@ -13033,7 +13034,7 @@ async def test_unbound_local_approval_response_is_filtered_before_mixed_batch_va
 # region tool-reported usage
 
 
-_TOOL_REPORTED_USAGE = {"input_token_count": 7, "output_token_count": 3, "total_token_count": 10}
+_TOOL_REPORTED_USAGE = UsageDetails(input_token_count=7, output_token_count=3, total_token_count=10)
 
 
 async def _get_tool_usage_response(client: Any, tool_obj: FunctionTool, *, streaming: bool) -> ChatResponse:
@@ -13048,14 +13049,14 @@ async def _get_tool_usage_response(client: Any, tool_obj: FunctionTool, *, strea
 
 def _script_tool_call_turn(client: Any, *, streaming: bool) -> None:
     call = Content.from_function_call(call_id="usage-call", name="delegating_tool", arguments={})
-    model_usage = {"input_token_count": 2, "output_token_count": 1, "total_token_count": 3}
+    model_usage = UsageDetails(input_token_count=2, output_token_count=1, total_token_count=3)
     if streaming:
         client.streaming_responses = [
-            [ChatResponseUpdate(role="assistant", contents=[call, Content.from_usage(model_usage)])]  # type: ignore[arg-type]
+            [ChatResponseUpdate(role="assistant", contents=[call, Content.from_usage(model_usage)])]
         ]
     else:
         client.run_responses = [
-            ChatResponse(messages=Message(role="assistant", contents=[call]), usage_details=model_usage)  # type: ignore[arg-type]
+            ChatResponse(messages=Message(role="assistant", contents=[call]), usage_details=model_usage)
         ]
 
 

@@ -20,6 +20,7 @@ from agent_framework import (
     Content,
     Message,
     ServiceSessionId,
+    UsageDetails,
 )
 from agent_framework._sessions import SessionContext
 
@@ -929,18 +930,18 @@ async def test_release_session_skips_drain_when_no_pending_tasks(
 # --- Usage Accounting Tests ---
 
 
-def _usage(input_tokens: int, output_tokens: int) -> dict[str, int]:
-    return {
-        "input_token_count": input_tokens,
-        "output_token_count": output_tokens,
-        "total_token_count": input_tokens + output_tokens,
-    }
+def _usage(input_tokens: int, output_tokens: int) -> UsageDetails:
+    return UsageDetails(
+        input_token_count=input_tokens,
+        output_token_count=output_tokens,
+        total_token_count=input_tokens + output_tokens,
+    )
 
 
 class _UsageReportingFakeAgent(_FakeAgent):
     """Fake background agent whose response reports token usage."""
 
-    def __init__(self, name: str, usage: dict[str, int]) -> None:
+    def __init__(self, name: str, usage: UsageDetails) -> None:
         super().__init__(name)
         self._usage = usage
 
@@ -948,18 +949,18 @@ class _UsageReportingFakeAgent(_FakeAgent):
         self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
     ) -> AgentResponse[Any]:
         response = await super().run(messages, stream=stream, session=session, **kwargs)
-        response.usage_details = dict(self._usage)  # type: ignore[assignment]
+        response.usage_details = self._usage.copy()
         return response
 
 
 def _script_parent_turns(client: Any, *turns: list[Content]) -> None:
     """Script parent model turns that each spend 1 input and 1 output token."""
     client.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=contents), usage_details=_usage(1, 1))  # type: ignore[arg-type]
+        ChatResponse(messages=Message(role="assistant", contents=contents), usage_details=_usage(1, 1))
         for contents in turns
     ]
     client.streaming_responses = [
-        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(_usage(1, 1))])]  # type: ignore[arg-type]
+        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(_usage(1, 1))])]
         for contents in turns
     ]
 
@@ -972,7 +973,7 @@ def _start_task_call(call_id: str) -> Content:
     )
 
 
-async def _run_parent(agent: Agent, session: AgentSession, *, stream: bool = False) -> AgentResponse[Any]:
+async def _run_parent(agent: Agent[Any], session: AgentSession, *, stream: bool = False) -> AgentResponse[Any]:
     if stream:
         return await agent.run("Go.", session=session, stream=True).get_final_response()
     return await agent.run("Go.", session=session)
@@ -993,7 +994,7 @@ def test_task_info_serializes_usage() -> None:
         description="work",
         status=BackgroundTaskStatus.COMPLETED,
         result_text="done",
-        usage_details=_usage(5, 2),  # type: ignore[arg-type]
+        usage_details=_usage(5, 2),
         usage_reported=True,
     )
     restored = BackgroundTaskInfo.from_dict(info.to_dict())
