@@ -937,32 +937,78 @@ class TestResponseBodyLimits:
                 handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
             )
             await started.wait()
-            task.cancel()
+            assert task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await task
+                _ = await task
             assert stream.closed
             assert not client.is_closed
 
-    async def test_empty_head_response_does_not_require_encoded_body(self) -> None:
+    @pytest.mark.parametrize(("method", "status"), [("HEAD", 200), ("GET", 204), ("GET", 304)])
+    async def test_empty_bodyless_response_does_not_require_encoded_body(self, method: str, status: int) -> None:
         stream = _ResponseStream([])
-        response = httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=stream)
+        response = httpx.Response(status, headers={"Content-Encoding": "gzip"}, stream=stream)
         async with (
             httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
             DefaultHttpRequestHandler(client=client) as handler,
         ):
-            result = await handler.send(HttpRequestInfo(method="HEAD", url="https://api.example.test/items"))
+            result = await handler.send(HttpRequestInfo(method=method, url="https://api.example.test/items"))
         assert result.body == ""
+        assert stream.closed
+
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate"])
+    async def test_empty_encoded_get_response_is_rejected(self, encoding: str) -> None:
+        stream = _ResponseStream([])
+        response = httpx.Response(200, headers={"Content-Encoding": encoding}, stream=stream)
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
+            DefaultHttpRequestHandler(client=client) as handler,
+        ):
+            with pytest.raises(httpx.DecodingError, match="Incomplete"):
+                await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+        assert stream.closed
+
+    @pytest.mark.parametrize("chunk_size", [1, 166])
+    async def test_raw_deflate_with_wrapped_header_prefix_is_decoded(self, chunk_size: int) -> None:
+        body = bytes.fromhex("789c0063ff") + b"a" * 156 + bytes.fromhex("010000ffff")
+        stream = _ResponseStream([body[index : index + chunk_size] for index in range(0, len(body), chunk_size)])
+        response = httpx.Response(200, headers={"Content-Encoding": "deflate"}, stream=stream)
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
+            DefaultHttpRequestHandler(client=client, max_response_body_bytes=256) as handler,
+        ):
+            result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+        assert result.body == "a" * 156
+        assert stream.closed
+
+    @pytest.mark.parametrize("encoding", ["gzip, deflate", "deflate, gzip", "deflate, deflate"])
+    @pytest.mark.parametrize("size", [128, 129])
+    async def test_mixed_encoding_finalization_preserves_limit(self, encoding: str, size: int) -> None:
+        body = b"a" * size
+        for stage in encoding.split(", "):
+            body = gzip.compress(body) if stage == "gzip" else zlib.compress(body)
+        stream = _ResponseStream([body[index : index + 1] for index in range(len(body))])
+        response = httpx.Response(200, headers={"Content-Encoding": encoding}, stream=stream)
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
+            DefaultHttpRequestHandler(client=client, max_response_body_bytes=128) as handler,
+        ):
+            if size > 128:
+                with pytest.raises(httpx.StreamError, match="response body.*limit"):
+                    await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+            else:
+                result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+                assert result.body == "a" * size
         assert stream.closed
 
     @pytest.mark.parametrize(
         ("encoding", "body"),
         [
-            ("br", b"body"),
-            ("gzip", b"invalid"),
-            ("gzip", gzip.compress(b"body")[:-1]),
-            ("deflate", zlib.compress(b"body")[:-1]),
-            ("gzip", gzip.compress(b"body") + b"extra"),
-            ("gzip, gzip, gzip, gzip, gzip", b"body"),
+            pytest.param("br", b"body", id="unsupported"),
+            pytest.param("gzip", b"invalid", id="invalid-gzip"),
+            pytest.param("gzip", gzip.compress(b"body", mtime=0)[:-1], id="incomplete-gzip"),
+            pytest.param("deflate", zlib.compress(b"body")[:-1], id="incomplete-deflate"),
+            pytest.param("gzip", gzip.compress(b"body", mtime=0) + b"extra", id="trailing-gzip-data"),
+            pytest.param("gzip, gzip, gzip, gzip, gzip", b"body", id="excessive-encoding-stages"),
         ],
     )
     async def test_invalid_content_encoding_closes_response(self, encoding: str, body: bytes) -> None:

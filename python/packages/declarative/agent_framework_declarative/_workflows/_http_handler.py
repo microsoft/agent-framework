@@ -368,6 +368,8 @@ async def _read_bounded_response(response: httpx.Response, limit: int) -> None:
             for encoding in response.headers.get("content-encoding", "").split(",")
             if encoding.strip().lower() != "identity" and encoding.strip()
         ]
+        if response.request.method == "HEAD" or response.status_code in {204, 304}:
+            encodings = []
         if len(encodings) > 4:
             raise httpx.DecodingError("HTTP response has too many content encoding stages.", request=response.request)
         decoders = [_BoundedContentDecoder(encoding, limit) for encoding in reversed(encodings)]
@@ -382,9 +384,13 @@ async def _read_bounded_response(response: httpx.Response, limit: int) -> None:
             if len(body) + len(chunk) > limit:
                 raise httpx.StreamError("HTTP response body exceeds the configured limit.")
             body.extend(chunk)
-        if received:
-            for decoder in decoders:
-                decoder.finish()
+        for index, decoder in enumerate(decoders):
+            chunk = decoder.finish()
+            for downstream in decoders[index + 1 :]:
+                chunk = downstream.decode(chunk)
+            if len(body) + len(chunk) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            body.extend(chunk)
         # HTTPX rereads intermediate responses during auth/redirect handling. Populate
         # its content cache so those reads cannot trigger automatic decoding again.
         response._content = bytes(body)  # pyright: ignore[reportPrivateUsage]
@@ -398,21 +404,17 @@ class _BoundedContentDecoder:
             raise httpx.DecodingError(f"Unsupported HTTP response content encoding: {encoding}.")
         self._limit = limit
         self._decoded = 0
-        self._prefix = bytearray()
+        self._input = bytearray()
         self._decoder = zlib.decompressobj(zlib.MAX_WBITS | 16) if encoding == "gzip" else None
 
     def decode(self, data: bytes) -> bytes:
         if self._decoder is None:
-            # Deflate may use either the zlib wrapper or a raw stream. Wait for
-            # its two-byte header rather than retrying after consuming partial input.
-            self._prefix.extend(data)
-            if len(self._prefix) < 2:
-                return b""
-            first, second = self._prefix[:2]
-            wrapped = first & 15 == 8 and first >> 4 <= 7 and (first * 256 + second) % 31 == 0
-            self._decoder = zlib.decompressobj(zlib.MAX_WBITS if wrapped else -zlib.MAX_WBITS)
-            data = bytes(self._prefix)
-            self._prefix.clear()
+            # Raw deflate can share a wrapped stream's prefix. Retain bounded input
+            # until finalization so a failed candidate never reaches downstream stages.
+            if len(self._input) + len(data) > self._limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            self._input.extend(data)
+            return b""
         try:
             decoded = self._decoder.decompress(data, self._limit - self._decoded + 1)
         except zlib.error as exc:
@@ -424,6 +426,26 @@ class _BoundedContentDecoder:
             raise httpx.DecodingError("Unexpected data after HTTP response content encoding.")
         return decoded
 
-    def finish(self) -> None:
-        if self._decoder is None or not self._decoder.eof:
-            raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+    def finish(self) -> bytes:
+        if self._decoder is not None:
+            if not self._decoder.eof:
+                raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+            return b""
+
+        data = bytes(self._input)
+        self._input.clear()
+        failures: list[httpx.DecodingError | httpx.StreamError] = []
+        for mode in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            self._decoder = zlib.decompressobj(mode)
+            self._decoded = 0
+            try:
+                decoded = self.decode(data)
+                if not self._decoder.eof:
+                    raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+                return decoded
+            except (httpx.DecodingError, httpx.StreamError) as exc:
+                failures.append(exc)
+        for error in failures:
+            if isinstance(error, httpx.StreamError):
+                raise error
+        raise failures[-1]

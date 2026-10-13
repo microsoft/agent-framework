@@ -52,6 +52,9 @@ assignment, and their streams are closed without closing caller-owned clients.
 The handler advertises `gzip, deflate` and supports identity, gzip, and deflate
 responses, including up to four encoding stages. Unsupported encodings,
 incomplete encoded bodies, and trailing encoded data raise `httpx.DecodingError`.
+Empty encoded responses are validated unless the response is bodyless (HEAD,
+204, or 304). Deflate input is retained within the same bound until its wrapped
+or raw format can be validated.
 Explicit request `Accept-Encoding` headers are preserved but do not enable
 additional decoders. Caller-supplied response hooks and transports must not
 buffer response bodies before the handler applies its limit.
