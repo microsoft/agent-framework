@@ -134,8 +134,12 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._harness._loop": (
         "AgentLoopMiddleware",
         "JudgeVerdict",
+        "LoopExitReason",
+        "SignalParser",
         "background_tasks_running",
         "background_tasks_running_message",
+        "get_loop_exit_reason",
+        "signal_should_continue",
         "todos_remaining",
         "todos_remaining_message",
     ),
@@ -148,12 +152,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "MemoryTopicRecord",
     ),
     "._harness._mode": ("DEFAULT_MODE_SOURCE_ID", "AgentModeProvider", "get_agent_mode", "set_agent_mode"),
-    "._harness._signals": (
-        "LoopExitReason",
-        "SignalParser",
-        "get_loop_exit_reason",
-        "signal_should_continue",
-    ),
     "._harness._todo": (
         "DEFAULT_TODO_SOURCE_ID",
         "TodoFileStore",

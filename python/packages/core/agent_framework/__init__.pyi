@@ -92,8 +92,12 @@ from ._harness._file_memory import DEFAULT_FILE_MEMORY_INSTRUCTIONS, DEFAULT_FIL
 from ._harness._loop import (
     AgentLoopMiddleware,
     JudgeVerdict,
+    LoopExitReason,
+    SignalParser,
     background_tasks_running,
     background_tasks_running_message,
+    get_loop_exit_reason,
+    signal_should_continue,
     todos_remaining,
     todos_remaining_message,
 )
@@ -106,12 +110,6 @@ from ._harness._memory import (
     MemoryTopicRecord,
 )
 from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent_mode, set_agent_mode
-from ._harness._signals import (
-    LoopExitReason,
-    SignalParser,
-    get_loop_exit_reason,
-    signal_should_continue,
-)
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,

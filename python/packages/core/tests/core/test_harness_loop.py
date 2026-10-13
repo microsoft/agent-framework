@@ -44,9 +44,9 @@ from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_NEXT_MESSAGE,
+    LOOP_EXIT_REASON_KEY,
     AgentLoopMiddleware,
 )
-from agent_framework._harness._signals import LOOP_EXIT_REASON_KEY
 
 from .conftest import MockBaseChatClient
 
