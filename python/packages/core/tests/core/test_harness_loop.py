@@ -1826,6 +1826,41 @@ async def test_budget_exit_reason_in_additional_properties() -> None:
     assert response.additional_properties["loop_exit_reason"] == "token_budget_exceeded"
 
 
+async def test_budget_excludes_judge_call_usage() -> None:
+    # The agent spends 40 tokens per iteration; the judge spends 1000 per call and never says done.
+    # If judge usage were charged, the 100-token budget would trip after iteration 1's judge call
+    # (stopping at 2 agent calls). Only agent usage counts, so the budget trips on iteration 3.
+    agent_client = RecordingChatClient(usage_per_call=40)
+    judge_client = RecordingChatClient(texts=["VERDICT: MORE"] * 5, usage_per_call=1000)
+    agent = Agent(
+        client=agent_client,
+        middleware=[AgentLoopMiddleware.with_judge(judge_client, max_iterations=10, budget={"max_tokens": 100})],
+    )
+
+    response = await agent.run("task")
+
+    assert agent_client.call_count == 3
+    assert judge_client.call_count == 2
+    assert response.additional_properties["loop_exit_reason"] == "token_budget_exceeded"
+
+
+async def test_budget_excludes_judge_call_usage_streaming() -> None:
+    agent_client = RecordingChatClient(usage_per_call=40)
+    judge_client = RecordingChatClient(texts=["VERDICT: MORE"] * 5, usage_per_call=1000)
+    agent = Agent(
+        client=agent_client,
+        middleware=[AgentLoopMiddleware.with_judge(judge_client, max_iterations=10, budget={"max_tokens": 100})],
+    )
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    await stream.get_final_response()
+
+    assert agent_client.call_count == 3
+    assert judge_client.call_count == 2
+
+
 def test_agent_budget_validates_max_tokens() -> None:
     with pytest.raises(ValueError, match="max_tokens"):
         AgentLoopMiddleware(always_continue, budget=AgentBudget(max_tokens=0))

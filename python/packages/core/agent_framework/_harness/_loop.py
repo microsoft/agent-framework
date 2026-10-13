@@ -167,10 +167,21 @@ class AgentBudget(TypedDict, total=False):
     """
 
     max_tokens: int | None
-    """Maximum total LLM token spend across all loop iterations.
+    """Maximum token spend (input + output) of the wrapped agent across all loop iterations.
 
-    Counts ``total_token_count`` from each iteration's usage details, falling back to
-    ``input_token_count + output_token_count`` when ``total_token_count`` is absent.
+    Each iteration is charged the ``total_token_count`` from the agent response's usage details,
+    falling back to ``input_token_count + output_token_count`` when ``total_token_count`` is
+    absent. That usage covers every model call the agent makes during the iteration, including
+    each round of tool calling.
+
+    Calls the loop framework makes on its own behalf are never charged: the judge call made by
+    :meth:`AgentLoopMiddleware.with_judge` does not count toward this budget.
+
+    Sub-agents are only counted when their usage is reported in the wrapped agent's response
+    usage details. Agents exposed as tools via :meth:`~agent_framework.Agent.as_tool` and
+    background agents return only text, so their token usage is currently *not* included.
+
+    This accounting is fixed and not configurable.
     """
 
     max_duration: float | None
@@ -397,7 +408,11 @@ class AgentLoopMiddleware(AgentMiddleware):
                 persists server-side across iterations. Used by :meth:`with_judge` to tell the agent
                 about the criteria its response must satisfy, but available to any loop.
             budget: Optional :class:`AgentBudget` (or a plain ``dict`` with the same keys) bounding total
-                token spend and/or wall-clock time. Checked after each iteration, before
+                token spend and/or wall-clock time. ``max_tokens`` counts the wrapped agent's
+                ``total_token_count`` (falling back to input + output tokens) per iteration; the
+                judge call made by :meth:`with_judge` is never counted, and sub-agent usage counts
+                only when it is reported in the agent's response usage details (see
+                :attr:`AgentBudget.max_tokens`). Not configurable. Checked after each iteration, before
                 ``should_continue`` is evaluated. When exceeded the loop stops and (non-streaming
                 only) stamps ``loop_exit_reason``. Budgets do not interrupt an in-flight model/tool
                 call; use ``asyncio.timeout`` (or similar) around the run for a hard wall-clock
@@ -495,7 +510,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                 conversation; an attached session is snapshotted before the loop and restored to that
                 baseline between iterations. See :meth:`__init__` for the full semantics. Defaults to
                 ``False``.
-            budget: Optional :class:`AgentBudget`. See :meth:`__init__`.
+            budget: Optional :class:`AgentBudget`. See :meth:`__init__`. The judge call's own token
+                usage is never charged against ``max_tokens``.
         """
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)
