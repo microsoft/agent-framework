@@ -133,7 +133,7 @@ def detect_media_type_from_base64(
     Args:
         data_bytes: Raw binary data.
         data_str: Base64-encoded data (without data URI prefix).
-        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo=").
             This will look at the actual data to determine the media_type and not at the URI prefix.
             Will also not compare those two values.
 
