@@ -6,7 +6,9 @@ Uses `foundry_local_sdk` (SDK 2.1+, below 3.0) on Python 3.11-3.14. Clients shar
 `FoundryLocalManager.instance` and use its built-in web service with the existing
 OpenAI transport. Model lifecycle operations live on catalog model objects.
 The adapter resolves public-catalog variants only; BYOM/local-catalog selection
-is not exposed through SDK 2.1's HTTP service.
+is intentionally not exposed by this adapter. SDK 2.1's HTTP service supports
+registered local models through `/catalogs/local/v1`, separate from the public
+`/v1` route used here.
 
 `FoundryLocalClient` exposes the SDK `Configuration` for initial manager setup,
 download progress/cancellation controls, and exact device/variant selection.

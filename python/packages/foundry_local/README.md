@@ -103,8 +103,9 @@ must handle the returned function call before requesting a structured final repl
 ## Scope
 
 This adapter targets the SDK's public model catalog and HTTP chat service.
-BYOM/local-catalog model selection is not exposed: SDK 2.1's HTTP service cannot
-resolve models registered in its local catalog. Native-session-only features,
+BYOM/local-catalog model selection is intentionally not exposed by this adapter.
+SDK 2.1 supports registered local models through `/catalogs/local/v1`, but this
+adapter uses the public-catalog `/v1` route. Native-session-only features,
 audio transcription, and embeddings are outside this chat integration.
 
 Image content follows the OpenAI transport's serialization, but a successful HTTP
