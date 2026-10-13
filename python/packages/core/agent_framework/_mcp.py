@@ -28,7 +28,6 @@ else:
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
-from tenacity import AsyncRetrying, before_sleep_log, retry_if_exception, wait_exponential
 
 from ._feature_stage import (
     ExperimentalFeature,
@@ -1741,6 +1740,14 @@ class MCPTool:
 
     async def _listen_capability_list_changes(self, mcp_client: Client) -> None:
         """Start one recovering tool/prompt catalog subscription for the active Client."""
+        try:
+            from tenacity import AsyncRetrying, before_sleep_log, retry_if_exception, wait_exponential
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "MCP subscription recovery requires `tenacity`. "
+                "Please install `agent-framework-core[all]` or `tenacity`."
+            ) from exc
+
         from mcp.client.subscriptions import (
             ListenNotSupportedError,
             PromptsListChanged,

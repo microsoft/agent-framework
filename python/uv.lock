@@ -450,7 +450,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "regex" },
-    { name = "tenacity" },
     { name = "typing-extensions" },
 ]
 
@@ -486,6 +485,7 @@ all = [
     { name = "agent-framework-redis" },
     { name = "agent-framework-tools" },
     { name = "mcp" },
+    { name = "tenacity" },
 ]
 
 [package.dev-dependencies]
@@ -534,7 +534,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "regex", specifier = ">=2024.11.6" },
-    { name = "tenacity", specifier = ">=9.1.4,<9.2.0" },
+    { name = "tenacity", marker = "extra == 'all'", specifier = ">=9.1.4,<9.2.0" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
 ]
 provides-extras = ["all"]
