@@ -11,7 +11,8 @@ Agent-to-Agent (A2A) protocol support for inter-agent communication.
 
 A2A protocol metadata is stored under `additional_properties["a2a"]`. The legacy `a2a_metadata` key remains readable
 and is dual-written during the compatibility period defined by
-[spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md).
+[spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md). Consuming legacy-only input
+emits `FutureWarning`; new callers should write only the canonical `a2a` key.
 
 ## Usage
 

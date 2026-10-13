@@ -5948,6 +5948,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 if projected_contents is None:
                     projected_contents = list(update.contents)
                 cumulative_usage = add_usage_details(completed_usage, turn_usage)
+                # Copy only the objects mutated below. Other fields stay read-only, and raw provider objects may not
+                # support deepcopy.
                 projected_content = copy.copy(content)
                 projected_content.usage_details = copy.deepcopy(cumulative_usage)
                 projected_content.merge_mode = "replace"

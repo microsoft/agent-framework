@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import warnings
 from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -620,6 +621,41 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
 
     assert result.context_id == "ctx-123"
     assert result.metadata == {"trace_id": "trace-456"}
+
+
+def test_prepare_message_for_a2a_warns_for_legacy_metadata() -> None:
+    """Legacy-only A2A metadata remains readable but directs callers to the canonical namespace."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue the task")],
+        additional_properties={"a2a_metadata": {"trace_id": "trace-legacy"}},
+    )
+
+    with warns(FutureWarning, match=r"a2a_metadata.*deprecated"):
+        result = agent._prepare_message_for_a2a(message)
+
+    assert result.metadata == {"trace_id": "trace-legacy"}
+
+
+def test_prepare_message_for_a2a_prefers_canonical_metadata() -> None:
+    """Canonical metadata wins during the dual-written compatibility period."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue the task")],
+        additional_properties={
+            "a2a": {"trace_id": "trace-canonical"},
+            "a2a_metadata": {"trace_id": "trace-legacy"},
+        },
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = agent._prepare_message_for_a2a(message)
+
+    assert result.metadata == {"trace_id": "trace-canonical"}
+    assert not [warning for warning in caught if issubclass(warning.category, FutureWarning)]
 
 
 def test_prepare_message_for_a2a_uses_fallback_context_id() -> None:

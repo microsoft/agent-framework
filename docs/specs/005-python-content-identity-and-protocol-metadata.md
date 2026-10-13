@@ -16,7 +16,8 @@ Hosting Responses, Hosting A2A, DevUI, AG-UI, and A2A.
 
 The contract has four parts:
 
-1. Agent Framework occurrence identity remains separate from provider item identity.
+1. Message identity, Agent Framework content occurrence identity, provider item identity, and call correlation remain
+   separate.
 2. Execution routing and stream merge intent use first-class fields.
 3. Provider-neutral and provider-owned metadata use one-level namespaces.
 4. Legacy locations remain readable; replay-critical writers temporarily dual-write.
@@ -37,6 +38,20 @@ locations or merge behavior.
 
 An occurrence-identified Host result binds to that exact occurrence. An id-less Host result is a compatibility form
 and binds only when the active batch has one unambiguous unanswered occurrence with the same `call_id`.
+
+### Message identity and metadata
+
+`Message.message_id`, `ChatResponseUpdate.message_id`, and `AgentResponseUpdate.message_id` identify the containing
+provider or protocol message. They do not identify a `Content` item and must not be substituted for `Content.id` or
+`call_id`.
+
+When streamed updates carry a non-empty `message_id`, aggregation preserves it on the finalized `Message`. A change
+between two non-empty message IDs starts a new message; an absent ID keeps the legacy role-and-adjacency grouping.
+Adapters preserve a provider message ID when the protocol exposes one. Deserializing an older message without an ID
+does not manufacture one.
+
+Message- and update-level `additional_properties` follow the same namespace rules as content metadata. A protocol's
+message metadata belongs in that protocol owner's namespace; content item metadata remains on the relevant `Content`.
 
 ### Hosted execution
 
@@ -84,6 +99,11 @@ The mode belongs to the incoming fragment:
 - `replace` makes the incoming semantic payload authoritative after identity validation.
 - `None` preserves the legacy type-specific behavior.
 
+`None` is not an alias for `replace`, and there is no single universal implicit default. It delegates to the behavior
+that existed before `merge_mode`: text and reasoning text concatenate, function-call fields and arguments merge
+incrementally, usage values add, and code-interpreter inputs and outputs use their existing field-wise list merge.
+This compatibility mode exists for older adapters; new provider updates must state `append` or `replace` explicitly.
+
 The field is serialized on individual updates. `ChatResponse.from_updates()`,
 `AgentResponse.from_updates()`, and `ResponseStream.get_final_response()` consume and recursively clear it from
 finalized content, including nested content items.
@@ -100,6 +120,12 @@ markers are not compatibility formats.
 - `core`: provider-neutral semantics documented by core;
 - a provider/protocol owner name such as `openai`, `foundry`, or `a2a`;
 - leading-underscore top-level keys for core-private state.
+
+For a package-owned namespace, the canonical key is the normalized integration package suffix: remove the
+`agent-framework-` prefix and replace hyphens with underscores, for example `agent-framework-ag-ui` uses `ag_ui` and
+`agent-framework-github-copilot` uses `github_copilot`. A package implementing another owner's wire protocol uses that
+protocol owner's namespace instead and documents the exception; for example Foundry and hosting packages use
+`openai` for Responses metadata and `foundry` only for Foundry-owned data.
 
 Namespace values are mappings with one level of keys. Each value must be plain serializable data. A value may itself
 be a JSON mapping or list, but namespace owners do not add a second namespace layer.
@@ -136,7 +162,7 @@ Example:
 | Foundry | reasoning content | `__foundry_reasoning_replay_item__` | `foundry["reasoning_item"]` | Read indefinitely; dual-write through the Foundry package's next major version. |
 | Bedrock | redacted reasoning marker | `bedrock.redacted_reasoning` | `bedrock["redacted_reasoning"]` | Read indefinitely; dual-write through the Bedrock package's next major version. |
 | Mistral | response service tier | `service_tier` | `mistral["service_tier"]` | Read indefinitely; dual-write through the Mistral package's next major version. |
-| A2A | response/update/message metadata | `a2a_metadata` | `a2a` | Read indefinitely; dual-write through the A2A package's next major version. |
+| A2A | response/update/message metadata | `a2a_metadata` | `a2a` | Read indefinitely with a warning for legacy-only input; dual-write through the A2A package's next major version. |
 | all | data/URI/hosted-file display name | `filename` | `Content.name` | Read indefinitely where accepted; dual-write where older adapters require it. |
 | all | data/URI provider file identity | `file_id` | `Content.file_id` | Read indefinitely where accepted; dual-write where older adapters require it. |
 | all | function/reasoning/tool status | `additional_properties["status"]` | `Content.status` | Read indefinitely where accepted; new writers use the field. |
@@ -178,6 +204,8 @@ merge_additional_properties(existing, incoming, *, incoming_wins=True)
 - Legacy reads remain until a separate breaking decision removes them.
 - Replay-critical writers dual-write until that package's next major version. Display-only or request-local keys may
   switch immediately.
+- The owning integration package centralizes its canonical and legacy keys and may warn when it consumes legacy-only
+  input. Generic core namespace helpers do not contain provider-specific migration tables.
 - A package that writes namespaces requires a core version that implements one-level namespace merging.
 
 ## Authoritative validation

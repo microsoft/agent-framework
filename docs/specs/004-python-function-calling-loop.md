@@ -267,6 +267,10 @@ never regenerated. Deserializing a legacy stored call without `Content.id` does 
 identity takes precedence over `call_id`; an id-less Host result is a compatibility form that binds only when the
 active batch has one unambiguous unanswered occurrence with that `call_id`.
 
+`Message.message_id` identifies the containing provider/protocol message and groups its streamed updates. It is not a
+function-call occurrence ID or call/result correlation ID. The message-level identity and metadata contract is
+defined by [spec 005](005-python-content-identity-and-protocol-metadata.md).
+
 `function_call.hosted` decides execution ownership. A hosted call is provider-executed and must never be executed
 locally. `function_call.server_name` is the descriptive server boundary used by standing approval rules; it does not
 decide execution ownership. Legacy `additional_properties["server_label"]` records are migrated as defined by

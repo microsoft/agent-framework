@@ -734,7 +734,7 @@ class Content:
                         "Function-call content inferred hosted=True from legacy additional_properties['server_label']. "
                         "Set hosted explicitly; the legacy inference will be removed in a future release.",
                         FutureWarning,
-                        stacklevel=2,
+                        stacklevel=2,  # Report the constructor caller rather than this migration shim.
                     )
             if server_name is None and legacy_server_label:
                 server_name = legacy_server_label
@@ -849,7 +849,7 @@ class Content:
                     "Function-call content inferred hosted=True from legacy additional_properties['server_label']. "
                     "Set hosted explicitly; the legacy inference will be removed in a future release.",
                     FutureWarning,
-                    stacklevel=2,
+                    stacklevel=2,  # Report the unpickle caller rather than this migration shim.
                 )
         elif type(self.hosted) is not bool:
             raise ValueError("Function-call hosted must be true or false.")
