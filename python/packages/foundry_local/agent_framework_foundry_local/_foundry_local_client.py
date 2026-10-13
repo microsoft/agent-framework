@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from threading import Event, Lock
-from typing import Any, ClassVar, Generic, Literal, cast, overload
+from typing import Any, ClassVar, Generic, Literal, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -21,6 +21,7 @@ from agent_framework import (
     TokenizerProtocol,
 )
 from agent_framework._settings import load_settings
+from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
 from foundry_local_sdk import Configuration, DeviceType, FoundryLocalManager
@@ -145,7 +146,7 @@ class FoundryLocalSettings(TypedDict, total=False):
 
 
 class FoundryLocalClient(
-    FunctionInvocationLayer[FoundryLocalChatOptionsT],
+    FunctionInvocationLayer[FoundryLocalChatOptionsT | FoundryLocalChatOptions[Any]],
     ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     ChatTelemetryLayer[FoundryLocalChatOptionsT],
     RawOpenAIChatCompletionClient[FoundryLocalChatOptionsT],
@@ -210,16 +211,22 @@ class FoundryLocalClient(
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the Foundry Local chat client with all standard layers enabled."""
-        super_get_response = cast(
-            "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
-            super().get_response,
-        )
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             effective_client_kwargs["middleware"] = middleware
-        return super_get_response(
+        if stream:
+            return super().get_response(
+                messages=messages,
+                stream=True,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=effective_client_kwargs,
+            )
+        return super().get_response(
             messages=messages,
-            stream=stream,
+            stream=False,
             options=options,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
@@ -386,7 +393,9 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        model_setting = cast(str, settings.get("model"))
+        model_setting = settings.get("model")
+        if model_setting is None:
+            raise SettingNotFoundError("Required setting 'model' was not provided.")
         device_type = DeviceType(device) if device is not None else None
 
         with _MANAGER_SETUP_LOCK:
