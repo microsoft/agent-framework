@@ -23,7 +23,7 @@ from collections.abc import (
 )
 from copy import deepcopy
 from datetime import datetime
-from inspect import isawaitable
+from inspect import isawaitable, ismethod
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
 
 from typing_extensions import Required, TypedDict
@@ -5010,7 +5010,7 @@ def _append_instructions(
     return combined
 
 
-def _wrap_plain_callables_once(tools: Any, wrapped: dict[int, Any]) -> Any:
+def _wrap_plain_callables_once(tools: Any, wrapped: dict[object, Any]) -> Any:
     """Wrap each plain callable in ``tools`` in a FunctionTool, reusing the wrapper for a repeated callable."""
     from ._mcp import MCPTool
     from ._tools import FunctionTool
@@ -5021,9 +5021,11 @@ def _wrap_plain_callables_once(tools: Any, wrapped: dict[int, Any]) -> Any:
     items: list[Any] = []
     for item in cast(Sequence[Any], tools):
         if callable(item) and not isinstance(item, (FunctionTool, MCPTool, dict)):
-            if id(item) not in wrapped:
-                wrapped[id(item)] = make_tool(item)
-            item = wrapped[id(item)]
+            # Every `obj.method` access is a new object, so key bound methods by instance and function
+            key = (id(item.__self__), id(item.__func__)) if ismethod(item) else id(item)
+            if key not in wrapped:
+                wrapped[key] = make_tool(item)
+            item = wrapped[key]
         items.append(item)
     return items
 
@@ -5086,7 +5088,7 @@ def merge_chat_options(
                 # Add tools that aren't already present. normalize_tools wraps a plain
                 # callable in a new FunctionTool each time, so wrap each plain function
                 # once here and the same function given on both sides is one tool.
-                wrapped: dict[int, Any] = {}
+                wrapped: dict[object, Any] = {}
                 merged_tools = normalize_tools(_wrap_plain_callables_once(base_tools, wrapped))
                 for tool in normalize_tools(_wrap_plain_callables_once(value, wrapped)):
                     if tool not in merged_tools:

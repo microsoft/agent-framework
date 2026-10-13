@@ -6948,6 +6948,18 @@ def test_merge_chat_options_same_plain_callable_on_both_sides():
     assert [t.name for t in merged["tools"]] == ["my_func"]
 
 
+def test_merge_chat_options_same_bound_method_on_both_sides():
+    """A bound method on both sides is one tool, although each `obj.method` access is a new object."""
+
+    class Weather:
+        def forecast(self) -> str:
+            return "sunny"
+
+    weather = Weather()
+    merged = merge_chat_options({"tools": [weather.forecast]}, {"tools": [weather.forecast]})  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    assert [t.name for t in merged["tools"]] == ["forecast"]
+
+
 def test_merge_chat_options_keeps_distinct_tool_with_same_name():
     """A different tool that shares a base tool's name is not dropped by the merge."""
 
