@@ -1167,6 +1167,25 @@ def test_chat_message_text():
     assert isinstance(message.contents[0], Content)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [Message("user", "Hello, how are you?"), Message(role="user", contents="Hello, how are you?")],
+    ids=["positional", "keyword"],
+)
+def test_chat_message_with_single_string_contents(message: Message) -> None:
+    """A bare string is one text content, not a sequence of single-character contents."""
+    assert len(message.contents) == 1
+    assert message.contents[0].type == "text"
+    assert message.text == "Hello, how are you?"
+
+
+def test_chat_message_with_empty_string_contents() -> None:
+    message = Message("user", "")
+
+    assert len(message.contents) == 1
+    assert message.text == ""
+
+
 def test_chat_message_contents():
     """Test the Message class to ensure it initializes correctly with contents."""
     # Create a Message with a role and multiple contents

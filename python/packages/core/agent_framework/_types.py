@@ -2072,7 +2072,8 @@ class Message(SerializationMixin):
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
             contents: A sequence of content items. Can be Content objects, strings (auto-converted
-                to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
+                to TextContent), or dicts (parsed via Content.from_dict). A single string is
+                treated as one text item. Defaults to empty list.
 
         Keyword Args:
             author_name: Optional name of the author of the message.
@@ -2081,6 +2082,10 @@ class Message(SerializationMixin):
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
+        if isinstance(contents, str):
+            # A string is itself a sequence of strings, so iterating it would create one text
+            # content per character.
+            contents = [contents]
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
         self.role: str = role
