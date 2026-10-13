@@ -552,7 +552,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "httpx", specifier = ">=0.27,<0.29" },
     { name = "powerfx", marker = "python_full_version < '3.14'", specifier = ">=0.0.32,<0.0.35" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
 ]

@@ -61,6 +61,10 @@ HTTPX's generated default are preserved but do not enable additional decoders.
 Caller-supplied response hooks and transports must not
 buffer response bodies before the handler applies its limit.
 
+HTTPX support is limited to the 0.27 and 0.28 series because the bounded
+intermediate-response cache and generated default-header integration depend
+on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
+
 ## MCP handler session lifetime
 
 `DefaultMCPToolHandler()` reuses MCP sessions through a bounded LRU cache.

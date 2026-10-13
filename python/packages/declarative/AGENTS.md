@@ -18,6 +18,8 @@ Both state classes validate object attribute names but leave dictionary keys unc
 wire and decoded-stage body limit, including redirect and authentication responses.
 It supports identity, gzip, and deflate, rejects unsupported or incomplete encodings,
 and closes response streams without closing caller-owned clients.
+HTTPX is constrained to the 0.27 and 0.28 series; focused CI checks both
+series because response caching and default-header integration use its internals.
 
 ## MCP Handler Lifetimes
 
