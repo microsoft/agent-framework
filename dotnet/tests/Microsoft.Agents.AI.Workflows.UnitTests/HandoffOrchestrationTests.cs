@@ -437,14 +437,20 @@ public class HandoffOrchestrationTests
     [InlineData(true, false, true)]
     [InlineData(true, true, false)]
     [InlineData(true, true, true)]
-    public async Task Handoffs_ReturnToInitialAgent_ReceivesFreshUserRequestAsync(bool serviceManagedHistory, bool includeReasoning, bool streaming)
+    public async Task Handoffs_ReturnToInitialAgent_ContinuesWithoutRepeatingCompletedActionAsync(bool serviceManagedHistory, bool includeReasoning, bool streaming)
     {
         // Arrange
-        const string UserRequest = "What is the status of my order?";
+        const string UserRequest = "Place my order and check its shipping status with the specialist.";
         const string Answer = "Your order has shipped.";
         ChatMessage userMessage = new(ChatRole.User, UserRequest) { MessageId = "original-user-request" };
         List<List<ChatMessage>> initialAgentRequests = [];
         List<string?> conversationIds = [];
+        int placeOrderInvocationCount = 0;
+        AIFunction placeOrder = AIFunctionFactory.Create(() =>
+        {
+            placeOrderInvocationCount++;
+            return "Order placed.";
+        }, name: "place_order");
         int toolInvocationCount = 0;
         AIFunction orderStatus = AIFunctionFactory.Create(() =>
         {
@@ -460,6 +466,11 @@ public class HandoffOrchestrationTests
             ChatMessage responseMessage;
             if (initialAgentRequests.Count == 1)
             {
+                responseMessage = new(ChatRole.Assistant, [new FunctionCallContent("place-order", placeOrder.Name)]);
+            }
+            else if (initialAgentRequests.Count == 2)
+            {
+                Assert.Equal("place-order", Assert.IsType<FunctionResultContent>(Assert.Single(request.Last().Contents)).CallId);
                 string? handoffName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
                 Assert.NotNull(handoffName);
                 responseMessage = new(ChatRole.Assistant, [new FunctionCallContent("initial-handoff", handoffName)]);
@@ -468,17 +479,18 @@ public class HandoffOrchestrationTests
                     responseMessage.Contents.Insert(0, new TextReasoningContent("The specialist should handle this request."));
                 }
             }
-            else if (initialAgentRequests.Count == 2)
+            else if (initialAgentRequests.Count == 3)
             {
-                // Reproduce the silent completion only when the framework supplies no fresh request after the handoff result.
+                // A repeated command repeats the side effect; a continuation resumes the existing request.
                 responseMessage = request.Last().Role == ChatRole.User && string.Equals(request.Last().Text, UserRequest, StringComparison.Ordinal)
-                    ? new(ChatRole.Assistant, [new FunctionCallContent("ordinary-tool-call", orderStatus.Name)])
-                    : new(ChatRole.Assistant, string.Empty);
+                    ? new(ChatRole.Assistant, [new FunctionCallContent("repeated-place-order", placeOrder.Name)])
+                    : request.Last().Role == ChatRole.User && request.Last().Text.IndexOf("initial-handoff", StringComparison.Ordinal) >= 0
+                        ? new(ChatRole.Assistant, [new FunctionCallContent("ordinary-tool-call", orderStatus.Name)])
+                        : new(ChatRole.Assistant, string.Empty);
             }
             else
             {
                 Assert.Equal(ChatRole.Tool, request.Last().Role);
-                Assert.Equal("ordinary-tool-call", Assert.IsType<FunctionResultContent>(Assert.Single(request.Last().Contents)).CallId);
                 responseMessage = new(ChatRole.Assistant, Answer);
             }
 
@@ -488,7 +500,7 @@ public class HandoffOrchestrationTests
                 ResponseId = $"initial-response-{initialAgentRequests.Count}",
                 ConversationId = serviceManagedHistory ? "initial-conversation" : null,
             };
-        }), name: "initialAgent", tools: [orderStatus]);
+        }), name: "initialAgent", tools: [placeOrder, orderStatus]);
 
         var specialist = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
@@ -532,15 +544,20 @@ public class HandoffOrchestrationTests
 
         // Assert
         Assert.Equal(Answer, response.Text);
-        Assert.Equal(3, initialAgentRequests.Count);
+        Assert.Equal(4, initialAgentRequests.Count);
+        Assert.Equal(1, placeOrderInvocationCount);
         Assert.Equal(1, toolInvocationCount);
-        List<ChatMessage> returningRequest = initialAgentRequests[1];
-        ChatMessage freshRequest = returningRequest.Last();
-        Assert.Equal(ChatRole.User, freshRequest.Role);
-        Assert.Equal(UserRequest, freshRequest.Text);
-        Assert.NotEqual(userMessage.MessageId, freshRequest.MessageId);
-        Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionResultContent>().Any(result => result.CallId == "initial-handoff"));
-        Assert.Equal(serviceManagedHistory ? "initial-conversation" : null, conversationIds[1]);
+        Assert.Equal("ordinary-tool-call", Assert.IsType<FunctionResultContent>(Assert.Single(initialAgentRequests[3].Last().Contents)).CallId);
+        List<ChatMessage> returningRequest = initialAgentRequests[2];
+        ChatMessage continuation = returningRequest.Last();
+        Assert.Equal(ChatRole.User, continuation.Role);
+        Assert.Contains("initial-handoff", continuation.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(UserRequest, continuation.Text, StringComparison.Ordinal);
+        Assert.Contains("Do not repeat", continuation.Text, StringComparison.Ordinal);
+        Assert.Null(continuation.RawRepresentation);
+        Assert.Equal(serviceManagedHistory ? 0 : 1, returningRequest.Count(message => string.Equals(message.Text, UserRequest, StringComparison.Ordinal)));
+        Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionResultContent>().Any(result => string.Equals(result.CallId, "initial-handoff", StringComparison.Ordinal)));
+        Assert.Equal(serviceManagedHistory ? "initial-conversation" : null, conversationIds[2]);
         if (serviceManagedHistory)
         {
             Assert.Equal(2, returningRequest.Count);
@@ -548,7 +565,7 @@ public class HandoffOrchestrationTests
         }
         else
         {
-            Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionCallContent>().Any(call => call.CallId == "initial-handoff"));
+            Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionCallContent>().Any(call => string.Equals(call.CallId, "initial-handoff", StringComparison.Ordinal)));
         }
 
         WorkflowSession workflowSession = Assert.IsType<WorkflowSession>(session);
@@ -562,12 +579,11 @@ public class HandoffOrchestrationTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Handoffs_ReturnAfterCheckpoint_ReplaysOnlyWithoutNewUserInputAsync(bool serviceManagedHistory, bool newUserInput)
+    public async Task Handoffs_ReturnAfterCheckpoint_ContinuesOnlyWithoutNewUserInputAsync(bool serviceManagedHistory, bool newUserInput)
     {
         // Arrange
         const string OriginalRequest = "What is the status of my order?";
         const string NewRequest = "When will it arrive?";
-        string expectedRequest = newUserInput ? NewRequest : OriginalRequest;
         List<List<ChatMessage>> initialAgentRequests = [];
         int specialistInvocationCount = 0;
         AIFunctionDeclaration externalTool = AIFunctionFactory.CreateDeclaration(
@@ -609,17 +625,19 @@ public class HandoffOrchestrationTests
         List<ChatMessage> returningRequest = initialAgentRequests[1];
         ChatMessage lastMessage = returningRequest.Last();
         Assert.Equal(ChatRole.User, lastMessage.Role);
-        Assert.Equal(expectedRequest, lastMessage.Text);
         if (newUserInput)
         {
+            Assert.Equal(NewRequest, lastMessage.Text);
             Assert.Equal("new-request", lastMessage.MessageId);
         }
         else
         {
-            Assert.NotEqual("original-request", lastMessage.MessageId);
+            Assert.Contains("initial-handoff", lastMessage.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain(OriginalRequest, lastMessage.Text, StringComparison.Ordinal);
+            Assert.Contains("Do not repeat", lastMessage.Text, StringComparison.Ordinal);
         }
-        Assert.Equal(serviceManagedHistory || newUserInput ? 1 : 2, returningRequest.Count(message => message.Role == ChatRole.User && message.Text == expectedRequest));
-        Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionResultContent>().Any(result => result.CallId == "initial-handoff"));
+        Assert.Equal(serviceManagedHistory ? 0 : 1, returningRequest.Count(message => message.Role == ChatRole.User && string.Equals(message.Text, OriginalRequest, StringComparison.Ordinal)));
+        Assert.Contains(returningRequest, message => message.Contents.OfType<FunctionResultContent>().Any(result => string.Equals(result.CallId, "initial-handoff", StringComparison.Ordinal)));
         Assert.NotNull(resumedRun.Result);
         Assert.Equal(newUserInput ? 2 : 1, resumedRun.Result.Count(message => message.Role == ChatRole.User));
 
@@ -640,7 +658,10 @@ public class HandoffOrchestrationTests
                 else
                 {
                     Assert.Equal(serviceManagedHistory ? "initial-conversation" : null, options?.ConversationId);
-                    responseMessage = new(ChatRole.Assistant, request.Last().Role == ChatRole.User && request.Last().Text == expectedRequest ? "Request answered." : string.Empty);
+                    bool isExpectedInput = newUserInput
+                        ? string.Equals(request.Last().Text, NewRequest, StringComparison.Ordinal)
+                        : request.Last().Text.IndexOf("initial-handoff", StringComparison.Ordinal) >= 0 && !string.Equals(request.Last().Text, OriginalRequest, StringComparison.Ordinal);
+                    responseMessage = new(ChatRole.Assistant, request.Last().Role == ChatRole.User && isExpectedInput ? "Request answered." : string.Empty);
                 }
 
                 return new(responseMessage) { ConversationId = serviceManagedHistory ? "initial-conversation" : null };

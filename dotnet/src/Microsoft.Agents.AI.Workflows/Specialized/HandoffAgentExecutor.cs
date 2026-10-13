@@ -384,29 +384,16 @@ internal sealed class HandoffAgentExecutor :
             && messagesForAgent.Any(message => message.Contents.OfType<FunctionResultContent>()
                 .Any(result => string.Equals(result.CallId, state.PendingHandoffCallId, StringComparison.Ordinal))))
         {
-            await this._sharedStateRef.InvokeWithStateAsync(
-                (sharedState, ctx, ct) =>
-                {
-                    if (sharedState is null)
-                    {
-                        throw new InvalidOperationException("Handoff Orchestration shared state was not properly initialized.");
-                    }
-
-                    // The old handoff result completes the pending call, but is not a fresh request to act on.
-                    // Reissue the latest user request only to this participant, not to the shared conversation.
-                    ChatMessage? userRequest = sharedState.Conversation.CloneHistory().LastOrDefault(IsUserRequest);
-                    if (userRequest is not null)
-                    {
-                        ChatMessage freshRequest = userRequest.Clone();
-                        freshRequest.MessageId = Guid.NewGuid().ToString("N");
-                        freshRequest.CreatedAt = DateTimeOffset.UtcNow;
-                        messagesForAgent.Add(freshRequest);
-                    }
-
-                    return new ValueTask();
-                },
-                context,
-                cancellationToken).ConfigureAwait(false);
+            // Keep this prompt participant-local. Replaying the original command as a new request
+            // could repeat side effects already recorded in the retained agent session.
+            messagesForAgent.Add(new ChatMessage(ChatRole.User,
+                $"Control has returned after handoff call '{state.PendingHandoffCallId}'. " +
+                "Continue the existing user request using the conversation and completed tool results. " +
+                "This is a continuation, not a new request. Do not repeat actions that have already completed.")
+            {
+                MessageId = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
         }
 
         bool emitUpdateEvents = state.IncomingState!.ShouldEmitStreamingEvents(this._options.EmitAgentResponseUpdateEvents);
