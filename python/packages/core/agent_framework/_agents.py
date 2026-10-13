@@ -687,6 +687,11 @@ class BaseAgent(SerializationMixin):
             A FunctionTool that can be used as a tool by other agents.
 
         Note:
+            The sub-agent's response ``usage_details`` (including its own sub-agents) is rolled into
+            the calling agent's response ``usage_details`` when the tool runs inside the function
+            invocation loop, also when the sub-agent stops on an approval or user-input request. A
+            sub-agent run that fails produces no response, so its usage is not counted.
+
             Child function approvals are not propagated into the calling agent.
             Configure ToolApprovalMiddleware with runtime auto-approval rules on
             the child for immediate policy decisions. Use a workflow when approval
@@ -747,6 +752,8 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
+            from ._tools import _record_tool_usage  # pyright: ignore[reportPrivateUsage]
+
             parent_session = ctx.session
             session = AgentSession()
             child_approval_source_ids = _tool_approval_source_ids(self.middleware)
@@ -833,6 +840,10 @@ class BaseAgent(SerializationMixin):
                         if isawaitable(callback_result):
                             await callback_result
                 final_response = await stream.get_final_response()
+                # Report the sub-agent's token usage (including its own sub-agents) to the calling loop,
+                # which folds it into the parent response's usage_details exactly once. Recorded before
+                # the approval/user-input raises below so that usage is not lost on those paths.
+                _record_tool_usage(ctx, final_response.usage_details)
                 approval_requests = [
                     request
                     for request in final_response.user_input_requests

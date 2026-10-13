@@ -1861,6 +1861,54 @@ async def test_budget_excludes_judge_call_usage_streaming() -> None:
     assert judge_client.call_count == 2
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_budget_counts_sub_agent_usage_from_as_tool(stream: bool) -> None:
+    # The parent spends 10 tokens per model call; the as_tool sub-agent spends 200. Only the
+    # roll-up of the sub-agent's usage into the parent's usage_details trips the 100-token
+    # budget after iteration 1; without it the loop would run to the iteration cap.
+    child = Agent(client=RecordingChatClient(usage_per_call=200), name="researcher")
+    parent_client = MockBaseChatClient()
+    delegate_call = Content.from_function_call(call_id="delegate", name="researcher", arguments={"task": "dig"})
+    parent_client.run_responses = [
+        ChatResponse(
+            messages=Message(role="assistant", contents=[delegate_call]),
+            usage_details=UsageDetails(total_token_count=10),
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", contents=["summary"]), usage_details=UsageDetails(total_token_count=10)
+        ),
+    ]
+    parent_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant", contents=[delegate_call, Content.from_usage(UsageDetails(total_token_count=10))]
+            )
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text("summary"), Content.from_usage(UsageDetails(total_token_count=10))],
+            )
+        ],
+    ]
+    agent = Agent(
+        client=parent_client,
+        tools=[child.as_tool()],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=10, budget=AgentBudget(max_tokens=100))],
+    )
+
+    if stream:
+        response = await agent.run("task", stream=True).get_final_response()
+    else:
+        response = await agent.run("task")
+
+    assert parent_client.call_count == 2
+    assert response.usage_details is not None
+    assert response.usage_details.get("total_token_count") == 220
+    if not stream:
+        assert response.additional_properties.get("loop_exit_reason") == "token_budget_exceeded"
+
+
 def test_agent_budget_validates_max_tokens() -> None:
     with pytest.raises(ValueError, match="max_tokens"):
         AgentLoopMiddleware(always_continue, budget=AgentBudget(max_tokens=0))

@@ -11,18 +11,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, cast
 
 from .._agents import SupportsAgentRun
 from .._feature_stage import ExperimentalFeature, experimental
+from .._middleware import ChatContext, ChatMiddleware, FunctionInvocationContext
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
-from .._tools import tool
-from .._types import AgentResponse, Message
+from .._tools import _record_tool_usage, tool  # pyright: ignore[reportPrivateUsage]
+from .._types import AgentResponse, ChatResponse, ChatResponseUpdate, Content, Message, UsageDetails, add_usage_details
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,18 @@ class BackgroundTaskInfo(SerializationMixin):
     status: BackgroundTaskStatus
     result_text: str | None
     error_text: str | None
-    __slots__ = ("agent_name", "description", "error_text", "id", "result_text", "status")
+    usage_details: UsageDetails | None
+    usage_reported: bool
+    __slots__ = (
+        "agent_name",
+        "description",
+        "error_text",
+        "id",
+        "result_text",
+        "status",
+        "usage_details",
+        "usage_reported",
+    )
 
     def __init__(
         self,
@@ -75,14 +87,30 @@ class BackgroundTaskInfo(SerializationMixin):
         status: BackgroundTaskStatus = BackgroundTaskStatus.RUNNING,
         result_text: str | None = None,
         error_text: str | None = None,
+        usage_details: UsageDetails | None = None,
+        usage_reported: bool = False,
     ) -> None:
-        """Initialize a background task info entry."""
+        """Initialize a background task info entry.
+
+        Args:
+            id: The task ID.
+            agent_name: The name of the background agent running the task.
+            description: The task description.
+            status: The task status.
+            result_text: The text output of a completed task.
+            error_text: The error of a failed task.
+            usage_details: Token usage of the task's latest completed run.
+            usage_reported: Whether ``usage_details`` has already been charged to a parent run, so the
+                usage of each completed run is charged exactly once.
+        """
         self.id = id
         self.agent_name = agent_name
         self.description = description
         self.status = status
         self.result_text = result_text
         self.error_text = error_text
+        self.usage_details = usage_details
+        self.usage_reported = usage_reported
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize for session state persistence."""
@@ -97,6 +125,9 @@ class BackgroundTaskInfo(SerializationMixin):
             data["result_text"] = self.result_text
         if not exclude_none or self.error_text is not None:
             data["error_text"] = self.error_text
+        if not exclude_none or self.usage_details is not None:
+            data["usage_details"] = dict(self.usage_details) if self.usage_details is not None else None
+            data["usage_reported"] = self.usage_reported
         return data
 
     @classmethod
@@ -109,7 +140,16 @@ class BackgroundTaskInfo(SerializationMixin):
             status=BackgroundTaskStatus(data["status"]),
             result_text=data.get("result_text"),
             error_text=data.get("error_text"),
+            usage_details=_usage_from_state(data.get("usage_details")),
+            usage_reported=bool(data.get("usage_reported", False)),
         )
+
+
+def _usage_from_state(value: Any) -> UsageDetails | None:
+    """Restore persisted usage details, ignoring malformed state."""
+    if not isinstance(value, Mapping) or not value:
+        return None
+    return cast(UsageDetails, dict(cast(Mapping[str, Any], value)))
 
 
 @dataclass
@@ -227,9 +267,65 @@ def _finalize_task(
             task_info.status = BackgroundTaskStatus.FAILED
             task_info.error_text = str(exception)
         else:
+            response = completed_task.result()
             task_info.status = BackgroundTaskStatus.COMPLETED
-            task_info.result_text = completed_task.result().text
+            task_info.result_text = response.text
+            # Held until a parent run observes the completion; see _take_unreported_usage.
+            task_info.usage_details = (
+                cast(UsageDetails, dict(response.usage_details)) if response.usage_details else None
+            )
+            task_info.usage_reported = False
     runtime.in_flight_tasks.pop(task_info.id, None)
+
+
+def _take_unreported_usage(tasks: Sequence[BackgroundTaskInfo]) -> UsageDetails | None:
+    """Sum the usage of finished tasks not yet charged to a parent run and mark it charged.
+
+    Each completed run's usage is charged exactly once, to the parent run that first observes the
+    completion. Failed or cancelled runs produce no response, so they carry no usage.
+    """
+    total: UsageDetails | None = None
+    for task_info in tasks:
+        if task_info.usage_details and not task_info.usage_reported:
+            total = add_usage_details(total, task_info.usage_details)
+            task_info.usage_reported = True
+    return total
+
+
+class _BackgroundUsageChargeMiddleware(ChatMiddleware):
+    """Charge background task usage that ``before_run`` observed to the current run's response.
+
+    ``before_run`` has no tool invocation context to report usage through, so this run-scoped chat
+    middleware folds the usage into the first successful model response of the run instead. The
+    function invocation loop then folds that response's usage into the run's ``usage_details``.
+    """
+
+    def __init__(self, take_usage: Callable[[], UsageDetails | None]) -> None:
+        self._take_usage = take_usage
+
+    def _charge(self) -> UsageDetails | None:
+        usage = self._take_usage()
+        if usage:
+            from ..observability import _record_delegated_usage  # pyright: ignore[reportPrivateUsage]
+
+            # The usage is not this agent's own; keep it out of the invoke_agent span's fallback usage.
+            _record_delegated_usage(usage)
+        return usage
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        if not context.stream:
+            await call_next()
+            if isinstance(context.result, ChatResponse) and (usage := self._charge()):
+                context.result.usage_details = add_usage_details(context.result.usage_details, usage)
+            return
+
+        def _attach_usage(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            if usage := self._charge():
+                update.contents = [*update.contents, Content.from_usage(usage)]
+            return update
+
+        context.stream_update_transforms.append(_attach_usage)
+        await call_next()
 
 
 def _refresh_task_state(
@@ -282,6 +378,14 @@ class BackgroundAgentsProvider(ContextProvider):
     - ``background_agents_get_all_tasks`` — List all background tasks with their IDs, statuses, and descriptions.
     - ``background_agents_continue_task`` — Send follow-up input to a completed task's session to resume work.
     - ``background_agents_clear_completed_task`` — Remove a completed task and release its session.
+
+    Token usage:
+        Each completed background run's token usage is charged exactly once to the parent agent's
+        response ``usage_details``: to the parent run that first observes the task finished, through
+        the observing tool call, or through the run's first model response when ``before_run`` observes
+        it. Failed or cancelled runs produce no response, so their tokens are not counted, and tasks
+        that are never observed as finished (including tasks abandoned by :meth:`release_session`)
+        are not counted either.
 
     Security considerations:
         The agents passed to the constructor are delegated arbitrary work by the parent agent — the
@@ -473,6 +577,18 @@ class BackgroundAgentsProvider(ContextProvider):
         runtime = self._get_runtime(session)
         source_id = self.source_id
 
+        def take_unreported_usage(tasks: Sequence[BackgroundTaskInfo]) -> UsageDetails | None:
+            usage = _take_unreported_usage(tasks)
+            if usage is not None:
+                _save_tasks(provider_state, list(tasks))
+                _save_provider_state(session, provider_state, source_id=source_id)
+            return usage
+
+        def charge_observed_usage(tasks: Sequence[BackgroundTaskInfo], ctx: FunctionInvocationContext | None) -> None:
+            """Charge finished tasks' usage to the parent run through the observing tool's context."""
+            if ctx is not None:
+                _record_tool_usage(ctx, take_unreported_usage(tasks))
+
         @tool(name="background_agents_start_task", approval_mode="never_require")
         def background_agents_start_task(agent_name: str, input: str, description: str) -> str:
             """Start a background task on a named agent. Returns a confirmation with the task ID."""
@@ -514,7 +630,9 @@ class BackgroundAgentsProvider(ContextProvider):
         background_agents_start_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
-        async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
+        async def background_agents_wait_for_first_completion(
+            task_ids: list[int], ctx: FunctionInvocationContext | None = None
+        ) -> str:
             """Wait until the first of the specified tasks completes or the configured timeout expires.
 
             Returns the completed task's ID. On timeout, the tasks remain running and this tool
@@ -536,6 +654,7 @@ class BackgroundAgentsProvider(ContextProvider):
             if not waitable:
                 # Refresh state to catch any that completed.
                 tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+                charge_observed_usage(tasks, ctx)
                 already_complete = next(
                     (t for t in tasks if t.id in task_ids and t.status != BackgroundTaskStatus.RUNNING), None
                 )
@@ -573,14 +692,16 @@ class BackgroundAgentsProvider(ContextProvider):
                     _finalize_task(task_info, completed_task, runtime)
                     _save_tasks(provider_state, tasks)
                     _save_provider_state(session, provider_state, source_id=source_id)
+                    charge_observed_usage(tasks, ctx)
 
             status_str = task_info.status.value if task_info else "Unknown"
             return f"Task {completed_id} finished with status: {status_str}."
 
         @tool(name="background_agents_get_task_results", approval_mode="never_require")
-        def background_agents_get_task_results(task_id: int) -> str:
+        def background_agents_get_task_results(task_id: int, ctx: FunctionInvocationContext | None = None) -> str:
             """Get the text output of a background task by its ID."""
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+            charge_observed_usage(tasks, ctx)
             task_info = next((t for t in tasks if t.id == task_id), None)
 
             if task_info is None:
@@ -597,9 +718,10 @@ class BackgroundAgentsProvider(ContextProvider):
             return f"Task {task_id} has status: {task_info.status.value}."
 
         @tool(name="background_agents_get_all_tasks", approval_mode="never_require")
-        def background_agents_get_all_tasks() -> str:
+        def background_agents_get_all_tasks(ctx: FunctionInvocationContext | None = None) -> str:
             """List all background tasks with their IDs, statuses, agent names, and descriptions."""
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+            charge_observed_usage(tasks, ctx)
 
             if not tasks:
                 return "No tasks."
@@ -610,12 +732,16 @@ class BackgroundAgentsProvider(ContextProvider):
             return "\n".join(lines)
 
         @tool(name="background_agents_continue_task", approval_mode="never_require")
-        def background_agents_continue_task(task_id: int, text: str) -> str:
+        def background_agents_continue_task(
+            task_id: int, text: str, ctx: FunctionInvocationContext | None = None
+        ) -> str:
             """Send follow-up input to a completed or failed task to resume its work."""
             if runtime.closed:
                 return "Error: Session is being released; cannot continue a background task."
 
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+            # Charge the previous run's usage before a new run replaces it.
+            charge_observed_usage(tasks, ctx)
             task_info = next((t for t in tasks if t.id == task_id), None)
 
             if task_info is None:
@@ -647,6 +773,8 @@ class BackgroundAgentsProvider(ContextProvider):
             task_info.status = BackgroundTaskStatus.RUNNING
             task_info.result_text = None
             task_info.error_text = None
+            task_info.usage_details = None
+            task_info.usage_reported = False
             _save_tasks(provider_state, tasks)
 
             _save_provider_state(session, provider_state, source_id=source_id)
@@ -655,12 +783,13 @@ class BackgroundAgentsProvider(ContextProvider):
         background_agents_continue_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_clear_completed_task", approval_mode="never_require")
-        def background_agents_clear_completed_task(task_id: int) -> str:
+        def background_agents_clear_completed_task(task_id: int, ctx: FunctionInvocationContext | None = None) -> str:
             """Remove a completed or failed task and release its session to free memory."""
             if runtime.closed:
                 return "Error: Session is being released; cannot clear tasks."
 
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+            charge_observed_usage(tasks, ctx)
             task_info = next((t for t in tasks if t.id == task_id), None)
 
             if task_info is None:
@@ -697,6 +826,15 @@ class BackgroundAgentsProvider(ContextProvider):
         # Include current task status as context message if there are tasks.
         # Refresh first to get accurate statuses for any tasks that completed between turns.
         tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+        if any(t.usage_details and not t.usage_reported for t in tasks):
+            # Completions observed here have no tool context to report through, so charge their usage to
+            # this run's first model response instead.
+            context.extend_middleware(
+                self.source_id,
+                _BackgroundUsageChargeMiddleware(
+                    lambda: take_unreported_usage(_get_tasks(provider_state)),
+                ),
+            )
         if tasks:
             status_lines = ["### Current background tasks"]
             for t in tasks:

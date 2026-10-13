@@ -177,9 +177,13 @@ class AgentBudget(TypedDict, total=False):
     Calls the loop framework makes on its own behalf are never charged: the judge call made by
     :meth:`AgentLoopMiddleware.with_judge` does not count toward this budget.
 
-    Sub-agents are only counted when their usage is reported in the wrapped agent's response
-    usage details. Agents exposed as tools via :meth:`~agent_framework.Agent.as_tool` and
-    background agents return only text, so their token usage is currently *not* included.
+    Sub-agent usage counts too: an agent exposed as a tool via :meth:`~agent_framework.Agent.as_tool`
+    rolls its response usage (including its own sub-agents) into the calling agent's usage details,
+    and a :class:`~agent_framework.BackgroundAgentsProvider` task's usage is charged once, to the
+    parent run that first observes the task finished. Remaining gaps: a sub-agent run that fails or
+    is cancelled produces no response, so its tokens are not counted; background tasks that are never
+    observed as finished (including tasks abandoned when their session is released) are not counted;
+    and custom tools that call ``agent.run`` directly do not report the nested run's usage.
 
     This accounting is fixed and not configurable.
     """
@@ -410,9 +414,9 @@ class AgentLoopMiddleware(AgentMiddleware):
             budget: Optional :class:`AgentBudget` (or a plain ``dict`` with the same keys) bounding total
                 token spend and/or wall-clock time. ``max_tokens`` counts the wrapped agent's
                 ``total_token_count`` (falling back to input + output tokens) per iteration; the
-                judge call made by :meth:`with_judge` is never counted, and sub-agent usage counts
-                only when it is reported in the agent's response usage details (see
-                :attr:`AgentBudget.max_tokens`). Not configurable. Checked after each iteration, before
+                judge call made by :meth:`with_judge` is never counted, while sub-agent usage from
+                ``as_tool`` and background agents is included, with the gaps listed on
+                :attr:`AgentBudget.max_tokens`. Not configurable. Checked after each iteration, before
                 ``should_continue`` is evaluated. When exceeded the loop stops and (non-streaming
                 only) stamps ``loop_exit_reason``. Budgets do not interrupt an in-flight model/tool
                 call; use ``asyncio.timeout`` (or similar) around the run for a hard wall-clock
@@ -511,7 +515,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                 baseline between iterations. See :meth:`__init__` for the full semantics. Defaults to
                 ``False``.
             budget: Optional :class:`AgentBudget`. See :meth:`__init__`. The judge call's own token
-                usage is never charged against ``max_tokens``.
+                usage is never charged against ``max_tokens``; the agent's sub-agent usage (``as_tool``
+                and background agents) is, as described on :attr:`AgentBudget.max_tokens`.
         """
         judge_instructions = (instructions or DEFAULT_JUDGE_INSTRUCTIONS).replace(
             CRITERIA_PLACEHOLDER, _render_criteria_block(criteria)

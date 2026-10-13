@@ -11824,3 +11824,86 @@ async def test_unbound_local_approval_response_is_filtered_before_mixed_batch_va
     assert executed == []
     # The warning proves the response was filtered before the completeness check reported it missing.
     assert any("tool-approval response" in record.message for record in caplog.records)
+
+
+# region tool-reported usage
+
+
+_TOOL_REPORTED_USAGE = {"input_token_count": 7, "output_token_count": 3, "total_token_count": 10}
+
+
+async def _get_tool_usage_response(client: Any, tool_obj: FunctionTool, *, streaming: bool) -> ChatResponse:
+    messages = [Message(role="user", contents=["run"])]
+    if streaming:
+        stream = client.get_response(messages, options={"tools": [tool_obj]}, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+    return await client.get_response(messages, options={"tools": [tool_obj]})
+
+
+def _script_tool_call_turn(client: Any, *, streaming: bool) -> None:
+    call = Content.from_function_call(call_id="usage-call", name="delegating_tool", arguments={})
+    model_usage = {"input_token_count": 2, "output_token_count": 1, "total_token_count": 3}
+    if streaming:
+        client.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[call, Content.from_usage(model_usage)])]  # type: ignore[arg-type]
+        ]
+    else:
+        client.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[call]), usage_details=model_usage)  # type: ignore[arg-type]
+        ]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_tool_reported_usage_counted_once_across_max_iterations_final_call(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+) -> None:
+    """Usage a tool reports through the private context key is folded in once, also when Phase 3 runs."""
+    from agent_framework._tools import _TOOL_USAGE_CONTEXT_KEY
+
+    @tool(name="delegating_tool", approval_mode="never_require")
+    def delegating_tool(ctx: FunctionInvocationContext) -> str:
+        ctx.metadata[_TOOL_USAGE_CONTEXT_KEY] = dict(_TOOL_REPORTED_USAGE)
+        return "delegated"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _script_tool_call_turn(chat_client_base, streaming=streaming)
+
+    response = await _get_tool_usage_response(chat_client_base, delegating_tool, streaming=streaming)
+
+    # The max-iterations Phase 3 call ran (and reported no usage of its own).
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert response.usage_details == {"input_token_count": 9, "output_token_count": 4, "total_token_count": 13}
+    function_results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 1
+    assert function_results[0].usage_details == _TOOL_REPORTED_USAGE
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_tool_reported_usage_survives_tool_exception(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+) -> None:
+    """Usage reported before a tool raises is kept on the error result and folded into the response."""
+    from agent_framework._tools import _TOOL_USAGE_CONTEXT_KEY
+
+    @tool(name="delegating_tool", approval_mode="never_require")
+    def delegating_tool(ctx: FunctionInvocationContext) -> str:
+        ctx.metadata[_TOOL_USAGE_CONTEXT_KEY] = dict(_TOOL_REPORTED_USAGE)
+        raise RuntimeError("delegated work failed after spending tokens")
+
+    _script_tool_call_turn(chat_client_base, streaming=streaming)
+
+    response = await _get_tool_usage_response(chat_client_base, delegating_tool, streaming=streaming)
+
+    function_results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 1
+    assert function_results[0].exception is not None
+    assert response.usage_details == {"input_token_count": 9, "output_token_count": 4, "total_token_count": 13}
+
+
+# endregion

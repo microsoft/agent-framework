@@ -6527,6 +6527,101 @@ async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(s
     assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
+def _script_usage_turns(client: Any, *turns: tuple[list[Content], UsageDetails]) -> None:
+    client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=contents), usage_details=usage)
+        for contents, usage in turns
+    ]
+    client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(usage)])]
+        for contents, usage in turns
+    ]
+
+
+def _invoke_agent_spans_by_name(spans: Sequence[Any]) -> dict[str, Any]:
+    return {
+        span.attributes.get(OtelAttr.AGENT_NAME): span.attributes
+        for span in spans
+        if span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+    }
+
+
+async def _run_parent_with_sub_agent(client_type: type[Any], stream: bool) -> dict[str, Any]:
+    child_client = client_type()
+    _script_usage_turns(
+        child_client,
+        ([Content.from_text("child answer")], UsageDetails(input_token_count=1000, output_token_count=500)),
+    )
+    child = Agent(client=child_client, name="child_agent")
+
+    parent_client = client_type()
+    delegate_call = Content.from_function_call(call_id="delegate", name="delegate", arguments={"task": "dig"})
+    _script_usage_turns(
+        parent_client,
+        ([delegate_call], UsageDetails(input_token_count=30, output_token_count=20)),
+        ([Content.from_text("parent answer")], UsageDetails(input_token_count=40, output_token_count=10)),
+    )
+    parent = Agent(client=parent_client, name="parent_agent", tools=[child.as_tool(name="delegate")])
+
+    if stream:
+        response = await parent.run("Go.", stream=True).get_final_response()
+    else:
+        response = await parent.run("Go.")
+    return dict(response.usage_details or {})
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_invoke_span_reports_own_usage_when_sub_agent_usage_rolls_up(
+    span_exporter: InMemorySpanExporter, stream: bool
+) -> None:
+    """Sub-agent usage rolls into the parent's response, but each invoke_agent span reports its own usage."""
+    from tests.core.conftest import MockBaseChatClient
+
+    span_exporter.clear()
+    usage = await _run_parent_with_sub_agent(MockBaseChatClient, stream)
+
+    assert usage["input_token_count"] == 1070
+    assert usage["output_token_count"] == 530
+    spans = _invoke_agent_spans_by_name(span_exporter.get_finished_spans())
+    assert spans["parent_agent"].get(OtelAttr.INPUT_TOKENS) == 70
+    assert spans["parent_agent"].get(OtelAttr.OUTPUT_TOKENS) == 30
+    assert spans["child_agent"].get(OtelAttr.INPUT_TOKENS) == 1000
+    assert spans["child_agent"].get(OtelAttr.OUTPUT_TOKENS) == 500
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_invoke_span_usage_fallback_excludes_sub_agent_usage(
+    span_exporter: InMemorySpanExporter, stream: bool
+) -> None:
+    """Without chat spans, the invoke_agent span falls back to response usage minus sub-agent usage."""
+    from agent_framework import ChatMiddlewareLayer, FunctionInvocationLayer
+    from tests.core.conftest import MockBaseChatClient
+
+    class _NoChatTelemetryClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__(middleware=[])
+            self.run_responses: list[ChatResponse] = []
+            self.streaming_responses: list[list[ChatResponseUpdate]] = []
+            self.call_count = 0
+
+        _inner_get_response = MockBaseChatClient._inner_get_response
+        _get_non_streaming_response = MockBaseChatClient._get_non_streaming_response
+        _get_streaming_response = MockBaseChatClient._get_streaming_response
+
+    span_exporter.clear()
+    usage = await _run_parent_with_sub_agent(_NoChatTelemetryClient, stream)
+
+    assert usage["input_token_count"] == 1070
+    assert usage["output_token_count"] == 530
+    spans = _invoke_agent_spans_by_name(span_exporter.get_finished_spans())
+    assert spans["parent_agent"].get(OtelAttr.INPUT_TOKENS) == 70
+    assert spans["parent_agent"].get(OtelAttr.OUTPUT_TOKENS) == 30
+    assert spans["child_agent"].get(OtelAttr.INPUT_TOKENS) == 1000
+    assert spans["child_agent"].get(OtelAttr.OUTPUT_TOKENS) == 500
+
+
 # region Test span nesting (parent-child relationships)
 
 

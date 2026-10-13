@@ -127,6 +127,13 @@ _BUDGET_PAUSED_AT_KEY: Final[str] = "paused_at"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
+# Private FunctionInvocationContext.metadata key through which a tool reports token usage it spent on the
+# caller's behalf (for example a delegated sub-agent run). The function invocation loop folds it into the
+# calling response's usage_details exactly once.
+_TOOL_USAGE_CONTEXT_KEY: Final[str] = "_tool_usage_details"
+# Private exception attribute that carries tool usage across control-flow exceptions which escape
+# _auto_invoke_function without producing a function_result (user input requests, middleware termination).
+_TOOL_USAGE_EXCEPTION_ATTRIBUTE: Final[str] = "_agent_framework_tool_usage_details"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
 _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
@@ -1968,6 +1975,43 @@ def _replacement_approval_request(
     )
 
 
+def _record_tool_usage(context: FunctionInvocationContext, usage: UsageDetails | None) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Accumulate token usage a tool spent on the caller's behalf into its invocation context.
+
+    The function invocation loop moves the accumulated usage onto the tool's result and folds it
+    into the calling response's ``usage_details`` exactly once.
+    """
+    if not usage:
+        return
+    from ._types import add_usage_details
+
+    existing = context.metadata.get(_TOOL_USAGE_CONTEXT_KEY)
+    context.metadata[_TOOL_USAGE_CONTEXT_KEY] = add_usage_details(
+        cast("UsageDetails | None", existing) if isinstance(existing, Mapping) else None,
+        usage,
+    )
+
+
+def _pop_tool_usage(context: FunctionInvocationContext | None) -> UsageDetails | None:
+    """Remove and return the tool usage accumulated in an invocation context."""
+    if context is None:
+        return None
+    usage = context.metadata.pop(_TOOL_USAGE_CONTEXT_KEY, None)
+    return cast("UsageDetails", usage) if isinstance(usage, Mapping) and usage else None
+
+
+def _attach_tool_usage_to_exception(exception: BaseException, context: FunctionInvocationContext | None) -> None:
+    """Carry tool usage on a control-flow exception that escapes without a function_result."""
+    if (usage := _pop_tool_usage(context)) is not None:
+        setattr(exception, _TOOL_USAGE_EXCEPTION_ATTRIBUTE, usage)
+
+
+def _tool_usage_from_exception(exception: BaseException) -> UsageDetails | None:
+    """Return the tool usage carried by a control-flow exception, if any."""
+    usage = getattr(exception, _TOOL_USAGE_EXCEPTION_ATTRIBUTE, None)
+    return cast("UsageDetails", usage) if isinstance(usage, Mapping) and usage else None
+
+
 def _finalize_function_result(
     *,
     call_id: str,
@@ -1997,6 +2041,9 @@ def _finalize_function_result(
         exception=exception,
         additional_properties=additional_properties,
     )
+    # Usage a tool spent on the caller's behalf (e.g. a delegated sub-agent run) travels on the result so
+    # the function invocation loop can fold it into the calling response exactly once.
+    function_result.usage_details = _pop_tool_usage(context)
     if carrier is None or function_result.items is None:
         return function_result
 
@@ -2149,7 +2196,12 @@ async def _auto_invoke_function(
                 base_additional_properties=function_call_content.additional_properties,
                 context=direct_context,
             )
-        except (MiddlewareFailure, UserInputRequiredException):
+        except UserInputRequiredException as exc:
+            # The tool ran (e.g. a sub-agent that ended on a user-input request), so keep the
+            # usage it spent with the request contents surfaced by the loop.
+            _attach_tool_usage_to_exception(exc, direct_context)
+            raise
+        except MiddlewareFailure:
             # Explicit control-flow signals escape the loop; only ordinary exceptions
             # are absorbed into tool-error results below.
             raise
@@ -2275,6 +2327,8 @@ async def _auto_invoke_function(
                     base_additional_properties=function_call_content.additional_properties,
                     context=middleware_context,
                 )
+        # Usage not already moved onto a finalized result travels with the exception.
+        _attach_tool_usage_to_exception(term_exc, middleware_context)
         raise
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
@@ -2283,7 +2337,10 @@ async def _auto_invoke_function(
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
-    except (MiddlewareFailure, UserInputRequiredException):
+    except UserInputRequiredException as exc:
+        _attach_tool_usage_to_exception(exc, middleware_context)
+        raise
+    except MiddlewareFailure:
         # MiddlewareFailure is the loop's explicit fail-closed escape: middleware that
         # must abort the run (enforcement layers, guardrails) raises it instead of
         # relying on the tool-error conversion below, and it propagates to the caller.
@@ -2334,7 +2391,7 @@ async def _execute_single_function_call(
 ) -> tuple[list[Content], bool]:
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
-    from ._types import Content
+    from ._types import Content, add_usage_details
 
     source_function_call = _underlying_function_call(function_call)
     source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
@@ -2362,16 +2419,20 @@ async def _execute_single_function_call(
             )
         return [result], False
     except MiddlewareTermination as exc:
+        tool_usage = _tool_usage_from_exception(exc)
         if isinstance(exc.result, Content):
+            if tool_usage is not None:
+                exc.result.usage_details = add_usage_details(exc.result.usage_details, tool_usage)
             return [exc.result], True
         source_function_call = _underlying_function_call(function_call)
-        return [
-            Content.from_function_result(
-                call_id=source_function_call.call_id,  # type: ignore[arg-type]
-                result=exc.result,
-            )
-        ], True
+        terminated_result = Content.from_function_result(
+            call_id=source_function_call.call_id,  # type: ignore[arg-type]
+            result=exc.result,
+        )
+        terminated_result.usage_details = tool_usage
+        return [terminated_result], True
     except UserInputRequiredException as exc:
+        tool_usage = _tool_usage_from_exception(exc)
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
         propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
@@ -2379,15 +2440,19 @@ async def _execute_single_function_call(
             item.call_id = call_id
             if not item.id:
                 item.id = call_id
+            # Request contents can come from a nested agent run whose own loop already counted the usage
+            # they carry; the usage this tool reports below already includes it, so count it only once.
+            item.usage_details = None
         if propagated_contents:
+            propagated_contents[0].usage_details = tool_usage
             return propagated_contents, False
-        return [
-            Content.from_function_result(
-                call_id=call_id,  # type: ignore[arg-type]
-                result="Tool requires user input but no request details were provided.",
-                exception="UserInputRequiredException",
-            )
-        ], False
+        missing_details_result = Content.from_function_result(
+            call_id=call_id,  # type: ignore[arg-type]
+            result="Tool requires user input but no request details were provided.",
+            exception="UserInputRequiredException",
+        )
+        missing_details_result.usage_details = tool_usage
+        return [missing_details_result], False
 
 
 async def _try_execute_function_call_groups(
@@ -2620,6 +2685,17 @@ async def _try_execute_function_call_groups(
     return [result_contents for result_contents, _ in execution_results], should_terminate
 
 
+def _sum_content_usage(contents: Iterable[Content]) -> UsageDetails | None:
+    """Sum the usage_details carried by top-level contents, or return None when none carry usage."""
+    from ._types import add_usage_details
+
+    total: UsageDetails | None = None
+    for content in contents:
+        if content.usage_details:
+            total = add_usage_details(total, content.usage_details)
+    return total
+
+
 @dataclass
 class _FunctionExecutionBatch:
     """Results from one ordered batch of function-call executions."""
@@ -2647,6 +2723,15 @@ class _FunctionExecutionBatch:
             for result_group in self.result_groups
             if not any(content.type in {"function_approval_request", "function_call"} for content in result_group)
         )
+
+    @property
+    def usage_details(self) -> UsageDetails | None:
+        """Token usage the executed tools spent on the caller's behalf (e.g. delegated sub-agent runs).
+
+        Each tool reports such usage once on its own result content (see ``_TOOL_USAGE_CONTEXT_KEY``),
+        so summing the fresh results of one batch counts every tool exactly once.
+        """
+        return _sum_content_usage(self.contents)
 
     @property
     def had_errors(self) -> bool:
@@ -4551,6 +4636,26 @@ class _FunctionProcessingResult:
     function_call_count: int = 0
     response_messages: tuple[Message, ...] = ()
     streaming_updates: tuple[ChatResponseUpdate, ...] = ()
+    usage_details: UsageDetails | None = None
+    """Token usage the executed tools spent on the caller's behalf, to fold into the calling response."""
+
+    def streaming_updates_with_usage(self) -> tuple[ChatResponseUpdate, ...]:
+        """Return the streaming updates with this batch's tool usage attached as a usage content.
+
+        The usage rides on the last update so response finalization (``_process_update``) folds it
+        into ``usage_details`` without creating an extra message. The update is copied because
+        terminal-content updates can share their contents list with ``response_messages``.
+        """
+        if not self.usage_details:
+            return self.streaming_updates
+        from ._types import ChatResponseUpdate, Content
+
+        usage_content = Content.from_usage(self.usage_details)
+        if not self.streaming_updates:
+            return (ChatResponseUpdate(role="tool", contents=[usage_content]),)
+        last_update = copy.copy(self.streaming_updates[-1])
+        last_update.contents = [*last_update.contents, usage_content]
+        return (*self.streaming_updates[:-1], last_update)
 
 
 _FunctionCallExecutor: TypeAlias = Callable[..., Awaitable[_FunctionExecutionBatch]]
@@ -4783,6 +4888,7 @@ async def _resolve_deferred_mixed_pause_calls(
         should_terminate = False
         executed_function_count = 0
         had_errors = True
+        usage_details: UsageDetails | None = None
     else:
         try:
             execution = await execute_function_calls(
@@ -4797,6 +4903,7 @@ async def _resolve_deferred_mixed_pause_calls(
         should_terminate = execution.should_terminate
         executed_function_count = execution.executed_call_count
         had_errors = execution.had_errors
+        usage_details = execution.usage_details
 
     _merge_deferred_mixed_pause_results(
         prepared_messages,
@@ -4834,6 +4941,7 @@ async def _resolve_deferred_mixed_pause_calls(
         function_call_count=executed_function_count,
         response_messages=response_messages,
         streaming_updates=streaming_updates,
+        usage_details=usage_details,
     )
 
 
@@ -5054,6 +5162,7 @@ async def _resolve_approval_responses(
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
+    usage_details: UsageDetails | None = None
     if responses_to_execute and not (options and options.get("tool_choice") == "none"):
         try:
             execution = await execute_function_calls(
@@ -5069,6 +5178,7 @@ async def _resolve_approval_responses(
             raise
         execution_result_groups = execution.result_groups
         should_terminate = execution.should_terminate
+        usage_details = execution.usage_details
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
             errors_in_a_row,
             had_errors=execution.had_errors,
@@ -5129,6 +5239,7 @@ async def _resolve_approval_responses(
         function_call_count=executed_function_count,
         response_messages=response_messages,
         streaming_updates=streaming_updates,
+        usage_details=usage_details,
     )
 
 
@@ -5180,6 +5291,7 @@ async def _process_model_function_calls(
         for message in response.messages
         for content in message.contents
     )
+    processing_result.usage_details = execution.usage_details
     if execution.should_terminate or has_pending_computer_call:
         processing_result.action = "return"
     if processing_result.action == "return":
@@ -5192,6 +5304,29 @@ async def _process_model_function_calls(
         if returned_approval_requests:
             _store_pending_approval_requests(approval_session, returned_approval_requests)
     return processing_result
+
+
+def _fold_tool_usage(aggregated: UsageDetails | None, tool_usage: UsageDetails | None) -> UsageDetails | None:
+    """Fold usage that tools spent on the caller's behalf into the loop's aggregated usage.
+
+    The usage is also recorded as delegated for the active ``invoke_agent`` span, whose fallback
+    usage attributes report only the agent's own usage.
+    """
+    if not tool_usage:
+        return aggregated
+    from ._types import add_usage_details
+
+    _record_delegated_usage(tool_usage)
+    return add_usage_details(aggregated, tool_usage)
+
+
+def _record_delegated_usage(tool_usage: UsageDetails | None) -> None:
+    """Record tool-reported usage as delegated for the active ``invoke_agent`` telemetry span."""
+    if not tool_usage:
+        return
+    from .observability import _record_delegated_usage as _record_span_delegated_usage  # pyright: ignore[reportPrivateUsage]
+
+    _record_span_delegated_usage(tool_usage)
 
 
 OptionsCoT = TypeVar(
@@ -5414,6 +5549,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
+        aggregated_usage = _fold_tool_usage(aggregated_usage, approval_processing.usage_details)
         total_function_calls = _record_function_calls(
             budget_state,
             total_function_calls,
@@ -5505,6 +5641,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     error_exception="KeyError" if is_unknown_call else "MiddlewareFailure",
                 )
                 raise
+            aggregated_usage = _fold_tool_usage(aggregated_usage, function_processing.usage_details)
             total_function_calls = _record_function_calls(
                 budget_state,
                 total_function_calls,
@@ -5640,7 +5777,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             total_function_calls,
             approval_processing.function_call_count,
         )
-        for update in approval_processing.streaming_updates:
+        # The usage rides on the yielded updates; record it as delegated for the agent span.
+        _record_delegated_usage(approval_processing.usage_details)
+        for update in approval_processing.streaming_updates_with_usage():
             yield update
         if approval_processing.action == "return":
             _clear_budget_state_from_session(invocation_session, budget_state)
@@ -5793,7 +5932,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls,
                 function_processing.function_call_count,
             )
-            for update in function_processing.streaming_updates:
+            _record_delegated_usage(function_processing.usage_details)
+            for update in function_processing.streaming_updates_with_usage():
                 yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
                 # "return" action: model produced a terminal response.
