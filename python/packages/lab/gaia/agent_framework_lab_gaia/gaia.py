@@ -405,7 +405,9 @@ class GAIA:
 
     def _ensure_data(self) -> Path:
         """Ensure GAIA data is available locally."""
-        if self.data_dir.exists() and any(self.data_dir.rglob("metadata.jsonl")):
+        if self.data_dir.exists() and (
+            any(self.data_dir.rglob("metadata.jsonl")) or any(self.data_dir.rglob("metadata*.parquet"))
+        ):
             return self.data_dir
 
         # Download data if not available
