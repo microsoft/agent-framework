@@ -560,14 +560,14 @@ class _MCPConnection(Protocol):
     async def call_tool(
         self,
         name: str,
-        arguments: dict[str, Any] | None,
+        arguments: Mapping[str, Any] | None,
         *,
-        meta: dict[str, Any] | None,
+        meta: types.RequestParamsMeta | None,
     ) -> types.CallToolResult:
         """Call a tool through this connection."""
         ...
 
-    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+    async def get_prompt(self, name: str, arguments: Mapping[str, str] | None) -> types.GetPromptResult:
         """Get a prompt through this connection."""
         ...
 
@@ -599,20 +599,20 @@ class _ClientMCPConnection:
     async def call_tool(
         self,
         name: str,
-        arguments: dict[str, Any] | None,
+        arguments: Mapping[str, Any] | None,
         *,
-        meta: dict[str, Any] | None,
+        meta: types.RequestParamsMeta | None,
     ) -> types.CallToolResult:
         """Call a tool through the high-level Client."""
         return await self.client.call_tool(
             name,
-            arguments=arguments,
-            meta=cast("types.RequestParamsMeta | None", meta),
+            arguments=dict(arguments) if arguments is not None else None,
+            meta=meta,
         )
 
-    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+    async def get_prompt(self, name: str, arguments: Mapping[str, str] | None) -> types.GetPromptResult:
         """Get a prompt through the high-level Client."""
-        return await self.client.get_prompt(name, arguments=cast("dict[str, str] | None", arguments))
+        return await self.client.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
 
     async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         """List one tools page while honoring server cache hints."""
@@ -647,20 +647,20 @@ class _SessionMCPConnection:
     async def call_tool(
         self,
         name: str,
-        arguments: dict[str, Any] | None,
+        arguments: Mapping[str, Any] | None,
         *,
-        meta: dict[str, Any] | None,
+        meta: types.RequestParamsMeta | None,
     ) -> types.CallToolResult:
         """Call a tool directly through the session."""
         return await self.session.call_tool(
             name,
-            arguments=arguments,
-            meta=cast("types.RequestParamsMeta | None", meta),
+            arguments=dict(arguments) if arguments is not None else None,
+            meta=meta,
         )
 
-    async def get_prompt(self, name: str, arguments: dict[str, Any] | None) -> types.GetPromptResult:
+    async def get_prompt(self, name: str, arguments: Mapping[str, str] | None) -> types.GetPromptResult:
         """Get a prompt directly through the session."""
-        return await self.session.get_prompt(name, arguments=cast("dict[str, str] | None", arguments))
+        return await self.session.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
 
     async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         """List one tools page directly through the session."""
@@ -893,7 +893,7 @@ def _validate_mcp_meta_key(key: str) -> None:
         raise _mcp_tool_execution_exception(f"Invalid MCP _meta key name: {key!r}.")
 
 
-def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
+def _validate_mcp_meta(raw_meta: object | None) -> types.RequestParamsMeta | None:
     """Validate and copy MCP request metadata."""
     if raw_meta is None:
         return None
@@ -901,7 +901,7 @@ def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
         raise _mcp_tool_execution_exception("MCP tool metadata provided via _meta must be a dict.")
 
     raw_meta_dict = cast(Mapping[object, Any], raw_meta)
-    meta: dict[str, Any] = {}
+    meta: types.RequestParamsMeta = {}
     for key, value in raw_meta_dict.items():
         if not isinstance(key, str):
             raise _mcp_tool_execution_exception("MCP tool metadata provided via _meta must use string keys.")
@@ -911,10 +911,10 @@ def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
 
 
 def _inject_otel_into_mcp_meta(
-    meta: dict[str, Any] | None = None,
+    meta: types.RequestParamsMeta | None = None,
     *,
     overwrite: bool = False,
-) -> dict[str, Any] | None:
+) -> types.RequestParamsMeta | None:
     """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
     carrier: dict[str, str] = {}
     propagate.inject(carrier)
@@ -3250,7 +3250,7 @@ class MCPTool:
         self,
         tool_name: str,
         filtered_kwargs: dict[str, Any],
-        meta: dict[str, Any] | None,
+        meta: types.RequestParamsMeta | None,
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
     ) -> str | list[Content]:
@@ -3338,7 +3338,7 @@ class MCPTool:
 
     def _prepare_call_kwargs(
         self, tool_name: str, kwargs: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    ) -> tuple[dict[str, Any], types.RequestParamsMeta | None]:
         """Filter kwargs down to the tool's arguments and build the merged MCP request metadata."""
         user_meta = _validate_mcp_meta(kwargs.get("_meta"))
 
@@ -3372,11 +3372,11 @@ class MCPTool:
         }
 
         # Some MCP proxies require their tools/list metadata to be echoed on tools/call.
-        request_meta = dict(user_meta) if user_meta is not None else None
+        request_meta = user_meta.copy() if user_meta is not None else None
         request_meta = _inject_otel_into_mcp_meta(request_meta, overwrite=True)
         tool_meta = _validate_mcp_meta(self._tool_call_meta_by_name.get(tool_name))
         if tool_meta is not None:
-            request_meta = {**(request_meta or {}), **tool_meta}
+            request_meta = cast("types.RequestParamsMeta", {**(request_meta or {}), **tool_meta})
         return filtered_kwargs, request_meta
 
     async def _call_prompt_with_runtime_kwargs(
