@@ -1546,8 +1546,7 @@ class RawAnthropicClient(
                         case "text_editor_code_execution_tool_result_error":
                             text_editor_outputs.append(
                                 Content.from_error(
-                                    message=content_block.content.error_code
-                                    and getattr(content_block.content, "error_message", ""),
+                                    message=content_block.content.error_message or content_block.content.error_code,
                                     raw_representation=content_block.content,
                                 )
                             )
