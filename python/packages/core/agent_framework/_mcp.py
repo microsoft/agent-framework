@@ -592,9 +592,10 @@ class _ClientMCPConnection:
     """MCP connection backed by a high-level Client."""
 
     def __init__(self, client: Client) -> None:
-        self.client = client
+        self.client: Client | None = client
+        self.session: ClientSession | None = None
         self.is_framework_owned = True
-        self.session = None
+        self._client = client
 
     async def call_tool(
         self,
@@ -604,7 +605,7 @@ class _ClientMCPConnection:
         meta: types.RequestParamsMeta | None,
     ) -> types.CallToolResult:
         """Call a tool through the high-level Client."""
-        return await self.client.call_tool(
+        return await self._client.call_tool(
             name,
             arguments=dict(arguments) if arguments is not None else None,
             meta=meta,
@@ -612,17 +613,17 @@ class _ClientMCPConnection:
 
     async def get_prompt(self, name: str, arguments: Mapping[str, str] | None) -> types.GetPromptResult:
         """Get a prompt through the high-level Client."""
-        return await self.client.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
+        return await self._client.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
 
     async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         """List one tools page while honoring server cache hints."""
-        return await self.client.list_tools(
+        return await self._client.list_tools(
             cursor=params.cursor if params is not None else None,
         )
 
     async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
         """List one prompts page while honoring server cache hints."""
-        return await self.client.list_prompts(
+        return await self._client.list_prompts(
             cursor=params.cursor if params is not None else None,
         )
 
@@ -633,16 +634,17 @@ class _ClientMCPConnection:
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through the high-level Client while honoring server cache hints."""
-        return await self.client.read_resource(uri, cache_mode="use")
+        return await self._client.read_resource(uri, cache_mode="use")
 
 
 class _SessionMCPConnection:
     """MCP connection backed by a low-level ClientSession."""
 
     def __init__(self, session: ClientSession) -> None:
-        self.session = session
+        self.session: ClientSession | None = session
+        self.client: Client | None = None
         self.is_framework_owned = False
-        self.client = None
+        self._session = session
 
     async def call_tool(
         self,
@@ -652,7 +654,7 @@ class _SessionMCPConnection:
         meta: types.RequestParamsMeta | None,
     ) -> types.CallToolResult:
         """Call a tool directly through the session."""
-        return await self.session.call_tool(
+        return await self._session.call_tool(
             name,
             arguments=dict(arguments) if arguments is not None else None,
             meta=meta,
@@ -660,25 +662,25 @@ class _SessionMCPConnection:
 
     async def get_prompt(self, name: str, arguments: Mapping[str, str] | None) -> types.GetPromptResult:
         """Get a prompt directly through the session."""
-        return await self.session.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
+        return await self._session.get_prompt(name, arguments=dict(arguments) if arguments is not None else None)
 
     async def list_tools_page(self, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
         """List one tools page directly through the session."""
-        return await self.session.list_tools(params=params)
+        return await self._session.list_tools(params=params)
 
     async def list_prompts_page(self, params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
         """List one prompts page directly through the session."""
-        return await self.session.list_prompts(params=params)
+        return await self._session.list_prompts(params=params)
 
     async def set_logging_level(self, level: Any) -> None:
         """Set the legacy logging level directly through the session."""
-        if self.session.initialize_result is None:
+        if self._session.initialize_result is None:
             return
-        await self.session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
+        await self._session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through this connection."""
-        return await self.session.read_resource(uri)
+        return await self._session.read_resource(uri)
 
 
 def _as_mcp_connection(  # pyright: ignore[reportUnusedFunction]
