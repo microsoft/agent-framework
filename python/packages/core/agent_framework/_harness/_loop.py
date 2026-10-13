@@ -32,11 +32,10 @@ import inspect
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import BaseModel, Field
-from typing_extensions import Self
+from typing_extensions import Self, TypedDict
 
 from .._agents import (
     _LOOP_ITERATION_TOKEN_KEY,  # pyright: ignore[reportPrivateUsage] -- shared loop-turn marker, see _agents.py
@@ -136,26 +135,27 @@ DEFAULT_JUDGE_MAX_ITERATIONS = 5
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-@dataclass
-class AgentBudget:
+class AgentBudget(TypedDict, total=False):
     """Budget constraints for an :class:`AgentLoopMiddleware` autonomous loop.
 
     Both ``max_tokens`` and ``max_duration`` are optional with no default — they are
     workload-specific and must be set explicitly for production autonomous sessions.
-    When a budget dimension is ``None``, it is unconstrained.
+    When a budget dimension is omitted or ``None``, it is unconstrained. Because this is a
+    ``TypedDict``, a plain ``dict`` works too (for example ``budget={"max_tokens": 50_000}``).
+    Values are validated by :class:`AgentLoopMiddleware` when it is constructed.
 
     Examples:
 
         .. code-block:: python
 
-            from agent_framework import AgentBudget, AgentLoopMiddleware, todos_remaining
+            from agent_framework import AgentLoopMiddleware, todos_remaining
 
             agent = Agent(
                 client=client,
                 middleware=[
                     AgentLoopMiddleware(
                         todos_remaining(),
-                        budget=AgentBudget(max_tokens=50_000, max_duration=300.0),
+                        budget={"max_tokens": 50_000, "max_duration": 300.0},
                     )
                 ],
             )
@@ -166,14 +166,14 @@ class AgentBudget:
         :class:`~agent_framework.AgentResponse` (non-streaming only).
     """
 
-    max_tokens: int | None = None
+    max_tokens: int | None
     """Maximum total LLM token spend across all loop iterations.
 
     Counts ``total_token_count`` from each iteration's usage details, falling back to
     ``input_token_count + output_token_count`` when ``total_token_count`` is absent.
     """
 
-    max_duration: float | None = None
+    max_duration: float | None
     """Maximum wall-clock time in seconds for the entire loop run.
 
     Measured with :func:`time.monotonic` and checked between iterations, after each
@@ -182,12 +182,6 @@ class AgentBudget:
     past the deadline. Callers that need a hard deadline should wrap the run in their
     own cancellation/timeout (for example ``asyncio.timeout``).
     """
-
-    def __post_init__(self) -> None:
-        if self.max_tokens is not None and self.max_tokens < 1:
-            raise ValueError("AgentBudget.max_tokens must be a positive integer.")
-        if self.max_duration is not None and (not math.isfinite(self.max_duration) or self.max_duration <= 0):
-            raise ValueError("AgentBudget.max_duration must be a positive, finite number of seconds.")
 
 
 # A callable invoked between iterations. It always receives the loop keyword arguments
@@ -402,17 +396,25 @@ class AgentLoopMiddleware(AgentMiddleware):
                 messages, so it is preserved across ``fresh_context`` resets and (with a session)
                 persists server-side across iterations. Used by :meth:`with_judge` to tell the agent
                 about the criteria its response must satisfy, but available to any loop.
-            budget: Optional :class:`AgentBudget` bounding total token spend and/or wall-clock time.
-                Checked after each iteration, before ``should_continue`` is evaluated. When exceeded
-                the loop stops and (non-streaming only) stamps ``loop_exit_reason``. Budgets do not
-                interrupt an in-flight model/tool call; use ``asyncio.timeout`` (or similar) around
-                the run for a hard wall-clock deadline.
+            budget: Optional :class:`AgentBudget` (or a plain ``dict`` with the same keys) bounding total
+                token spend and/or wall-clock time. Checked after each iteration, before
+                ``should_continue`` is evaluated. When exceeded the loop stops and (non-streaming
+                only) stamps ``loop_exit_reason``. Budgets do not interrupt an in-flight model/tool
+                call; use ``asyncio.timeout`` (or similar) around the run for a hard wall-clock
+                deadline.
 
         Raises:
-            ValueError: If ``max_iterations`` is not ``None`` and is less than 1.
+            ValueError: If ``max_iterations`` is not ``None`` and is less than 1, or if ``budget``
+                contains a non-positive ``max_tokens`` or a non-positive/non-finite ``max_duration``.
         """
         if max_iterations is not None and max_iterations < 1:
             raise ValueError("max_iterations must be None or a positive integer (>= 1).")
+        budget_max_tokens = budget.get("max_tokens") if budget is not None else None
+        budget_max_duration = budget.get("max_duration") if budget is not None else None
+        if budget_max_tokens is not None and budget_max_tokens < 1:
+            raise ValueError("AgentBudget.max_tokens must be a positive integer.")
+        if budget_max_duration is not None and (not math.isfinite(budget_max_duration) or budget_max_duration <= 0):
+            raise ValueError("AgentBudget.max_duration must be a positive, finite number of seconds.")
 
         self.max_iterations: int | None = max_iterations
         self.should_continue: ShouldContinueCallable = should_continue
@@ -423,6 +425,8 @@ class AgentLoopMiddleware(AgentMiddleware):
         self.return_final_only = return_final_only
         self.additional_instructions = additional_instructions
         self.budget: AgentBudget | None = budget
+        self._budget_max_tokens: int | None = budget_max_tokens
+        self._budget_max_duration: float | None = budget_max_duration
 
     @classmethod
     def with_judge(
@@ -639,7 +643,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
                 # Accumulate token spend for budget enforcement.
-                if self.budget is not None and self.budget.max_tokens is not None and result.usage_details is not None:
+                if self._budget_max_tokens is not None and result.usage_details is not None:
                     ud = result.usage_details
                     tokens_used += ud.get("total_token_count") or (
                         (ud.get("input_token_count") or 0) + (ud.get("output_token_count") or 0)
@@ -665,10 +669,10 @@ class AgentLoopMiddleware(AgentMiddleware):
                 # predicate/judge after a budget has already been exhausted.
                 if self.budget is not None:
                     elapsed = time.monotonic() - budget_start
-                    if self.budget.max_duration is not None and elapsed >= self.budget.max_duration:
+                    if self._budget_max_duration is not None and elapsed >= self._budget_max_duration:
                         budget_exit = "time_budget_exceeded"
                         break
-                    if self.budget.max_tokens is not None and tokens_used >= self.budget.max_tokens:
+                    if self._budget_max_tokens is not None and tokens_used >= self._budget_max_tokens:
                         budget_exit = "token_budget_exceeded"
                         break
                 # Decide whether to stop and capture any feedback from should_continue first, so the
@@ -787,15 +791,15 @@ class AgentLoopMiddleware(AgentMiddleware):
                     # ``loop_exit_reason`` on the response (the caller assembles it from updates), so
                     # the loop simply stops, consistent with the iteration-cap limitation.
                     if self.budget is not None:
-                        if self.budget.max_tokens is not None and final.usage_details:
+                        if self._budget_max_tokens is not None and final.usage_details:
                             ud = final.usage_details
                             tokens_used += ud.get("total_token_count") or (
                                 (ud.get("input_token_count") or 0) + (ud.get("output_token_count") or 0)
                             )
                         elapsed = time.monotonic() - budget_start
-                        if self.budget.max_duration is not None and elapsed >= self.budget.max_duration:
+                        if self._budget_max_duration is not None and elapsed >= self._budget_max_duration:
                             return
-                        if self.budget.max_tokens is not None and tokens_used >= self.budget.max_tokens:
+                        if self._budget_max_tokens is not None and tokens_used >= self._budget_max_tokens:
                             return
                     # Decide whether to stop and capture any feedback from should_continue first, so the
                     # feedback is available to both the progress and next-message callables this iteration.

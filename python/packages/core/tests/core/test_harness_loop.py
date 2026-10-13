@@ -1817,7 +1817,7 @@ async def test_budget_exit_reason_in_additional_properties() -> None:
     client = RecordingChatClient(usage_per_call=60)
     agent = Agent(
         client=client,
-        middleware=[AgentLoopMiddleware(always_continue, budget=AgentBudget(max_tokens=50))],
+        middleware=[AgentLoopMiddleware(always_continue, budget={"max_tokens": 50})],
     )
 
     response = await agent.run("task")
@@ -1828,9 +1828,20 @@ async def test_budget_exit_reason_in_additional_properties() -> None:
 
 def test_agent_budget_validates_max_tokens() -> None:
     with pytest.raises(ValueError, match="max_tokens"):
-        AgentBudget(max_tokens=0)
+        AgentLoopMiddleware(always_continue, budget=AgentBudget(max_tokens=0))
+    with pytest.raises(ValueError, match="max_tokens"):
+        AgentLoopMiddleware(always_continue, budget={"max_tokens": 0})
 
 
 def test_agent_budget_validates_max_duration() -> None:
     with pytest.raises(ValueError, match="max_duration"):
-        AgentBudget(max_duration=-1.0)
+        AgentLoopMiddleware(always_continue, budget=AgentBudget(max_duration=-1.0))
+    with pytest.raises(ValueError, match="max_duration"):
+        AgentLoopMiddleware(always_continue, budget={"max_duration": float("inf")})
+
+
+def test_agent_budget_accepts_empty_and_none_values() -> None:
+    middleware = AgentLoopMiddleware(always_continue, budget={})
+    assert middleware.budget == {}
+    middleware = AgentLoopMiddleware(always_continue, budget={"max_tokens": None, "max_duration": None})
+    assert middleware.budget == {"max_tokens": None, "max_duration": None}
