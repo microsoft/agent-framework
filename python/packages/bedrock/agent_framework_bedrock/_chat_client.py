@@ -495,6 +495,10 @@ class BedrockChatClient(
         ):
             if (value := options.get(key)) is not None:
                 run_options[key] = value
+        # Per-call client kwargs (for example Bedrock-native fields passed through
+        # client_kwargs) join the request before the prompt-ARN cleanup so that
+        # branch still strips fields Converse rejects, mirroring the other clients.
+        run_options.update(kwargs)
         if ":prompt/" in model:
             # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
             if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
