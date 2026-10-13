@@ -7,6 +7,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -25,15 +27,18 @@ internal sealed class McpListedSkillsLoader
     private const string CompleteResultType = "complete";
 
     private readonly McpClient _client;
+    private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
     /// </summary>
     /// <param name="client">The MCP client used to discover skills and fetch their content.</param>
+    /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
-    public McpListedSkillsLoader(McpClient client)
+    public McpListedSkillsLoader(McpClient client, ILogger? logger = null)
     {
         this._client = Throw.IfNull(client);
+        this._logger = logger ?? NullLogger.Instance;
     }
 
     /// <summary>
@@ -79,7 +84,7 @@ internal sealed class McpListedSkillsLoader
 
             List<McpListedSkillResourceEntry> resources = CreateSupportingResources(entry);
 
-            skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client));
+            skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger));
         }
 
         return skills;

@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -16,6 +18,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// Instructions and supporting resources are fetched from the MCP server when requested.
+/// Fetched instructions must have the same frontmatter name and description as the listing.
 /// Only supporting resources listed by the server are available.
 /// </remarks>
 internal sealed class AgentMcpListedSkill : AgentSkill
@@ -23,6 +26,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     private const int MaxResourceNameDecodingDepth = 32;
 
     private readonly McpClient _client;
+    private readonly ILogger _logger;
     private readonly string _skillUri;
     private readonly string _skillRootUri;
     private readonly IReadOnlyList<McpListedSkillResourceEntry> _resources;
@@ -35,13 +39,15 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
     /// <param name="resources">The skill's supporting resources, excluding <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch instructions and resources.</param>
-    public AgentMcpListedSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpListedSkillResourceEntry> resources, McpClient client)
+    /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
+    public AgentMcpListedSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpListedSkillResourceEntry> resources, McpClient client, ILogger? logger = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this._skillUri = Throw.IfNullOrWhitespace(uri);
         this._skillRootUri = this._skillUri[..^"SKILL.md".Length];
         this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
+        this._logger = logger ?? NullLogger.Instance;
     }
 
     /// <inheritdoc/>
@@ -49,8 +55,11 @@ internal sealed class AgentMcpListedSkill : AgentSkill
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Fetches the skill's <c>SKILL.md</c> instructions on the first call and reuses them on later calls.
+    /// Fetches the skill's <c>SKILL.md</c> instructions on the first call, verifies its frontmatter
+    /// name and description against the listing, and reuses verified content on later calls.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">The fetched content is empty, has invalid frontmatter,
+    /// or its name or description differs from the listing.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
         if (this._content is not null)
@@ -67,6 +76,21 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         if (text.Length == 0)
         {
             throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this._skillUri}'.");
+        }
+
+        if (!AgentSkillFrontmatterParser.TryParse(text, this._skillUri, this._logger, out AgentSkillFrontmatter? frontmatter))
+        {
+            throw new InvalidOperationException($"SKILL.md resource '{this._skillUri}' contains invalid frontmatter.");
+        }
+
+        if (!string.Equals(frontmatter.Name, this.Frontmatter.Name, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"SKILL.md resource '{this._skillUri}' has a frontmatter name that differs from the skills/list entry.");
+        }
+
+        if (!string.Equals(frontmatter.Description, this.Frontmatter.Description, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"SKILL.md resource '{this._skillUri}' has a frontmatter description that differs from the skills/list entry.");
         }
 
         return this._content = text;

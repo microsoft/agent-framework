@@ -159,8 +159,8 @@ public sealed class AgentMcpListedSkillTests
             {
                 Contents =
                 [
-                    new TextResourceContents { Uri = root + "unrelated.md", Text = "Additional instructions." },
                     new TextResourceContents { Uri = uri, Text = SkillContent },
+                    new TextResourceContents { Uri = root + "unrelated.md", Text = "Additional instructions." },
                 ],
             });
         });
@@ -173,7 +173,7 @@ public sealed class AgentMcpListedSkillTests
         string cached = await skill.GetContentAsync();
 
         // Assert
-        Assert.Equal("Additional instructions.\n" + SkillContent, content);
+        Assert.Equal(SkillContent + "\nAdditional instructions.", content);
         Assert.Equal(content, cached);
         Assert.Equal(root + "SKILL.md", Assert.Single(reads));
     }
@@ -223,7 +223,7 @@ public sealed class AgentMcpListedSkillTests
             {
                 Contents =
                 [
-                    new TextResourceContents { Uri = uri, Text = "First text block." },
+                    new TextResourceContents { Uri = uri, Text = SkillContent },
                     BlobResourceContents.FromBytes(bytes, uri, "text/markdown"),
                     new TextResourceContents { Uri = "skill://other/SKILL.md", Text = "Second text block." },
                 ],
@@ -235,23 +235,131 @@ public sealed class AgentMcpListedSkillTests
         string content = await skill.GetContentAsync();
 
         // Assert
-        Assert.Equal("First text block.\nSecond text block.", content);
+        Assert.Equal(SkillContent + "\nSecond text block.", content);
     }
 
     [Fact]
     public async Task GetContentAsync_SameUriOnDifferentServers_ReadsFromEachOriginAsync()
     {
         // Arrange
-        await using var firstServer = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, "First server.")));
-        await using var secondServer = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, "Second server.")));
+        await using var firstServer = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nFirst server.")));
+        await using var secondServer = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nSecond server.")));
         await using var firstClient = await firstServer.CreateClientAsync();
         await using var secondClient = await secondServer.CreateClientAsync();
         var firstSkill = CreateSkill(firstClient);
         var secondSkill = CreateSkill(secondClient);
 
         // Act & Assert
-        Assert.Equal("First server.", await firstSkill.GetContentAsync());
-        Assert.Equal("Second server.", await secondSkill.GetContentAsync());
+        Assert.Equal(SkillContent + "\nFirst server.", await firstSkill.GetContentAsync());
+        Assert.Equal(SkillContent + "\nSecond server.", await secondSkill.GetContentAsync());
+    }
+
+    [Theory]
+    [InlineData("---\nname: other-skill\ndescription: Convert units.\n---\nInstructions.", "name")]
+    [InlineData("---\nname: unit-converter\ndescription: Different instructions.\n---\nInstructions.", "description")]
+    [InlineData("---\nname: unit-converter\ndescription: convert units.\n---\nInstructions.", "description")]
+    [InlineData("---\nname: unit-converter\ndescription: \" Convert units. \"\n---\nInstructions.", "description")]
+    [InlineData("---\nname: unit-converter\ndescription: \"\"\n---\nInstructions.", "description")]
+    public async Task GetContentAsync_MismatchedFrontmatter_ThrowsWithoutCachingAsync(string content, string field)
+    {
+        // Arrange
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, content));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client);
+        var advertised = skill.Frontmatter;
+
+        // Act & Assert
+        for (int i = 0; i < 2; i++)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+            Assert.Contains(SkillUri, exception.Message);
+            Assert.Contains($"frontmatter {field}", exception.Message);
+            Assert.Contains("skills/list", exception.Message);
+        }
+
+        Assert.Equal(2, reads);
+        Assert.Same(advertised, skill.Frontmatter);
+        Assert.Equal("unit-converter", skill.Frontmatter.Name);
+        Assert.Equal("Convert units.", skill.Frontmatter.Description);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_InvalidFrontmatter_ThrowsWithoutCachingAsync(bool overlengthCompatibility)
+    {
+        // Arrange
+        string content = overlengthCompatibility
+            ? SkillContent.Replace("\n---\n", $"\ncompatibility: {new string('a', 501)}\n---\n")
+            : "Instructions without frontmatter.";
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, content));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client);
+
+        // Act & Assert
+        for (int i = 0; i < 2; i++)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+            Assert.Equal($"SKILL.md resource '{SkillUri}' contains invalid frontmatter.", exception.Message);
+        }
+
+        Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_AfterVerificationFailure_RetriesAndCachesVerifiedContentAsync(bool invalidFrontmatter)
+    {
+        // Arrange
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, reads > 1
+                ? SkillContent
+                : invalidFrontmatter ? "Invalid frontmatter." : SkillContent.Replace("Convert units.", "Changed.")));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Equal(SkillContent, await skill.GetContentAsync());
+        Assert.Equal(SkillContent, await skill.GetContentAsync());
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_OptionalFrontmatter_IsNotComparedOrAppliedAsync()
+    {
+        // Arrange
+        const string Content = "---\nname: unit-converter\ndescription: Convert units.\nlicense: Apache-2.0\ncompatibility: Any runtime\nallowed-tools: read\nmetadata:\n  author: Example\n---\nInstructions.";
+        await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
+        await using var client = await server.CreateClientAsync();
+        var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
+        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [], client);
+
+        // Act
+        string verified = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal(Content, verified);
+        Assert.Same(frontmatter, skill.Frontmatter);
+        Assert.Equal("MIT", skill.Frontmatter.License);
+        Assert.Null(skill.Frontmatter.Compatibility);
+        Assert.Null(skill.Frontmatter.AllowedTools);
+        Assert.Null(skill.Frontmatter.Metadata);
     }
 
     [Theory]
