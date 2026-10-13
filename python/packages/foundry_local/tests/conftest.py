@@ -59,6 +59,15 @@ def mock_foundry_local_manager_factory() -> Callable[[], MagicMock]:
         mock_model.variants = [mock_model]
         mock_manager.catalog.get_model.return_value = mock_model
         mock_manager.catalog.get_model_variant.return_value = mock_model
+
+        local_catalog = MagicMock(spec=Catalog)
+        local_model = MagicMock(spec=IModel)
+        local_model.id = "local-model:1"
+        local_model.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.CPU))
+        local_model.variants = [local_model]
+        local_catalog.get_model.return_value = local_model
+        local_catalog.get_model_variant.return_value = local_model
+        mock_manager.get_catalog.return_value = local_catalog
         return mock_manager
 
     return create_manager

@@ -51,6 +51,54 @@ If construction fails after creating a new manager, that manager is closed; an
 existing application's manager is not closed. If failed construction started
 its web service, that service is stopped; a previously running service is left running.
 
+## Bring Your Own Model
+
+Use `catalog_type="local"` (or `CatalogType.LOCAL`) for models registered through
+the SDK's local catalog. Model lookup and HTTP inference both use that catalog:
+local clients target `/catalogs/local/v1`, while the default public clients use
+`/v1`. There is no fallback between catalogs.
+
+Register compatible ONNX Runtime GenAI model assets through the SDK before
+constructing the client. The adapter does not import or convert model files.
+Registration does not transfer ownership of the files. For example:
+
+```python
+from agent_framework import Agent
+from agent_framework.foundry import FoundryLocalClient
+from foundry_local_sdk import Configuration, FoundryLocalManager, ModelInfoBuilder
+from foundry_local_sdk.catalog import CatalogType
+
+FoundryLocalManager.initialize(Configuration(app_name="my-local-agent"))
+manager = FoundryLocalManager.instance
+if manager is None:
+    raise RuntimeError("Foundry Local manager was not initialized.")
+local_catalog = manager.get_catalog(CatalogType.LOCAL)
+with ModelInfoBuilder() as metadata:
+    metadata.set_string_property("task", "chat-completion")
+    registered_model = local_catalog.register_model(
+        "your-model-directory", "my-local-model:1", metadata
+    )
+
+client = None
+try:
+    client = FoundryLocalClient(model=registered_model.id, catalog_type="local")
+    agent = Agent(client=client, instructions="You are a helpful assistant.")
+    response = await agent.run("What is 2 + 2?")
+    print(response.text)
+finally:
+    if client is not None:
+        await client.client.close()
+    registered_model.unload()
+    local_catalog.unregister_model(registered_model.id)
+    manager.close()
+```
+
+The normal preparation, exact variant selection, streaming, middleware, tools,
+and structured-output APIs also apply to local models, subject to model/runtime
+capabilities. `prepare_model=False` still requires manual loading before inference.
+Clients do not unregister local models or delete their assets; the application
+owns registration and manager shutdown.
+
 ## Chat Options
 
 `FoundryLocalChatOptions` includes the standard generation settings and native
@@ -94,7 +142,8 @@ print(response.value.answer)
 
 Agent sessions, middleware, streaming, and automatic tool execution retain their
 standard Agent Framework APIs. A per-request `model` option overrides inference
-targeting only: that public-catalog variant must also be loaded in the shared manager.
+targeting only: that variant must also be loaded in the client's selected catalog.
+An override does not switch between the public and local catalogs.
 When a tool is required (including a named tool), the request uses the native tool
 grammar first, then applies the requested structured format to the final reply
 after automatic tool execution. With automatic execution disabled, the caller
@@ -102,10 +151,8 @@ must handle the returned function call before requesting a structured final repl
 
 ## Scope
 
-This adapter targets the SDK's public model catalog and HTTP chat service.
-BYOM/local-catalog model selection is intentionally not exposed by this adapter.
-SDK 2.1 supports registered local models through `/catalogs/local/v1`, but this
-adapter uses the public-catalog `/v1` route. Native-session-only features,
+This adapter targets the SDK's public and local model catalogs and HTTP chat service.
+Local models must be registered through the SDK before use. Native-session-only features,
 audio transcription, and embeddings are outside this chat integration.
 
 Image content follows the OpenAI transport's serialization, but a successful HTTP

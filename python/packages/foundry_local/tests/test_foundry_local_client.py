@@ -31,6 +31,7 @@ from agent_framework._settings import load_settings
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from agent_framework.foundry import FoundryLocalChatOptions, FoundryLocalClient
 from foundry_local_sdk import Configuration, DeviceType, IModel
+from foundry_local_sdk.catalog import CatalogType
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pydantic import BaseModel
 
@@ -74,6 +75,113 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
     assert isinstance(client, SupportsChatGetResponse)
     assert str(client.client.base_url) == "http://localhost:5272/v1/"
     assert client.client.api_key == "foundry-local"
+
+
+@pytest.mark.parametrize("catalog_type", ["local", CatalogType.LOCAL])
+@pytest.mark.parametrize("model", ["local-model", "local-model:1"])
+def test_foundry_local_client_selects_local_catalog(
+    mock_foundry_local_manager: MagicMock, catalog_type: Literal["local"] | CatalogType, model: str
+) -> None:
+    client = FoundryLocalClient(model=model, catalog_type=catalog_type)
+
+    local_catalog = mock_foundry_local_manager.get_catalog.return_value
+    mock_foundry_local_manager.get_catalog.assert_called_once_with(CatalogType.LOCAL)
+    mock_foundry_local_manager.catalog.get_model.assert_not_called()
+    mock_foundry_local_manager.catalog.get_model_variant.assert_not_called()
+    local_catalog.get_model_variant.assert_called_with("local-model:1")
+    local_catalog.get_model_variant.return_value.download.assert_called_once_with()
+    local_catalog.get_model_variant.return_value.load.assert_called_once_with()
+    assert client.model == "local-model:1"
+    assert str(client.client.base_url) == "http://localhost:5272/catalogs/local/v1/"
+
+
+@pytest.mark.parametrize("catalog_type", ["public", CatalogType.PUBLIC])
+def test_foundry_local_client_selects_public_catalog(
+    mock_foundry_local_manager: MagicMock, catalog_type: Literal["public"] | CatalogType
+) -> None:
+    client = FoundryLocalClient(model="test-model-id", catalog_type=catalog_type)
+    mock_foundry_local_manager.get_catalog.assert_not_called()
+    assert client.model == "test-model-id"
+    assert str(client.client.base_url) == "http://localhost:5272/v1/"
+
+
+@pytest.mark.parametrize("catalog_type", ["missing", None, 2])
+def test_foundry_local_client_rejects_invalid_catalog_before_setup(
+    mock_foundry_local_manager: MagicMock, catalog_type: Any
+) -> None:
+    with (
+        patch("agent_framework_foundry_local._foundry_local_client.FoundryLocalManager") as manager_class,
+        pytest.raises(ValueError, match="catalog_type"),
+    ):
+        manager_class.instance = None
+        FoundryLocalClient(model="test-model-id", catalog_type=catalog_type)
+    manager_class.initialize.assert_not_called()
+    mock_foundry_local_manager.start_web_service.assert_not_called()
+
+
+def test_foundry_local_client_local_catalog_does_not_fall_back_to_public(
+    mock_foundry_local_manager: MagicMock,
+) -> None:
+    mock_foundry_local_manager.get_catalog.return_value.get_model_variant.return_value = None
+    with pytest.raises(ValueError, match="not found"):
+        FoundryLocalClient(model="test-model-id:1", catalog_type="local")
+    mock_foundry_local_manager.catalog.get_model_variant.assert_not_called()
+    mock_foundry_local_manager.close.assert_not_called()
+    mock_foundry_local_manager.stop_web_service.assert_not_called()
+
+
+def test_foundry_local_client_local_catalog_respects_manual_preparation(mock_foundry_local_manager: MagicMock) -> None:
+    client = FoundryLocalClient(model="local-model:1", catalog_type="local", prepare_model=False, bootstrap=False)
+    local_model = mock_foundry_local_manager.get_catalog.return_value.get_model_variant.return_value
+    local_model.download.assert_not_called()
+    local_model.load.assert_not_called()
+    mock_foundry_local_manager.start_web_service.assert_not_called()
+    assert str(client.client.base_url) == "http://localhost:5272/catalogs/local/v1/"
+
+
+def test_foundry_local_client_local_catalog_selects_exact_device_variant(mock_foundry_local_manager: MagicMock) -> None:
+    with pytest.raises(ValueError, match="not found"):
+        FoundryLocalClient(model="local-model:1", catalog_type="local", device=DeviceType("GPU"))
+    local_catalog = mock_foundry_local_manager.get_catalog.return_value
+    local_catalog.get_model.assert_not_called()
+    local_catalog.get_model_variant.return_value.load.assert_not_called()
+
+
+def test_foundry_local_client_local_catalog_preserves_download_controls(mock_foundry_local_manager: MagicMock) -> None:
+    progress: list[float] = []
+    cancel_event = Event()
+    FoundryLocalClient(
+        model="local-model:1",
+        catalog_type="local",
+        download_progress_callback=progress.append,
+        download_cancel_event=cancel_event,
+    )
+    local_model = mock_foundry_local_manager.get_catalog.return_value.get_model_variant.return_value
+    local_model.download.assert_called_once_with(progress_callback=progress.append, cancel_event=cancel_event)
+    local_model.load.assert_called_once_with()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("override_model", [False, True])
+async def test_foundry_local_client_local_catalog_http_route(
+    mock_foundry_local_manager: MagicMock, stream: bool, override_model: bool
+) -> None:
+    requests: list[Any] = []
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond, catalog_type="local", model="local-model:1") as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        options: FoundryLocalChatOptions[None] = {"model": "other-local:2"} if override_model else {}
+        if stream:
+            response = await client.get_response(messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages, options=options)
+    assert response.text == "Hello"
+    assert requests[0].url.path == "/catalogs/local/v1/chat/completions"
+    assert json.loads(requests[0].content)["model"] == ("other-local:2" if override_model else "local-model:1")
 
 
 def test_agent_accepts_foundry_local_client(mock_foundry_local_manager: MagicMock) -> None:
@@ -244,17 +352,26 @@ def test_foundry_local_client_requires_bound_url(mock_foundry_local_manager: Mag
 
 @pytest.mark.parametrize("service_running", [False, True])
 @pytest.mark.parametrize("failure_stage", ["lookup", "download", "load", "http"])
+@pytest.mark.parametrize("catalog_type", ["public", "local"])
 def test_foundry_local_client_rolls_back_service_started_on_existing_manager(
-    mock_foundry_local_manager: MagicMock, service_running: bool, failure_stage: str
+    mock_foundry_local_manager: MagicMock,
+    service_running: bool,
+    failure_stage: str,
+    catalog_type: Literal["public", "local"],
 ) -> None:
     if not service_running:
         mock_foundry_local_manager.urls = None
         mock_foundry_local_manager.start_web_service.side_effect = lambda: setattr(
             mock_foundry_local_manager, "urls", ["http://localhost:5272"]
         )
-    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    catalog = (
+        mock_foundry_local_manager.catalog
+        if catalog_type == "public"
+        else mock_foundry_local_manager.get_catalog.return_value
+    )
+    model = catalog.get_model_variant.return_value
     if failure_stage == "lookup":
-        mock_foundry_local_manager.catalog.get_model.return_value = None
+        catalog.get_model.return_value = None
     elif failure_stage in ("download", "load"):
         getattr(model, failure_stage).side_effect = RuntimeError("setup failed")
     with (
@@ -263,7 +380,7 @@ def test_foundry_local_client_rolls_back_service_started_on_existing_manager(
     ):
         if failure_stage == "http":
             http_client.side_effect = RuntimeError("setup failed")
-        FoundryLocalClient(model="test-model-id")
+        FoundryLocalClient(model="test-model-id", catalog_type=catalog_type)
     mock_foundry_local_manager.close.assert_not_called()
     if service_running:
         mock_foundry_local_manager.stop_web_service.assert_not_called()
@@ -492,16 +609,22 @@ async def _client_with_transport(
     *,
     middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
     function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+    catalog_type: Literal["public", "local"] = "public",
+    model: str = "test-model-id",
 ) -> AsyncGenerator[FoundryLocalClient[FoundryLocalChatOptions[None]]]:
     async with (
         DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(respond), trust_env=False) as http_client,
         AsyncOpenAI(
-            base_url="http://localhost:5272/v1", api_key="foundry-local", http_client=http_client, max_retries=0
+            base_url=f"http://localhost:5272{'/catalogs/local' if catalog_type == 'local' else ''}/v1",
+            api_key="foundry-local",
+            http_client=http_client,
+            max_retries=0,
         ) as async_client,
     ):
         with patch("agent_framework_foundry_local._foundry_local_client.AsyncOpenAI", return_value=async_client):
             yield FoundryLocalClient(
-                model="test-model-id",
+                model=model,
+                catalog_type=catalog_type,
                 prepare_model=False,
                 middleware=middleware,
                 function_invocation_configuration=function_invocation_configuration,

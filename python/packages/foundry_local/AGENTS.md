@@ -5,10 +5,11 @@ Integration with Microsoft Foundry Local for local model inference.
 Uses `foundry_local_sdk` (SDK 2.1+, below 3.0) on Python 3.11-3.14. Clients share
 `FoundryLocalManager.instance` and use its built-in web service with the existing
 OpenAI transport. Model lifecycle operations live on catalog model objects.
-The adapter resolves public-catalog variants only; BYOM/local-catalog selection
-is intentionally not exposed by this adapter. SDK 2.1's HTTP service supports
-registered local models through `/catalogs/local/v1`, separate from the public
-`/v1` route used here.
+The adapter defaults to the public catalog and `/v1`. Use `catalog_type="local"`
+or `foundry_local_sdk.catalog.CatalogType.LOCAL` for SDK-registered BYOM models:
+both lookup and HTTP inference use the local catalog and `/catalogs/local/v1`.
+Catalogs never fall back to each other; per-request model overrides remain in the
+selected catalog. The application owns local-model registration and assets.
 
 `FoundryLocalClient` exposes the SDK `Configuration` for initial manager setup,
 download progress/cancellation controls, and exact device/variant selection.

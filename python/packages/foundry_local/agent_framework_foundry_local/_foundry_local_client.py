@@ -25,6 +25,7 @@ from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
 from foundry_local_sdk import Configuration, DeviceType, FoundryLocalManager
+from foundry_local_sdk.catalog import CatalogType
 from openai import DEFAULT_TIMEOUT, AsyncOpenAI
 from pydantic import BaseModel
 
@@ -282,6 +283,7 @@ class FoundryLocalClient(
         bootstrap: bool = True,
         timeout: float | None = None,
         prepare_model: bool = True,
+        catalog_type: CatalogType | Literal["public", "local"] = CatalogType.PUBLIC,
         download_progress_callback: Callable[[float], None] | None = None,
         download_cancel_event: Event | None = None,
         device: DeviceType | Literal["CPU", "GPU", "NPU"] | None = None,
@@ -306,6 +308,10 @@ class FoundryLocalClient(
                 the inferencing service upon initialization. Default is True.
                 If False, the exact model variant must already be loaded, or be downloaded
                 and loaded manually before inference.
+            catalog_type: The catalog used for model lookup and HTTP inference.
+                Defaults to "public". Use "local" for models already registered through
+                the SDK's local catalog. Also accepts foundry_local_sdk.catalog.CatalogType.
+                Per-request model overrides remain in the selected catalog.
             download_progress_callback: Optional callback receiving native download progress
                 as a percentage from 0 to 100. Used only when prepare_model is True.
             download_cancel_event: Optional event that cancels native model download when set.
@@ -397,6 +403,13 @@ class FoundryLocalClient(
         if model_setting is None:
             raise SettingNotFoundError("Required setting 'model' was not provided.")
         device_type = DeviceType(device) if device is not None else None
+        catalog_kind = (
+            {"public": CatalogType.PUBLIC, "local": CatalogType.LOCAL}.get(catalog_type)
+            if isinstance(catalog_type, str)
+            else catalog_type
+        )
+        if not isinstance(catalog_kind, CatalogType):
+            raise ValueError("catalog_type must be 'public', 'local', or a CatalogType.")
 
         with _MANAGER_SETUP_LOCK:
             manager = FoundryLocalManager.instance
@@ -426,11 +439,10 @@ class FoundryLocalClient(
                 if not manager.urls:
                     raise ValueError("Foundry Local web service did not provide a bound URL.")
 
+                catalog = manager.catalog if catalog_kind == CatalogType.PUBLIC else manager.get_catalog(catalog_kind)
                 is_variant_id = ":" in model_setting
                 model_handle = (
-                    manager.catalog.get_model_variant(model_setting)
-                    if is_variant_id
-                    else manager.catalog.get_model(model_setting)
+                    catalog.get_model_variant(model_setting) if is_variant_id else catalog.get_model(model_setting)
                 )
                 if model_handle is not None and device_type is not None:
                     model_handle = next(
@@ -443,7 +455,7 @@ class FoundryLocalClient(
                     )
                 elif model_handle is not None and not is_variant_id:
                     # Pin the alias's chosen variant before download changes the cached preference.
-                    model_handle = manager.catalog.get_model_variant(model_handle.id)
+                    model_handle = catalog.get_model_variant(model_handle.id)
                 if model_handle is None:
                     target = f"{model_setting}:{device_type.value}" if device_type is not None else model_setting
                     raise ValueError(f"Model with ID or alias '{target}' not found in Foundry Local.")
@@ -458,10 +470,11 @@ class FoundryLocalClient(
                         )
                     model_handle.load()
 
+                catalog_path = "/catalogs/local" if catalog_kind == CatalogType.LOCAL else ""
                 super().__init__(
                     model=model_id,
                     async_client=AsyncOpenAI(
-                        base_url=f"{manager.urls[0].rstrip('/')}/v1",
+                        base_url=f"{manager.urls[0].rstrip('/')}{catalog_path}/v1",
                         api_key="foundry-local",
                         timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
                     ),
