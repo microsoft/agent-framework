@@ -3537,14 +3537,14 @@ def _json_safe_to_str(value: Any | None) -> str:
 
 def _image_generation_result(outputs: Any) -> str | None:
     """Return the base64 image of an image generation tool result, as the Responses API expects."""
+    if isinstance(outputs, str):
+        return outputs
     items: Sequence[Any] = [outputs]
-    if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, bytearray)):
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (bytes, bytearray)):
         items = cast(Sequence[Any], outputs)
     for item in items:
         if isinstance(item, Content) and item.uri:
             return item.uri.split(";base64,", 1)[1] if ";base64," in item.uri else item.uri
-        if isinstance(item, str):
-            return item
     return None
 
 
