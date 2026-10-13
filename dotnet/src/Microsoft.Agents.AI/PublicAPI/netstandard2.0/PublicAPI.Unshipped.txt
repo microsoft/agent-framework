@@ -32,7 +32,7 @@ Microsoft.Agents.AI.AgentModeProviderOptions.DisableModeSetTool.set -> void
 [MAAI001]const Microsoft.Agents.AI.LoopExitReason.Completed = "completed" -> string!
 [MAAI001]const Microsoft.Agents.AI.LoopExitReason.IterationCapReached = "iteration_cap_reached" -> string!
 [MAAI001]const Microsoft.Agents.AI.LoopExitReason.NeedInput = "need_input" -> string!
-[MAAI001]const Microsoft.Agents.AI.SignalProtocolLoopEvaluator.DefaultFeedbackMessage = "Continue working on the task. When done, emit 'TASK_COMPLETE: <summary>'. If you need input, emit 'NEED_INPUT: <question>'." -> string!
+[MAAI001]const Microsoft.Agents.AI.SignalProtocolLoopEvaluator.DefaultFeedbackMessage = "Continue working on the task. When done, start a new line with 'TASK_COMPLETE: <summary>'. If you need input, start a new line with 'NEED_INPUT: <question>'." -> string!
 [MAAI001]const Microsoft.Agents.AI.SignalProtocolLoopEvaluator.NeedInputToken = "NEED_INPUT:" -> string!
 [MAAI001]const Microsoft.Agents.AI.SignalProtocolLoopEvaluator.TaskCompleteToken = "TASK_COMPLETE:" -> string!
 [MAAI001]override Microsoft.Agents.AI.SignalProtocolLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>

@@ -73,7 +73,7 @@ public class SignalProtocolLoopEvaluatorTests
     {
         // Arrange
         var evaluator = new SignalProtocolLoopEvaluator();
-        LoopContext context = CreateContext("NEED_INPUT: q? TASK_COMPLETE: done");
+        LoopContext context = CreateContext("NEED_INPUT: q?\nTASK_COMPLETE: done");
 
         // Act
         LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
@@ -209,6 +209,142 @@ public class SignalProtocolLoopEvaluatorTests
             new ChatMessage(ChatRole.Tool, "tool output"),
             new ChatMessage(ChatRole.Assistant, "NEED_INPUT: which file?"),
         ]);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(LoopExitReason.NeedInput, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that a token mentioned mid-sentence is not treated as a signal.
+    /// </summary>
+    [Theory]
+    [InlineData("I'll emit TASK_COMPLETE: when done.")]
+    [InlineData("If anything is unclear I will reply with NEED_INPUT: and a question.")]
+    public async Task EvaluateAsync_TokenMidSentence_ContinuesAsync(string text)
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(text);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.True(evaluation.ShouldReinvoke);
+        Assert.False(context.AdditionalProperties.ContainsKey(LoopExitReason.AdditionalPropertiesKey));
+    }
+
+    /// <summary>
+    /// Verify that a token quoted in backticks, even at the start of a line, is not treated as a signal.
+    /// </summary>
+    [Theory]
+    [InlineData("`TASK_COMPLETE:` is the completion signal.")]
+    [InlineData("Protocol:\n`NEED_INPUT:` asks the user a question.")]
+    [InlineData("I'll emit `TASK_COMPLETE:` when done.")]
+    [InlineData("I'll emit `NEED_INPUT:` if I get stuck.")]
+    public async Task EvaluateAsync_TokenInBackticks_ContinuesAsync(string text)
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(text);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.True(evaluation.ShouldReinvoke);
+        Assert.False(context.AdditionalProperties.ContainsKey(LoopExitReason.AdditionalPropertiesKey));
+    }
+
+    /// <summary>
+    /// Verify that a token at the start of a later line, after prose, stops the loop.
+    /// </summary>
+    [Theory]
+    [InlineData("I updated the file and ran the tests.\nTASK_COMPLETE: all tests pass", LoopExitReason.Completed)]
+    [InlineData("I found two config files.\nNEED_INPUT: which one should I edit?", LoopExitReason.NeedInput)]
+    public async Task EvaluateAsync_TokenAtStartOfLaterLine_StopsAsync(string text, string expectedReason)
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(text);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(expectedReason, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that leading spaces or tabs before a token on its line are allowed.
+    /// </summary>
+    [Theory]
+    [InlineData("   TASK_COMPLETE: done", LoopExitReason.Completed)]
+    [InlineData("Summary:\n\t NEED_INPUT: which file?", LoopExitReason.NeedInput)]
+    public async Task EvaluateAsync_TokenWithLeadingWhitespace_StopsAsync(string text, string expectedReason)
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext(text);
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(expectedReason, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that a token at the start of a line is detected with CRLF line endings.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_TokenAfterCrLf_StopsAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext("Done with the work.\r\nTASK_COMPLETE: summary\r\n");
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(LoopExitReason.Completed, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that a mid-sentence mention earlier in a message does not hide a real signal later in the same message.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_MentionThenRealSignal_StopsAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext("I was asked to emit TASK_COMPLETE: when done.\nTASK_COMPLETE: done");
+
+        // Act
+        LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
+
+        // Assert
+        Assert.False(evaluation.ShouldReinvoke);
+        Assert.Equal(LoopExitReason.Completed, context.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that a mid-sentence TASK_COMPLETE: mention does not take priority over a real NEED_INPUT: signal.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_TaskCompleteMentionWithNeedInputSignal_StampsNeedInputAsync()
+    {
+        // Arrange
+        var evaluator = new SignalProtocolLoopEvaluator();
+        LoopContext context = CreateContext("Before I can emit TASK_COMPLETE: I need to know more.\nNEED_INPUT: which file?");
 
         // Act
         LoopEvaluation evaluation = await evaluator.EvaluateAsync(context);
