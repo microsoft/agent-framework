@@ -734,14 +734,14 @@ class DeclarativeWorkflowState:
             evaluated_args: list[str] = []
             for arg in args:
                 arg = arg.strip()
-                if arg.startswith('"') and arg.endswith('"'):
+                if re.fullmatch(r'"(?:[^"]|"")*"', arg):
                     # String literal
-                    evaluated_args.append(arg[1:-1])
+                    evaluated_args.append(arg[1:-1].replace('""', '"'))
                 elif arg.startswith("'") and arg.endswith("'"):
                     # Single-quoted string literal
                     evaluated_args.append(arg[1:-1])
                 else:
-                    # Variable reference - evaluate it
+                    # Variable reference or expression - evaluate it
                     result = self.eval(f"={arg}")
                     evaluated_args.append(str(result) if result is not None else "")
             return "".join(evaluated_args)
@@ -983,8 +983,9 @@ class DeclarativeWorkflowState:
         Captures brace-delimited tokens whose root segment is an identifier
         (``[A-Za-z][A-Za-z0-9_]*``) followed by zero or more ``.`` separated
         dict-key segments. Resolution is delegated to :meth:`get`; unresolved
-        tokens are replaced with the empty string. Tokens that do not look
-        like state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
+        tokens are replaced with the empty string. Substituted values remain
+        literal and are not interpolated again. Tokens that do not look like
+        state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
 
         Args:
             text: Text that may contain {Variable.Path} references
@@ -1004,12 +1005,7 @@ class DeclarativeWorkflowState:
         # per-segment safety on attribute traversal.
         pattern = r"\{([A-Za-z][A-Za-z0-9_]*(?:\.[^{}\s.]+)*)\}"
 
-        result = text
-        for match in re.finditer(pattern, text):
-            replacement = replace_var(match)
-            result = result.replace(match.group(0), replacement, 1)
-
-        return result
+        return re.sub(pattern, replace_var, text)
 
 
 # Message types for inter-executor communication

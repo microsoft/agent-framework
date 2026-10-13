@@ -45,7 +45,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 - **Follow `python-package-management` for package lifecycle and versioning rules** — do not duplicate those
   rules in this release workflow.
 - **No `Co-Authored-By` trailer** on any commit.
-- **Use `uv run`** for all Python/poe commands (`uv run poe ...`, `uv run pytest ...`).
+- **Use `uv run`** for cross-version Python/Poe commands and add the relevant
+  `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
 

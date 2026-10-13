@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Refresh development dependency pins across the Python workspace."""
+"""Refresh development dependency and on-demand tool pins."""
 
 from __future__ import annotations
 
@@ -9,16 +9,20 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomli
+from packaging.requirements import InvalidRequirement, Requirement
 from rich import print
 
+from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_upper_impl import (
     VersionCatalog,
     _apply_package_replacements,
     _collect_development_pin_replacements,
+    _exact_pin_version,
     _load_lock_versions,
+    _select_latest_dev_version,
 )
 from scripts.task_runner import discover_projects
+from scripts.tool_requirements import REQUIREMENTS_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +37,65 @@ class WorkspaceProject:
     pyproject_file: Path
 
 
+def _collect_tool_requirement_replacements(
+    requirements_file: Path,
+    *,
+    catalog: VersionCatalog,
+) -> dict[str, str]:
+    """Return exact tool-pin updates for one requirements file."""
+    requirements = [
+        line
+        for raw_line in requirements_file.read_text().splitlines()
+        if (line := raw_line.strip()) and not line.startswith(("#", "-r ", "--requirement "))
+    ]
+    return _collect_requirement_replacements(requirements, catalog=catalog)
+
+
+def _collect_requirement_replacements(
+    requirements: list[str],
+    *,
+    catalog: VersionCatalog,
+) -> dict[str, str]:
+    """Return latest-version replacements for exact requirements."""
+    replacements: dict[str, str] = {}
+    for requirement in requirements:
+        try:
+            parsed_requirement = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        if parsed_requirement.url is not None:
+            continue
+
+        current_version = _exact_pin_version(parsed_requirement)
+        latest_version = _select_latest_dev_version(catalog.get(parsed_requirement.name.lower()))
+        if current_version is None or latest_version is None or latest_version <= current_version:
+            continue
+
+        extras = f"[{','.join(sorted(parsed_requirement.extras))}]" if parsed_requirement.extras else ""
+        marker = f"; {parsed_requirement.marker}" if parsed_requirement.marker else ""
+        replacements[requirement] = f"{parsed_requirement.name}{extras}=={latest_version}{marker}"
+    return replacements
+
+
+def _apply_tool_requirement_replacements(requirements_file: Path, replacements: dict[str, str]) -> None:
+    """Apply exact requirement replacements while preserving file layout."""
+    lines = requirements_file.read_text().splitlines(keepends=True)
+    updated_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        replacement = replacements.get(stripped)
+        if replacement is None:
+            updated_lines.append(line)
+            continue
+        newline = "\n" if line.endswith("\n") else ""
+        updated_lines.append(f"{replacement}{newline}")
+    requirements_file.write_text("".join(updated_lines))
+
+
 def _read_project_name(pyproject_file: Path) -> str:
     """Return the normalized project name declared in a pyproject file."""
     with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     project = data.get("project", {}) or {}
     project_name = str(project.get("name", "")).strip()
@@ -103,10 +162,10 @@ def _select_projects(projects: list[WorkspaceProject], package_filters: list[str
 
 
 def main() -> None:
-    """Refresh exact development dependency pins in workspace pyproject files."""
+    """Refresh exact development and tool dependency pins."""
     parser = argparse.ArgumentParser(
         description=(
-            "Refresh development dependency pins across the workspace pyproject.toml files. "
+            "Refresh development dependency pins and on-demand tool requirement files. "
             "By default, resolves versions from PyPI and falls back to uv.lock when network access is unavailable."
         )
     )
@@ -153,7 +212,7 @@ def main() -> None:
         filters = ", ".join(args.packages or [])
         raise SystemExit(f"No matching workspace projects found for: {filters}")
 
-    updated_projects = 0
+    updated_sources = 0
     updated_requirements = 0
     for project in selected_projects:
         # Keep the replacement logic centralized in the upper-bound helper so exact development pins are
@@ -163,7 +222,7 @@ def main() -> None:
         if not replacements:
             continue
 
-        updated_projects += 1
+        updated_sources += 1
         updated_requirements += len(replacements)
         if args.dry_run:
             print(f"[yellow]Planned updates for {project.pyproject_path}[/yellow]")
@@ -177,14 +236,31 @@ def main() -> None:
             f"({project.name}) with {len(replacements)} development dependency pin refresh(es)."
         )
 
-    if updated_projects == 0:
-        print("[green]No development dependency pin updates were needed.[/green]")
+    for requirements_file in sorted(REQUIREMENTS_ROOT.glob("requirements-*.txt")):
+        replacements = _collect_tool_requirement_replacements(requirements_file, catalog=catalog)
+        if not replacements:
+            continue
+
+        updated_sources += 1
+        updated_requirements += len(replacements)
+        relative_path = requirements_file.relative_to(workspace_root)
+        if args.dry_run:
+            print(f"[yellow]Planned updates for {relative_path}[/yellow]")
+            for original, replacement in replacements.items():
+                print(f"  - {original} -> {replacement}")
+            continue
+
+        _apply_tool_requirement_replacements(requirements_file, replacements)
+        print(f"[green]Updated {relative_path}[/green] with {len(replacements)} on-demand tool pin refresh(es).")
+
+    if updated_sources == 0:
+        print("[green]No development dependency or tool pin updates were needed.[/green]")
         return
 
     action = "Would update" if args.dry_run else "Updated"
     print(
-        f"[green]{action} {updated_requirements} development dependency pin(s) "
-        f"across {updated_projects} workspace project(s).[/green]"
+        f"[green]{action} {updated_requirements} development dependency and tool pin(s) "
+        f"across {updated_sources} source file(s).[/green]"
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import sys
 import uuid
 import warnings
@@ -44,13 +45,14 @@ from agent_framework import (
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._types import AgentRunInputs
+from agent_framework._types import AgentRunInputs, _set_operation_state  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
+from google.protobuf.struct_pb2 import Struct
 
 from ._feature_usage import FeatureIndex
-from ._utils import get_uri_data
+from ._utils import AGENT_FRAMEWORK_METADATA_KEY, get_uri_data
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
@@ -64,6 +66,15 @@ class A2AServiceSessionId(TypedDict):
     context_id: str
     task_id: str | None
     task_state: TaskState | None
+
+
+def _with_operation_state(
+    update: AgentResponseUpdate,
+    state: Literal["in_progress", "terminal"],
+) -> AgentResponseUpdate:
+    """Attach framework-internal resumable-operation state."""
+    _set_operation_state(update, state)
+    return update
 
 
 class A2AAgentSession(AgentSession):
@@ -207,6 +218,48 @@ IN_PROGRESS_TASK_STATES = [
 A2AStreamItem: TypeAlias = StreamResponse
 
 
+# Largest magnitude at which every integer is exactly representable as the double protobuf Struct uses.
+_MAX_EXACT_STRUCT_INT = 2**53
+
+
+def _parse_exact_int(text: str) -> int:
+    value = int(text)
+    if abs(value) > _MAX_EXACT_STRUCT_INT:
+        raise ValueError(f"integer {text[:20]} is outside the exactly representable range of a protobuf Struct")
+    return value
+
+
+def _reject_non_str_keys(value: Any) -> None:
+    """Recursively raise if any mapping key is not a ``str``, since JSON would silently coerce it."""
+    if isinstance(value, Mapping):
+        for key, item in cast("Mapping[Any, Any]", value).items():
+            if not isinstance(key, str):
+                raise TypeError(f"mapping keys must be str, got {type(key).__name__}: {key!r}")
+            _reject_non_str_keys(item)
+    elif isinstance(value, (list, tuple)):
+        for item in cast("Sequence[Any]", value):
+            _reject_non_str_keys(item)
+
+
+def _to_struct_safe_json(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a JSON round-tripped copy of ``values`` that a protobuf ``Struct`` can carry exactly.
+
+    Raises:
+        TypeError: If a value is not JSON-compatible or a mapping key is not a ``str``.
+        ValueError: If a value is NaN, infinite, an out-of-range integer, or otherwise unrepresentable.
+        OverflowError: If a number is too large for a protobuf ``Struct``.
+    """
+    # json.dumps coerces non-str keys (for example 1 and "1" collide), so reject them before the round trip.
+    _reject_non_str_keys(values)
+    # allow_nan=False rejects NaN and infinities, and parse_int rejects integers a Struct would round.
+    round_tripped = cast(
+        "dict[str, Any]", json.loads(json.dumps(dict(values), allow_nan=False), parse_int=_parse_exact_int)
+    )
+    # Dry run so any remaining Struct conversion failure (for example an unpaired surrogate) surfaces here.
+    Struct().update(round_tripped)
+    return round_tripped
+
+
 class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
@@ -233,6 +286,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         auth_interceptor: AuthInterceptor | None = None,
         timeout: float | httpx.Timeout | None = None,
         supported_protocol_bindings: list[Literal["JSONRPC", "GRPC", "HTTP+JSON"] | str] | None = None,
+        forwarded_kwargs: Sequence[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -255,6 +309,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             supported_protocol_bindings: List of protocol bindings to use for transport negotiation.
                 Known values: "JSONRPC", "GRPC", "HTTP+JSON". Defaults to ["JSONRPC"].
                 The A2A spec treats this as an open-form string, so custom bindings are also accepted.
+            forwarded_kwargs: Names of keys to forward to the remote A2A server. Keys are looked up in
+                the ``function_invocation_kwargs`` and ``client_kwargs`` passed to :meth:`run` and sent
+                in ``SendMessageRequest.metadata`` under ``"agent_framework"``. The default (``None``)
+                sends nothing. Values must be JSON-compatible with finite numbers and integers within
+                +/-2**53 (protobuf ``Struct`` stores numbers as doubles), otherwise
+                ``AgentInvalidRequestException`` is raised. The receiving ``A2AExecutor`` decides
+                which keys it accepts.
             kwargs: any additional properties, passed to BaseAgent.
         """
         # Default name/description from agent_card when not explicitly provided
@@ -265,6 +326,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 description = agent_card.description
 
         super().__init__(id=id, name=name, description=description, **kwargs)
+        self._forwarded_kwargs: frozenset[str] = frozenset(forwarded_kwargs or ())
         self._http_client: httpx.AsyncClient | None = http_client
         # Only HTTP clients created by this agent are closed on exit.
         self._close_http_client = False
@@ -481,10 +543,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
-            function_invocation_kwargs: Present for compatibility with the shared agent interface.
-                A2AAgent does not use these values directly.
-            client_kwargs: Present for compatibility with the shared agent interface.
-                A2AAgent does not use these values directly.
+            function_invocation_kwargs: Keyword arguments for tool invocation. Only the keys named in
+                ``forwarded_kwargs`` are sent to the server, nothing otherwise.
+            client_kwargs: Keyword arguments for the chat client. Only the keys named in
+                ``forwarded_kwargs`` are sent to the server, nothing otherwise.
             kwargs: Additional compatibility keyword arguments.
                 A2AAgent does not use these values directly.
             continuation_token: Optional token to resume a long-running task
@@ -526,6 +588,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], session=session)
             input_request_occurrence_id = a2a_message.message_id
             request = SendMessageRequest(message=a2a_message)
+            forwarded = self._get_forwarded_kwargs(function_invocation_kwargs, client_kwargs)
+            if forwarded:
+                request.metadata.update({AGENT_FRAMEWORK_METADATA_KEY: forwarded})
             if background and not stream:
                 # return_immediately only applies to non-streaming (message/send)
                 request.configuration.return_immediately = True
@@ -680,16 +745,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         all_updates.append(update)
                         yield update
                 elif is_terminal or is_input_required:
-                    if updates:
+                    if updates and any(update.contents for update in updates):
                         # Terminal/input-required event with content — discard accumulated intermediates
                         pending_updates_by_task.pop(status_event.task_id, None)
                         for update in updates:
                             all_updates.append(update)
                             yield update
                     elif is_terminal:
-                        # Terminal event with NO content — flush accumulated updates
+                        # Terminal event with no content — flush accumulated updates before its metadata marker.
                         pending = pending_updates_by_task.pop(status_event.task_id, [])
                         for update in pending:
+                            all_updates.append(update)
+                            yield update
+                        for update in updates:
                             all_updates.append(update)
                             yield update
                 else:
@@ -702,7 +770,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 last_task_id = artifact_event.task_id
                 if artifact_event.context_id:
                     last_context_id = artifact_event.context_id
-                updates = self._updates_from_task_update_event(artifact_event)
+                updates = self._updates_from_task_update_event(artifact_event, background=background)
                 # Always yield artifact updates — they carry actual response
                 # content (files, data).  Track IDs so that a subsequent
                 # terminal Task doesn't duplicate the same artifacts.
@@ -814,22 +882,21 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
             message = status.message if status.HasField("message") and status.message.parts else None
             occurrence_id = input_request_occurrence_id or task.id
-            return [
-                AgentResponseUpdate(
-                    contents=[
-                        self._input_required_request(
-                            task.id,
-                            message,
-                            fallback_occurrence_id=occurrence_id,
-                        )
-                    ],
-                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
-                    response_id=task.id,
-                    continuation_token=self._build_continuation_token(task) if background else None,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
-                )
-            ]
+            update = AgentResponseUpdate(
+                contents=[
+                    self._input_required_request(
+                        task.id,
+                        message,
+                        fallback_occurrence_id=occurrence_id,
+                    )
+                ],
+                role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                response_id=task.id,
+                continuation_token=self._build_continuation_token(task) if background else None,
+                additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                raw_representation=task,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
@@ -840,7 +907,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     if getattr(message.raw_representation, "artifact_id", None) not in streamed_artifact_ids
                 ]
             if task_messages:
-                return [
+                updates = [
                     AgentResponseUpdate(
                         contents=message.contents,
                         role=message.role,
@@ -853,28 +920,49 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     )
                     for message in task_messages
                 ]
+                _set_operation_state(updates[-1], "terminal")
+                return updates
             if task.artifacts:
-                return []
+                if not background:
+                    return []
+                return [
+                    _with_operation_state(
+                        AgentResponseUpdate(
+                            contents=[],
+                            role="assistant",
+                            response_id=task.id,
+                            additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                            raw_representation=task,
+                        ),
+                        "terminal",
+                    )
+                ]
             return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant",
-                    response_id=task.id,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=task.id,
+                        additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                        raw_representation=task,
+                    ),
+                    "terminal",
                 )
             ]
 
         if background and status.state in IN_PROGRESS_TASK_STATES:
             token = self._build_continuation_token(task)
             return [
-                AgentResponseUpdate(
-                    contents=[],
-                    role="assistant",
-                    response_id=task.id,
-                    continuation_token=token,
-                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
-                    raw_representation=task,
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=task.id,
+                        continuation_token=token,
+                        additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                        raw_representation=task,
+                    ),
+                    "in_progress",
                 )
             ]
 
@@ -888,7 +976,18 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             contents = self._parse_contents_from_a2a(status.message.parts)
             if contents:
                 return [
-                    AgentResponseUpdate(
+                    _with_operation_state(
+                        AgentResponseUpdate(
+                            contents=contents,
+                            role="assistant" if status.message.role == A2ARole.ROLE_AGENT else "user",
+                            response_id=task.id,
+                            additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                            raw_representation=task,
+                        ),
+                        "in_progress",
+                    )
+                    if background
+                    else AgentResponseUpdate(
                         contents=contents,
                         role="assistant" if status.message.role == A2ARole.ROLE_AGENT else "user",
                         response_id=task.id,
@@ -914,16 +1013,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             artifact_meta = MessageToDict(update_event.artifact.metadata) if update_event.artifact.metadata else {}
             event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
             merged_metadata = {**artifact_meta, **event_meta} or None
-            return [
-                AgentResponseUpdate(
-                    contents=contents,
-                    role="assistant",
-                    response_id=update_event.task_id,
-                    message_id=update_event.artifact.artifact_id,
-                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                    raw_representation=update_event,
-                )
-            ]
+            update = AgentResponseUpdate(
+                contents=contents,
+                role="assistant",
+                response_id=update_event.task_id,
+                message_id=update_event.artifact.artifact_id,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                raw_representation=update_event,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if not isinstance(update_event, TaskStatusUpdateEvent):
             return []
@@ -944,47 +1042,78 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
             merged_metadata = {**message_meta, **event_meta} or None
             occurrence_id = input_request_occurrence_id or update_event.task_id
-            return [
-                AgentResponseUpdate(
-                    contents=[
-                        self._input_required_request(
-                            update_event.task_id,
-                            message,
-                            fallback_occurrence_id=occurrence_id,
-                        )
-                    ],
-                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
-                    response_id=update_event.task_id,
-                    message_id=message.message_id if message is not None else None,
-                    continuation_token=continuation_token,
-                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                    raw_representation=update_event,
-                )
-            ]
-
-        if not update_event.status.HasField("message") or not update_event.status.message.parts:
-            return []
+            update = AgentResponseUpdate(
+                contents=[
+                    self._input_required_request(
+                        update_event.task_id,
+                        message,
+                        fallback_occurrence_id=occurrence_id,
+                    )
+                ],
+                role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                response_id=update_event.task_id,
+                message_id=message.message_id if message is not None else None,
+                continuation_token=continuation_token,
+                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                raw_representation=update_event,
+            )
+            return [_with_operation_state(update, "in_progress")] if background else [update]
 
         if state not in TERMINAL_TASK_STATES:
             return []
 
+        event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
+        if not update_event.status.HasField("message") or not update_event.status.message.parts:
+            if not background:
+                return []
+            return [
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant",
+                        response_id=update_event.task_id,
+                        continuation_token=continuation_token,
+                        additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                        raw_representation=update_event,
+                    ),
+                    "terminal",
+                )
+            ]
+
         message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
-            return []
+            if not background:
+                return []
+            return [
+                _with_operation_state(
+                    AgentResponseUpdate(
+                        contents=[],
+                        role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
+                        response_id=update_event.task_id,
+                        message_id=message.message_id,
+                        continuation_token=continuation_token,
+                        additional_properties={"a2a_metadata": event_meta} if event_meta else None,
+                        raw_representation=update_event,
+                    ),
+                    "terminal",
+                )
+            ]
         msg_meta = MessageToDict(message.metadata) if message.metadata else {}
-        event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
 
         return [
-            AgentResponseUpdate(
-                contents=contents,
-                role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
-                response_id=update_event.task_id,
-                message_id=message.message_id,
-                continuation_token=continuation_token,
-                additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
-                raw_representation=update_event,
+            _with_operation_state(
+                AgentResponseUpdate(
+                    contents=contents,
+                    role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=update_event.task_id,
+                    message_id=message.message_id,
+                    continuation_token=continuation_token,
+                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                    raw_representation=update_event,
+                ),
+                "terminal",
             )
         ]
 
@@ -1015,6 +1144,35 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if updates:
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
+
+    def _get_forwarded_kwargs(
+        self,
+        function_invocation_kwargs: Mapping[str, Any] | None,
+        client_kwargs: Mapping[str, Any] | None,
+    ) -> dict[str, dict[str, Any]]:
+        """Select the opted-in run kwargs to send in the request metadata.
+
+        Raises:
+            AgentInvalidRequestException: If a selected value is not JSON-compatible.
+        """
+        if not self._forwarded_kwargs:
+            return {}
+        forwarded: dict[str, dict[str, Any]] = {}
+        for name, source in (
+            ("function_invocation_kwargs", function_invocation_kwargs),
+            ("client_kwargs", client_kwargs),
+        ):
+            selected = {key: value for key, value in (source or {}).items() if key in self._forwarded_kwargs}
+            if not selected:
+                continue
+            try:
+                forwarded[name] = _to_struct_safe_json(selected)
+            except (TypeError, ValueError, OverflowError) as ex:
+                raise AgentInvalidRequestException(
+                    f"Forwarded {name} must contain only values that protobuf Struct can carry "
+                    f"(JSON-compatible, finite numbers, integers within +/-2**53): {ex}"
+                ) from ex
+        return forwarded
 
     def _prepare_message_for_a2a(self, message: Message, *, session: AgentSession | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
