@@ -168,7 +168,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._mcp": (
         "MCPStdioTool",
         "MCPStreamableHTTPTool",
-        "MCPTaskOptions",
         "MCPWebsocketTool",
         "SamplingApprovalCallback",
     ),
