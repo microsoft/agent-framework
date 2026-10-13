@@ -1731,8 +1731,7 @@ class MCPTool:
             from tenacity import AsyncRetrying, before_sleep_log, retry_if_exception, wait_exponential
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                "MCP subscription recovery requires `tenacity`. "
-                "Please install `agent-framework-core[all]` or `tenacity`."
+                "MCP subscription recovery requires `tenacity`. Please install `tenacity`."
             ) from exc
 
         from mcp.client.subscriptions import (
