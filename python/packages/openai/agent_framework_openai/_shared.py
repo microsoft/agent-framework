@@ -297,10 +297,14 @@ def load_openai_service_settings(
         api_key=api_key_str,
         endpoint=endpoint,
         base_url=base_url,
-        api_version=api_version or default_azure_api_version,
+        api_version=api_version,
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
+    # Apply the client default only after load_settings: an explicit value passed to it always
+    # wins, so passing the default there would hide AZURE_OPENAI_API_VERSION and the .env file.
+    if not azure_settings.get("api_version"):
+        azure_settings["api_version"] = default_azure_api_version
     if model is not None:
         azure_settings[azure_model_fields[0]] = model
     client_args = {}

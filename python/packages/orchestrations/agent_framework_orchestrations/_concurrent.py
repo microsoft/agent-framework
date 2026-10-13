@@ -18,7 +18,7 @@ from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never
 
 from ._feature_usage import FeatureIndex
-from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_request_info import AgentApprovalExecutor, validate_request_info_filter
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -171,6 +171,10 @@ class _CallbackAggregator(Executor):
                 ret = await self._callback(results)
             else:
                 ret = await asyncio.to_thread(self._callback, results)
+
+        # Async callable objects and wrappers returning a coroutine are not coroutine functions
+        if inspect.isawaitable(ret):
+            ret = await ret
 
         # If the callback returned a value, finalize the workflow with it
         if ret is not None:
@@ -382,6 +386,11 @@ class ConcurrentBuilder:
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 
+        if self._request_info_enabled:
+            validate_request_info_filter(
+                self._request_info_filter,
+                [resolve_agent_id(p) for p in participants if not isinstance(p, Executor)],
+            )
         return executors
 
     def build(self) -> Workflow:

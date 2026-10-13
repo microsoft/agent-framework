@@ -7,11 +7,15 @@ import math
 import threading
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from datetime import date, datetime, timedelta, timezone
+from datetime import time as datetime_time
+from decimal import Decimal
 from typing import Any, Literal
 from unittest.mock import Mock
+from uuid import UUID, SafeUUID
 
 import pytest
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, TypeAdapter, field_validator
 
 from agent_framework import (
     Agent,
@@ -4999,6 +5003,147 @@ def test_stateful_mixed_batch_assigns_idless_equal_result_to_unanswered_occurren
     assert host_result_ids == {id(messages[-1].contents[1]), id(messages[-1].contents[2])}
 
 
+def test_stateful_mixed_batch_rejects_idless_replay_of_previously_staged_result() -> None:
+    """An id-less replay cannot fill a sibling occurrence after partial recovery."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests = [
+        Content.from_function_call(
+            call_id="shared",
+            name="host_func",
+            arguments={},
+            id=f"host-occurrence-{index}",
+        )
+        for index in range(2)
+    ]
+    for request in host_requests:
+        request.user_input_request = True
+    identified_result = Content.from_function_result(call_id="shared", result="same result")
+    identified_result.id = "host-occurrence-0"
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], *[[request] for request in host_requests]])
+
+    first_messages = [Message(role="user", contents=[approval_response, identified_result])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(first_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    replay = Content.from_function_result(call_id="shared", result="same result")
+    full_transcript = [Message(role="user", contents=[approval_response, identified_result, replay])]
+    with pytest.raises(RuntimeError, match="Ambiguous id-less Host response"):
+        _stage_pending_mixed_pause_responses(full_transcript, session)
+
+    distinct_result = Content.from_function_result(call_id="shared", result="second result")
+    full_transcript = [Message(role="user", contents=[approval_response, identified_result, distinct_result])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(full_transcript, session)
+    assert incomplete is False
+    assert completed is True
+    assert [content.result for content in full_transcript[-1].contents if content.type == "function_result"] == [
+        "same result",
+        "second result",
+    ]
+
+
+def test_stateful_mixed_batch_accepts_exact_host_results_across_messages() -> None:
+    """The first exact Host response anchors a split response window."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(call_id="approval", name="approval_func", arguments={}, id="approval")
+    approval_request = Content.from_function_approval_request(id="approval", function_call=approval_call)
+    host_requests = [
+        Content.from_function_call(call_id=f"host-{index}", name="host_func", arguments={}, id=f"host-{index}")
+        for index in range(2)
+    ]
+    for request in host_requests:
+        request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], *[[request] for request in host_requests]])
+
+    approval_messages = [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(approval_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    host_messages: list[Message] = []
+    for request in host_requests:
+        assert request.call_id is not None
+        assert request.id is not None
+        result = Content.from_function_result(call_id=request.call_id, result=request.id)
+        result.id = request.id
+        host_messages.append(Message(role="tool", contents=[result]))
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(host_messages, session)
+    assert incomplete is False
+    assert completed is True
+    assert [content.result for content in host_messages[-1].contents if content.type == "function_result"] == [
+        "host-0",
+        "host-1",
+    ]
+
+
+def test_stateful_mixed_batch_accepts_idless_host_result_after_staged_approval() -> None:
+    """A latest-message id-less Host result can continue a partially staged batch."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(call_id="approval", name="approval_func", arguments={}, id="approval")
+    approval_request = Content.from_function_approval_request(id="approval", function_call=approval_call)
+    host_request = Content.from_function_call(call_id="host", name="host_func", arguments={}, id="host")
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    approval_messages = [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(approval_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    historical_result = Content.from_function_result(call_id="host", result="historical")
+    historical_messages = [
+        Message(
+            role="tool",
+            contents=[historical_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(role="user", contents=["later"]),
+    ]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(historical_messages, session)
+    assert incomplete is True
+    assert completed is False
+    assert historical_messages[0].contents == [historical_result]
+
+    current_result = Content.from_function_result(call_id="host", result="current")
+    current_messages = [Message(role="tool", contents=[current_result])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(current_messages, session)
+    assert incomplete is False
+    assert completed is True
+    assert current_messages[-1].contents[-1].result == "current"
+
+
 def test_stateless_mixed_batch_rejects_conflicting_identified_host_results() -> None:
     """Conflicting results for one identified Host occurrence fail closed."""
     from agent_framework._tools import _stateless_mixed_pause_batch_status
@@ -5040,8 +5185,8 @@ def test_stateless_mixed_batch_rejects_conflicting_identified_host_results() -> 
         _stateless_mixed_pause_batch_status(messages)
 
 
-def test_active_mixed_pause_ignores_historical_host_requests() -> None:
-    """Only the session-recorded mixed batch participates in response correlation."""
+def test_active_mixed_pause_ignores_historical_idless_result_with_reused_call_id() -> None:
+    """A historical id-less result cannot be consumed as an active duplicate."""
     from agent_framework._tools import (
         _stage_pending_mixed_pause_responses,
         _store_pending_approval_requests,
@@ -5070,14 +5215,13 @@ def test_active_mixed_pause_ignores_historical_host_requests() -> None:
     _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
 
     completed_old_host = Content.from_function_call(
-        call_id="old-completed",
+        call_id="current-host",
         name="old_host",
         arguments={},
         id="old-completed-occurrence",
     )
     completed_old_host.user_input_request = True
-    completed_old_result = Content.from_function_result(call_id="old-completed", result="old result")
-    completed_old_result.id = "old-completed-occurrence"
+    completed_old_result = Content.from_function_result(call_id="current-host", result="current result")
     abandoned_old_host = Content.from_function_call(
         call_id="old-abandoned",
         name="old_host",
@@ -5087,29 +5231,628 @@ def test_active_mixed_pause_ignores_historical_host_requests() -> None:
     abandoned_old_host.user_input_request = True
     host_result = Content.from_function_result(call_id="current-host", result="current result")
     host_result.id = "current-host-occurrence"
-    messages = [
-        Message(role="assistant", contents=[completed_old_host, abandoned_old_host]),
-        Message(role="tool", contents=[completed_old_result]),
-        Message(
-            role="user",
-            contents=[
-                approval_request.to_function_approval_response(approved=True),
-                host_result,
-            ],
-        ),
+    current_contents = [
+        approval_request.to_function_approval_response(approved=True),
+        host_result,
     ]
+    messages = [
+        Message(
+            role="assistant",
+            contents=[completed_old_host, abandoned_old_host],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        )
+    ]
+    messages.append(
+        Message(
+            role="tool",
+            contents=[completed_old_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        )
+    )
+    messages.append(Message(role="user", contents=current_contents))
 
     incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
 
     assert incomplete is False
     assert completed is True
     assert messages[0].contents == [completed_old_host, abandoned_old_host]
-    assert messages[1].contents == [completed_old_result]
+    assert any(content is completed_old_result for message in messages[:-1] for content in message.contents)
     assert [(content.type, content.id) for content in messages[-1].contents] == [
         ("function_approval_response", "current-approval-occurrence"),
         ("function_result", "current-host-occurrence"),
     ]
     assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
+def test_active_mixed_pause_accepts_idless_host_result_before_approval_in_same_message() -> None:
+    """A Host-first current reply retains its id-less result before the approval anchor."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    historical_result = Content.from_function_result(call_id="host", result="historical result")
+    host_result = Content.from_function_result(call_id="host", result="current result")
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    messages = [
+        Message(
+            role="tool",
+            contents=[historical_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(role="user", contents=[host_result, approval_response]),
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert messages[0].contents == [historical_result]
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_approval_response", "approval-occurrence"),
+        ("function_result", None),
+    ]
+    assert messages[-1].contents[-1].result == "current result"
+    assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
+@pytest.mark.parametrize("approval_staged", [False, True], ids=["same-resume", "partial-resume"])
+def test_active_mixed_pause_rejects_conflicting_host_first_idless_results(approval_staged: bool) -> None:
+    """Conflicting id-less results in the anchored message cannot be ordered by guesswork."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    first_result = Content.from_function_result(call_id="host", result="first")
+    second_result = Content.from_function_result(call_id="host", result="second")
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    if approval_staged:
+        approval_messages = [Message(role="user", contents=[approval_response])]
+        incomplete, completed, _ = _stage_pending_mixed_pause_responses(approval_messages, session)
+        assert incomplete is True
+        assert completed is False
+        messages = [Message(role="user", contents=[first_result, second_result])]
+    else:
+        messages = [Message(role="user", contents=[first_result, second_result, approval_response])]
+
+    with pytest.raises(RuntimeError, match="Conflicting id-less Host responses"):
+        _stage_pending_mixed_pause_responses(messages, session)
+
+
+def test_active_mixed_pause_exact_host_result_precedes_weak_idless_candidate() -> None:
+    """An exact occurrence result remains authoritative over an earlier id-less candidate."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    weak_result = Content.from_function_result(call_id="host", result="weak")
+    exact_result = Content.from_function_result(call_id="host", result="exact")
+    exact_result.id = "host-occurrence"
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    messages = [Message(role="user", contents=[weak_result, exact_result, approval_response])]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert messages[0].contents == [weak_result]
+    assert [content.result for content in messages[-1].contents if content.type == "function_result"] == ["exact"]
+
+
+def test_active_mixed_pause_staged_approval_replay_does_not_anchor_full_history() -> None:
+    """A replayed staged approval cannot admit an intervening stale Host result."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    partial_messages = [Message(role="user", contents=[approval_response])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(partial_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    replayed_approval = approval_request.to_function_approval_response(approved=True)
+    stale_result = Content.from_function_result(call_id="host", result="stale")
+    current_result = Content.from_function_result(call_id="host", result="current")
+    full_history = [
+        Message(
+            role="user",
+            contents=[replayed_approval],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(
+            role="tool",
+            contents=[stale_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(role="user", contents=[current_result]),
+    ]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(full_history, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert all(content is not replayed_approval for message in full_history for content in message.contents)
+    assert any(content is stale_result for message in full_history[:-1] for content in message.contents)
+    assert [content.result for content in full_history[-1].contents if content.type == "function_result"] == ["current"]
+
+
+def test_active_mixed_pause_staged_exact_host_replay_does_not_anchor_full_history() -> None:
+    """A replayed staged exact Host result cannot admit stale input for a sibling occurrence."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    first_host = Content.from_function_call(
+        call_id="shared-host",
+        name="host",
+        arguments={},
+        id="host-occurrence-1",
+    )
+    first_host.user_input_request = True
+    second_host = Content.from_function_call(
+        call_id="shared-host",
+        name="host",
+        arguments={},
+        id="host-occurrence-2",
+    )
+    second_host.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [first_host, second_host]])
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    first_result = Content.from_function_result(call_id="shared-host", result="first")
+    first_result.id = "host-occurrence-1"
+    partial_messages = [Message(role="user", contents=[approval_response, first_result])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(partial_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    replayed_first_result = Content.from_function_result(call_id="shared-host", result="first")
+    replayed_first_result.id = "host-occurrence-1"
+    stale_result = Content.from_function_result(call_id="shared-host", result="stale")
+    current_result = Content.from_function_result(call_id="shared-host", result="current")
+    full_history = [
+        Message(
+            role="tool",
+            contents=[replayed_first_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(
+            role="tool",
+            contents=[stale_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        ),
+        Message(role="user", contents=[current_result]),
+    ]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(full_history, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert all(content is not replayed_first_result for message in full_history for content in message.contents)
+    assert any(content is stale_result for message in full_history[:-1] for content in message.contents)
+    assert [content.result for content in full_history[-1].contents if content.type == "function_result"] == [
+        "first",
+        "current",
+    ]
+
+
+@pytest.mark.parametrize(
+    "alias_mode",
+    ["distinct-history", "shared-history", "shared-current"],
+)
+def test_active_mixed_pause_removes_at_most_one_attributed_replay_per_staged_item(
+    alias_mode: str,
+) -> None:
+    """One staged Host occurrence cannot consume multiple equal attributed history results."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    first_host = Content.from_function_call(
+        call_id="shared-host",
+        name="host",
+        arguments={},
+        id="host-occurrence-1",
+    )
+    first_host.user_input_request = True
+    second_host = Content.from_function_call(
+        call_id="shared-host",
+        name="host",
+        arguments={},
+        id="host-occurrence-2",
+    )
+    second_host.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [first_host, second_host]])
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    first_result = Content.from_function_result(call_id="shared-host", result="first")
+    first_result.id = "host-occurrence-1"
+    partial_messages = [Message(role="user", contents=[approval_response, first_result])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(partial_messages, session)
+    assert incomplete is True
+    assert completed is False
+
+    historical_result = Content.from_function_result(call_id="shared-host", result="first")
+    historical_results = [
+        historical_result,
+        historical_result
+        if alias_mode != "distinct-history"
+        else Content.from_function_result(call_id="shared-host", result="first"),
+    ]
+    second_result = Content.from_function_result(call_id="shared-host", result="second")
+    second_result.id = "host-occurrence-2"
+    messages = [
+        Message(
+            role="tool",
+            contents=[historical_results[0]],
+            additional_properties={"_attribution": {"source_id": "history-a"}},
+        ),
+        Message(
+            role="tool",
+            contents=[historical_results[1]],
+            additional_properties={"_attribution": {"source_id": "history-b"}},
+        ),
+        Message(
+            role="user",
+            contents=[historical_result, second_result] if alias_mode == "shared-current" else [second_result],
+        ),
+    ]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert (
+        sum(
+            content is historical_results[0] or content is historical_results[1]
+            for message in messages[:-1]
+            for content in message.contents
+        )
+        == 1
+    )
+    assert [content.result for content in messages[-1].contents if content.type == "function_result"] == [
+        "first",
+        "second",
+    ]
+
+
+@pytest.mark.parametrize("trailing_empty_message", [False, True], ids=["host-last", "empty-last"])
+def test_active_mixed_pause_stages_idless_host_before_approval_across_resumes(
+    trailing_empty_message: bool,
+) -> None:
+    """A current delta Host result is retained when its approval arrives on a later resume."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    host_messages = [Message(role="user", contents=[host_result])]
+    if trailing_empty_message:
+        host_messages.append(Message(role="user", contents=[]))
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(host_messages, session)
+
+    assert incomplete is True
+    assert completed is False
+    assert host_messages == []
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    approval_messages = [Message(role="user", contents=[approval_response])]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(approval_messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert [(content.type, content.id) for content in approval_messages[-1].contents] == [
+        ("function_approval_response", "approval-occurrence"),
+        ("function_result", None),
+    ]
+    assert approval_messages[-1].contents[-1].result == "host result"
+    assert host_result_ids == {id(approval_messages[-1].contents[-1])}
+
+
+def test_active_mixed_pause_accepts_host_before_approval_across_current_messages() -> None:
+    """Current Host-first responses remain active when approval is in a later message."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    host_result = Content.from_function_result(call_id="host", result="host result")
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    messages = [
+        Message(role="tool", contents=[host_result]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    incomplete, completed, host_result_ids = _stage_pending_mixed_pause_responses(messages, session)
+
+    assert incomplete is False
+    assert completed is True
+    assert [(content.type, content.id) for content in messages[-1].contents] == [
+        ("function_approval_response", "approval-occurrence"),
+        ("function_result", None),
+    ]
+    assert messages[-1].contents[-1].result == "host result"
+    assert host_result_ids == {id(messages[-1].contents[-1])}
+
+
+def test_active_mixed_pause_does_not_stage_attributed_history_without_current_anchor() -> None:
+    """A HistoryProvider message cannot masquerade as the current Host-first delta."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="reused-host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    stale_result = Content.from_function_result(call_id="reused-host", result="stale")
+    history_messages = [
+        Message(
+            role="tool",
+            contents=[stale_result],
+            additional_properties={"_attribution": {"source_id": "in_memory"}},
+        )
+    ]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(history_messages, session)
+
+    assert incomplete is True
+    assert completed is False
+    assert history_messages[0].contents == [stale_result]
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    approval_messages = [Message(role="user", contents=[approval_response])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(approval_messages, session)
+
+    assert incomplete is True
+    assert completed is False
+
+
+def test_active_mixed_pause_does_not_anchor_or_collect_attributed_history() -> None:
+    """HistoryProvider responses cannot authorize or complete the active mixed batch."""
+    from agent_framework._tools import (
+        _stage_pending_mixed_pause_responses,
+        _store_pending_approval_requests,
+        _store_pending_mixed_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="guarded",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="reused-host",
+        name="host",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_mixed_pause_batch(session, [[approval_request], [host_request]])
+
+    historical_approval = approval_request.to_function_approval_response(approved=True)
+    historical_host = Content.from_function_result(call_id="reused-host", result="historical")
+    history_messages = [
+        Message(
+            role="user",
+            contents=[historical_approval],
+            additional_properties={"_attribution": {"source_id": "history-a"}},
+        ),
+        Message(
+            role="tool",
+            contents=[historical_host],
+            additional_properties={"_attribution": {"source_id": "history-b"}},
+        ),
+    ]
+
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(history_messages, session)
+
+    assert incomplete is True
+    assert completed is False
+    assert history_messages[0].contents == [historical_approval]
+    assert history_messages[1].contents == [historical_host]
+
+    current_approval = approval_request.to_function_approval_response(approved=True)
+    current_messages = [*history_messages, Message(role="user", contents=[current_approval])]
+    incomplete, completed, _ = _stage_pending_mixed_pause_responses(current_messages, session)
+
+    assert incomplete is True
+    assert completed is False
+    assert current_messages[0].contents == [historical_approval]
+    assert current_messages[1].contents == [historical_host]
 
 
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
@@ -5770,6 +6513,467 @@ async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
     assert result.result == "nan"
     assert len(received) == 1 and math.isnan(received[0])
     assert validation_count == 1
+
+
+class _PassthroughFunctionMiddleware(FunctionMiddleware):
+    """Routes an invocation through the middleware path, which binds approved arguments."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        await call_next()
+
+
+def _approved_function_call(tool_name: str, arguments: dict[str, Any]) -> Content:
+    function_call = Content.from_function_call(
+        call_id=f"{tool_name}-call",
+        id=f"{tool_name}-occurrence",
+        name=tool_name,
+        arguments=arguments,
+    )
+    return Content.from_function_approval_request(
+        id=f"{tool_name}-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (datetime, "2026-01-02T03:04:05+01:00", datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=1)))),
+        (date, "2026-01-02", date(2026, 1, 2)),
+        (timedelta, "PT90S", timedelta(seconds=90)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (frozenset[int], [2, 1], frozenset({1, 2})),
+        (tuple[int, int], [1, 2], (1, 2)),
+        (Decimal, "1.50", Decimal("1.50")),
+        (UUID, "12345678-1234-5678-1234-567812345678", UUID("12345678-1234-5678-1234-567812345678")),
+    ],
+    ids=["datetime", "aware_datetime", "date", "timedelta", "set", "frozenset", "tuple", "decimal", "uuid"],
+)
+async def test_approval_binds_values_converted_by_input_model(annotation: Any, raw_value: Any, expected: Any) -> None:
+    """An approved tool receives values its input model converts from JSON (#8661).
+
+    Approval binds the arguments with a stable snapshot token, so every converted type needs one;
+    otherwise the approved call fails as if the arguments were opaque mutable objects.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    result = await _auto_invoke_function(
+        _approved_function_call(capture_tool.name, {"value": raw_value}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={capture_tool.name: capture_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "ok"
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+def _change_value_middleware(change: Callable[[Any], Any]) -> FunctionMiddleware:
+    """Return middleware that applies ``change`` to the ``value`` argument after approval."""
+
+    class ChangeValueMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            changed = change(context.arguments["value"])
+            if changed is not None:
+                context.arguments["value"] = changed
+            await call_next()
+
+    return ChangeValueMiddleware()
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "change"),
+    [
+        (set[str], ["read"], lambda value: value.add("delete")),
+        (set[float], ["NaN", "NaN"], lambda value: value.discard(next(iter(value)))),
+        (
+            datetime,
+            "2026-01-02T03:04:05+01:00",
+            lambda value: TypeAdapter(datetime).validate_python("2026-01-02T04:04:05+02:00"),
+        ),
+        (Decimal, "1.0", lambda value: Decimal("1.00")),
+    ],
+    ids=[
+        "set_mutated_in_place",
+        "set_with_one_of_two_nans_removed",
+        "datetime_moved_to_other_time_zone",
+        "decimal_with_other_precision",
+    ],
+)
+async def test_approval_detects_changes_to_converted_values(
+    annotation: Any, raw_value: Any, change: Callable[[Any], Any]
+) -> None:
+    """Middleware changes to a converted value require a replacement approval.
+
+    This covers changes that ``==`` misses: the set still holds a NaN, the moved datetime is the
+    same instant, and the Decimals compare equal, but the tool would receive a different value.
+    The replacement request is persisted with the session, so its arguments must be JSON-native.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareTermination, match="Function arguments changed after approval") as exc_info:
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": raw_value}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_change_value_middleware(change)),
+        )
+
+    assert received == []
+    replacement = exc_info.value.result
+    assert isinstance(replacement, Content)
+    assert replacement.type == "function_approval_request"
+    json.dumps(replacement.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "change"),
+    [
+        (datetime, "2026-01-02T03:04:05+01:00", lambda value: value.astimezone(timezone.utc)),
+        (datetime, "2026-11-01T01:30:00", lambda value: value.replace(fold=1)),
+        (datetime_time, "01:30:00", lambda value: value.replace(fold=1)),
+        (
+            UUID,
+            "12345678-1234-5678-1234-567812345678",
+            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+        ),
+    ],
+    ids=[
+        "datetime_with_standard_library_time_zone",
+        "datetime_with_other_fold",
+        "time_with_other_fold",
+        "uuid_with_other_is_safe",
+    ],
+)
+async def test_approval_change_that_json_cannot_represent_fails_closed(
+    annotation: Any, raw_value: Any, change: Callable[[Any], Any]
+) -> None:
+    """A change JSON cannot carry exactly fails closed instead of asking for approval again (#8661).
+
+    Approving a replacement validates its JSON arguments again, which drops ``fold`` and
+    ``is_safe`` and parses offsets into pydantic's own time zone type. The approved value would then
+    differ from the one the middleware produces, so every approval would need another one.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareFailure, match="cannot represent exactly"):
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": raw_value}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_change_value_middleware(change)),
+        )
+
+    assert received == []
+
+
+@pytest.mark.parametrize("short_circuit", [False, True], ids=["middleware_calls_next", "middleware_short_circuits"])
+async def test_approval_change_that_cannot_be_serialized_fails_closed(short_circuit: bool) -> None:
+    """A change that cannot be serialized at all fails closed like one JSON cannot carry exactly.
+
+    The replacement approval request needs JSON arguments. For bytes that are not UTF-8,
+    ``to_jsonable_python`` raises ``UnicodeDecodeError`` rather than ``PydanticSerializationError``;
+    that must end in the same ``MiddlewareFailure`` instead of escaping as a raw error.
+    """
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    received: list[bytes] = []
+
+    def capture(value: bytes) -> str:
+        received.append(value)
+        return "ok"
+
+    class ChangeToInvalidUtf8Middleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            context.arguments["value"] = b"\xff\xfe"
+            if short_circuit:
+                context.result = "handled by middleware"
+                return
+            await call_next()
+
+    capture_tool = tool(capture, name="capture", approval_mode="always_require")
+
+    with pytest.raises(MiddlewareFailure, match="cannot represent exactly") as exc_info:
+        await _auto_invoke_function(
+            _approved_function_call(capture_tool.name, {"value": "hello"}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={capture_tool.name: capture_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeToInvalidUtf8Middleware()),
+        )
+
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+    assert received == []
+
+
+@pytest.mark.parametrize(
+    ("value", "other"),
+    [
+        (datetime(2026, 11, 1, 1, 30), datetime(2026, 11, 1, 1, 30, fold=1)),
+        (datetime_time(1, 30), datetime_time(1, 30, fold=1)),
+        (
+            UUID("12345678-1234-5678-1234-567812345678"),
+            UUID("12345678-1234-5678-1234-567812345678", is_safe=SafeUUID.safe),
+        ),
+        (
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1))),
+            datetime(2026, 1, 2, tzinfo=timezone(timedelta(hours=1), "CET")),
+        ),
+    ],
+    ids=["datetime_fold", "time_fold", "uuid_is_safe", "time_zone_name"],
+)
+def test_argument_tokens_distinguish_values_with_the_same_string_form(value: Any, other: Any) -> None:
+    """Values a tool can tell apart get different authority tokens, even when ``str()`` is equal."""
+    from agent_framework._tools import _argument_authority_token
+
+    assert str(value) == str(other)
+    token = _argument_authority_token(value, boundary="approval")
+    assert token == _argument_authority_token(value, boundary="approval")
+    assert token != _argument_authority_token(other, boundary="approval")
+
+
+@pytest.mark.parametrize(
+    ("value", "other"),
+    [
+        ({float("nan"), float("nan")}, {float("nan")}),
+        ({Decimal("NaN"), Decimal("NaN")}, {Decimal("NaN")}),
+        (frozenset({float("nan"), float("nan")}), frozenset({float("nan")})),
+        ({float("nan"): 1, float("nan"): 1}, {float("nan"): 1}),
+        ({(float("nan"),), (float("nan"),)}, {(float("nan"),)}),
+    ],
+    ids=["set_of_floats", "set_of_decimals", "frozenset", "dict_keys", "set_of_tuples"],
+)
+def test_argument_tokens_count_items_that_share_a_token(value: Any, other: Any) -> None:
+    """Items with the same token are counted, so removing one changes the token (#8661).
+
+    NaN is not equal to itself, so a set or dict can hold several NaNs, and they all get the same
+    token. Without a count, removing one would leave the token unchanged.
+    """
+    from agent_framework._tools import _argument_authority_token
+
+    assert len(value) == 2
+    assert len(other) == 1
+    token = _argument_authority_token(value, boundary="approval")
+    assert token == _argument_authority_token(value, boundary="approval")
+    assert token != _argument_authority_token(other, boundary="approval")
+
+
+async def test_approval_rejects_subclass_of_converted_value_type() -> None:
+    """Only the exact immutable types get value tokens; a subclass may carry mutable state."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class MutableDatetime(datetime):
+        pass
+
+    class SubclassArgs(BaseModel):
+        moment: datetime
+
+        @field_validator("moment")
+        @classmethod
+        def to_subclass(cls, value: datetime) -> datetime:
+            return MutableDatetime.fromisoformat(value.isoformat())
+
+    @tool(name="subclass_tool", schema=SubclassArgs, approval_mode="always_require")
+    def subclass_tool(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(MiddlewareFailure, match="Cannot safely bind approval to opaque mutable function arguments"):
+        await _auto_invoke_function(
+            _approved_function_call(subclass_tool.name, {"moment": "2026-01-02T03:04:05"}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={subclass_tool.name: subclass_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(_PassthroughFunctionMiddleware()),
+        )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_agent_runs_approved_tool_with_converted_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """End to end: an approved tool with datetime and set parameters runs after approval (#8661)."""
+    received: list[tuple[datetime, set[str]]] = []
+
+    @tool(name="schedule", approval_mode="always_require")
+    def schedule(moment: datetime, tags: set[str]) -> str:
+        received.append((moment, tags))
+        return "scheduled"
+
+    function_call = Content.from_function_call(
+        call_id="schedule-1",
+        name="schedule",
+        arguments='{"moment": "2026-01-02T03:04:05Z", "tags": ["b", "a"]}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[schedule], middleware=[_PassthroughFunctionMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("schedule it")
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    final_response = await run(
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+    )
+
+    assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"a", "b"})]
+    assert final_response.text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_approved_repair_replacement_round_trips_through_json(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A replacement for repaired converted arguments can be stored as JSON and then runs once (#8661).
+
+    Middleware repairs one argument after approval while the others keep their converted values
+    (datetime, set). The replacement request holds the arguments in JSON form, so the session and
+    the approval message survive a JSON round trip, and approving the stored request runs the call.
+    """
+    received: list[tuple[datetime, set[str], int]] = []
+
+    class LimitSeatsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if context.arguments["seats"] > 4:
+                context.arguments = {**context.arguments, "seats": 4}
+            await call_next()
+
+    @tool(name="book", approval_mode="always_require")
+    def book(when: datetime, tags: set[str], seats: int) -> str:
+        received.append((when, tags, seats))
+        return "booked"
+
+    function_call = Content.from_function_call(
+        call_id="book-1",
+        name="book",
+        arguments='{"when": "2026-01-02T03:04:05Z", "tags": ["window"], "seats": 6}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[book], middleware=[LimitSeatsMiddleware()])
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("book it")
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)])
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert received == []
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert replacement_request.function_call is not None
+    assert replacement_request.function_call.parse_arguments() == {
+        "when": "2026-01-02T03:04:05Z",
+        "tags": ["window"],
+        "seats": 4,
+    }
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    approval_message = Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)])
+    final_response = await run(Message.from_dict(json.loads(approval_message.to_json())))
+
+    assert received == [(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), {"window"}, 4)]
+    assert type(received[0][0]) is datetime
+    assert type(received[0][1]) is set
+    assert final_response.text == "done"
 
 
 async def test_function_middleware_can_short_circuit_before_argument_validation(

@@ -217,6 +217,12 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
+def test_service_url() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key", base_url="http://localhost:1234/v1")
+
+    assert client.service_url() == "http://localhost:1234/v1/"
+
+
 def test_init_uses_explicit_parameters() -> None:
     signature = inspect.signature(OpenAIChatClient.__init__)
 
@@ -8207,10 +8213,12 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].inputs[0].type == "text"
     assert result.contents[0].inputs[0].text is not None
     assert "import pandas as pd" in result.contents[0].inputs[0].text
-    # Verify additional_properties for stream ordering
+    # Verify additional_properties for stream ordering and authoritative snapshot
     assert result.contents[0].additional_properties["output_index"] == 0
     assert result.contents[0].additional_properties["sequence_number"] == 5
     assert result.contents[0].additional_properties["item_id"] == "ci_456"
+    assert result.contents[0].additional_properties["stream_complete"] is True
+    assert result.contents[0].inputs[0].additional_properties["stream_complete"] is True
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:

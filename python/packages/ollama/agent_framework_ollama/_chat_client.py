@@ -348,6 +348,15 @@ class OllamaChatClient(
         self.middleware = list(self.chat_middleware)
 
     @override
+    def service_url(self) -> str:
+        """Get the URL of the Ollama service.
+
+        Returns:
+            The Ollama server URL, used for the ``server.address`` telemetry attribute.
+        """
+        return self.host
+
+    @override
     def _inner_get_response(
         self,
         *,

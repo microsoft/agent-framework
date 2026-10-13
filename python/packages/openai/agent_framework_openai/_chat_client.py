@@ -820,6 +820,15 @@ class RawOpenAIChatClient(
         ) from ex
 
     @override
+    def service_url(self) -> str:
+        """Get the URL of the service.
+
+        Returns:
+            The base URL of the underlying OpenAI client, or ``"Unknown"`` if there is no client.
+        """
+        return str(self.client.base_url) if self.client else "Unknown"
+
+    @override
     def _inner_get_response(
         self,
         *,
@@ -3879,6 +3888,8 @@ class RawOpenAIChatClient(
                     "output_index": event.output_index,
                     "sequence_number": event.sequence_number,
                     "item_id": event.item_id,
+                    # Authoritative full code; core merges replace prior deltas.
+                    "stream_complete": True,
                 }
                 contents.append(
                     Content.from_code_interpreter_tool_call(
