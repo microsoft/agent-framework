@@ -821,6 +821,32 @@ async def test_sub_workflow_checkpoint_restore_clears_answered_sibling_requests(
     assert result.get_final_state() == WorkflowRunState.IDLE
 
 
+async def test_sub_workflow_checkpoint_restore_clears_cancelled_sibling_requests() -> None:
+    """Restoring and cancelling sibling requests must not retain either request."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_sibling_checkpoint_test_workflow()
+
+    result = await workflow.run({}, checkpoint_storage=storage)
+    pending = {event.request_id: event.data.field for event in result.get_request_info_events()}
+    assert sorted(pending.values()) == ["a", "b"]
+
+    checkpoint_id = await workflow.resolve_pause_checkpoint_id(pending, checkpoint_storage=storage)
+    workflow = _build_sibling_checkpoint_test_workflow()
+    result = await workflow.cancel_pending_requests(
+        pending,
+        checkpoint_id=checkpoint_id,
+        checkpoint_storage=storage,
+    )
+
+    assert result.get_request_info_events() == []
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert await workflow._runner_context.get_pending_request_info_events() == {}  # pyright: ignore[reportPrivateUsage]
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    latest_checkpoint = max(checkpoints, key=lambda checkpoint: checkpoint.timestamp)
+    assert latest_checkpoint.pending_request_info_events == {}
+
+
 async def test_sub_workflow_checkpoint_restore_preserves_sub_workflow_state() -> None:
     """Resuming a sub-workflow mid-progress must restore its internal executor state.
 
