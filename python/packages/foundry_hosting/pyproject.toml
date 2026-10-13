@@ -97,5 +97,5 @@ help = "Run the default unit test suite for this package."
 cmd = 'pytest -m "not integration" --cov=agent_framework_foundry_hosting --cov-report=term-missing:skip-covered tests'
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

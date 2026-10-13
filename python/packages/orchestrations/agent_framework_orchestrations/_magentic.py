@@ -427,8 +427,20 @@ def _extract_json(text: str) -> dict[str, Any]:
             raise ValueError("No JSON object found.")
         depth = 0
         end = None
+        in_string = False
+        escaped = False
         for i, ch in enumerate(text[start:], start=start):
-            if ch == "{":
+            # Braces inside string values, such as code in an instruction, do not count.
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch == "{":
                 depth += 1
             elif ch == "}":
                 depth -= 1
@@ -1374,8 +1386,9 @@ class MagenticAgentExecutor(AgentExecutor):
         # Request into related
         self._pending_agent_requests.clear()
         self._pending_responses_to_agent.clear()
+        self._pending_request_order.clear()
         # Reset sessions
-        self._agent_thread = self._agent.create_session()
+        self._session = self._agent.create_session()
 
 
 #  endregion Magentic Agent Executor
