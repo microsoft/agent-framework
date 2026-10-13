@@ -142,8 +142,8 @@ export function AudioMessagePreview({
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const lastAutoPlayedUrlRef = useRef<string | null>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const duration = Math.max(audio.durationSeconds, 0.01);
   const progress = Math.min(1, Math.max(0, currentTime / duration));
@@ -204,11 +204,17 @@ export function AudioMessagePreview({
       target.removeEventListener("pointermove", updateFromPointer);
       target.removeEventListener("pointerup", cleanupPointerListeners);
       target.removeEventListener("pointercancel", cleanupPointerListeners);
+      setIsScrubbing(false);
       if (target.hasPointerCapture(pointerId)) {
         target.releasePointerCapture(pointerId);
       }
     };
 
+    if (!previewBeforeSend || disabled) {
+      return;
+    }
+
+    setIsScrubbing(true);
     seekFromClientX(event.clientX);
     target.setPointerCapture(pointerId);
     target.addEventListener("pointermove", updateFromPointer);
@@ -245,23 +251,76 @@ export function AudioMessagePreview({
             {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
           </Button>
         )}
-        <button
-          type="button"
-          onClick={() => previewBeforeSend && setIsExpanded((expanded) => !expanded)}
-          disabled={!previewBeforeSend}
-          className="flex min-w-0 flex-1 items-center gap-4 text-left disabled:cursor-default"
-          aria-label={previewBeforeSend ? `${label}. Show audio scrubber` : label}
-        >
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 text-xs font-medium">{label}</div>
-            <div className="h-8 overflow-hidden">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 text-xs font-medium">{label}</div>
+          {previewBeforeSend ? (
+            <div
+              role="slider"
+              aria-label={AUDIO_UI_TEXT.audioPlaybackPosition}
+              aria-valuemin={0}
+              aria-valuemax={Math.round(duration)}
+              aria-valuenow={Math.round(currentTime)}
+              aria-valuetext={`${formatAudioDuration(Math.floor(currentTime))} of ${formatAudioDuration(
+                Math.floor(duration)
+              )}`}
+              aria-disabled={disabled || undefined}
+              tabIndex={disabled ? -1 : 0}
+              onPointerDown={handleScrubPointerDown}
+              onKeyDown={(event) => {
+                if (disabled) {
+                  return;
+                }
+
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  seekTo(currentTime - 1);
+                } else if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  seekTo(currentTime + 1);
+                } else if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  seekTo(currentTime - 1);
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  seekTo(currentTime + 1);
+                } else if (event.key === "Home") {
+                  event.preventDefault();
+                  seekTo(0);
+                } else if (event.key === "End") {
+                  event.preventDefault();
+                  seekTo(duration);
+                }
+              }}
+              data-scrubbing={isScrubbing}
+              className="group relative h-8 cursor-pointer overflow-hidden rounded-md px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 aria-disabled:cursor-default"
+            >
+              <div className="h-full">
+                <WaveformBars peaks={audio.waveformPeaks} progress={progress} />
+              </div>
+              <div
+                className="pointer-events-none absolute inset-x-3 top-1/2 h-6 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[scrubbing=true]:opacity-100"
+                aria-hidden="true"
+              >
+                <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted-foreground/35" />
+                <div
+                  className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-violet-500/80"
+                  style={{ width: `${progress * 100}%` }}
+                />
+                <div
+                  className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-background bg-violet-500 shadow-md"
+                  style={{ left: `${progress * 100}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="h-8 overflow-hidden px-1">
               <WaveformBars peaks={audio.waveformPeaks} progress={progress} />
             </div>
-          </div>
-          <div className="min-w-[4ch] text-sm font-semibold tabular-nums">
-            {formatAudioDuration(Math.floor(currentTime || audio.durationSeconds))}
-          </div>
-        </button>
+          )}
+        </div>
+        <div className="min-w-[4ch] text-sm font-semibold tabular-nums">
+          {formatAudioDuration(Math.floor(currentTime || audio.durationSeconds))}
+        </div>
         {onRemove && (
           <Button
             type="button"
@@ -288,49 +347,6 @@ export function AudioMessagePreview({
           </a>
         )}
       </div>
-      {previewBeforeSend && isExpanded && (
-        <div
-          role="slider"
-          aria-label={AUDIO_UI_TEXT.audioPlaybackPosition}
-          aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
-          aria-valuenow={Math.round(currentTime)}
-          aria-valuetext={`${formatAudioDuration(Math.floor(currentTime))} of ${formatAudioDuration(
-            Math.floor(duration)
-          )}`}
-          tabIndex={0}
-          onPointerDown={handleScrubPointerDown}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              seekTo(currentTime - 1);
-            } else if (event.key === "ArrowRight") {
-              event.preventDefault();
-              seekTo(currentTime + 1);
-            } else if (event.key === "Home") {
-              event.preventDefault();
-              seekTo(0);
-            } else if (event.key === "End") {
-              event.preventDefault();
-              seekTo(duration);
-            }
-          }}
-          className="relative mt-2 h-9 cursor-pointer rounded-full px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-        >
-          <div className="absolute inset-x-2 top-1/2 h-1 -translate-y-1/2 rounded-full bg-muted-foreground/40" />
-          <div
-            className="absolute left-2 top-1/2 h-1 -translate-y-1/2 rounded-full bg-violet-500"
-            style={{ width: `calc(${progress * 100}% - ${progress * 16}px)` }}
-          />
-          <div className="absolute inset-x-10 top-1/2 h-7 -translate-y-1/2 overflow-hidden opacity-55">
-            <WaveformBars peaks={audio.waveformPeaks} progress={progress} maxHeight={28} />
-          </div>
-          <div
-            className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-background bg-violet-500 shadow"
-            style={{ left: `calc(8px + ${progress * 100}% - ${progress * 16}px)` }}
-          />
-        </div>
-      )}
     </div>
   );
 }
