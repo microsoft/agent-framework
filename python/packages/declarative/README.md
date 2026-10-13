@@ -54,7 +54,7 @@ and supports identity, gzip, and deflate
 responses, including up to four encoding stages. Unsupported encodings,
 incomplete encoded bodies, and trailing encoded data raise `httpx.DecodingError`.
 Empty encoded responses are validated unless the response is bodyless (HEAD,
-204, or 304). Deflate input is retained within the same bound until its wrapped
+204, 205, or 304). Deflate input is retained within the same bound until its wrapped
 or raw format can be validated.
 Explicit request `Accept-Encoding` headers and client values that differ from
 HTTPX's generated default are preserved but do not enable additional decoders.

@@ -998,7 +998,7 @@ class TestResponseBodyLimits:
             assert stream.closed
             assert not client.is_closed
 
-    @pytest.mark.parametrize(("method", "status"), [("HEAD", 200), ("GET", 204), ("GET", 304)])
+    @pytest.mark.parametrize(("method", "status"), [("HEAD", 200), ("GET", 204), ("GET", 205), ("GET", 304)])
     async def test_empty_bodyless_response_does_not_require_encoded_body(self, method: str, status: int) -> None:
         stream = _ResponseStream([])
         response = httpx.Response(status, headers={"Content-Encoding": "gzip"}, stream=stream)
