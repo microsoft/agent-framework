@@ -157,6 +157,12 @@ def _mock_unnegotiated_session(capabilities: types.ServerCapabilities | None) ->
     return session
 
 
+def _connected_client(tool: MCPTool) -> Any:
+    connection = tool._require_connection()
+    assert connection.client is not None
+    return connection.client
+
+
 class _TransportBoundClientContext:
     """Model SDK-owned transport entry and exit without running a protocol dispatcher."""
 
@@ -5355,12 +5361,12 @@ async def test_connect_retains_and_close_clears_sdk_client() -> None:
             tool.session = tool.session
             assert tool._connection is connection
             with pytest.raises(RuntimeError, match="framework-owned MCP Client"):
-                tool.session = None
+                tool.session = sdk_client.session
             await tool.connect(reset=True)
             reset_connection = tool._connection
             assert reset_connection is not None
             assert reset_connection.client is sdk_client
-            assert tool.session is sdk_client.session
+            assert tool.session is None
         finally:
             await tool.close()
 
@@ -5651,8 +5657,7 @@ async def test_modern_subscription_evicts_tool_catalog_cache() -> None:
     )
 
     async with tool:
-        assert tool.session is not None
-        assert tool.session.protocol_version == "2026-07-28"
+        assert _connected_client(tool).protocol_version == "2026-07-28"
         await tool.load_tools()
         assert list_count == 1
 
@@ -7348,7 +7353,7 @@ async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
             assert transport_contexts[0].closed_cleanly is True
             assert transport_contexts[0].exit_task is transport_contexts[0].enter_task
             assert transport_contexts[1].enter_task is transport_contexts[0].enter_task
-            assert tool.session is sessions[1]
+            assert _connected_client(tool) is clients[1]
             assert tool.is_connected is True
             clients[0].__aexit__.assert_awaited_once()
             clients[1].__aenter__.assert_awaited_once()
@@ -7543,10 +7548,10 @@ async def test_connect_sets_logging_level_when_logger_level_is_set():
     with (
         patch("mcp.Client", return_value=sdk_client) as mock_client_class,
         patch.object(logger, "level", logging.DEBUG),  # Set logger level to DEBUG
-        pytest.warns(DeprecationWarning, match="The logging capability is deprecated"),
     ):
         async with tool:
             assert mock_client_class.call_args.kwargs["log_level"] == "debug"
+            sdk_client.set_logging_level.assert_awaited_once_with("debug")
             mock_session.set_logging_level.assert_not_awaited()
 
 
@@ -7573,6 +7578,7 @@ async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
     ):
         async with tool:
             assert mock_client_class.call_args.kwargs["log_level"] is None
+            sdk_client.set_logging_level.assert_not_awaited()
             mock_session.set_logging_level.assert_not_called()
 
 
@@ -7886,8 +7892,7 @@ async def test_auto_mode_falls_back_to_legacy_sampling_backchannel() -> None:
         )
 
     async with tool:
-        assert tool.session is not None
-        assert tool.session.protocol_version == "2025-11-25"
+        assert _connected_client(tool).protocol_version == "2025-11-25"
         result = await tool.call_tool("answer")
 
     assert discover_calls == 1
@@ -9772,8 +9777,7 @@ async def test_mcp_streamble_http_tool_connects_to_v2_server() -> None:
 
     with patch.object(logger, "level", logging.INFO):
         async with tool_a:
-            assert tool_a.session is not None
-            assert tool_a.session.protocol_version == "2026-07-28"
+            assert _connected_client(tool_a).protocol_version == "2026-07-28"
             assert [function.name for function in tool_a.functions] == ["greet"]
 
             result = await tool_a.call_tool("greet")
@@ -9832,8 +9836,7 @@ async def test_mcp_streamable_http_tool_connects_to_legacy_server() -> None:
         pytest.warns(MCPDeprecationWarning, match="logging capability"),
     ):
         async with tool_a:
-            assert tool_a.session is not None
-            assert tool_a.session.protocol_version == "2025-11-25"
+            assert _connected_client(tool_a).protocol_version == "2025-11-25"
             assert [function.name for function in tool_a.functions] == ["greet"]
 
             result = await tool_a.call_tool("greet")
@@ -9911,8 +9914,7 @@ async def test_mcp_streamable_http_prompt_contract_supports_both_protocol_eras(
         )
 
         async with tool:
-            assert tool.session is not None
-            assert tool.session.protocol_version == expected_version
+            assert _connected_client(tool).protocol_version == expected_version
             assert [function.name for function in tool.functions] == ["summarize"]
 
             prompt = tool.functions[0]
@@ -10018,8 +10020,7 @@ async def test_mcp_stdio_tool_connects_to_both_protocol_eras(era: str, expected_
     )
 
     async with tool:
-        assert tool.session is not None
-        assert tool.session.protocol_version == expected_version
+        assert _connected_client(tool).protocol_version == expected_version
         assert [function.name for function in tool.functions] == ["greet"]
         assert _mcp_result_to_text(await tool.call_tool("greet")) == "Hello!"
 

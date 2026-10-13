@@ -150,6 +150,12 @@ def _tool(client: httpx.AsyncClient, principal: str, *, declare_credential: bool
     )
 
 
+def _connected_client(tool: MCPStreamableHTTPTool) -> Any:
+    connection = tool._require_connection()
+    assert connection.client is not None
+    return connection.client
+
+
 def _calls(requests: list[httpx.Request]) -> list[httpx.Request]:
     return [
         request
@@ -417,8 +423,7 @@ async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambien
         await tool.call_tool("record", credential="token-a", marker="first")
         await tool.call_tool("record", credential="token-b", marker="second")
         await tool.load_tools()
-        assert tool.session is not None
-        await tool.session.send_ping()
+        await tool._ensure_connected()
         assert {function.name for function in tool.functions} == {"record", "token-b-only"}
 
         assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
@@ -901,7 +906,7 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
                         "name": "record" if failure_count == 2 else "partial_record",
                         "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
                         "_meta": {"source": "discovery"},
-                        "execution": {"taskSupport": "optional"},
+                        "execution": {"taskSupport": "forbidden"},
                     }
                 ]
             }
@@ -1088,7 +1093,7 @@ async def test_abandoned_connect_is_cleaned_before_next_caller(mcp_http_server: 
     caller = asyncio.create_task(tool.connect())
     try:
         await asyncio.wait_for(setup_started.wait(), timeout=5)
-        abandoned_session = tool.session
+        abandoned_connection = tool._connection
         caller.cancel()
         with pytest.raises(asyncio.CancelledError):
             await caller
@@ -1096,7 +1101,7 @@ async def test_abandoned_connect_is_cleaned_before_next_caller(mcp_http_server: 
         release_setup.set()
         await asyncio.wait_for(retry, timeout=5)
         assert tool.is_connected
-        assert tool.session is not abandoned_session
+        assert tool._connection is not abandoned_connection
         assert (
             sum(
                 request.method == "POST" and json.loads(request.content).get("method") == "initialize"
@@ -1121,8 +1126,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 ) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = _connected_client(source).session
         original_hooks = list(client.event_hooks["request"])
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
@@ -1167,8 +1171,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = _connected_client(source).session
         borrowed = MCPStreamableHTTPTool(
             name="borrowed",
             url="https://must-not-connect.example/mcp",
@@ -1254,8 +1257,7 @@ async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_serve
 async def test_cancelled_borrowed_session_caller_can_retry(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = _connected_client(source).session
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
         )

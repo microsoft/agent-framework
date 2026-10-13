@@ -631,15 +631,18 @@ class _ClientMCPConnection:
             cursor=params.cursor if params is not None else None,
         )
 
-    @deprecated("The logging capability is deprecated as of 2026-07-28 (SEP-2577).", category=DeprecationWarning)
     async def set_logging_level(self, level: types.LoggingLevel) -> None:
-        """Logging is configured when the Client is constructed."""
-        del level
-        return
+        """Set legacy logging; modern request metadata is configured in the Client constructor."""
+        if self._client.session.initialize_result is None:
+            return
+        await self._client.set_logging_level(level)  # pyright: ignore[reportDeprecated]
 
     async def check_connection(self) -> None:
-        """Let high-level Client requests determine connection availability."""
-        return
+        """Check legacy Client connections; modern MCP has no ping."""
+        if self._client.session.initialize_result is None:
+            return
+
+        await self._client.send_ping()  # pyright: ignore[reportDeprecated]
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through the high-level Client while honoring server cache hints."""
@@ -2016,14 +2019,14 @@ class MCPTool:
 
                 try:
                     if action == "connect":
-                        previous_session = self.session
+                        previous_connection = self._connection
                         previously_connected = self.is_connected
                         await self._connect_on_owner(
                             reset=reset,
                             load_configured=load_configured,
                             reset_discovery=reset_discovery,
                         )
-                        new_connection = not previously_connected or self.session is not previous_session
+                        new_connection = not previously_connected or self._connection is not previous_connection
                         accepted = False
                         try:
                             if not future.done():
@@ -2271,7 +2274,8 @@ class MCPTool:
             if reset_discovery:
                 self._reset_session_discovery_state()
             self._exit_stack = AsyncExitStack()
-        if not self.session:
+        connection = self._connection
+        if connection is None:
             try:
                 try:
                     from mcp import Client, types
@@ -2358,9 +2362,10 @@ class MCPTool:
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
             self._connection = _ClientMCPConnection(mcp_client)
-        else:
+        elif connection.session is not None:
+            session = connection.session
             try:
-                if self.session.protocol_version is None:
+                if session.protocol_version is None:
                     # Preserve old compatibility behavior for an
                     # unnegotiated caller-supplied session: initialize it as legacy.
                     with create_mcp_client_span(
@@ -2369,24 +2374,26 @@ class MCPTool:
                         capture_unhandled_exceptions=False,
                     ) as init_span:
                         try:
-                            initialize_result = await self.session.initialize()
+                            initialize_result = await session.initialize()
                         except Exception as init_ex:
                             set_mcp_span_error(init_span, type(init_ex).__name__, str(init_ex))
                             raise
                         init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocol_version)
 
-                self._set_server_capabilities(self.session.server_capabilities)
-                self._ping_available = self.session.initialize_result is not None
+                self._set_server_capabilities(session.server_capabilities)
+                self._ping_available = session.initialize_result is not None
             except (Exception, asyncio.CancelledError):
                 await self._close_on_owner()
                 raise
+        elif connection.client is None:
+            raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
         functions_before_discovery = self._functions.copy()
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
         try:
-            logger.debug("Connected to MCP server: %s", self.session)
-            self.is_connected = True
             connection = self._require_connection()
+            logger.debug("Connected to MCP server: %s", connection.client or connection.session)
+            self.is_connected = True
             if connection.client is not None:
                 await self._listen_capability_list_changes(connection.client)
             if load_configured and self.load_tools_flag:
