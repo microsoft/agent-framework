@@ -4653,8 +4653,14 @@ async def test_connect_session_creation_failure():
         assert "Session creation failed" in str(exc_info.value.__cause__)
 
 
-async def test_connect_initialization_failure_http_no_command():
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_connect_initialization_failure_http_no_command(
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test connect() when session.initialize() fails for HTTP tool (no command attribute)."""
+    private_error_detail = "founder-secret-token"
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     # Mock successful transport creation
@@ -4666,18 +4672,22 @@ async def test_connect_initialization_failure_http_no_command():
 
     # Mock successful session creation but failed initialization
     mock_session = Mock()
-    mock_session.initialize = AsyncMock(side_effect=ConnectionError("Server not ready"))
+    mock_session.initialize = AsyncMock(side_effect=ConnectionError(f"Server not ready: {private_error_detail}"))
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with pytest.raises(ToolException) as exc_info:
+        with (
+            caplog.at_level(logging.DEBUG, logger="agent_framework"),
+            pytest.raises(ToolException) as exc_info,
+        ):
             await tool.connect()
 
         # Should use generic error message since HTTP tool doesn't have command
         assert "MCP server failed to initialize" in str(exc_info.value)
-        assert "Server not ready" in str(exc_info.value)
+        assert private_error_detail in str(exc_info.value)
+        assert (private_error_detail in caplog.text) is enable_sensitive_data
 
 
 async def test_connect_cleanup_on_transport_failure():
@@ -5083,8 +5093,14 @@ async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
         assert "Cancelled via cancel scope" not in message
 
 
-async def test_connect_cancelled_error_during_session_creation_logs_with_exc_info():
-    """Test that CancelledError from session creation is logged with exc_info=True."""
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_connect_cancelled_error_during_session_creation_log_respects_sensitive_data(
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that CancelledError session logs export details only after opt-in."""
+    private_error_detail = "founder-secret-token"
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     mock_transport = (Mock(), Mock())
@@ -5094,21 +5110,17 @@ async def test_connect_cancelled_error_during_session_creation_logs_with_exc_inf
     tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
     with patch("mcp.client.session.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError("cancel scope"))
+        mock_session_class.return_value.__aenter__ = AsyncMock(
+            side_effect=asyncio.CancelledError(f"cancel scope: {private_error_detail}")
+        )
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        from agent_framework._mcp import logger as mcp_logger
+        with caplog.at_level(logging.DEBUG), pytest.raises(ToolException):
+            await tool.connect()
 
-        with patch.object(mcp_logger, "debug") as mock_debug:
-            with pytest.raises(ToolException):
-                await tool.connect()
-
-            # Verify logger.debug was called with exc_info=True (not an exception instance)
-            debug_calls = mock_debug.call_args_list
-            cancel_calls = [c for c in debug_calls if "Failed to create MCP session" in str(c)]
-            assert cancel_calls, "Expected a debug log for the cancelled session creation"
-            _, kwargs = cancel_calls[0]
-            assert kwargs.get("exc_info") is True
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    if not enable_sensitive_data:
+        assert "MCP session creation failed (CancelledError)." in caplog.text
 
 
 def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():

@@ -76,6 +76,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _log_mcp_exception(
+    level: int,
+    exception: BaseException,
+    sensitive_message: str,
+    *sensitive_args: object,
+    redacted_message: str,
+    sensitive_exc_info: bool | BaseException = False,
+) -> None:
+    """Log an MCP exception without exporting details unless explicitly enabled."""
+    from .observability import OBSERVABILITY_SETTINGS
+
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        message = sensitive_message
+        args = sensitive_args
+        exc_info = sensitive_exc_info
+    else:
+        message = "%s (%s)."
+        args = (redacted_message, type(exception).__name__)
+        exc_info = False
+
+    if level == logging.DEBUG:
+        logger.debug(message, *args, exc_info=exc_info)
+    elif level == logging.ERROR:
+        logger.error(message, *args, exc_info=exc_info)
+    else:
+        logger.log(level, message, *args, exc_info=exc_info)
+
+
+def _mcp_tool_exception(
+    message: str,
+    inner_exception: Exception | None = None,
+) -> ToolException:
+    """Create an MCP tool lifecycle exception without leaking details through automatic logs."""
+    from .observability import OBSERVABILITY_SETTINGS
+
+    return ToolException(
+        message,
+        inner_exception=inner_exception,
+        log_level=10 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None,
+    )
+
+
 def _mcp_tool_execution_exception(
     message: str,
     inner_exception: Exception | None = None,
@@ -1998,15 +2040,24 @@ class MCPTool:
                 # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
                 # inner_exception=None and ToolException.__init__ won't log exc_info.
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(error_msg, exc_info=True)
-                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
+                    _log_mcp_exception(
+                        logging.DEBUG,
+                        ex,
+                        error_msg,
+                        redacted_message="MCP transport startup failed",
+                        sensitive_exc_info=True,
+                    )
+                raise _mcp_tool_exception(
+                    error_msg,
+                    inner_exception=ex if isinstance(ex, Exception) else None,
+                ) from ex
             try:
                 try:
                     from mcp import types
                     from mcp.client.session import ClientSession as runtime_client_session
                 except ModuleNotFoundError as ex:
                     await self._safe_close_exit_stack()
-                    raise ToolException(
+                    raise _mcp_tool_exception(
                         "MCP support requires `mcp`. Please install `mcp`.",
                         inner_exception=ex,
                     ) from ex
@@ -2035,8 +2086,14 @@ class MCPTool:
                     raise
                 session_error_msg = f"Failed to create MCP session: {_describe_with_cleanup(ex, cleanup_error)}"
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(session_error_msg, exc_info=True)
-                raise ToolException(
+                    _log_mcp_exception(
+                        logging.DEBUG,
+                        ex,
+                        session_error_msg,
+                        redacted_message="MCP session creation failed",
+                        sensitive_exc_info=True,
+                    )
+                raise _mcp_tool_exception(
                     message=session_error_msg,
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
@@ -2067,8 +2124,17 @@ class MCPTool:
                 else:
                     error_msg = f"MCP server failed to initialize: {_describe_with_cleanup(ex, cleanup_error)}"
                 if isinstance(ex, asyncio.CancelledError):
-                    logger.debug(error_msg, exc_info=True)
-                raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
+                    _log_mcp_exception(
+                        logging.DEBUG,
+                        ex,
+                        error_msg,
+                        redacted_message="MCP session initialization failed",
+                        sensitive_exc_info=True,
+                    )
+                raise _mcp_tool_exception(
+                    error_msg,
+                    inner_exception=ex if isinstance(ex, Exception) else None,
+                ) from ex
             self.session = session
             self._owns_session = True
         else:
@@ -2304,7 +2370,14 @@ class MCPTool:
                 options=options or None,
             )
         except Exception as ex:
-            logger.debug("Sampling callback error: %s", ex, exc_info=True)
+            _log_mcp_exception(
+                logging.DEBUG,
+                ex,
+                "Sampling callback error: %s",
+                ex,
+                redacted_message="MCP sampling callback failed",
+                sensitive_exc_info=True,
+            )
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
                 message=f"Failed to get chat message content: {ex}",
@@ -2380,7 +2453,14 @@ class MCPTool:
         from mcp import types
 
         if isinstance(message, Exception):
-            logger.error("Error from MCP server: %s", message, exc_info=message)
+            _log_mcp_exception(
+                logging.ERROR,
+                message,
+                "Error from MCP server: %s",
+                message,
+                redacted_message="MCP server reported an error",
+                sensitive_exc_info=message,
+            )
             return
         if isinstance(message, types.ServerNotification):
             match message.root.method:
@@ -2512,7 +2592,13 @@ class MCPTool:
                                 inner_exception=reconn_ex,
                             ) from reconn_ex
                         continue
-                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    _log_mcp_exception(
+                        logging.ERROR,
+                        cl_ex,
+                        "MCP connection closed unexpectedly after reconnection: %s",
+                        cl_ex,
+                        redacted_message="MCP prompt discovery connection closed after reconnection",
+                    )
                     raise _mcp_tool_execution_exception(
                         "Failed to load prompts - connection lost.",
                         inner_exception=cl_ex,
@@ -2633,7 +2719,13 @@ class MCPTool:
                                 inner_exception=reconn_ex,
                             ) from reconn_ex
                         continue
-                    logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
+                    _log_mcp_exception(
+                        logging.ERROR,
+                        cl_ex,
+                        "MCP connection closed unexpectedly after reconnection: %s",
+                        cl_ex,
+                        redacted_message="MCP tool discovery connection closed after reconnection",
+                    )
                     raise _mcp_tool_execution_exception(
                         "Failed to load tools - connection lost.",
                         inner_exception=cl_ex,
@@ -2974,7 +3066,13 @@ class MCPTool:
                         ) from reconn_ex
 
                 # Second attempt also failed, give up.
-                logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
+                _log_mcp_exception(
+                    logging.ERROR,
+                    call_ex,
+                    "MCP connection closed unexpectedly after reconnection: %s",
+                    call_ex,
+                    redacted_message="MCP tool call connection closed after reconnection",
+                )
                 if span.is_recording():
                     set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
                 raise _mcp_tool_execution_exception(
@@ -3528,7 +3626,13 @@ class MCPTool:
                             ) from reconn_ex
                     else:
                         # Second attempt also failed, give up
-                        logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
+                        _log_mcp_exception(
+                            logging.ERROR,
+                            cl_ex,
+                            "MCP connection closed unexpectedly after reconnection: %s",
+                            cl_ex,
+                            redacted_message="MCP prompt call connection closed after reconnection",
+                        )
                         set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
                         raise _mcp_tool_execution_exception(
                             f"Failed to call prompt '{prompt_name}' - connection lost.",
@@ -4084,8 +4188,14 @@ class MCPStreamableHTTPTool(MCPTool):
             if port is None:
                 port = 443 if parsed.scheme == "https" else 80
             attrs[OtelAttr.PORT] = port
-        except Exception:
-            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        except Exception as ex:
+            _log_mcp_exception(
+                logging.DEBUG,
+                ex,
+                "Failed to parse URL for MCP span transport attributes",
+                redacted_message="Failed to parse MCP URL for span transport attributes",
+                sensitive_exc_info=True,
+            )
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -4592,8 +4702,14 @@ class MCPWebsocketTool(MCPTool):
             if port is None:
                 port = 443 if parsed.scheme == "wss" else 80
             attrs[OtelAttr.PORT] = port
-        except Exception:
-            logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
+        except Exception as ex:
+            _log_mcp_exception(
+                logging.DEBUG,
+                ex,
+                "Failed to parse URL for MCP span transport attributes",
+                redacted_message="Failed to parse MCP URL for span transport attributes",
+                sensitive_exc_info=True,
+            )
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:

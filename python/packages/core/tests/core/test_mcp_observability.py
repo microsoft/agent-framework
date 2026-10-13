@@ -320,6 +320,35 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Second connection loss should retain an error log without exporting exception details by default."""
+    private_error_detail = "founder-secret-token"
+    tool = _make_connected_mcp_tool()
+    tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        side_effect=[
+            McpError(ErrorData(code=-32000, message=f"session terminated: {private_error_detail}")),
+            McpError(ErrorData(code=-32000, message=f"session terminated: {private_error_detail}")),
+        ]
+    )
+    tool.connect = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    span_exporter.clear()
+    with (
+        caplog.at_level(logging.ERROR, logger="agent_framework._mcp"),
+        pytest.raises(ToolExecutionException, match="connection lost"),
+    ):
+        await tool.call_tool("get-weather")
+
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
+    if not enable_sensitive_data:
+        assert "MCP tool call connection closed after reconnection (McpError)." in caplog.text
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_mcp_tools_list_error_respects_sensitive_data(
     span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
 ) -> None:
