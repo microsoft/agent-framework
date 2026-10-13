@@ -1364,6 +1364,33 @@ def test_switch_case_edge_group() -> None:
     assert edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id]) == [target2.id]  # type: ignore
 
 
+def test_switch_case_edge_group_cases_share_a_target() -> None:
+    """Test that cases routing to the same target create one edge per target."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 0, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 1, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target1.id),
+        ],
+    )
+
+    assert len(edge_group.cases) == 4
+    assert [edge.target_id for edge in edge_group.edges] == [target2.id, target1.id]
+    assert edge_group.target_executor_ids == [target2.id, target1.id]
+
+    targets = [target2.id, target1.id]
+    assert edge_group._selection_func(MockMessage(data=-1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=0), targets) == [target1.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=2), targets) == [target1.id]  # type: ignore
+
+
 def test_switch_case_edge_group_invalid_number_of_cases():
     """Test creating a switch case edge group with an invalid number of cases."""
     source = MockExecutor(id="source_executor")

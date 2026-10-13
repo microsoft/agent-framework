@@ -1429,7 +1429,7 @@ class FunctionTool(SerializationMixin):
     @override
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        if (exclude and "input_model" in exclude) or not self.input_model:
+        if exclude and "input_model" in exclude:
             return as_dict
         as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict

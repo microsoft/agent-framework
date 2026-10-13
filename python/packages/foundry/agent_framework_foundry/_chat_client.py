@@ -56,7 +56,7 @@ from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
+from agent_framework_foundry._oauth_helpers import parse_oauth_consent_output_items, try_parse_oauth_consent_event
 
 from ._feature_usage import (
     FeatureIndex,
@@ -346,6 +346,9 @@ class RawFoundryChatClient(
                 if getattr(item, "type", None) != "reasoning":
                     continue
                 self._attach_foundry_reasoning_replay_item(chat_response.messages[0].contents, item)
+            chat_response.messages[0].contents.extend(
+                parse_oauth_consent_output_items(getattr(response, "output", None))
+            )
         return chat_response
 
     @override

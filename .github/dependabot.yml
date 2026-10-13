@@ -141,6 +141,9 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      agent-framework:
+        patterns:
+          - "agent-framework-*"
       basics:
         patterns:
           - "uv"
@@ -173,6 +176,13 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      # Update shared packages once across all frontend workspaces.
+      shared-frontend-dependencies:
+        group-by: dependency-name
     labels:
       - "dependencies"
     cooldown:
@@ -197,6 +207,15 @@ updates:
         patterns:
           - "actions/upload-artifact"
           - "actions/download-artifact"
+      routine-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Keep repeated major action updates aligned across action directories.
+      shared-actions:
+        group-by: dependency-name
     schedule:
       interval: "weekly"
       day: "sunday"

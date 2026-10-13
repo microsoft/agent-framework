@@ -99,5 +99,5 @@ shell = "python -c \"import sys; exit(0 if sys.version_info < (3,11) else 1)\" |
 interpreter = "posix"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"
