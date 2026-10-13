@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from copy import deepcopy
 from importlib import import_module
 from queue import Queue
 from threading import Event, Lock
@@ -12,12 +15,24 @@ from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Message, SupportsChatGetResponse
+from agent_framework import (
+    Agent,
+    ChatAndFunctionMiddlewareTypes,
+    ChatContext,
+    ChatOptions,
+    Content,
+    FunctionInvocationConfiguration,
+    Message,
+    SupportsChatGetResponse,
+    chat_middleware,
+    tool,
+)
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import SettingNotFoundError
+from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from agent_framework.foundry import FoundryLocalChatOptions, FoundryLocalClient
 from foundry_local_sdk import Configuration, DeviceType, IModel
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from pydantic import BaseModel
 
 from agent_framework_foundry_local._feature_usage import FeatureIndex
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
@@ -227,6 +242,36 @@ def test_foundry_local_client_requires_bound_url(mock_foundry_local_manager: Mag
         FoundryLocalClient(model="test-model-id")
 
 
+@pytest.mark.parametrize("service_running", [False, True])
+@pytest.mark.parametrize("failure_stage", ["lookup", "download", "load", "http"])
+def test_foundry_local_client_rolls_back_service_started_on_existing_manager(
+    mock_foundry_local_manager: MagicMock, service_running: bool, failure_stage: str
+) -> None:
+    if not service_running:
+        mock_foundry_local_manager.urls = None
+        mock_foundry_local_manager.start_web_service.side_effect = lambda: setattr(
+            mock_foundry_local_manager, "urls", ["http://localhost:5272"]
+        )
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    if failure_stage == "lookup":
+        mock_foundry_local_manager.catalog.get_model.return_value = None
+    elif failure_stage in ("download", "load"):
+        getattr(model, failure_stage).side_effect = RuntimeError("setup failed")
+    with (
+        patch("agent_framework_foundry_local._foundry_local_client.AsyncOpenAI") as http_client,
+        pytest.raises(ValueError if failure_stage == "lookup" else RuntimeError),
+    ):
+        if failure_stage == "http":
+            http_client.side_effect = RuntimeError("setup failed")
+        FoundryLocalClient(model="test-model-id")
+    mock_foundry_local_manager.close.assert_not_called()
+    if service_running:
+        mock_foundry_local_manager.stop_web_service.assert_not_called()
+    else:
+        mock_foundry_local_manager.start_web_service.assert_called_once_with()
+        mock_foundry_local_manager.stop_web_service.assert_called_once_with()
+
+
 def test_foundry_local_client_init_with_timeout(mock_foundry_local_manager: MagicMock) -> None:
     client = FoundryLocalClient(model="test-model-id", timeout=60.0)
     assert client.client.timeout == 60.0
@@ -264,6 +309,43 @@ def test_foundry_local_client_exact_id_does_not_resolve_alias(mock_foundry_local
     assert client.model == "exact-variant:1"
     mock_foundry_local_manager.catalog.get_model_variant.assert_called_once_with("exact-variant:1")
     mock_foundry_local_manager.catalog.get_model.assert_not_called()
+
+
+def test_foundry_local_client_passes_download_controls(mock_foundry_local_manager: MagicMock) -> None:
+    progress = MagicMock()
+    cancel_event = Event()
+    FoundryLocalClient(model="test-model-id", download_progress_callback=progress, download_cancel_event=cancel_event)
+    mock_model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    mock_model.download.assert_called_once_with(progress_callback=progress, cancel_event=cancel_event)
+    mock_model.load.assert_called_once_with()
+
+
+def test_foundry_local_client_cancelled_download_does_not_load(mock_foundry_local_manager: MagicMock) -> None:
+    cancel_event = Event()
+    cancel_event.set()
+    mock_model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    mock_model.download.side_effect = RuntimeError("download cancelled")
+
+    with pytest.raises(RuntimeError, match="download cancelled"):
+        FoundryLocalClient(model="test-model-id", download_cancel_event=cancel_event)
+
+    mock_model.download.assert_called_once_with(progress_callback=None, cancel_event=cancel_event)
+    mock_model.load.assert_not_called()
+    mock_foundry_local_manager.close.assert_not_called()
+
+
+def test_foundry_local_client_skips_download_controls_without_preparation(
+    mock_foundry_local_manager: MagicMock,
+) -> None:
+    FoundryLocalClient(
+        model="test-model-id",
+        prepare_model=False,
+        download_progress_callback=MagicMock(),
+        download_cancel_event=Event(),
+    )
+    mock_model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    mock_model.download.assert_not_called()
+    mock_model.load.assert_not_called()
 
 
 def test_foundry_local_client_init_from_env(
@@ -402,3 +484,514 @@ async def test_foundry_local_client_uses_openai_transport(mock_foundry_local_man
     payload = json.loads(requests[0].content)
     assert payload["model"] == "test-model-id"
     assert payload["stream"] is stream
+
+
+@asynccontextmanager
+async def _client_with_transport(
+    respond: Callable[[Any], Any],
+    *,
+    middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+    function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+) -> AsyncGenerator[FoundryLocalClient[FoundryLocalChatOptions[None]]]:
+    async with (
+        DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(respond), trust_env=False) as http_client,
+        AsyncOpenAI(
+            base_url="http://localhost:5272/v1", api_key="foundry-local", http_client=http_client, max_retries=0
+        ) as async_client,
+    ):
+        with patch("agent_framework_foundry_local._foundry_local_client.AsyncOpenAI", return_value=async_client):
+            yield FoundryLocalClient(
+                model="test-model-id",
+                prepare_model=False,
+                middleware=middleware,
+                function_invocation_configuration=function_invocation_configuration,
+            )
+
+
+def _completion_response(message: dict[str, Any], *, stream: bool, finish_reason: str = "stop") -> Any:
+    usage = {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+    message = {"role": "assistant", **message}
+    if not stream:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "completion-1",
+                "created": 0,
+                "model": "test-model-id",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+                "usage": usage,
+            },
+        )
+    if "tool_calls" in message:
+        message["tool_calls"] = [{"index": index, **call} for index, call in enumerate(message["tool_calls"])]
+    chunk = {
+        "id": "completion-1",
+        "created": 0,
+        "model": "test-model-id",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": message, "finish_reason": finish_reason}],
+        "usage": usage,
+    }
+    return _OPENAI_HTTPX.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_generation_options_and_usage(mock_foundry_local_manager: MagicMock, stream: bool) -> None:
+    requests: list[Any] = []
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    options: FoundryLocalChatOptions[None] = {
+        "temperature": 0.0,
+        "top_p": 0.8,
+        "max_tokens": 32,
+        "seed": 0,
+        "top_k": 0,
+        "do_sample": False,
+        "early_stopping": False,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop": ["END"],
+        "logit_bias": {"42": -1.0},
+        "instructions": "Be concise.",
+        "metadata": {"top_k": "16", "native_custom": "keep"},
+        "extra_body": {"metadata": {"top_k": "8"}, "custom_setting": "test"},
+    }
+    original_options = json.loads(json.dumps(options))
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            response_stream = client.get_response(
+                messages, stream=True, options=options, client_kwargs={"extra_headers": {"X-Test-Header": "present"}}
+            )
+            response = await response_stream.get_final_response()
+        else:
+            response = await client.get_response(
+                messages, options=options, client_kwargs={"extra_headers": {"X-Test-Header": "present"}}
+            )
+
+    assert response.text == "Hello"
+    assert response.usage_details is not None
+    assert response.usage_details["input_token_count"] == 5
+    assert response.usage_details["output_token_count"] == 3
+    assert requests[0].headers["X-Test-Header"] == "present"
+    payload = json.loads(requests[0].content)
+    for key in (
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "seed",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "logit_bias",
+    ):
+        assert payload[key] == original_options[key]
+    assert payload["messages"][0] == {"role": "system", "content": "Be concise."}
+    assert payload["metadata"] == {
+        "top_k": "0",
+        "do_sample": "false",
+        "early_stopping": "false",
+        "native_custom": "keep",
+    }
+    assert all(key not in payload for key in ("top_k", "do_sample", "early_stopping", "max_completion_tokens"))
+    assert payload["custom_setting"] == "test"
+    assert options == original_options
+    if stream:
+        assert payload["stream_options"] == {"include_usage": True}
+    mock_foundry_local_manager.close.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_decoder_metadata_passthrough(mock_foundry_local_manager: MagicMock, stream: bool) -> None:
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    options: FoundryLocalChatOptions[None] = {
+        "metadata": {"do_sample": "false"},
+        "extra_body": {"metadata": {"top_k": "8"}},
+    }
+    original_options = deepcopy(options)
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            await client.get_response(messages, stream=True, options=options).get_final_response()
+        else:
+            await client.get_response(messages, options=options)
+    assert payloads[0]["metadata"] == {"top_k": "8", "do_sample": "false"}
+    assert options == original_options
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_request_model_override(mock_foundry_local_manager: MagicMock, stream: bool) -> None:
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            await client.get_response(messages, stream=True, options={"model": "other-variant:1"}).get_final_response()
+        else:
+            await client.get_response(messages, options={"model": "other-variant:1"})
+        assert client.model == "test-model-id"
+    assert payloads[0]["model"] == "other-variant:1"
+
+
+@pytest.mark.parametrize("invalid_metadata", [0, "invalid", ["top_k", "8"]])
+async def test_foundry_local_invalid_decoder_metadata(
+    mock_foundry_local_manager: MagicMock, invalid_metadata: object
+) -> None:
+    requests: list[Any] = []
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=False)
+
+    options: FoundryLocalChatOptions[None] = {
+        "top_k": 1,
+        "metadata": cast(dict[str, Any], invalid_metadata),
+    }
+    async with _client_with_transport(respond) as client:
+        with pytest.raises(ValueError, match="metadata must be a mapping"):
+            await client.get_response([Message(role="user", contents=["Hi"])], options=options)
+    assert not requests
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("format_kind", ["pydantic", "schema", "native_schema", "json_object"])
+async def test_foundry_local_structured_responses(
+    mock_foundry_local_manager: MagicMock, stream: bool, format_kind: str
+) -> None:
+    class Answer(BaseModel):
+        answer: int
+
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": '{"answer": 4}'}, stream=stream)
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"answer": {"type": "integer"}},
+        "required": ["answer"],
+    }
+    options: FoundryLocalChatOptions[Answer] = {
+        "response_format": Answer
+        if format_kind == "pydantic"
+        else schema
+        if format_kind == "schema"
+        else {"type": "json_schema", "json_schema": schema}
+        if format_kind == "native_schema"
+        else {"type": "json_object"}
+    }
+    original_options = deepcopy(options)
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["What is 2+2?"])]
+        if stream:
+            response = await client.get_response(messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages, options=options)
+    if format_kind == "pydantic":
+        assert isinstance(response.value, Answer)
+        assert response.value.answer == 4
+    else:
+        assert response.value == {"answer": 4}
+    assert payloads[0]["response_format"]["type"] == ("json_object" if format_kind == "json_object" else "json_schema")
+    if format_kind != "json_object":
+        native_schema = payloads[0]["response_format"]["json_schema"]
+        assert isinstance(native_schema, dict)
+        assert native_schema["type"] == "object"
+        assert native_schema["properties"]["answer"]["type"] == "integer"
+    assert options == original_options
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_foundry_local_agent_tool_loop(
+    mock_foundry_local_manager: MagicMock, stream: bool, enabled: bool
+) -> None:
+    payloads: list[dict[str, Any]] = []
+    invocations: list[tuple[int, int]] = []
+
+    @tool
+    def add(a: int, b: int) -> int:
+        """Add two integers."""
+        invocations.append((a, b))
+        return a + b
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            return _completion_response(
+                {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-add",
+                            "type": "function",
+                            "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
+                        }
+                    ],
+                },
+                stream=stream,
+                finish_reason="tool_calls",
+            )
+        return _completion_response({"content": "5"}, stream=stream)
+
+    async with _client_with_transport(respond, function_invocation_configuration={"enabled": enabled}) as client:
+        agent = Agent(client=client, tools=add, instructions="Use the calculator.")
+        if stream:
+            response = await agent.run(
+                "What is 2+3?", stream=True, options={"tool_choice": "required", "allow_multiple_tool_calls": False}
+            ).get_final_response()
+        else:
+            response = await agent.run(
+                "What is 2+3?", options={"tool_choice": "required", "allow_multiple_tool_calls": False}
+            )
+
+    assert payloads[0]["tools"][0]["function"]["name"] == "add"
+    assert payloads[0]["tool_choice"] == "required"
+    assert payloads[0]["parallel_tool_calls"] is False
+    if enabled:
+        assert invocations == [(2, 3)]
+        assert len(payloads) == 2
+        assert response.text == "5"
+        tool_messages = [message for message in payloads[1]["messages"] if message["role"] == "tool"]
+        assert len(tool_messages) == 1
+        assert tool_messages[0]["tool_call_id"] == "call-add"
+        assert tool_messages[0]["content"] == "5"
+    else:
+        assert invocations == []
+        assert len(payloads) == 1
+        assert any(content.type == "function_call" for message in response.messages for content in message.contents)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("named_tool", [False, True])
+@pytest.mark.parametrize("json_object", [False, True])
+async def test_foundry_local_required_tools_with_structured_output(
+    mock_foundry_local_manager: MagicMock, stream: bool, named_tool: bool, json_object: bool
+) -> None:
+    class Answer(BaseModel):
+        answer: int
+
+    payloads: list[dict[str, Any]] = []
+    invocations: list[tuple[int, int]] = []
+
+    @tool
+    def add(a: int, b: int) -> int:
+        """Add two integers."""
+        invocations.append((a, b))
+        return a + b
+
+    def respond(request: Any) -> Any:
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if len(payloads) == 1:
+            assert "response_format" not in payload
+            assert payload["tool_choice"] == (
+                {"type": "function", "function": {"name": "add"}} if named_tool else "required"
+            )
+            return _completion_response(
+                {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-add",
+                            "type": "function",
+                            "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
+                        }
+                    ],
+                },
+                stream=stream,
+                finish_reason="tool_calls",
+            )
+        assert payload["response_format"]["type"] == ("json_object" if json_object else "json_schema")
+        if not json_object:
+            assert payload["response_format"]["json_schema"]["properties"]["answer"]["type"] == "integer"
+        return _completion_response({"content": '{"answer":5}'}, stream=stream)
+
+    options: ChatOptions[Answer] = {
+        "tool_choice": {"mode": "required", "required_function_name": "add"} if named_tool else "required",
+        "response_format": {"type": "json_object"} if json_object else Answer,
+    }
+    original_options = deepcopy(options)
+    async with _client_with_transport(respond) as client:
+        agent = Agent(client=client, tools=add)
+        if stream:
+            response = await agent.run("What is 2+3?", stream=True, options=options).get_final_response()
+        else:
+            response = await agent.run("What is 2+3?", options=options)
+    assert invocations == [(2, 3)]
+    assert len(payloads) == 2
+    if json_object:
+        assert response.value == {"answer": 5}
+    else:
+        assert isinstance(response.value, Answer)
+        assert response.value.answer == 5
+    assert options == original_options
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_constructor_and_per_call_middleware(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    order: list[str] = []
+    payloads: list[dict[str, Any]] = []
+
+    @chat_middleware
+    async def constructor_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        order.append("constructor-before")
+        context.options = {**(context.options or {}), "temperature": 0.1}
+        await call_next()
+        order.append("constructor-after")
+
+    @chat_middleware
+    async def per_call_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        order.append("per-call-before")
+        context.options = {**(context.options or {}), "top_p": 0.5}
+        await call_next()
+        order.append("per-call-after")
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond, middleware=[constructor_middleware]) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            response = await client.get_response(
+                messages, stream=True, middleware=[per_call_middleware]
+            ).get_final_response()
+        else:
+            response = await client.get_response(messages, middleware=[per_call_middleware])
+    assert response.text == "Hello"
+    assert order == ["constructor-before", "per-call-before", "per-call-after", "constructor-after"]
+    assert payloads[0]["temperature"] == 0.1
+    assert payloads[0]["top_p"] == 0.5
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_agent_session_preserves_history(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Remembered" if len(payloads) == 1 else "LANTERN"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        agent = Agent(client=client, instructions="Remember the conversation.")
+        session = agent.create_session()
+        if stream:
+            await agent.run("Remember LANTERN", session=session, stream=True).get_final_response()
+            response = await agent.run("What did I say?", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Remember LANTERN", session=session)
+            response = await agent.run("What did I say?", session=session)
+    assert response.text == "LANTERN"
+    assert [message["role"] for message in payloads[1]["messages"]] == ["system", "user", "assistant", "user"]
+    assert payloads[1]["messages"][1]["content"] == "Remember LANTERN"
+    assert payloads[1]["messages"][2]["content"] == "Remembered"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_multimodal_request_serialization(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "A red square"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        messages = [
+            Message(
+                role="user",
+                contents=[
+                    "Describe this image",
+                    Content.from_uri("https://example.test/image.png", media_type="image/png"),
+                ],
+            )
+        ]
+        if stream:
+            response = await client.get_response(messages, stream=True).get_final_response()
+        else:
+            response = await client.get_response(messages)
+    assert response.text == "A red square"
+    assert payloads[0]["messages"] == [
+        {"role": "user", "content": "Describe this image"},
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "https://example.test/image.png"}}],
+        },
+    ]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("status", [400, 404, 429, 503])
+async def test_foundry_local_http_errors_remain_visible(
+    mock_foundry_local_manager: MagicMock, stream: bool, status: int
+) -> None:
+    def respond(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            status, json={"error": {"message": "native inference failed", "type": "server_error"}}
+        )
+
+    async with _client_with_transport(respond) as client:
+        with pytest.raises(ChatClientException, match="native inference failed"):
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                await client.get_response(messages, stream=True).get_final_response()
+            else:
+                await client.get_response(messages)
+    mock_foundry_local_manager.close.assert_not_called()
+
+
+async def test_foundry_local_request_cancellation_preserves_manager(mock_foundry_local_manager: MagicMock) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    requests = 0
+
+    async def respond(request: Any) -> Any:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            started.set()
+            await release.wait()
+        return _completion_response({"content": "Hello"}, stream=False)
+
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+
+        async def request_response() -> None:
+            await client.get_response(messages)
+
+        task = asyncio.create_task(request_response())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            response = await client.get_response(messages)
+            assert response.text == "Hello"
+        finally:
+            release.set()
+            task.cancel()
+    mock_foundry_local_manager.close.assert_not_called()

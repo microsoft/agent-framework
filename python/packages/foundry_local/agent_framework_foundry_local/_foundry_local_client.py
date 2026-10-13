@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
@@ -83,21 +83,32 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
         # Options not supported in Foundry Local:
         user: Not used locally.
         store: Not applicable for local inference.
-        metadata: Not applicable for local inference.
-
         # Foundry Local-specific options:
+        top_k: Number of highest-probability tokens to consider; 0 disables the limit.
+        do_sample: Whether to sample instead of using greedy decoding.
+        early_stopping: Whether to stop beam search early.
+        metadata: Native decoder settings encoded as string-valued metadata.
         extra_body: Additional request body parameters to pass to the model.
             Can be used for model-specific options not covered by standard API.
 
     Note:
         The actual options supported depend on the specific model being used.
         Some models (like Phi-4) may not support all OpenAI API features.
-        Options not supported by the model will typically be ignored.
+        Unsupported options may fail the request rather than being ignored.
     """
 
     # Foundry Local-specific options
     extra_body: dict[str, Any]
     """Additional request body parameters for model-specific options."""
+
+    top_k: int
+    """Number of highest-probability tokens to consider; 0 disables the limit."""
+
+    do_sample: bool
+    """Whether to sample instead of using greedy decoding."""
+
+    early_stopping: bool
+    """Whether to stop beam search early."""
 
     # ChatOptions fields not applicable for local inference
     user: None  # type: ignore[misc]
@@ -150,7 +161,7 @@ class FoundryLocalClient(
         messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
-        options: ChatOptions[ResponseModelT],
+        options: ChatOptions[ResponseModelT] | FoundryLocalChatOptions[ResponseModelT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -164,7 +175,7 @@ class FoundryLocalClient(
         messages: Sequence[Message],
         *,
         stream: Literal[False] = ...,
-        options: FoundryLocalChatOptionsT | ChatOptions[None] | None = None,
+        options: FoundryLocalChatOptionsT | FoundryLocalChatOptions[Any] | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -178,7 +189,7 @@ class FoundryLocalClient(
         messages: Sequence[Message],
         *,
         stream: Literal[True],
-        options: FoundryLocalChatOptionsT | ChatOptions[Any] | None = None,
+        options: FoundryLocalChatOptionsT | FoundryLocalChatOptions[Any] | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -191,7 +202,7 @@ class FoundryLocalClient(
         messages: Sequence[Message],
         *,
         stream: bool = False,
-        options: FoundryLocalChatOptionsT | ChatOptions[Any] | None = None,
+        options: FoundryLocalChatOptionsT | FoundryLocalChatOptions[Any] | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -216,6 +227,47 @@ class FoundryLocalClient(
             client_kwargs=effective_client_kwargs,
         )
 
+    def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
+        prepared = super()._prepare_options(messages, options)
+        native_metadata: dict[str, str] = {}
+        for key in ("top_k", "do_sample", "early_stopping"):
+            value = prepared.pop(key, None)
+            if value is not None:
+                native_metadata[key] = str(value).lower() if isinstance(value, bool) else str(value)
+        extra_body: Mapping[str, Any] | None = prepared.get("extra_body")
+        if extra_body is not None and not isinstance(extra_body, Mapping):
+            raise ValueError("extra_body must be a mapping.")
+        metadata: Mapping[str, Any] | None = prepared.get("metadata")
+        extra_metadata: Mapping[str, Any] | None = extra_body.get("metadata") if extra_body is not None else None
+        for name, value in (("metadata", metadata), ("extra_body metadata", extra_metadata)):
+            if value is not None and not isinstance(value, Mapping):
+                raise ValueError(f"{name} must be a mapping.")
+        if native_metadata or (metadata is not None and extra_metadata is not None):
+            merged_metadata: dict[str, Any] = {
+                **(metadata or {}),
+                **(extra_metadata or {}),
+                **native_metadata,
+            }
+            prepared["metadata"] = merged_metadata
+            if extra_body is not None and "metadata" in extra_body:
+                prepared["extra_body"] = {**extra_body, "metadata": merged_metadata}
+        # The HTTP service uses max_tokens and a bare schema, not OpenAI's newer token key or named schema envelope.
+        if "max_completion_tokens" in prepared:
+            prepared["max_tokens"] = prepared.pop("max_completion_tokens")
+        response_format: Mapping[str, Any] | None = prepared.get("response_format")
+        if isinstance(response_format, Mapping) and response_format.get("type") == "json_schema":
+            schema: Mapping[str, Any] | None = response_format.get("json_schema")
+            if isinstance(schema, Mapping):
+                prepared["response_format"] = {
+                    **response_format,
+                    "json_schema": schema.get("schema", schema),
+                }
+        tool_choice: str | Mapping[str, Any] | None = prepared.get("tool_choice")
+        if tool_choice == "required" or (isinstance(tool_choice, Mapping) and tool_choice.get("type") == "function"):
+            # Native schema grammar overrides forced tools; retain it only for the final reply.
+            prepared.pop("response_format", None)
+        return prepared
+
     def __init__(
         self,
         model: str | None = None,
@@ -223,6 +275,8 @@ class FoundryLocalClient(
         bootstrap: bool = True,
         timeout: float | None = None,
         prepare_model: bool = True,
+        download_progress_callback: Callable[[float], None] | None = None,
+        download_cancel_event: Event | None = None,
         device: DeviceType | Literal["CPU", "GPU", "NPU"] | None = None,
         configuration: Configuration | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -243,8 +297,12 @@ class FoundryLocalClient(
                 client's default when omitted; does not apply to native model preparation.
             prepare_model: Whether to download the model into the cache, and load the model into
                 the inferencing service upon initialization. Default is True.
-                If false, the first call to generate a completion will load the model,
-                and might take a long time.
+                If False, the exact model variant must already be loaded, or be downloaded
+                and loaded manually before inference.
+            download_progress_callback: Optional callback receiving native download progress
+                as a percentage from 0 to 100. Used only when prepare_model is True.
+            download_cancel_event: Optional event that cancels native model download when set.
+                Used only when prepare_model is True; does not cancel model loading or inference.
             device: The device type to use for model inference.
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
@@ -298,25 +356,21 @@ class FoundryLocalClient(
                     model="phi-4-mini",
                     prepare_model=False,
                 )
-                # Beware, in this case the first request to generate a completion
-                # will take a long time as the model is loaded then.
-                # Alternatively, prepare the exact resolved variant manually.
+                # Prepare the exact resolved variant manually before inference.
                 model = client.manager.catalog.get_model_variant(client.model)
                 if model is not None:
                     model.download()
                     model.load()
 
-                # Using custom ChatOptions with type safety:
-                from typing import TypedDict
+                # Using native ChatOptions with type safety:
+                from agent_framework import Message
                 from agent_framework.foundry import FoundryLocalChatOptions
 
-
-                class MyOptions(FoundryLocalChatOptions, total=False):
-                    my_custom_option: str
-
-
-                client: FoundryLocalClient[MyOptions] = FoundryLocalClient(model="phi-4-mini")
-                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+                options: FoundryLocalChatOptions[None] = {"top_k": 40, "max_tokens": 100}
+                response = await client.get_response(
+                    [Message(role="user", contents=["Hello"])],
+                    options=options,
+                )
 
         Raises:
             ValueError: If the model or requested device is unavailable, bootstrap is
@@ -353,11 +407,13 @@ class FoundryLocalClient(
                 )
 
             initialized = False
+            started_web_service = False
             try:
                 if not manager.urls:
                     if not bootstrap:
                         raise ValueError("bootstrap=False requires a running Foundry Local web service.")
                     manager.start_web_service()
+                    started_web_service = bool(manager.urls)
                 if not manager.urls:
                     raise ValueError("Foundry Local web service did not provide a bound URL.")
 
@@ -385,7 +441,12 @@ class FoundryLocalClient(
 
                 model_id = model_handle.id
                 if prepare_model:
-                    model_handle.download()
+                    if download_progress_callback is None and download_cancel_event is None:
+                        model_handle.download()
+                    else:
+                        model_handle.download(
+                            progress_callback=download_progress_callback, cancel_event=download_cancel_event
+                        )
                     model_handle.load()
 
                 super().__init__(
@@ -404,3 +465,5 @@ class FoundryLocalClient(
             finally:
                 if owns_manager and not initialized:
                     manager.close()
+                elif started_web_service and not initialized:
+                    manager.stop_web_service()

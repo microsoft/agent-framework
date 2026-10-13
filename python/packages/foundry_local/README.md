@@ -36,12 +36,81 @@ selects a matching variant; an exact model ID is never replaced by a sibling var
 
 `bootstrap=False` requires an already initialized SDK manager with a running web
 service in the same process. `prepare_model=False` skips native download/load during
-construction. `timeout` applies to HTTP inference requests, not native preparation.
+construction; the exact selected variant must already be loaded or be prepared
+manually before inference. The HTTP service does not load it automatically.
+`timeout` applies to HTTP inference requests, not native preparation.
+
+`download_progress_callback` receives download percentages from 0 to 100, and
+`download_cancel_event` accepts a `threading.Event` to cancel the download.
+Both apply only when `prepare_model=True`. They do not cancel model loading or
+inference; asynchronous request cancellation uses the normal Agent Framework API.
 
 Clients do not close or unload the shared manager. After all clients finish, close
 their HTTP clients and call `client.manager.close()` once at application shutdown.
 If construction fails after creating a new manager, that manager is closed; an
-existing application's manager is left untouched.
+existing application's manager is not closed. If failed construction started
+its web service, that service is stopped; a previously running service is left running.
+
+## Chat Options
+
+`FoundryLocalChatOptions` includes the standard generation settings and native
+`top_k`, `do_sample`, and `early_stopping` controls. The client encodes these three
+controls as the HTTP service's string-valued decoder metadata, preserving zero
+and `False` values. Explicit controls take precedence over conflicting values in
+`metadata` or `extra_body["metadata"]`. Other native settings can be supplied
+through these dictionaries.
+
+Pydantic response models and JSON schemas use the native HTTP service's bare-schema
+format automatically. JSON-object mode constrains output to an object; it does
+not guarantee particular fields or values. Supported settings and structured
+output capabilities depend on the model and runtime. Backend errors remain
+visible as `ChatClientException`.
+
+```python
+from agent_framework import Message
+from agent_framework.foundry import FoundryLocalChatOptions, FoundryLocalClient
+from pydantic import BaseModel
+
+
+class Answer(BaseModel):
+    answer: int
+
+
+client = FoundryLocalClient(model="phi-4-mini")
+options: FoundryLocalChatOptions[Answer] = {
+    "response_format": Answer,
+    "max_tokens": 128,
+    "temperature": 0.0,
+    "top_k": 1,
+    "do_sample": False,
+}
+response = await client.get_response(
+    [Message(role="user", contents=["What is 2 + 2?"])],
+    options=options,
+)
+assert isinstance(response.value, Answer)
+print(response.value.answer)
+```
+
+Agent sessions, middleware, streaming, and automatic tool execution retain their
+standard Agent Framework APIs. A per-request `model` option overrides inference
+targeting only: that public-catalog variant must also be loaded in the shared manager.
+When a tool is required (including a named tool), the request uses the native tool
+grammar first, then applies the requested structured format to the final reply
+after automatic tool execution. With automatic execution disabled, the caller
+must handle the returned function call before requesting a structured final reply.
+
+## Scope
+
+This adapter targets the SDK's public model catalog and HTTP chat service.
+BYOM/local-catalog model selection is not exposed: SDK 2.1's HTTP service cannot
+resolve models registered in its local catalog. Native-session-only features,
+audio transcription, and embeddings are outside this chat integration.
+
+Image content follows the OpenAI transport's serialization, but a successful HTTP
+request or the presence of vision assets does not establish that a particular
+model/runtime consumes those images. Verify multimodal behavior for the selected
+configuration before relying on it.
 
 ## Migration from SDK 0.5.1
 
