@@ -172,7 +172,7 @@ internal sealed class InvokeMcpToolExecutor(
         if (snapshot.ConnectionName is not null && !snapshot.ConnectionNameValidated)
         {
             this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
-            await this.RequestApprovalAsync(context, cancellationToken).ConfigureAwait(false);
+            await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -183,7 +183,7 @@ internal sealed class InvokeMcpToolExecutor(
         }
         else if (snapshot.RequiresHeaderReapprovalAfterRestore || this.Model.Headers is { Count: > 0 })
         {
-            await this.RequestApprovalAsync(context, cancellationToken).ConfigureAwait(false);
+            await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
             return;
         }
         else
@@ -266,7 +266,7 @@ internal sealed class InvokeMcpToolExecutor(
         }
     }
 
-    private ValueTask RequestApprovalAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    private ValueTask RequestApprovalAsync(IWorkflowContext context, bool? autoSend, CancellationToken cancellationToken)
     {
         return this.RequestApprovalAsync(
             context,
@@ -276,7 +276,7 @@ internal sealed class InvokeMcpToolExecutor(
             this.GetArguments(),
             this.GetHeaders(),
             this.GetConnectionName(),
-            this.GetAutoSendValue(),
+            autoSend ?? this.GetAutoSendValue(),
             cancellationToken);
     }
 

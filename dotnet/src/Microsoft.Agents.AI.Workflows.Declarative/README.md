@@ -31,6 +31,8 @@ Tool actions validate automatic-send settings before dispatch and retain the
 evaluated setting for the matching response, including approval and checkpoint
 resumption. Changes to workflow state while a request is pending do not change
 that invocation's automatic-send behavior.
+Replacement MCP approvals after restoration retain the same setting while
+refreshing headers and revalidating connection names.
 
 ### MCP session lifetime
 
