@@ -32,20 +32,44 @@ internal static partial class AgentSkillFrontmatterParser
     // Matches YAML frontmatter delimited by "---" lines. Group 1 = content between delimiters.
     // Multiline makes ^/$ match line boundaries; Singleline makes . match newlines across the block.
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
+#if NET
+    [GeneratedRegex(@"\A\uFEFF?---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline, 5000)]
+    private static partial Regex FrontmatterRegex();
+#else
+    private static Regex FrontmatterRegex() => s_frontmatterRegex;
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+#endif
 
     // Matches top-level YAML "key: value" lines. Group 1 = key (including quotes),
     // Group 2 = quoted value, Group 3 = unquoted value (possibly empty for keys such as "metadata:").
     // A value may start on a later indented line, but cannot consume another top-level field.
+#if NET
+    [GeneratedRegex(@"^([\w-]+|""[\w-]+""|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline, 5000)]
+    private static partial Regex YamlKeyValueRegex();
+#else
+    private static Regex YamlKeyValueRegex() => s_yamlKeyValueRegex;
     private static readonly Regex s_yamlKeyValueRegex = new(@"^([\w-]+|""[\w-]+""|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?(?:[""']([^\r\n]+?)[""']|([^\r\n]*?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+#endif
 
     // Matches a metadata block, allowing quotes around the root key.
     // Group 1 captures the entire indented block beneath the metadata key.
+#if NET
+    [GeneratedRegex(@"^(?:metadata|""metadata""|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline, 5000)]
+    private static partial Regex YamlMetadataBlockRegex();
+#else
+    private static Regex YamlMetadataBlockRegex() => s_yamlMetadataBlockRegex;
     private static readonly Regex s_yamlMetadataBlockRegex = new(@"^(?:metadata|""metadata""|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+#endif
 
     // Matches indented YAML "key: value" lines within a metadata block.
     // Group 1 = key (supports hyphens), Group 2 = quoted value, Group 3 = unquoted value.
+#if NET
+    [GeneratedRegex(@"^\s+([\w-]+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline, 5000)]
+    private static partial Regex YamlIndentedKeyValueRegex();
+#else
+    private static Regex YamlIndentedKeyValueRegex() => s_yamlIndentedKeyValueRegex;
     private static readonly Regex s_yamlIndentedKeyValueRegex = new(@"^\s+([\w-]+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+#endif
 
     /// <summary>
     /// Parses frontmatter, logging diagnostics against the supplied file path or resource URI.
@@ -59,7 +83,7 @@ internal static partial class AgentSkillFrontmatterParser
     {
         frontmatter = null;
 
-        Match match = s_frontmatterRegex.Match(content);
+        Match match = FrontmatterRegex().Match(content);
         if (!match.Success)
         {
             LogInvalidFrontmatter(logger, skillLocation);
@@ -78,7 +102,7 @@ internal static partial class AgentSkillFrontmatterParser
         // Recognized fields use exact lowercase names, with optional quotes. Reject casing variants and
         // duplicates rather than silently changing which value the skill exposes.
         var seenFields = new HashSet<string>(StringComparer.Ordinal);
-        foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
+        foreach (Match kvMatch in YamlKeyValueRegex().Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
             key = key[0] is '"' or '\'' ? key.Substring(1, key.Length - 2) : key;
@@ -135,11 +159,11 @@ internal static partial class AgentSkillFrontmatterParser
 
         // Parse metadata block (indented key-value pairs under "metadata:").
         AdditionalPropertiesDictionary? metadata = null;
-        Match metadataMatch = s_yamlMetadataBlockRegex.Match(yamlContent);
+        Match metadataMatch = YamlMetadataBlockRegex().Match(yamlContent);
         if (metadataMatch.Success)
         {
             metadata = [];
-            foreach (Match kvMatch in s_yamlIndentedKeyValueRegex.Matches(metadataMatch.Groups[1].Value))
+            foreach (Match kvMatch in YamlIndentedKeyValueRegex().Matches(metadataMatch.Groups[1].Value))
             {
                 string key = kvMatch.Groups[1].Value;
                 string value = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
