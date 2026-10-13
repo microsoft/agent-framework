@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Remove="Workflows\*.cs" />
+    <Compile Include="Workflows\LoopEach.cs" />
     <None Include="Workflows\*.cs">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

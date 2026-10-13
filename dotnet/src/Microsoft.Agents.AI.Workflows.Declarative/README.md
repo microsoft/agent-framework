@@ -27,6 +27,11 @@ expressions. `EvaluateValueWithSensitivityAsync<TValue>` is intended for
 operations that preserve the returned sensitivity metadata when storing values,
 not for discarding metadata and making decisions using only `Value`.
 
+Tool actions validate automatic-send settings before dispatch and retain the
+evaluated setting for the matching response, including approval and checkpoint
+resumption. Changes to workflow state while a request is pending do not change
+that invocation's automatic-send behavior.
+
 ### MCP session lifetime
 
 `DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,

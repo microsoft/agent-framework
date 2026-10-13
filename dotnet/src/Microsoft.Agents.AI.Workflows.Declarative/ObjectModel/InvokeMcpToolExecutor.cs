@@ -88,6 +88,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? serverLabel = this.GetServerLabel();
         string toolName = this.GetToolName();
         bool requireApproval = this.GetRequireApproval();
+        bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? arguments = this.GetArguments();
         Dictionary<string, string>? headers = this.GetHeaders();
         string? conversationId = this.GetConversationId();
@@ -103,6 +104,7 @@ internal sealed class InvokeMcpToolExecutor(
                 arguments,
                 headers,
                 connectionName,
+                autoSend,
                 cancellationToken).ConfigureAwait(false);
             return default;
         }
@@ -117,7 +119,7 @@ internal sealed class InvokeMcpToolExecutor(
             connectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, autoSend, cancellationToken).ConfigureAwait(false);
 
         // Signal completion so the workflow routes via RequiresNothing
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -190,6 +192,7 @@ internal sealed class InvokeMcpToolExecutor(
         }
 
         string? conversationId = this.GetConversationId();
+        bool autoSend = snapshot.AutoSend ?? this.GetAutoSendValue();
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             snapshot.ServerUrl,
             snapshot.ServerLabel,
@@ -199,7 +202,7 @@ internal sealed class InvokeMcpToolExecutor(
             snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, autoSend, cancellationToken).ConfigureAwait(false);
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -273,6 +276,7 @@ internal sealed class InvokeMcpToolExecutor(
             this.GetArguments(),
             this.GetHeaders(),
             this.GetConnectionName(),
+            this.GetAutoSendValue(),
             cancellationToken);
     }
 
@@ -284,6 +288,7 @@ internal sealed class InvokeMcpToolExecutor(
         Dictionary<string, object?>? arguments,
         Dictionary<string, string>? headers,
         string? connectionName,
+        bool autoSend,
         CancellationToken cancellationToken)
     {
         string requestId = Guid.NewGuid().ToString("N");
@@ -291,7 +296,8 @@ internal sealed class InvokeMcpToolExecutor(
         this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName)
         {
             ConnectionNameValidated = true,
-            RequiresHeaderReapprovalAfterRestore = this.Model.Headers is { Count: > 0 }
+            RequiresHeaderReapprovalAfterRestore = this.Model.Headers is { Count: > 0 },
+            AutoSend = autoSend,
         };
         this._approvalHeaderSnapshots[requestId] = new HeaderSnapshot(headers);
 
@@ -310,10 +316,9 @@ internal sealed class InvokeMcpToolExecutor(
         IWorkflowContext context,
         McpServerToolResultContent resultContent,
         string? conversationId,
+        bool autoSend,
         CancellationToken cancellationToken)
     {
-        bool autoSend = this.GetAutoSendValue();
-
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
         ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
 
@@ -533,6 +538,8 @@ internal sealed class InvokeMcpToolExecutor(
         Dictionary<string, object?>? Arguments,
         string? ConnectionName)
     {
+        public bool? AutoSend { get; init; }
+
         public bool ConnectionNameValidated { get; init; }
 
         public bool RequiresHeaderReapprovalAfterRestore { get; init; }

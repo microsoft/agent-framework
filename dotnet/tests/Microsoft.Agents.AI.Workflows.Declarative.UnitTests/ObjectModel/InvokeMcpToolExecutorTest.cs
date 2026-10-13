@@ -235,6 +235,73 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task AutoSendIsValidatedBeforeMcpDispatchAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        InvokeMcpTool.Builder builder = this.CreateModel(
+            nameof(AutoSendIsValidatedBeforeMcpDispatchAsync), TestServerUrl, TestToolName, requireApproval: false).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        MockMcpToolProvider handler = new();
+        InvokeMcpToolExecutor action = new(AssignParent<InvokeMcpTool>(builder), handler.Object, new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("auto send", exception.Message);
+        handler.Verify(
+            h => h.InvokeToolAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(), It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task AutoSendUsesMcpApprovalSnapshotAsync(bool autoSend, bool restore)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        InvokeMcpTool.Builder builder = this.CreateModel(
+            nameof(AutoSendUsesMcpApprovalSnapshotAsync), TestServerUrl, TestToolName, requireApproval: true).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        MockMcpToolProvider handler = new();
+        MockAgentProvider provider = new();
+        InvokeMcpToolExecutor action = new(model, handler.Object, provider.Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        List<WorkflowEvent> events = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(requests);
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((e, _) => events.Add(e))
+            .Returns(default(ValueTask));
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        if (restore)
+        {
+            await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+            action = new InvokeMcpToolExecutor(model, handler.Object, provider.Object, this.State);
+            await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        }
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(context.Object, CreateApprovalResponseFor(requests, approved: true), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+    }
+
+    [Fact]
     public async Task InvokeMcpToolExecuteWithEmptyConversationIdAsync()
     {
         // Arrange

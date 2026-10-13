@@ -6,7 +6,9 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 
@@ -368,10 +370,6 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         Assert.False(instanceB.HasValue, "Restored instance should report HasValue == false after exhausting all items.");
     }
 
-    /// <summary>
-    /// When no checkpoint state has been written for the executor (e.g. first run), the restore
-    /// hook must be a no-op and leave constructor defaults in place.
-    /// </summary>
     [Fact]
     public async Task ForeachRejectsSensitiveCheckpointItemsAsync()
     {
@@ -395,6 +393,55 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         Assert.False(action.HasValue);
     }
 
+    [Fact]
+    public async Task GeneratedLoopRejectsSensitiveCheckpointItemsAsync()
+    {
+        // Arrange
+        Test.WorkflowProviders.WorkflowProvider.ForeachLoopExecutor action = new(new TestFormulaSession(this.State));
+        InMemoryWorkflowContext checkpoint = new();
+        await checkpoint.QueueStateUpdateAsync("_values", new PortableValue[] { new("item") });
+        await checkpoint.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.Sensitive);
+        await checkpoint.QueueStateUpdateAsync("_index", 0);
+        await checkpoint.QueueStateUpdateAsync("HasValue", true);
+
+        // Act
+        Task RestoreAsync() => InvokeOnCheckpointRestoredAsync(action, checkpoint);
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(RestoreAsync);
+        Assert.False(action.HasValue);
+    }
+
+    [Fact]
+    public async Task GeneratedLoopPreservesIterationAcrossRestoreAsync()
+    {
+        // Arrange
+        TestFormulaSession session = new(this.State);
+        InMemoryWorkflowContext context = new();
+        await context.QueueStateUpdateAsync("_values", new PortableValue[] { new("a"), new("b") });
+        await context.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.None);
+        await context.QueueStateUpdateAsync("_index", 1);
+        await context.QueueStateUpdateAsync("HasValue", true);
+        Test.WorkflowProviders.WorkflowProvider.ForeachLoopExecutor restored = new(session);
+
+        // Act
+        await InvokeOnCheckpointRestoredAsync(restored, context);
+        await restored.TakeNextAsync(context, null, CancellationToken.None);
+
+        // Assert
+        Assert.True(restored.HasValue);
+        Assert.Equal(1, await context.ReadStateAsync<int>("LoopIndex", VariableScopeNames.Local));
+        Assert.Equal(SensitivityLevel.None, await context.ReadStateAsync<SensitivityLevel>(
+            "LoopValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local)));
+        Assert.Contains("LoopValue", await context.ReadStateKeysAsync(
+            WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local)));
+        Assert.Equal("b", await context.ReadStateAsync<string>("LoopValue", VariableScopeNames.Local));
+    }
+
+    /// <summary>
+    /// When no checkpoint state has been written for the executor (e.g. first run), the restore
+    /// hook must be a no-op and leave constructor defaults in place.
+    /// </summary>
     [Fact]
     public async Task ForeachRestoreWithNoSavedStateAsync()
     {
@@ -593,6 +640,11 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         ValueTask invocation = (ValueTask)method.Invoke(executor, new object[] { context, CancellationToken.None })!;
         await invocation;
+    }
+
+    private sealed class TestFormulaSession(WorkflowFormulaState state) : FormulaSession
+    {
+        internal override WorkflowFormulaState State => state;
     }
 
     /// <summary>

@@ -237,6 +237,130 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     #region CaptureResponseAsync Tests
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AutoSendIsValidatedBeforeFunctionDispatchAsync(bool requireApproval)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendIsValidatedBeforeFunctionDispatchAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), new MockAgentProvider().Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
+
+        // Act
+        Task ExecuteAsync() => action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("auto send", exception.Message);
+        Assert.Empty(requests);
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, true)]
+    public async Task AutoSendUsesFunctionInvocationSnapshotAsync(bool requireApproval, bool autoSend, bool restore)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendUsesFunctionInvocationSnapshotAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => "result", name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(model, provider, this.State);
+        List<ExternalInputRequest> requests = [];
+        List<WorkflowEvent> events = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(emittedRequests: requests);
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((e, _) => events.Add(e))
+            .Returns(default(ValueTask));
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        ExternalInputResponse response;
+        if (requireApproval)
+        {
+            response = CreateApprovalResponseFor(requests, approved: true);
+        }
+        else
+        {
+            FunctionCallContent call = Assert.Single(Assert.Single(requests).AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+            response = new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(call.CallId, "result")]));
+        }
+        if (restore)
+        {
+            await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+            action = new InvokeFunctionToolExecutor(model, provider, this.State);
+            await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        }
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AutoSendUsesMatchingSnapshotForMixedResponsesAsync(bool autoSend)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Approve", FormulaValue.New(true));
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendUsesMatchingSnapshotForMixedResponsesAsync), "test_function", requireApproval: true).ToBuilder();
+        builder.RequireApproval = BoolExpression.Expression("Local.Approve").ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        int invocationCount = 0;
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => ++invocationCount, name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), provider, this.State);
+        List<ExternalInputRequest> requests = [];
+        List<WorkflowEvent> events = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(emittedRequests: requests);
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((e, _) => events.Add(e))
+            .Returns(default(ValueTask));
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        ToolApprovalResponseContent approval = GetApprovalRequest(Assert.Single(requests)).CreateResponse(approved: true);
+        this.State.Set("Approve", FormulaValue.New(false));
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        FunctionCallContent call = Assert.Single(requests[1].AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [approval, new FunctionResultContent(call.CallId, "result")]));
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+        Assert.Equal(0, invocationCount);
+        await action.CaptureResponseAsync(context.Object, CreateApprovalResponseForRequest(requests[0], approved: true), CancellationToken.None);
+        Assert.Single(events.OfType<AgentResponseEvent>());
+        Assert.Equal(1, invocationCount);
+    }
+
+    [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -2019,6 +2143,9 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<List<string>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, List<string>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
             .Returns(default(ValueTask));
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, bool>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, Dictionary<string, bool>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
+            .Returns(default(ValueTask));
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, bool, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
             .Returns(default(ValueTask));
@@ -2050,6 +2177,9 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.ReadStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<List<string>?>(stateStore.TryGetValue(key, out object? val) ? val as List<string> : null));
+        mockContext.Setup(c => c.ReadStateAsync<Dictionary<string, bool>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<Dictionary<string, bool>?>(stateStore.TryGetValue(key, out object? val) ? val as Dictionary<string, bool> : null));
         mockContext.Setup(c => c.ReadStateAsync<bool>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<bool>(stateStore.TryGetValue(key, out object? val) && val is bool boolValue && boolValue));
