@@ -1983,6 +1983,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert update.raw_representation is mock_event
 
 
+async def test_get_response_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming response carrying an oauth_consent_request output item surfaces the consent link."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        response = await client.get_response([Message(role="user", contents=["List my repos"])])
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+
+
 def test_agent_accepts_foundry_chat_clients() -> None:
     mock_project = MagicMock()
     mock_openai = _make_mock_openai_client()
