@@ -7,6 +7,7 @@ See: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/#client
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -260,7 +261,9 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_mcp_tools_call_tool_error_sets_error_type(
-    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """When CallToolResult.isError is true, error.type should be 'tool_error' per MCP spec."""
     private_error_detail = "founder-secret-token"
@@ -270,9 +273,14 @@ async def test_mcp_tools_call_tool_error_sets_error_type(
     )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.call_tool("get-weather", city="invalid")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
@@ -283,7 +291,9 @@ async def test_mcp_tools_call_tool_error_sets_error_type(
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_mcp_tools_call_mcp_error_sets_error_type(
-    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """When session.call_tool() raises McpError, error.type should be the exception class name."""
     private_error_detail = "founder-secret-token"
@@ -293,9 +303,14 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(
     )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.call_tool("get-weather")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
@@ -354,7 +369,9 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_mcp_prompts_get_mcp_error_sets_error_type(
-    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
     private_error_detail = "founder-secret-token"
@@ -364,9 +381,14 @@ async def test_mcp_prompts_get_mcp_error_sets_error_type(
     )
 
     span_exporter.clear()
-    with pytest.raises(ToolExecutionException):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException) as exc_info,
+    ):
         await tool.get_prompt("missing-prompt")
 
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
     spans = span_exporter.get_finished_spans()
     prompt_spans = [s for s in spans if "prompts/get" in s.name]
     assert len(prompt_spans) == 1

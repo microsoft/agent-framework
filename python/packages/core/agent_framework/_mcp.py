@@ -75,6 +75,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _mcp_tool_execution_exception(
+    message: str,
+    inner_exception: Exception | None = None,
+) -> ToolExecutionException:
+    """Create an MCP tool exception without leaking details through automatic logs."""
+    from .observability import OBSERVABILITY_SETTINGS
+
+    return ToolExecutionException(
+        message,
+        inner_exception=inner_exception,
+        log_level=10 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None,
+    )
+
+
 if TYPE_CHECKING:
     _MCPSamplingContentBlock: TypeAlias = (
         types.TextContent
@@ -663,7 +678,7 @@ def _make_mcp_prompt_caller(
 def _validate_mcp_meta_key(key: str) -> None:
     """Validate an MCP ``_meta`` key against the 2025-06-18 key-name format."""
     if not _MCP_META_KEY_PATTERN.fullmatch(key):
-        raise ToolExecutionException(f"Invalid MCP _meta key name: {key!r}.")
+        raise _mcp_tool_execution_exception(f"Invalid MCP _meta key name: {key!r}.")
 
 
 def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
@@ -671,13 +686,13 @@ def _validate_mcp_meta(raw_meta: object | None) -> dict[str, Any] | None:
     if raw_meta is None:
         return None
     if not isinstance(raw_meta, dict):
-        raise ToolExecutionException("MCP tool metadata provided via _meta must be a dict.")
+        raise _mcp_tool_execution_exception("MCP tool metadata provided via _meta must be a dict.")
 
     raw_meta_dict = cast(Mapping[object, Any], raw_meta)
     meta: dict[str, Any] = {}
     for key, value in raw_meta_dict.items():
         if not isinstance(key, str):
-            raise ToolExecutionException("MCP tool metadata provided via _meta must use string keys.")
+            raise _mcp_tool_execution_exception("MCP tool metadata provided via _meta must use string keys.")
         _validate_mcp_meta_key(key)
         meta[key] = value
     return meta
@@ -1436,7 +1451,7 @@ class MCPTool:
                     continue
                 existing_remote = remote_by_config_name.get(name)
                 if existing_remote is not None and existing_remote != remote_name:
-                    raise ToolExecutionException(
+                    raise _mcp_tool_execution_exception(
                         f"MCP configuration name {name!r} is ambiguous: it matches raw remote names "
                         f"{existing_remote!r} and {remote_name!r}. "
                         "Use an unambiguous name or a different tool_name_prefix."
@@ -1555,9 +1570,11 @@ class MCPTool:
                 )
                 or "none"
             )
-            raise ToolExecutionException(f"MCP tool '{tool_name}' is not available. Available tools: {available}.")
+            raise _mcp_tool_execution_exception(
+                f"MCP tool '{tool_name}' is not available. Available tools: {available}."
+            )
         if len(matches) > 1:
-            raise ToolExecutionException(f"MCP tool name '{tool_name}' is ambiguous.")
+            raise _mcp_tool_execution_exception(f"MCP tool name '{tool_name}' is ambiguous.")
         return matches[0]
 
     @staticmethod
@@ -1566,10 +1583,10 @@ class MCPTool:
         if isinstance(tool, str):
             return [tool]
         if not isinstance(tool, Sequence):
-            raise ToolExecutionException("Progressive MCP tool request must be a string or a list of strings.")
+            raise _mcp_tool_execution_exception("Progressive MCP tool request must be a string or a list of strings.")
         tool_names = list(tool)
         if not all(isinstance(tool_name, str) for tool_name in tool_names):
-            raise ToolExecutionException("Progressive MCP tool request must contain only strings.")
+            raise _mcp_tool_execution_exception("Progressive MCP tool request must contain only strings.")
         return tool_names
 
     def _is_progressive_function_loaded(
@@ -1608,7 +1625,7 @@ class MCPTool:
     async def _load_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str | Sequence[str]) -> str:
         """Load an allowed MCP tool into the live function-calling tool list."""
         if ctx.tools is None:
-            raise ToolExecutionException("load_tool can only be used inside an agent function-calling run.")
+            raise _mcp_tool_execution_exception("load_tool can only be used inside an agent function-calling run.")
         messages: list[str] = []
         functions_to_load: list[FunctionTool] = []
         function_names_to_load: set[str] = set()
@@ -1644,14 +1661,14 @@ class MCPTool:
                 warnings.simplefilter("ignore", ExperimentalWarning)
                 ctx.add_tools(functions_to_load)
         except ValueError as ex:
-            raise ToolExecutionException(str(ex), inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception(str(ex), inner_exception=ex) from ex
         self._progressive_loaded_tool_names.update(func.name for func in functions_to_load)
         return "\n".join(messages)
 
     async def _unload_progressive_mcp_tool(self, ctx: FunctionInvocationContext, tool: str | Sequence[str]) -> str:
         """Unload a progressively loaded MCP tool from the live function-calling tool list."""
         if ctx.tools is None:
-            raise ToolExecutionException("unload_tool can only be used inside an agent function-calling run.")
+            raise _mcp_tool_execution_exception("unload_tool can only be used inside an agent function-calling run.")
         messages: list[str] = []
         function_names_to_unload: set[str] = set()
         for tool_name in self._progressive_tool_names(tool):
@@ -1692,7 +1709,7 @@ class MCPTool:
                 warnings.simplefilter("ignore", ExperimentalWarning)
                 ctx.remove_tools(list(function_names_to_unload))
         except RuntimeError as ex:
-            raise ToolExecutionException(str(ex), inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception(str(ex), inner_exception=ex) from ex
         self._progressive_loaded_tool_names.difference_update(function_names_to_unload)
         return "\n".join(messages)
 
@@ -2490,19 +2507,19 @@ class MCPTool:
                         try:
                             await self._reconnect_without_loading()
                         except Exception as reconn_ex:
-                            raise ToolExecutionException(
+                            raise _mcp_tool_execution_exception(
                                 "Failed to reconnect to MCP server.",
                                 inner_exception=reconn_ex,
                             ) from reconn_ex
                         continue
                     logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
-                    raise ToolExecutionException(
+                    raise _mcp_tool_execution_exception(
                         "Failed to load prompts - connection lost.",
                         inner_exception=cl_ex,
                     ) from cl_ex
 
             if prompt_list is None:
-                raise ToolExecutionException("Failed to load prompts.")
+                raise _mcp_tool_execution_exception("Failed to load prompts.")
 
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
@@ -2611,19 +2628,19 @@ class MCPTool:
                         try:
                             await self._reconnect_without_loading()
                         except Exception as reconn_ex:
-                            raise ToolExecutionException(
+                            raise _mcp_tool_execution_exception(
                                 "Failed to reconnect to MCP server.",
                                 inner_exception=reconn_ex,
                             ) from reconn_ex
                         continue
                     logger.error("MCP connection closed unexpectedly after reconnection: %s", cl_ex)
-                    raise ToolExecutionException(
+                    raise _mcp_tool_execution_exception(
                         "Failed to load tools - connection lost.",
                         inner_exception=cl_ex,
                     ) from cl_ex
 
             if tool_list is None:
-                raise ToolExecutionException("Failed to load tools.")
+                raise _mcp_tool_execution_exception("Failed to load tools.")
 
             for tool in tool_list.tools:
                 tool_annotations_by_name[tool.name] = tool.annotations
@@ -2658,7 +2675,7 @@ class MCPTool:
                 # Skip if already loaded
                 if local_name in existing_remote_by_local:
                     if existing_remote_by_local.get(local_name) != tool.name:
-                        raise ToolExecutionException(
+                        raise _mcp_tool_execution_exception(
                             "MCP server advertised multiple tools that map to the same local function name: "
                             f"{existing_remote_by_local[local_name]!r} and {tool.name!r} both map to "
                             f"{local_name!r}."
@@ -2792,7 +2809,7 @@ class MCPTool:
             try:
                 await self._reconnect_without_loading()
             except Exception as ex:
-                raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(
                     "Failed to establish MCP connection.",
                     inner_exception=ex,
                 ) from ex
@@ -2801,7 +2818,7 @@ class MCPTool:
             try:
                 await self._reconnect_without_loading()
             except Exception as ex:
-                raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(
                     "Failed to establish MCP connection.",
                     inner_exception=ex,
                 ) from ex
@@ -2864,7 +2881,7 @@ class MCPTool:
         kwargs: dict[str, Any],
     ) -> str | list[Content]:
         if not self.load_tools_flag:
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
 
@@ -2925,7 +2942,7 @@ class MCPTool:
                     if span.is_recording():
                         set_mcp_span_error(span, "tool_error", text or str(parsed))
                         span_error_recorded = True
-                    raise ToolExecutionException(text or str(parsed))
+                    raise _mcp_tool_execution_exception(text or str(parsed))
                 return parser(result)
             except ToolExecutionException as tool_ex:
                 if span.is_recording() and not span_error_recorded:
@@ -2940,7 +2957,7 @@ class MCPTool:
                     error_message = call_ex.error.message if isinstance(call_ex, McpError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)
-                    raise ToolExecutionException(error_message, inner_exception=call_ex) from call_ex
+                    raise _mcp_tool_execution_exception(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
                     # First attempt failed, try reconnecting.
@@ -2951,7 +2968,7 @@ class MCPTool:
                     except Exception as reconn_ex:
                         if span.is_recording():
                             set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                        raise ToolExecutionException(
+                        raise _mcp_tool_execution_exception(
                             "Failed to reconnect to MCP server.",
                             inner_exception=reconn_ex,
                         ) from reconn_ex
@@ -2960,15 +2977,15 @@ class MCPTool:
                 logger.error("MCP connection closed unexpectedly after reconnection: %s", call_ex)
                 if span.is_recording():
                     set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
-                raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(
                     f"Failed to call tool '{tool_name}' - connection lost.",
                     inner_exception=call_ex,
                 ) from call_ex
             except Exception as ex:
                 if span.is_recording():
                     set_mcp_span_error(span, type(ex).__name__, str(ex))
-                raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
-        retries_exhausted = ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
+                raise _mcp_tool_execution_exception(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+        retries_exhausted = _mcp_tool_execution_exception(f"Failed to call tool '{tool_name}' after retries.")
         if span.is_recording():
             set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
         raise retries_exhausted
@@ -3054,7 +3071,7 @@ class MCPTool:
         from mcp.shared.exceptions import McpError
 
         if not self.load_tools_flag:
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
 
@@ -3070,15 +3087,15 @@ class MCPTool:
         except (ClosedResourceError, McpError) as ex:
             if not self._is_connection_lost(ex):
                 error_message = ex.error.message if isinstance(ex, McpError) else str(ex)
-                raise ToolExecutionException(error_message, inner_exception=ex) from ex
-            raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(error_message, inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception(
                 f"Failed to call tool '{tool_name}' - connection lost; task state unknown.",
                 inner_exception=ex,
             ) from ex
         except ToolExecutionException:
             raise
         except Exception as ex:
-            raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
 
         # Server returned a CallToolResult (no task created) or fell back to plain tools/call.
         if fallback_result is not None:
@@ -3090,11 +3107,13 @@ class MCPTool:
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
-                raise ToolExecutionException(text or str(parsed))
+                raise _mcp_tool_execution_exception(text or str(parsed))
             return parser(fallback_result)
 
         if task_id is None:
-            raise ToolExecutionException(f"MCP server did not return a task_id or fallback result for '{tool_name}'.")
+            raise _mcp_tool_execution_exception(
+                f"MCP server did not return a task_id or fallback result for '{tool_name}'."
+            )
 
         # Track to completion: poll until terminal, then fetch payload. Never re-issue
         # tools/call past this point; reconnect-and-retry only against the same task_id.
@@ -3117,7 +3136,7 @@ class MCPTool:
                     return cast("str | list[Content]", result)
                 except _MCPDeadlineExpired as ex:
                     self._spawn_best_effort_cancel(task_id)
-                    raise ToolExecutionException(
+                    raise _mcp_tool_execution_exception(
                         f"MCP task '{task_id}' exceeded max_task_wait of {max_wait_s}s.",
                         inner_exception=ex,
                     ) from ex
@@ -3200,7 +3219,7 @@ class MCPTool:
         except ValidationError as ex:
             # Augmented call succeeded server-side; re-issuing a plain tools/call
             # could double-execute a side-effecting tool.
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 f"MCP server returned an unparseable response to augmented tools/call "
                 f"for '{tool_name}'; cannot safely retry (server may have started the operation).",
                 inner_exception=ex,
@@ -3254,7 +3273,7 @@ class MCPTool:
         try:
             return types.GetTaskResult.model_validate(raw)
         except Exception as ex:
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 f"MCP server returned a malformed tasks/get response for task '{task_id}'.",
                 inner_exception=ex,
             ) from ex
@@ -3290,7 +3309,7 @@ class MCPTool:
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
-                raise ToolExecutionException(text or str(parsed))
+                raise _mcp_tool_execution_exception(text or str(parsed))
             return parser(payload)
 
         # Non-completed terminal statuses surface as ToolExecutionException so the
@@ -3300,7 +3319,7 @@ class MCPTool:
             # Spec-non-terminal; treated as terminal here because the framework does
             # not implement the interactive input flow.
             message = snapshot.statusMessage or "MCP task requires additional input and cannot continue."
-        raise ToolExecutionException(f"Tool '{tool_name}' task {status}: {message}")
+        raise _mcp_tool_execution_exception(f"Tool '{tool_name}' task {status}: {message}")
 
     async def _fetch_task_result(self, task_id: str) -> types.CallToolResult:
         """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
@@ -3319,7 +3338,7 @@ class MCPTool:
             )
         except McpError as ex:
             # Server reported completed; a hard fetch error is a plain failure (no cancel).
-            raise ToolExecutionException(ex.error.message, inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception(ex.error.message, inner_exception=ex) from ex
 
         # GetTaskPayloadResult carries the tool result via extra fields; reinterpret as CallToolResult.
         payload_dict = payload.model_dump(by_alias=True, exclude_none=True)
@@ -3327,7 +3346,7 @@ class MCPTool:
             return types.CallToolResult.model_validate(payload_dict)
         except ValidationError as ex:
             # Server reported completed; malformed payload is a plain failure (no cancel needed).
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 f"MCP task '{task_id}' result payload could not be parsed as a CallToolResult.",
                 inner_exception=ex,
             ) from ex
@@ -3476,7 +3495,7 @@ class MCPTool:
         from mcp.shared.exceptions import McpError
 
         if not self.load_prompts_flag:
-            raise ToolExecutionException(
+            raise _mcp_tool_execution_exception(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
             )
 
@@ -3503,7 +3522,7 @@ class MCPTool:
                             continue  # Retry the operation
                         except Exception as reconn_ex:
                             set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                            raise ToolExecutionException(
+                            raise _mcp_tool_execution_exception(
                                 "Failed to reconnect to MCP server.",
                                 inner_exception=reconn_ex,
                             ) from reconn_ex
@@ -3511,18 +3530,20 @@ class MCPTool:
                         # Second attempt also failed, give up
                         logger.error(f"MCP connection closed unexpectedly after reconnection: {cl_ex}")
                         set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
-                        raise ToolExecutionException(
+                        raise _mcp_tool_execution_exception(
                             f"Failed to call prompt '{prompt_name}' - connection lost.",
                             inner_exception=cl_ex,
                         ) from cl_ex
                 except McpError as mcp_exc:
                     error_message = mcp_exc.error.message
                     set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
-                    raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
+                    raise _mcp_tool_execution_exception(error_message, inner_exception=mcp_exc) from mcp_exc
                 except Exception as ex:
                     set_mcp_span_error(span, type(ex).__name__, str(ex))
-                    raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
-            retries_exhausted = ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
+                    raise _mcp_tool_execution_exception(
+                        f"Failed to call prompt '{prompt_name}'.", inner_exception=ex
+                    ) from ex
+            retries_exhausted = _mcp_tool_execution_exception(f"Failed to get prompt '{prompt_name}' after retries.")
             set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
             raise retries_exhausted
 
@@ -3545,7 +3566,7 @@ class MCPTool:
             raise
         except Exception as ex:
             await self.close()
-            raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
+            raise _mcp_tool_execution_exception("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(
         self,
@@ -4285,12 +4306,12 @@ class MCPStreamableHTTPTool(MCPTool):
         identity = _mcp_header_identity(headers)
         if not self._owns_session:
             if self._session_header_identity is None:
-                raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(
                     "MCP header identity is unknown for a caller-supplied session; "
                     "use a separate framework-managed tool instance."
                 )
             if identity != self._session_header_identity:
-                raise ToolExecutionException(
+                raise _mcp_tool_execution_exception(
                     "MCP header identity cannot change for a caller-supplied session; use a separate tool instance."
                 )
             return
