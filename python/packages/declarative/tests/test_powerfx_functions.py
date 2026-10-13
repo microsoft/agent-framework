@@ -714,6 +714,16 @@ class TestWholeCallArgs:
         """Anything after the call's own closing paren disqualifies the match."""
         assert whole_call_args('Concat("a") + 1', "Concat") is None
 
+    def test_trailing_string_literal_after_the_call_is_not_claimed(self):
+        """A quoted string after the call's own closing paren is trailing code.
+
+        The suffix scan must not reuse the literal-skipping walker, or the
+        trailing string is silently dropped and a malformed formula is claimed
+        instead of being left to PowerFx.
+        """
+        assert whole_call_args('Concat("a") "tail"', "Concat") is None
+        assert whole_call_args('Upper("x") /* c */ "tail"', "Upper") is None
+
     def test_name_must_start_the_formula(self):
         """A call nested inside a larger formula is not a whole-formula match."""
         assert whole_call_args('Lower("B") & Concat("a")', "Concat") is None
@@ -836,3 +846,7 @@ class TestEvalCustomFunctionExtent:
     def test_trailing_unterminated_comment_falls_through(self):
         """An unterminated trailing /* is not trivia, so PowerFx handles the formula."""
         assert self._state()._eval_custom_function('Concat("a") /* unterminated') is None
+
+    def test_trailing_string_literal_falls_through(self):
+        """A trailing string after a complete call is a larger expression for PowerFx."""
+        assert self._state()._eval_custom_function('Concat("a") "tail"') is None

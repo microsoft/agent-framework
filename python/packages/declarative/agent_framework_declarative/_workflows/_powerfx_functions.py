@@ -85,6 +85,29 @@ def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
         cursor += 1
 
 
+def _after_trailing_trivia(formula: str, start: int) -> int:
+    """Return the index after trailing whitespace and complete comments.
+
+    Unlike the expression walker, this never skips a string literal: a quoted
+    token after the call's own closing paren is trailing code, not trivia, so it
+    stops the scan and leaves the formula to PowerFx.
+    """
+    index = start
+    while index < len(formula):
+        if formula[index].isspace():
+            index += 1
+            continue
+        if formula.startswith(("//", "/*"), index):
+            token_end = _skip_powerfx_opaque_token(formula, index)
+            if token_end == index:
+                # Unterminated /* is not a complete comment, so real code follows.
+                break
+            index = token_end
+            continue
+        break
+    return index
+
+
 def whole_call_args(formula: str, *names: str) -> str | None:
     """Return the argument text when ``formula`` is exactly one ``Name(...)`` call.
 
@@ -129,9 +152,11 @@ def whole_call_args(formula: str, *names: str) -> str | None:
         if close_index == -1:
             # Unbalanced: the call never closes, so it is not a whole call.
             return None
-        # Only whitespace may follow the call's own closing paren (the walker
-        # already skips trailing comments); any other code means a larger expression.
-        if any(not formula[index].isspace() for index in positions):
+        # Only whitespace and complete comments may follow the call's own closing
+        # paren. The suffix scan deliberately does not reuse the literal-skipping
+        # walker: a trailing string literal (or any other code) there means the
+        # formula is a larger expression the caller must not claim.
+        if _after_trailing_trivia(formula, close_index + 1) != len(formula):
             return None
         return formula[len(prefix) : close_index]
     return None
