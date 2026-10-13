@@ -496,7 +496,10 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         // Act
         ValueTask ExecuteAsync() => approval
             ? action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None)
-            : action.CaptureResponseAsync(context.Object, new ExternalInputResponse([]), CancellationToken.None);
+            : action.CaptureResponseAsync(
+                context.Object,
+                new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(action.Id, "result")])),
+                CancellationToken.None);
 
         // Assert
         DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(async () => await ExecuteAsync());
@@ -1236,6 +1239,74 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         // Assert - the function was invoked with the snapshot arguments.
         Assert.NotNull(capturedArguments);
         Assert.Equal(LegacyApprovedArg, capturedArguments[ArgumentKey]?.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task LegacyApprovalResponseValidatesAutoSendOnlyWhenApprovedAsync(bool singleSnapshot, bool approved)
+    {
+        // Arrange
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(LegacyApprovalResponseValidatesAutoSendOnlyWhenApprovedAsync),
+            "test_function", requireApproval: true, outputResultVariable: "Result").ToBuilder();
+        InvokeToolOutput.Builder? output = builder.Output;
+        Assert.NotNull(output);
+        output.AutoSend = BoolExpression.Expression("Local.Control").ToBuilder();
+        bool functionWasInvoked = false;
+        TestFunctionAgentProvider provider = new(
+            [AIFunctionFactory.Create(() => { functionWasInvoked = true; return "result"; }, name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), provider, this.State);
+        ApprovalSnapshot snapshot = new("test_function", null);
+        Dictionary<string, object?> stateStore = singleSnapshot
+            ? new() { ["_approvalSnapshot"] = snapshot }
+            : new() { ["_approvalSnapshots"] = new Dictionary<string, ApprovalSnapshot> { [action.Id] = snapshot } };
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(stateStore);
+        List<WorkflowEvent> events = [];
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((workflowEvent, _) => events.Add(workflowEvent))
+            .Returns(default(ValueTask));
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        ToolApprovalRequestContent request = new(action.Id, new FunctionCallContent(action.Id, "test_function"));
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [request.CreateResponse(approved)]));
+
+        // Act
+        if (approved)
+        {
+            DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(
+                () => action.CaptureResponseAsync(context.Object, response, CancellationToken.None).AsTask());
+            Assert.Contains("auto send", exception.Message);
+        }
+        else
+        {
+            await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+        }
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+
+        // Assert
+        Assert.False(functionWasInvoked);
+        Assert.Empty(events.OfType<AgentResponseEvent>());
+        Dictionary<string, ApprovalSnapshot> remainingSnapshots = Assert.IsType<Dictionary<string, ApprovalSnapshot>>(stateStore["_approvalSnapshots"]);
+        Assert.Empty(Assert.IsType<Dictionary<string, bool>>(stateStore["_autoSendSnapshots"]));
+        if (approved)
+        {
+            Assert.True(remainingSnapshots.ContainsKey(action.Id));
+            Assert.Empty(events.OfType<DeclarativeActionCompletedEvent>());
+        }
+        else
+        {
+            Assert.Empty(remainingSnapshots);
+            Assert.Single(events.OfType<DeclarativeActionCompletedEvent>());
+            Assert.Contains(context.Invocations, invocation =>
+                invocation.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && invocation.Arguments.Count >= 2
+                && invocation.Arguments[1] is StringValue error
+                && error.Value.Contains("not approved by user", StringComparison.Ordinal));
+        }
     }
 
     /// <summary>

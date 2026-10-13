@@ -132,7 +132,6 @@ internal sealed class InvokeFunctionToolExecutor(
         ExternalInputResponse response,
         CancellationToken cancellationToken)
     {
-        bool autoSend = this.GetResponseAutoSendValue(response);
         string? conversationId = this.GetConversationId();
         string? responseRequestId = response.RequestId;
 
@@ -158,6 +157,8 @@ internal sealed class InvokeFunctionToolExecutor(
                 .FirstOrDefault(r => string.Equals(r.CallId, this.Id, StringComparison.Ordinal)
                     && IsCorrelatedResponse(r.CallId, responseRequestId));
         }
+
+        bool autoSend = matchingResult is not null && this.GetResponseAutoSendValue(response);
 
         // When the caller approved an approval-required function call but didn't execute it
         // locally (the hosted Foundry scenario, where mcp_approval_response is converted to a
@@ -190,14 +191,18 @@ internal sealed class InvokeFunctionToolExecutor(
                     this._autoSendSnapshots.TryRemove(approval.RequestId, out _);
                     await this.AssignErrorAsync(context, "Function invocation was not approved by user.").ConfigureAwait(false);
                 }
-                else if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
-                {
-                    matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
-                    approvedFunctionResult = matchingResult;
-                }
                 else
                 {
-                    await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+                    autoSend = this.GetResponseAutoSendValue(response);
+                    if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
+                    {
+                        matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
+                        approvedFunctionResult = matchingResult;
+                    }
+                    else
+                    {
+                        await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+                    }
                 }
             }
             else if (!this._approvalSnapshots.IsEmpty)

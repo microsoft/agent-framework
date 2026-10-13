@@ -36,6 +36,9 @@ refreshing headers and revalidating connection names.
 For JSON checkpoints, pass `DeclarativeWorkflowJsonOptions.Default` to
 `CheckpointManager.CreateJson`; its source-generated context includes the
 per-invocation automatic-send settings.
+Function approval denials complete without evaluating automatic-send settings.
+Older approved checkpoints without a captured setting still validate the current
+setting before invoking the function.
 
 ### MCP session lifetime
 
