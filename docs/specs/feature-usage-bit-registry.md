@@ -188,7 +188,8 @@ only to approved first-party endpoints.
 | 86 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
 | 87 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
 | 88 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
-| 89–127 | _reserved_ | future packages | — |
+| 89 | `nvidia` | NVIDIA NIM embedding client | `agent_framework_nvidia.NvidiaEmbeddingClient` |
+| 90–127 | _reserved_ | future packages | — |
 
 ## Index table — .NET (`agent-framework-dotnet`, version 1)
 
