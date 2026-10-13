@@ -207,6 +207,8 @@ formats are not accepted as agent audio input.
 
 Audio settings are available from Settings → General. Browser capture options such as echo cancellation, noise
 suppression, and auto gain control are best-effort `getUserMedia` constraints, so browser and device support may vary.
+Users can click to record, hold the microphone button for push-to-talk, and optionally enable auto-stop on silence from
+the audio settings.
 
 ### OpenAI Proxy Mode
 

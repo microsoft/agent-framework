@@ -52,17 +52,19 @@ function WaveformBars({
   );
 }
 
-function RecordingWaveform() {
-  const bars = [8, 14, 22, 28, 32, 26, 20, 14, 10, 18, 12, 16];
+function RecordingWaveform({ inputLevel = 0 }: { inputLevel?: number }) {
+  const bars = [8, 12, 16, 22, 28, 32, 30, 24, 18, 14, 12, 16, 20, 24, 18, 14, 12, 16];
+  const level = Math.max(0, Math.min(1, inputLevel));
+  const maxBarHeight = 40;
 
   return (
-    <div className="flex items-center gap-1" aria-hidden="true">
+    <div className="flex h-10 items-center gap-1 overflow-hidden" aria-hidden="true">
       {bars.map((height, index) => (
         <span
           key={`${height}-${index}`}
           className="w-1 rounded-full bg-violet-500 dark:bg-violet-400 animate-pulse"
           style={{
-            height,
+            height: Math.min(maxBarHeight, Math.max(6, Math.round(height * (0.35 + level * 0.9)))),
             animationDelay: `${index * 80}ms`,
             animationDuration: "900ms",
           }}
@@ -74,16 +76,20 @@ function RecordingWaveform() {
 
 export function RecordingBar({
   recordingSeconds,
+  inputLevel = 0,
+  statusLabel,
   onStop,
   onCancel,
 }: {
   recordingSeconds: number;
+  inputLevel?: number;
+  statusLabel?: string;
   onStop: () => void;
   onCancel: () => void;
 }) {
   return (
-    <div className="flex flex-1 items-center gap-2">
-      <div className="flex min-h-[56px] flex-1 items-center justify-between gap-5 rounded-full border border-border bg-background px-4 py-2 shadow-sm">
+    <div className="mx-auto flex w-full max-w-[760px] items-center gap-2">
+      <div className="flex h-[72px] flex-1 items-center justify-between gap-5 rounded-full border border-border bg-background px-4 py-2 shadow-sm">
         <Button
           type="button"
           size="icon"
@@ -97,8 +103,13 @@ export function RecordingBar({
         <div className="min-w-[4ch] text-center text-base font-semibold tabular-nums">
           {formatAudioDuration(recordingSeconds)}
         </div>
-        <div className="flex flex-1 justify-center">
-          <RecordingWaveform />
+        <div className="flex h-full flex-1 flex-col items-center justify-center gap-1 overflow-hidden">
+          <RecordingWaveform inputLevel={inputLevel} />
+          {statusLabel && (
+            <span className="h-3 text-[10px] leading-3 text-muted-foreground">
+              {statusLabel}
+            </span>
+          )}
         </div>
         <span className="sr-only">{AUDIO_UI_TEXT.recordingMessage}</span>
       </div>
@@ -147,7 +158,7 @@ export function AudioMessagePreview({
   const [currentTime, setCurrentTime] = useState(0);
   const duration = Math.max(audio.durationSeconds, 0.01);
   const progress = Math.min(1, Math.max(0, currentTime / duration));
-  const previewWidth = Math.round(Math.min(maxWidth, Math.max(minWidth, 320 + duration * 32)));
+  const previewWidth = Math.round(Math.min(maxWidth, Math.max(minWidth, 300 + duration * 18)));
 
   useEffect(() => {
     if (!autoPlay || lastAutoPlayedUrlRef.current === audio.blobUrl) {
@@ -224,7 +235,7 @@ export function AudioMessagePreview({
 
   return (
     <div
-      className={`mx-auto max-w-full rounded-full border bg-background px-3 py-2 shadow-sm transition-[width] ${className}`}
+      className={`mx-auto max-w-full overflow-hidden rounded-full border bg-background px-3 py-2 shadow-sm transition-[width] ${className}`}
       style={{ width: `min(100%, ${previewWidth}px)` }}
     >
       <audio
@@ -251,7 +262,7 @@ export function AudioMessagePreview({
             {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 fill-current" />}
           </Button>
         )}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 max-w-[560px]">
           <div className="mb-1 text-xs font-medium">{label}</div>
           {previewBeforeSend ? (
             <div

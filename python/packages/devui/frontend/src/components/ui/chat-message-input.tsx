@@ -79,11 +79,19 @@ export function ChatMessageInput({
     isStarting: isStartingAudio,
     isProcessing: isProcessingAudio,
     recordingSeconds,
+    inputLevel,
     error: audioError,
     startRecording,
     stopRecording,
     cancelRecording,
   } = useAudioRecorder(audioInput);
+  const pushToTalkTimeoutRef = useRef<number | null>(null);
+  const pushToTalkStartRef = useRef<Promise<void> | null>(null);
+  const pushToTalkActiveRef = useRef(false);
+  const suppressAudioClickRef = useRef(false);
+  const autoStopTimeoutRef = useRef<number | null>(null);
+  const silenceStartedAtRef = useRef<number | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     pendingAudioRef.current = pendingAudio;
@@ -448,35 +456,6 @@ export function ChatMessageInput({
     setPendingAudio(null);
   };
 
-  const handleAudioButtonClick = async () => {
-    if (isStartingAudio) {
-      return;
-    }
-
-    if (isRecording) {
-      try {
-        const recording = await stopRecording();
-        if (recording) {
-          replaceAudioRecording(recording);
-        }
-      } catch {
-        // Error is surfaced by the recorder hook.
-      }
-      return;
-    }
-
-    void startRecording();
-  };
-
-  const handleRemoveAudioRecording = () => {
-    setPendingAudio((recording) => {
-      if (recording) {
-        URL.revokeObjectURL(recording.blobUrl);
-      }
-      return null;
-    });
-  };
-
   const canSendMessage =
     !disabled &&
     !isSubmitting &&
@@ -493,7 +472,210 @@ export function ChatMessageInput({
     !isSubmitting &&
     !isStreaming &&
     !isStartingAudio &&
+    !isRecording &&
     !isProcessingAudio;
+
+  const finishAudioRecording = useCallback(async () => {
+    try {
+      const recording = await stopRecording();
+      if (recording) {
+        replaceAudioRecording(recording);
+      }
+    } catch {
+      // Error is surfaced by the recorder hook.
+    }
+  }, [replaceAudioRecording, stopRecording]);
+
+  const clearAutoStopTimer = useCallback(() => {
+    if (autoStopTimeoutRef.current !== null) {
+      window.clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetAutoStopDetection = useCallback(() => {
+    clearAutoStopTimer();
+    silenceStartedAtRef.current = null;
+  }, [clearAutoStopTimer]);
+
+  useEffect(() => {
+    if (isRecording) {
+      recordingStartedAtRef.current = Date.now();
+      resetAutoStopDetection();
+      return;
+    }
+
+    recordingStartedAtRef.current = null;
+    resetAutoStopDetection();
+  }, [isRecording, resetAutoStopDetection]);
+
+  useEffect(() => {
+    if (!audioInput.autoStopOnSilence || !isRecording || pushToTalkActiveRef.current) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    const recordingStartedAt = recordingStartedAtRef.current;
+    if (recordingStartedAt === null) {
+      return;
+    }
+
+    const minimumRecordingMs = Math.max(0, audioInput.minimumRecordingMs ?? 1000);
+    const silenceDurationMs = Math.max(250, audioInput.silenceDurationMs ?? 1500);
+    const silenceThreshold = Math.max(0, Math.min(1, audioInput.silenceThreshold ?? 0.03));
+    const now = Date.now();
+
+    if (now - recordingStartedAt < minimumRecordingMs) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    if (inputLevel > silenceThreshold) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    silenceStartedAtRef.current ??= now;
+    const silenceElapsedMs = now - silenceStartedAtRef.current;
+    const remainingSilenceMs = silenceDurationMs - silenceElapsedMs;
+
+    if (remainingSilenceMs <= 0) {
+      resetAutoStopDetection();
+      void finishAudioRecording();
+      return;
+    }
+
+    if (autoStopTimeoutRef.current === null) {
+      autoStopTimeoutRef.current = window.setTimeout(() => {
+        autoStopTimeoutRef.current = null;
+        resetAutoStopDetection();
+        void finishAudioRecording();
+      }, remainingSilenceMs);
+    }
+  }, [
+    audioInput.autoStopOnSilence,
+    audioInput.minimumRecordingMs,
+    audioInput.silenceDurationMs,
+    audioInput.silenceThreshold,
+    finishAudioRecording,
+    inputLevel,
+    isRecording,
+    recordingSeconds,
+    resetAutoStopDetection,
+  ]);
+
+  const handleAudioButtonClick = async () => {
+    if (suppressAudioClickRef.current) {
+      suppressAudioClickRef.current = false;
+      return;
+    }
+
+    if (isStartingAudio) {
+      return;
+    }
+
+    void startRecording();
+  };
+
+  const clearPushToTalkTimer = useCallback(() => {
+    if (pushToTalkTimeoutRef.current !== null) {
+      window.clearTimeout(pushToTalkTimeoutRef.current);
+      pushToTalkTimeoutRef.current = null;
+    }
+  }, []);
+
+  const finishPushToTalk = useCallback(async () => {
+    clearPushToTalkTimer();
+
+    if (!pushToTalkActiveRef.current) {
+      return;
+    }
+
+    pushToTalkActiveRef.current = false;
+    suppressAudioClickRef.current = true;
+
+    try {
+      await pushToTalkStartRef.current;
+      await finishAudioRecording();
+    } finally {
+      pushToTalkStartRef.current = null;
+    }
+  }, [clearPushToTalkTimer, finishAudioRecording]);
+
+  const handleAudioPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !canRecordAudio || isRecording || isStartingAudio) {
+        return;
+      }
+
+      clearPushToTalkTimer();
+      pushToTalkActiveRef.current = false;
+      pushToTalkStartRef.current = null;
+      event.currentTarget.setPointerCapture(event.pointerId);
+
+      const finishFromWindow = () => {
+        window.removeEventListener("pointerup", finishFromWindow);
+        window.removeEventListener("pointercancel", finishFromWindow);
+        void finishPushToTalk();
+      };
+      window.addEventListener("pointerup", finishFromWindow, { once: true });
+      window.addEventListener("pointercancel", finishFromWindow, { once: true });
+
+      pushToTalkTimeoutRef.current = window.setTimeout(() => {
+        pushToTalkActiveRef.current = true;
+        suppressAudioClickRef.current = true;
+        pushToTalkStartRef.current = startRecording();
+      }, 300);
+    },
+    [canRecordAudio, clearPushToTalkTimer, finishPushToTalk, isRecording, isStartingAudio, startRecording]
+  );
+
+  const handleAudioPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      if (pushToTalkActiveRef.current) {
+        void finishPushToTalk();
+        return;
+      }
+
+      clearPushToTalkTimer();
+    },
+    [clearPushToTalkTimer, finishPushToTalk]
+  );
+
+  const handleAudioPointerCancel = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      if (pushToTalkActiveRef.current) {
+        void finishPushToTalk();
+      } else {
+        clearPushToTalkTimer();
+      }
+    },
+    [clearPushToTalkTimer, finishPushToTalk]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearPushToTalkTimer();
+      clearAutoStopTimer();
+    };
+  }, [clearAutoStopTimer, clearPushToTalkTimer]);
+
+  const handleRemoveAudioRecording = () => {
+    setPendingAudio((recording) => {
+      if (recording) {
+        URL.revokeObjectURL(recording.blobUrl);
+      }
+      return null;
+    });
+  };
 
   const audioButtonTitle = !audioInput.enabled
     ? "Microphone input is disabled in settings"
@@ -501,9 +683,7 @@ export function ChatMessageInput({
     ? "Microphone input requires a supported browser and localhost or HTTPS"
     : isStartingAudio
     ? "Preparing microphone"
-    : isRecording
-    ? "Stop recording"
-    : "Record voice message";
+    : "Click to record or hold to push-to-talk";
 
   return (
     <div
@@ -589,7 +769,9 @@ export function ChatMessageInput({
         {isRecording ? (
           <RecordingBar
             recordingSeconds={recordingSeconds}
-            onStop={handleAudioButtonClick}
+            inputLevel={inputLevel}
+            statusLabel={audioInput.autoStopOnSilence ? "Auto-stops after silence" : undefined}
+            onStop={finishAudioRecording}
             onCancel={cancelRecording}
           />
         ) : (
@@ -623,6 +805,9 @@ export function ChatMessageInput({
                 variant="outline"
                 size="icon"
                 onClick={handleAudioButtonClick}
+                onPointerDown={handleAudioPointerDown}
+                onPointerUp={handleAudioPointerUp}
+                onPointerCancel={handleAudioPointerCancel}
                 disabled={!canRecordAudio}
                 className="shrink-0 h-10 transition-all"
                 title={audioButtonTitle}

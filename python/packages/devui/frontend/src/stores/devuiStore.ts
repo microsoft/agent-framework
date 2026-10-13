@@ -20,6 +20,21 @@ import type { AttachmentItem } from "@/components/ui/attachment-gallery";
 
 const MAX_DEBUG_EVENTS = 1000;
 const MAX_DEBUG_TEXT_DELTA_CHARS = 2048;
+const DEFAULT_AUDIO_INPUT = {
+  enabled: true,
+  maxDurationSeconds: 60,
+  maxPayloadBytes: 10 * 1024 * 1024,
+  sampleRate: 16000,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  previewBeforeSend: true,
+  autoStopOnSilence: false,
+  silenceThreshold: 0.03,
+  silenceDurationMs: 1500,
+  minimumRecordingMs: 1000,
+  autoPlayAgentAudio: false,
+};
 
 function prepareDebugEvent(event: ExtendedResponseStreamEvent): ExtendedResponseStreamEvent {
   if (
@@ -90,6 +105,10 @@ interface DevUIState {
     noiseSuppression: boolean;
     autoGainControl: boolean;
     previewBeforeSend: boolean;
+    autoStopOnSilence: boolean;
+    silenceThreshold: number;
+    silenceDurationMs: number;
+    minimumRecordingMs: number;
     autoPlayAgentAudio: boolean;
   };
 
@@ -287,17 +306,7 @@ export const useDevUIStore = create<DevUIStore>()(
         isResizing: false,
         showToolCalls: true, // Default to showing tool calls
         streamingEnabled: true, // Default to streaming mode (recommended)
-        audioInput: {
-          enabled: true,
-          maxDurationSeconds: 60,
-          maxPayloadBytes: 10 * 1024 * 1024,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          previewBeforeSend: true,
-          autoPlayAgentAudio: false,
-        },
+        audioInput: { ...DEFAULT_AUDIO_INPUT },
 
         // Debug Panel Preferences (persisted)
         debugPanelTab: "events", // Default to events tab
@@ -452,6 +461,7 @@ export const useDevUIStore = create<DevUIStore>()(
         setAudioInput: (settings) =>
           set((state) => ({
             audioInput: {
+              ...DEFAULT_AUDIO_INPUT,
               ...state.audioInput,
               ...settings,
             },

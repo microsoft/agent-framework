@@ -407,7 +407,7 @@ export function SettingsModal({
                       Microphone Input
                     </Label>
                     <p className="text-xs text-muted-foreground">
-                      Record WAV audio and send it directly to audio-capable agents
+                      Record microphone audio and send it directly to audio-capable agents
                     </p>
                   </div>
                   <Switch
@@ -423,10 +423,13 @@ export function SettingsModal({
                         <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
                         Audio options
                       </summary>
-                      <div className="mt-3 space-y-4 pl-4 border-l-2 border-muted">
-                        <div className="space-y-3">
-                          <p className="text-xs font-medium">Input</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="mt-3 space-y-2 pl-4 border-l-2 border-muted">
+                        <details className="group/audio-input rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-input:rotate-90" />
+                            Input
+                          </summary>
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="space-y-1">
                               <Label className="text-xs">Max duration (seconds)</Label>
                               <Input
@@ -510,18 +513,92 @@ export function SettingsModal({
                               </p>
                             </div>
                           </div>
-                        </div>
+                        </details>
 
-                        <div className="space-y-3">
-                          <p className="text-xs font-medium">Output</p>
-                          <div className="flex items-center justify-between gap-3">
+                        <details className="group/audio-autostop rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-autostop:rotate-90" />
+                            Auto-stop on silence
+                          </summary>
+                          <div className="mt-3 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-xs text-muted-foreground">
+                                Automatically attaches click-to-record audio after a quiet pause.
+                              </p>
+                              <Switch
+                                checked={Boolean(audioInput.autoStopOnSilence)}
+                                onCheckedChange={(checked) => setAudioInput({ autoStopOnSilence: checked })}
+                              />
+                            </div>
+
+                            {audioInput.autoStopOnSilence && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Silence threshold</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max="1"
+                                    step="0.01"
+                                    value={audioInput.silenceThreshold ?? 0.03}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        silenceThreshold: Math.max(0, Math.min(1, Number(e.target.value || "0.03"))),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Silence duration (ms)</Label>
+                                  <Input
+                                    type="number"
+                                    min="250"
+                                    max="10000"
+                                    step="250"
+                                    value={audioInput.silenceDurationMs ?? 1500}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        silenceDurationMs: Math.max(250, parseInt(e.target.value || "1500")),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Minimum recording (ms)</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max="10000"
+                                    step="250"
+                                    value={audioInput.minimumRecordingMs ?? 1000}
+                                    onChange={(e) =>
+                                      setAudioInput({
+                                        minimumRecordingMs: Math.max(0, parseInt(e.target.value || "1000")),
+                                      })
+                                    }
+                                    className="text-sm"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+
+                        <details className="group/audio-output rounded-md border border-border/60 p-3" open>
+                          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                            <ChevronRight className="h-3 w-3 transition-transform group-open/audio-output:rotate-90" />
+                            Output
+                          </summary>
+                          <div className="mt-3 flex items-center justify-between gap-3">
                             <Label className="text-xs">Auto-play agent audio</Label>
                             <Switch
                               checked={audioInput.autoPlayAgentAudio}
                               onCheckedChange={(checked) => setAudioInput({ autoPlayAgentAudio: checked })}
                             />
                           </div>
-                        </div>
+                        </details>
                       </div>
                     </details>
 
@@ -542,6 +619,7 @@ export function SettingsModal({
                             <li>Audio is sent without transcription</li>
                             <li>Microphone recordings become mono WAV</li>
                             <li>WAV and MP3 uploads are sent as audio input</li>
+                            <li>Auto-stop on silence is optional and uses local microphone level only</li>
                             <li>Other audio formats are not accepted</li>
                           </ul>
                         </div>

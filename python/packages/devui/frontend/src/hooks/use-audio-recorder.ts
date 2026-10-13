@@ -242,10 +242,13 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
   const [isStarting, setIsStarting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [inputLevel, setInputLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioMeterFrameRef = useRef<number | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startedAtRef = useRef<number>(0);
   const intervalRef = useRef<number | null>(null);
@@ -268,10 +271,65 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     }
   }, []);
 
+  const stopInputMeter = useCallback(() => {
+    if (audioMeterFrameRef.current !== null) {
+      window.cancelAnimationFrame(audioMeterFrameRef.current);
+      audioMeterFrameRef.current = null;
+    }
+
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audioContext) {
+      void audioContext.close();
+    }
+    setInputLevel(0);
+  }, []);
+
+  const startInputMeter = useCallback(
+    (stream: MediaStream) => {
+      stopInputMeter();
+      const AudioContextConstructor = getAudioContextConstructor();
+      if (!AudioContextConstructor) {
+        return;
+      }
+
+      try {
+        const audioContext = new AudioContextConstructor();
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.75;
+        const source = audioContext.createMediaStreamSource(stream);
+        const samples = new Uint8Array(analyser.fftSize);
+        source.connect(analyser);
+        audioContextRef.current = audioContext;
+
+        const updateInputLevel = () => {
+          analyser.getByteTimeDomainData(samples);
+          let sumSquares = 0;
+          for (const sample of samples) {
+            const centeredSample = (sample - 128) / 128;
+            sumSquares += centeredSample * centeredSample;
+          }
+
+          const rms = Math.sqrt(sumSquares / samples.length);
+          setInputLevel(Math.min(1, rms * 4));
+          audioMeterFrameRef.current = window.requestAnimationFrame(updateInputLevel);
+        };
+
+        void audioContext.resume();
+        updateInputLevel();
+      } catch {
+        stopInputMeter();
+      }
+    },
+    [stopInputMeter]
+  );
+
   const releaseStream = useCallback(() => {
+    stopInputMeter();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-  }, []);
+  }, [stopInputMeter]);
 
   const clearWarmupTimer = useCallback(() => {
     if (warmupTimeoutRef.current !== null) {
@@ -279,6 +337,15 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
       warmupTimeoutRef.current = null;
     }
   }, []);
+
+  const resetRecordingState = useCallback(() => {
+    clearTimer();
+    clearWarmupTimer();
+    stopInputMeter();
+    setIsRecording(false);
+    setIsStarting(false);
+    setRecordingSeconds(0);
+  }, [clearTimer, clearWarmupTimer, stopInputMeter]);
 
   const startRecording = useCallback(async () => {
     if (!isSupported) {
@@ -311,13 +378,13 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
       };
 
       recorder.onstart = () => {
+        startedAtRef.current = Date.now();
+        setRecordingSeconds(0);
         warmupTimeoutRef.current = window.setTimeout(() => {
           if (cancelledRef.current) {
             return;
           }
 
-          startedAtRef.current = Date.now();
-          setRecordingSeconds(0);
           setIsRecording(true);
           setIsStarting(false);
 
@@ -329,6 +396,7 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
 
       streamRef.current = stream;
       mediaRecorderRef.current = recorder;
+      startInputMeter(stream);
 
       recorder.start();
     } catch (recordingError) {
@@ -337,11 +405,11 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
       setIsStarting(false);
       setError(recordingError instanceof Error ? recordingError.message : "Microphone permission was denied.");
     }
-  }, [isSupported, options, releaseStream]);
+  }, [isSupported, options, releaseStream, startInputMeter]);
 
   const stopRecording = useCallback(async (): Promise<RecordedAudio | null> => {
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive" || isStarting) {
+    if (!recorder || recorder.state === "inactive") {
       return null;
     }
 
@@ -394,7 +462,6 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
   }, [
     clearTimer,
     clearWarmupTimer,
-    isStarting,
     options.maxDurationSeconds,
     options.maxPayloadBytes,
     options.sampleRate,
@@ -403,18 +470,14 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
 
   const cancelRecording = useCallback(() => {
     cancelledRef.current = true;
-    clearTimer();
-    clearWarmupTimer();
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
     releaseStream();
-    setIsRecording(false);
-    setIsStarting(false);
-    setRecordingSeconds(0);
+    resetRecordingState();
     chunksRef.current = [];
-  }, [clearTimer, clearWarmupTimer, releaseStream]);
+  }, [releaseStream, resetRecordingState]);
 
   useEffect(() => {
     return () => {
@@ -428,6 +491,7 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     isStarting,
     isProcessing,
     recordingSeconds,
+    inputLevel,
     error,
     startRecording,
     stopRecording,
