@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -117,19 +118,27 @@ public sealed class LoopAgentOptions
 
     /// <summary>Gets or sets the maximum total LLM token spend across all iterations, or <see langword="null"/> for unconstrained.</summary>
     /// <remarks>
-    /// Counts <c>TotalTokenCount</c> from each iteration's <c>AgentResponse.Usage</c>, falling back to
-    /// <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c> is absent.
+    /// <para>
+    /// Counts the input and output tokens used by the inner agent, including any sub-agents whose usage the inner agent
+    /// reports in its response. For each iteration, the loop reads <c>TotalTokenCount</c> from the inner agent's
+    /// <c>AgentResponse.Usage</c>, falling back to <c>InputTokenCount + OutputTokenCount</c> when <c>TotalTokenCount</c>
+    /// is absent. Tokens spent by <see cref="LoopEvaluator"/> instances, including judge model calls made by
+    /// <see cref="AIJudgeLoopEvaluator"/>, are not counted. What is counted cannot be configured.
+    /// </para>
+    /// <para>
+    /// If the inner agent reports no token usage, the budget cannot be enforced, and the loop logs a warning (once per run).
     /// When exceeded, the loop stamps <c>AgentResponse.AdditionalProperties["loop_exit_reason"] = "token_budget_exceeded"</c>
     /// (non-streaming only) and returns the last response.
+    /// </para>
     /// </remarks>
     public long? MaxTokens
     {
         get;
         set
         {
-            if (value.HasValue && value.Value < 1)
+            if (value.HasValue)
             {
-                throw new ArgumentOutOfRangeException(nameof(value), "MaxTokens must be a positive integer.");
+                _ = Throw.IfLessThanOrEqual(value.Value, 0, nameof(value));
             }
 
             field = value;

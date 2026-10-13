@@ -2,8 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -20,6 +23,25 @@ public class LoopAgentBudgetTests
         new AgentResponseUpdate(ChatRole.Assistant, $"chunk {call}"),
         new AgentResponseUpdate(ChatRole.Assistant, [new UsageContent(usage)]),
     ];
+
+    private static (Mock<ILogger> Logger, ILoggerFactory Factory) CreateLogger()
+    {
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        return (logger, loggerFactory.Object);
+    }
+
+    private static void VerifyWarningLogged(Mock<ILogger> logger, Times times) =>
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times);
 
     private static async Task<List<AgentResponseUpdate>> CollectAsync(IAsyncEnumerable<AgentResponseUpdate> stream)
     {
@@ -250,5 +272,132 @@ public class LoopAgentBudgetTests
         Assert.Equal(1, evaluatorCalls);
         Assert.Equal(1, inner.CallCount);
         Assert.DoesNotContain(updates, u => u.Text == "chunk 2");
+    }
+
+    /// <summary>
+    /// Verify that non-positive MaxTokens values are rejected.
+    /// </summary>
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void MaxTokens_NonPositive_Throws(long value)
+    {
+        var options = new LoopAgentOptions();
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() => options.MaxTokens = value);
+        Assert.Equal("value", ex.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that non-positive MaxDuration values are rejected.
+    /// </summary>
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void MaxDuration_NonPositive_Throws(long ticks)
+    {
+        var options = new LoopAgentOptions();
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() => options.MaxDuration = TimeSpan.FromTicks(ticks));
+        Assert.Equal("value", ex.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that a warning is logged once per run when MaxTokens is set but the inner agent reports no token usage.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MaxTokensSetWithoutUsage_LogsWarningOnceAsync()
+    {
+        // Arrange
+        var (logger, loggerFactory) = CreateLogger();
+        var inner = new InnerAgentCapture(_ => new AgentResponse(new ChatMessage(ChatRole.Assistant, "working")));
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxTokens = 50, MaxIterations = 3 }, loggerFactory);
+
+        // Act
+        await agent.RunAsync("task", new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, inner.CallCount);
+        VerifyWarningLogged(logger, Times.Once());
+    }
+
+    /// <summary>
+    /// Verify that no warning is logged when MaxTokens is set and the inner agent reports token usage.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MaxTokensSetWithUsage_DoesNotLogWarningAsync()
+    {
+        // Arrange
+        var (logger, loggerFactory) = CreateLogger();
+        var inner = new InnerAgentCapture(_ => ResponseWithTokens(10));
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxTokens = 50, MaxIterations = 3 }, loggerFactory);
+
+        // Act
+        await agent.RunAsync("task", new ChatClientAgentSession());
+
+        // Assert
+        VerifyWarningLogged(logger, Times.Never());
+    }
+
+    /// <summary>
+    /// Verify that the streaming loop logs a warning once per run when MaxTokens is set but no token usage is reported.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_MaxTokensSetWithoutUsage_LogsWarningOnceAsync()
+    {
+        // Arrange
+        var (logger, loggerFactory) = CreateLogger();
+        var inner = new InnerStreamingCapture(call => [new AgentResponseUpdate(ChatRole.Assistant, $"chunk {call}")]);
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxTokens = 50, MaxIterations = 3 }, loggerFactory);
+
+        // Act
+        await CollectAsync(agent.RunStreamingAsync("task", new ChatClientAgentSession()));
+
+        // Assert
+        Assert.Equal(3, inner.CallCount);
+        VerifyWarningLogged(logger, Times.Once());
+    }
+
+    /// <summary>
+    /// Verify that the streaming loop does not log a warning when MaxTokens is set and token usage is reported.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_MaxTokensSetWithUsage_DoesNotLogWarningAsync()
+    {
+        // Arrange
+        var (logger, loggerFactory) = CreateLogger();
+        var inner = new InnerStreamingCapture(call => UpdatesWithUsage(call, new UsageDetails { TotalTokenCount = 10 }));
+        var agent = new LoopAgent(inner.Agent, LoopTestHelpers.While(_ => true), new LoopAgentOptions { MaxTokens = 50, MaxIterations = 3 }, loggerFactory);
+
+        // Act
+        await CollectAsync(agent.RunStreamingAsync("task", new ChatClientAgentSession()));
+
+        // Assert
+        VerifyWarningLogged(logger, Times.Never());
+    }
+
+    /// <summary>
+    /// Verify that tokens spent by the judge evaluator are not charged against MaxTokens; only the inner agent's usage counts.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_JudgeEvaluatorUsage_NotCountedTowardsTokenBudgetAsync()
+    {
+        // Arrange: the judge always asks for more and reports a large usage that alone would exhaust the budget.
+        var judgeMock = new Mock<IChatClient>();
+        judgeMock.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"answered\":false,\"gapAnalysis\":\"more\"}"))
+            {
+                Usage = new UsageDetails { TotalTokenCount = 1000 },
+            });
+        var inner = new InnerAgentCapture(_ => ResponseWithTokens(10));
+        var agent = new LoopAgent(inner.Agent, new AIJudgeLoopEvaluator(judgeMock.Object), new LoopAgentOptions { MaxTokens = 50, MaxIterations = 10 });
+
+        // Act
+        AgentResponse response = await agent.RunAsync("task", new ChatClientAgentSession());
+
+        // Assert: 10 tokens per iteration reaches 50 after five iterations; judge usage would have stopped it after one.
+        Assert.Equal(5, inner.CallCount);
+        Assert.Equal(LoopExitReason.TokenBudgetExceeded, response.AdditionalProperties![LoopExitReason.AdditionalPropertiesKey]);
     }
 }
