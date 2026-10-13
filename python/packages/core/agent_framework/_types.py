@@ -2224,6 +2224,11 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             and response.messages[-1].message_id
             and response.messages[-1].message_id != update.message_id
         )
+        or (
+            update.author_name
+            and response.messages[-1].author_name
+            and response.messages[-1].author_name != update.author_name
+        )
         or (update.role and response.messages[-1].role != update.role)
     ):
         is_new_message = True

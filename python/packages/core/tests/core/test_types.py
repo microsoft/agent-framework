@@ -2000,6 +2000,63 @@ def test_agent_run_response_from_updates(agent_response_update: AgentResponseUpd
     assert response.text == "Test contentTest content"
 
 
+@pytest.mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+    ids=["chat", "agent"],
+)
+def test_from_updates_starts_new_message_when_author_changes(response_type: Any, update_type: Any) -> None:
+    """Test that updates from different authors without message ids are not merged into one message."""
+    response = response_type.from_updates([
+        update_type(contents=[Content.from_text("Draft ")], role="assistant", author_name="writer"),
+        update_type(contents=[Content.from_text("text.")], role="assistant"),
+        update_type(contents=[Content.from_text("Looks good.")], role="assistant", author_name="reviewer"),
+    ])
+
+    assert [(message.author_name, message.text) for message in response.messages] == [
+        ("writer", "Draft text."),
+        ("reviewer", "Looks good."),
+    ]
+
+
+def test_from_updates_keeps_one_message_when_author_is_first_set() -> None:
+    """Test that a message without an author takes the author of a later update instead of splitting."""
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant"),
+        AgentResponseUpdate(contents=[Content.from_text("world")], role="assistant", author_name="writer"),
+    ])
+
+    assert [(message.author_name, message.text) for message in response.messages] == [("writer", "Hello world")]
+
+
+def test_from_updates_starts_new_message_for_interleaved_authors() -> None:
+    """Test that interleaved updates from two authors keep each run of updates with its author."""
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("A1")], role="assistant", author_name="alpha"),
+        AgentResponseUpdate(contents=[Content.from_text("B1")], role="assistant", author_name="beta"),
+        AgentResponseUpdate(contents=[Content.from_text("A2")], role="assistant", author_name="alpha"),
+    ])
+
+    assert [(message.author_name, message.text) for message in response.messages] == [
+        ("alpha", "A1"),
+        ("beta", "B1"),
+        ("alpha", "A2"),
+    ]
+
+
+def test_from_updates_starts_new_message_for_authors_sharing_a_message_id() -> None:
+    """Test that a different author starts a new message even when the message id is the same."""
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("Hi")], role="assistant", author_name="alpha", message_id="m1"),
+        AgentResponseUpdate(contents=[Content.from_text("Yo")], role="assistant", author_name="beta", message_id="m1"),
+    ])
+
+    assert [(message.author_name, message.message_id, message.text) for message in response.messages] == [
+        ("alpha", "m1", "Hi"),
+        ("beta", "m1", "Yo"),
+    ]
+
+
 def test_agent_run_response_from_updates_uses_last_non_none_agent_id() -> None:
     response = AgentResponse.from_updates([
         AgentResponseUpdate(agent_id="first-agent"),
