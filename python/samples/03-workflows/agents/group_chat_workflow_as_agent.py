@@ -16,7 +16,7 @@ load_dotenv()
 Sample: Group Chat Orchestration
 
 What it does:
-- Demonstrates the generic GroupChatBuilder with a agent orchestrator directing two agents.
+- Demonstrates the generic GroupChatBuilder with an agent orchestrator directing two agents.
 - The orchestrator coordinates a researcher (chat completions) and a writer (responses API) to solve a task.
 
 Prerequisites:

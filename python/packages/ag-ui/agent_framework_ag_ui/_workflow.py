@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncGenerator, Callable
 from typing import Any, cast
 
+import msgspec
 from ag_ui.core import (
     BaseEvent,
     MessagesSnapshotEvent,
@@ -29,17 +31,19 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import CheckpointID, CheckpointStorage, Workflow, WorkflowCheckpoint
+from agent_framework import CheckpointID, CheckpointStorage, Content, Message, Workflow, WorkflowCheckpoint
 from agent_framework._telemetry import mark_feature_used
 
 from ._feature_usage import FeatureIndex
-from ._message_adapters import agui_messages_to_snapshot_format
+from ._message_adapters import agent_framework_messages_to_agui, agui_messages_to_snapshot_format
 from ._run_common import (
     _cancelled_resume_interrupt_ids,
     _extract_resume_payload,
     _is_snapshot_hydration_request,
     _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
+    _snapshot_messages_match,
+    _snapshot_overlap_length,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._snapshots import (
@@ -68,6 +72,155 @@ _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
 
 
+def _hashable_message_content(content: Any) -> Any:
+    """Return a hashable, order-stable form of snapshot message content."""
+    if isinstance(content, (str, int, float, bool)) or content is None:
+        return content
+    return msgspec.json.encode(make_json_safe(content), order="deterministic")
+
+
+def _snapshot_messages_from_resume_value(
+    value: Any,
+) -> list[dict[str, Any]]:
+    """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
+
+    Values have already been coerced and validated by the execution path. Only
+    ``user`` turns are projected so resume cannot
+    forge assistant/system/tool history into the backend-owned snapshot.
+    """
+    if isinstance(value, Content):
+        value = [value]
+    if isinstance(value, list) and value and all(isinstance(item, Content) for item in value):
+        # Reuse the user-content encoder for ordered text/media, excluding tool and
+        # approval controls before they can be reinterpreted as snapshot history.
+        contents = [item for item in value if item.type in {"text", "uri", "data"}]
+        if not contents:
+            return []
+        return agui_messages_to_snapshot_format(
+            agent_framework_messages_to_agui([Message(role="user", contents=contents)])
+        )
+    value = make_json_safe(value)
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        return [{"role": "user", "content": text}]
+    if isinstance(value, dict):
+        # Function-approval style payloads are not chat turns.
+        if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
+            return []
+        if value.get("role") == "user":
+            return agui_messages_to_snapshot_format([_resume_message_to_agui_dict(value)])
+        return []
+    if isinstance(value, list):
+        message_like = [
+            _resume_message_to_agui_dict(item)
+            for item in value
+            if isinstance(item, dict) and item.get("role") == "user"
+        ]
+        if message_like:
+            return agui_messages_to_snapshot_format(message_like)
+    return []
+
+
+_RESUME_USER_ALLOWED_KEYS = frozenset({"id", "role", "content", "contents", "name"})
+
+
+def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize resume user turns for snapshot encoding.
+
+    Only chat-safe user fields are retained. Control fields such as ``tool_calls`` /
+    ``toolCalls``, ``actionExecutionId``, or ``function_approvals`` must not enter the
+    backend-owned thread snapshot — later hydrate/replay can otherwise reinterpret a
+    user turn as assistant/tool-control history.
+    """
+    normalized = {key: value for key, value in message.items() if key in _RESUME_USER_ALLOWED_KEYS}
+    if not normalized.get("id") and message.get("message_id"):
+        normalized["id"] = message["message_id"]
+    normalized["role"] = "user"
+    if normalized.get("content") not in (None, ""):
+        normalized.pop("contents", None)
+        return normalized
+    contents = normalized.get("contents")
+    if isinstance(contents, list):
+        # Let the snapshot adapter normalize text and media without losing their order.
+        normalized["content"] = contents
+    normalized.pop("contents", None)
+    return normalized
+
+
+def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable identity for deduping resume-synthesized turns against request messages."""
+    return (message.get("role"), message.get("id"), _hashable_message_content(message.get("content")))
+
+
+def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Role+content identity used when message IDs differ across messages vs resume."""
+    return (message.get("role"), _hashable_message_content(message.get("content")))
+
+
+def _current_turn_client_messages(
+    stored_messages: list[dict[str, Any]], client_messages: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Exclude confirmed prior transcript overlap before resume content matching."""
+    if not stored_messages or not client_messages:
+        return client_messages
+    matched_count = max(
+        (
+            overlap
+            for start, stored_message in enumerate(stored_messages)
+            if _snapshot_messages_match(stored_message, client_messages[0])
+            and (
+                (overlap := _snapshot_overlap_length(stored_messages, client_messages, start=start)) >= 2
+                or (stored_message.get("id") and stored_message.get("id") == client_messages[0].get("id"))
+            )
+        ),
+        default=0,
+    )
+    stored_ids = {message.get("id") for message in stored_messages if message.get("id")}
+    return [message for message in client_messages[matched_count:] if message.get("id") not in stored_ids]
+
+
+def _append_unique_snapshot_messages(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    content_dedupe_against: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Append resume-derived turns that are not already present in the seed.
+
+    Prefer id equality against ``existing``. Role/content fallback is limited to
+    ``content_dedupe_against`` (current-turn client overlap / id remaps). Callers
+    must not pass replayed prior transcript rows here — those keep their ids and
+    would otherwise let an earlier user ``"yes"`` consume a later resume interrupt
+    with the same text. When the list is empty or omitted, identical replies across
+    separate HITL turns on ``messages: []`` resumes are kept.
+    """
+    seen_ids = {message.get("id") for message in existing if message.get("id")}
+    content_source = content_dedupe_against if content_dedupe_against is not None else []
+    # Reserve exact-id overlap before content matching, regardless of incoming order.
+    # A client turn matched by id must not also consume a distinct identical reply.
+    matched_ids = seen_ids.intersection(message.get("id") for message in incoming if message.get("id"))
+    remaining_content = Counter(
+        _message_content_identity(message) for message in content_source if message.get("id") not in matched_ids
+    )
+    merged = list(existing)
+    for message in incoming:
+        message_id = message.get("id")
+        if message_id and message_id in seen_ids:
+            continue
+        content_key = _message_content_identity(message)
+        if remaining_content[content_key] > 0:
+            remaining_content[content_key] -= 1
+            continue
+        if message_id:
+            seen_ids.add(message_id)
+        merged.append(message)
+    return merged
+
+
 def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
     """Read an optional checkpoint id to resume from out of the AG-UI forwarded props."""
     forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
@@ -93,12 +246,25 @@ def _checkpoint_request_owner(metadata: dict[str, Any]) -> WorkflowRequestOwner 
     return snapshot_scope, thread_id
 
 
+def _workflow_checkpoint_storage(workflow: Workflow) -> CheckpointStorage | None:
+    """Return the workflow's build-time checkpoint storage."""
+    runner = getattr(workflow, "_runner", None)
+    context = getattr(runner, "context", None)
+    if context is None:
+        return None
+    return cast(CheckpointStorage | None, getattr(context, "_checkpoint_storage", None))
+
+
 class _OwnedWorkflowCheckpointStorage:
     """Attach one AG-UI request owner to checkpoints in their original save."""
 
     def __init__(self, storage: CheckpointStorage, owner: WorkflowRequestOwner) -> None:
         self._storage = storage
         self._owner = owner
+
+    def _owns(self, checkpoint: WorkflowCheckpoint) -> bool:
+        checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
+        return checkpoint_owner == self._owner or (checkpoint_owner is None and self._owner == (None, None))
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint with ownership for any pending request occurrences."""
@@ -110,24 +276,30 @@ class _OwnedWorkflowCheckpointStorage:
         return await self._storage.save(checkpoint)
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
-        """Load a checkpoint from the underlying store."""
-        return await self._storage.load(checkpoint_id)
+        """Load a checkpoint only when it belongs to this request owner."""
+        checkpoint = await self._storage.load(checkpoint_id)
+        if not self._owns(checkpoint):
+            raise PermissionError("The workflow checkpoint is unavailable for this AG-UI request owner.")
+        return checkpoint
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
-        """List checkpoints from the underlying store."""
-        return await self._storage.list_checkpoints(workflow_name=workflow_name)
+        """List checkpoints belonging to this request owner."""
+        checkpoints = await self._storage.list_checkpoints(workflow_name=workflow_name)
+        return [checkpoint for checkpoint in checkpoints if self._owns(checkpoint)]
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
-        """Delete a checkpoint from the underlying store."""
+        """Delete a checkpoint only when it belongs to this request owner."""
+        await self.load(checkpoint_id)
         return await self._storage.delete(checkpoint_id)
 
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
-        """Get the latest checkpoint from the underlying store."""
-        return await self._storage.get_latest(workflow_name=workflow_name)
+        """Get the latest checkpoint belonging to this request owner."""
+        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
+        return max(checkpoints, key=lambda checkpoint: checkpoint.timestamp, default=None)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
-        """List checkpoint IDs from the underlying store."""
-        return await self._storage.list_checkpoint_ids(workflow_name=workflow_name)
+        """List checkpoint IDs belonging to this request owner."""
+        return [checkpoint.checkpoint_id for checkpoint in await self.list_checkpoints(workflow_name=workflow_name)]
 
 
 class _WorkflowSnapshotBuilder:
@@ -146,6 +318,19 @@ class _WorkflowSnapshotBuilder:
         self._provisional_reasoning_messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] | None = None
         self.interrupt: list[dict[str, Any]] | None = None
+
+    def append_resume_messages(
+        self, messages: list[dict[str, Any]], *, content_dedupe_against: list[dict[str, Any]]
+    ) -> None:
+        """Seed validated user replies before any workflow output is observed."""
+        self._synthesized_messages = _append_unique_snapshot_messages(
+            self._synthesized_messages,
+            agui_messages_to_snapshot_format(messages),
+            content_dedupe_against=content_dedupe_against,
+        )
+        self._synthesized_message_ids = {
+            message_id for message in self._synthesized_messages if (message_id := message.get("id"))
+        }
 
     def observe(self, event: BaseEvent) -> None:
         """Fold one replayable AG-UI event into the latest snapshot state."""
@@ -544,6 +729,9 @@ class AgentFrameworkWorkflow:
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
         raw_messages = list(cast(list[dict[str, Any]], input_data.get("messages", []) or []))
+        # Preserve the client-supplied transcript for content-only dedupe of HITL
+        # resume turns. Stored history is not a confirmed client-replay overlap.
+        client_request_messages = list(raw_messages)
         resume_payload = _extract_resume_payload(input_data)
         snapshot_session = await ThreadSnapshotSession.open(
             store=self.snapshot_store,
@@ -552,7 +740,6 @@ class AgentFrameworkWorkflow:
         )
         stored_snapshot = snapshot_session.stored
 
-        checkpoint_storage = self.checkpoint_storage
         checkpoint_id = _checkpoint_id_from_input(input_data)
 
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
@@ -563,16 +750,19 @@ class AgentFrameworkWorkflow:
             if interrupt.get("id") is not None
         }
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
-        # Prefer wrapper/endpoint storage; otherwise allow builder/runtime storage on the
-        # resolved workflow so pause ids emitted without AG-UI storage still resume.
+        checkpoint_storage = self.checkpoint_storage or _workflow_checkpoint_storage(workflow)
+        owned_checkpoint_storage = (
+            _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
+            if checkpoint_storage is not None
+            else None
+        )
         if checkpoint_id is not None and checkpoint_storage is None:
-            if not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-                raise ValueError(
-                    "Resuming from a checkpoint requires checkpoint_storage to be configured on "
-                    "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
-                    "checkpoint storage on the workflow instance."
-                )
-        live_pending_events = await _pending_request_events(self.workflow) if self.workflow is not None else {}
+            raise ValueError(
+                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                "AgentFrameworkWorkflow (or the AG-UI endpoint), or WorkflowBuilder "
+                "checkpoint storage on the workflow instance."
+            )
+        live_pending_events = await _pending_request_events(workflow)
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
@@ -585,12 +775,16 @@ class AgentFrameworkWorkflow:
                     return
         if checkpoint_id is not None:
             try:
-                if checkpoint_storage is not None:
-                    checkpoint = await checkpoint_storage.load(checkpoint_id)
-                else:
-                    checkpoint = await workflow._runner.context.load_checkpoint(checkpoint_id)  # pyright: ignore[reportPrivateUsage]
-                    if checkpoint is None:
-                        raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
+                if owned_checkpoint_storage is None:
+                    raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
+                checkpoint = await owned_checkpoint_storage.load(checkpoint_id)
+            except PermissionError:
+                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield RunErrorEvent(
+                    message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",
+                    code="WORKFLOW_RESUME_NOT_FOUND",
+                )
+                return
             except Exception as exc:
                 yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                 yield RunErrorEvent(
@@ -598,14 +792,11 @@ class AgentFrameworkWorkflow:
                     code="WORKFLOW_CHECKPOINT_LOAD_FAILED",
                 )
                 return
-            checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
-            if checkpoint_owner is not None and checkpoint_owner != request_owner:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-                yield RunErrorEvent(
-                    message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",
-                    code="WORKFLOW_RESUME_NOT_FOUND",
-                )
-                return
+        effective_pending_events = live_pending_events
+        # Resolve persisted requests for response validation, but let a pure cold
+        # restore reach the core so it can re-emit its pending interrupt cards.
+        if checkpoint_id is not None and resume_payload is not None:
+            effective_pending_events = dict(checkpoint.pending_request_info_events or {})
         if self.workflow is not None and checkpoint_id is None:
             for interrupt_id in resume_interrupt_ids:
                 request_event = live_pending_events.get(interrupt_id)
@@ -646,9 +837,7 @@ class AgentFrameworkWorkflow:
         if effective_state:
             input_data["state"] = effective_state
 
-        run_checkpoint_storage = checkpoint_storage
-        if checkpoint_storage is not None:
-            run_checkpoint_storage = _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
+        run_checkpoint_storage = owned_checkpoint_storage
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
             # Resume / checkpoint-only requests need stored history. Empty input prepends;
@@ -662,6 +851,21 @@ class AgentFrameworkWorkflow:
             else:
                 builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
+
+        def append_conversational_responses(values: list[Any]) -> None:
+            # Execution owns response validation and approval classification. Project only
+            # validated conversational values from its effective live/checkpoint requests.
+            if snapshot_builder is None or resume_payload is None:
+                return
+            hitl_messages = [message for value in values for message in _snapshot_messages_from_resume_value(value)]
+            current_turn_client_messages = _current_turn_client_messages(
+                stored_snapshot.messages if stored_snapshot is not None else [], client_request_messages
+            )
+            snapshot_builder.append_resume_messages(
+                hitl_messages,
+                content_dedupe_against=agui_messages_to_snapshot_format(current_turn_client_messages),
+            )
+
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
             # persists the latest known Shared State instead of dropping it.
@@ -670,7 +874,12 @@ class AgentFrameworkWorkflow:
                 snapshot_builder.state = cast(dict[str, Any], state_snapshot)
         run_error_emitted = False
         async for event in run_workflow_stream(
-            input_data, workflow, checkpoint_storage=run_checkpoint_storage, checkpoint_id=checkpoint_id
+            input_data,
+            workflow,
+            checkpoint_storage=run_checkpoint_storage,
+            checkpoint_id=checkpoint_id,
+            pending_request_events=effective_pending_events,
+            on_conversational_responses=append_conversational_responses,
         ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)

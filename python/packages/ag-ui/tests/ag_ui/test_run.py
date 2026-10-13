@@ -523,10 +523,11 @@ class TestCreateStateContextMessage:
         result = _create_state_context_message(state, schema)
 
         assert result is not None
-        assert result.role == "system"
+        assert result.role == "user"
         assert len(result.contents) == 1
         assert "Hello world" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         assert "Current state" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "untrusted data" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestInjectStateContext:
@@ -571,8 +572,8 @@ class TestInjectStateContext:
         # System message first
         assert result[0].role == "system"
         assert "helpful" in result[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-        # State context second
-        assert result[1].role == "system"
+        # State context second, without system-message authority
+        assert result[1].role == "user"
         assert "Current state" in result[1].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # User message last
         assert result[2].role == "user"
@@ -592,6 +593,39 @@ def test_emit_text_basic():
     assert len(events) == 2  # TextMessageStartEvent + TextMessageContentEvent
     assert flow.message_id is not None
     assert flow.accumulated_text == "Hello world"
+
+
+async def test_client_a2ui_flag_without_backend_opt_in_does_not_import_optional_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client metadata alone cannot import or activate optional A2UI support."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "agent_framework_ag_ui._a2ui":
+            raise AssertionError("optional A2UI support must not be imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text("Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-no-a2ui",
+                "threadId": "thread-no-a2ui",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"injectA2UITool": True},
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    assert events[-1].type == "RUN_FINISHED"
 
 
 def test_emit_text_skip_empty():
@@ -1595,8 +1629,9 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
         function_call=function_call,
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-server-rejection")
     store.set_tool_approval_state(
-        "thread-server-rejection",
+        approval_thread_id,
         {"collected_approval_responses": [response.to_dict()]},
     )
     agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
@@ -1617,12 +1652,12 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
 
     assert not [event for event in events if event.type == "RUN_ERROR"]
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-server-rejection",
+        thread_id=approval_thread_id,
         interrupt_id="approval_rejected",
     )
     assert occurrence is not None
     assert occurrence.status is ApprovalStatus.REJECTED
-    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
+    assert store.lifecycle.pending_interrupt_ids(thread_id=approval_thread_id) == set()
 
 
 def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
