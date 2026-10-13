@@ -4906,7 +4906,7 @@ def normalize_tools(
             tools = normalize_tools(my_tool)
 
             # List of tools
-            tools = normalize_tools([my_tool, another_tool])
+            tools = normalize_tools([my_tool])
     """
     from ._tools import normalize_tools as _normalize_tools
 
@@ -4942,7 +4942,7 @@ async def validate_tools(
             tools = await validate_tools(my_tool)
 
             # List of tools
-            tools = await validate_tools([my_tool, another_tool])
+            tools = await validate_tools([my_tool])
     """
     # Use normalize_tools for common sync logic (converts callables to FunctionTool)
     normalized = normalize_tools(tools)
