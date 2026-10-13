@@ -21,6 +21,7 @@ enforces an allowlist or DNS-rebinding-resistant policy. This split mirrors the
 from __future__ import annotations
 
 import asyncio
+import sys
 import zlib
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -417,7 +418,7 @@ class _BoundedContentDecoder:
             self._input.extend(data)
             return b""
         try:
-            decoded = self._decoder.decompress(data, self._limit - self._decoded + 1)
+            decoded = self._decoder.decompress(data, min(self._limit - self._decoded + 1, sys.maxsize))
         except zlib.error as exc:
             raise httpx.DecodingError(str(exc)) from exc
         self._decoded += len(decoded)

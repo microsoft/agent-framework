@@ -768,6 +768,20 @@ class TestValidation:
 
 
 class TestResponseBodyLimits:
+    @pytest.mark.parametrize("limit", [sys.maxsize, sys.maxsize + 1, 10**100])
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate"])
+    async def test_large_response_body_limit_accepts_small_encoded_body(self, limit: int, encoding: str) -> None:
+        body = gzip.compress(b"ok") if encoding == "gzip" else zlib.compress(b"ok")
+        stream = _ResponseStream([body])
+        response = httpx.Response(200, headers={"Content-Encoding": encoding}, stream=stream)
+        async with (
+            httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response)) as client,
+            DefaultHttpRequestHandler(client=client, max_response_body_bytes=limit) as handler,
+        ):
+            result = await handler.send(HttpRequestInfo(method="GET", url="https://api.example.test/items"))
+        assert result.body == "ok"
+        assert stream.closed
+
     @pytest.mark.parametrize("client_source", ["caller", "provider"])
     @pytest.mark.parametrize(
         ("client_encoding", "request_encoding", "expected"),
