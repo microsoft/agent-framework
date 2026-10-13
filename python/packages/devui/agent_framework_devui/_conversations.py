@@ -12,7 +12,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, cast
 
 from agent_framework import AgentSession, Content, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
@@ -24,6 +24,7 @@ from openai.types.conversations.text_content import TextContent
 from openai.types.responses import (
     ResponseFunctionToolCallItem,
     ResponseFunctionToolCallOutputItem,
+    ResponseInputAudioParam,
     ResponseInputFile,
     ResponseInputImage,
     ResponseOutputRefusal,
@@ -39,32 +40,18 @@ _MODEL_OUTPUT_REFUSAL = "refusal"
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
 
 
-class _DevUIInputAudioPayload(TypedDict):
-    """DevUI extension payload for Responses input_audio conversation storage."""
-
-    data: str
-    format: Literal["wav", "mp3"]
-
-
-class _DevUIInputAudioContent(TypedDict):
-    """DevUI extension content for audio inputs unsupported by OpenAI Conversations SDK models."""
-
-    type: Literal["input_audio"]
-    input_audio: _DevUIInputAudioPayload
-
-
 _ConversationMessageContent = (
     OpenAIContent
     | TextContent
     | ResponseOutputRefusal
     | ResponseInputImage
     | ResponseInputFile
-    | _DevUIInputAudioContent
+    | ResponseInputAudioParam
 )
 
 
-def _is_devui_input_audio_content(content: object) -> bool:
-    """Return True when content is the narrow DevUI input_audio extension shape."""
+def _is_input_audio_content(content: object) -> bool:
+    """Return True when content is the Responses input_audio shape."""
     if not isinstance(content, dict):
         return False
     input_audio = content.get("input_audio")
@@ -431,7 +418,7 @@ class InMemoryConversationStore(ConversationStore):
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
             message_contents: list[
-                TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent
+                TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | ResponseInputAudioParam
             ] = []
             function_calls: list[ResponseFunctionToolCallItem] = []
             function_results: list[ResponseFunctionToolCallOutputItem] = []
@@ -562,10 +549,10 @@ class InMemoryConversationStore(ConversationStore):
         item_id: str,
         role: MessageRole,
         content: MutableSequence[_ConversationMessageContent]
-        | list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent],
+        | list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | ResponseInputAudioParam],
     ) -> ConversationItem:
-        """Build an OpenAI conversation message, preserving DevUI audio extensions."""
-        if any(_is_devui_input_audio_content(content_item) for content_item in content):
+        """Build an OpenAI conversation message, preserving Responses input_audio parts."""
+        if any(_is_input_audio_content(content_item) for content_item in content):
             return cast(
                 ConversationItem,
                 {
@@ -687,7 +674,7 @@ class InMemoryConversationStore(ConversationStore):
     @staticmethod
     def _to_openai_content(
         content: Content,
-    ) -> TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | _DevUIInputAudioContent | None:
+    ) -> TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | ResponseInputAudioParam | None:
         """Convert one supported Agent Framework message part."""
         content_type = content.type
         if content_type == "text":
@@ -709,7 +696,7 @@ class InMemoryConversationStore(ConversationStore):
                     audio_data = content.uri or ""
                     if audio_data.startswith("data:"):
                         audio_data = audio_data.split(",", 1)[-1]
-                    audio_content: _DevUIInputAudioContent = {
+                    audio_content: ResponseInputAudioParam = {
                         "type": "input_audio",
                         "input_audio": {
                             "data": audio_data,
