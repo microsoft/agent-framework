@@ -579,7 +579,7 @@ class _MCPConnection(Protocol):
         """List one prompts page through this connection."""
         ...
 
-    async def set_logging_level(self, level: Any) -> None:
+    async def set_logging_level(self, level: types.LoggingLevel) -> None:
         """Set the legacy logging level through this connection."""
         ...
 
@@ -628,8 +628,9 @@ class _ClientMCPConnection:
         )
 
     @deprecated("The logging capability is deprecated as of 2026-07-28 (SEP-2577).", category=DeprecationWarning)
-    async def set_logging_level(self, _level: Any) -> None:
-        """Using ``Client`` sets the logging at the constructor level."""
+    async def set_logging_level(self, level: types.LoggingLevel) -> None:
+        """Logging is configured when the Client is constructed."""
+        del level
         return
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
@@ -672,7 +673,7 @@ class _SessionMCPConnection:
         """List one prompts page directly through the session."""
         return await self._session.list_prompts(params=params)
 
-    async def set_logging_level(self, level: Any) -> None:
+    async def set_logging_level(self, level: types.LoggingLevel) -> None:
         """Set the legacy logging level directly through the session."""
         if self._session.initialize_result is None:
             return
