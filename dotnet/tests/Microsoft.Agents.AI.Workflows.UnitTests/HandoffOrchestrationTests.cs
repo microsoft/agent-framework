@@ -471,7 +471,7 @@ public class HandoffOrchestrationTests
             else if (initialAgentRequests.Count == 2)
             {
                 // Reproduce the silent completion only when the framework supplies no fresh request after the handoff result.
-responseMessage = request.Last().Role == ChatRole.User && string.Equals(request.Last().Text, UserRequest, StringComparison.Ordinal)
+                responseMessage = request.Last().Role == ChatRole.User && string.Equals(request.Last().Text, UserRequest, StringComparison.Ordinal)
                     ? new(ChatRole.Assistant, [new FunctionCallContent("ordinary-tool-call", orderStatus.Name)])
                     : new(ChatRole.Assistant, string.Empty);
             }
