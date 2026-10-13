@@ -23,10 +23,11 @@ going. It serves two common patterns through a single configurable class:
    response into ``JudgeVerdict``. The loop continues while the answer is "no". This is a convenience
    wrapper that builds an async ``should_continue`` predicate, so it is a special case of (1).
 3. Signal protocol (via :func:`~agent_framework.signal_should_continue`) - the
-   agent emits ``TASK_COMPLETE: <summary>`` or ``NEED_INPUT: <question>`` in its response text to
-   signal terminal intent. Only assistant-role messages are scanned; user-role nudges injected between
-   iterations do not trigger false positives. ``TASK_COMPLETE:`` is checked first. Read the result
-   with :func:`~agent_framework.get_loop_exit_reason`, which returns a
+   agent emits ``TASK_COMPLETE: <summary>`` or ``NEED_INPUT: <question>`` at the start of a line in
+   its response text to signal terminal intent (leading whitespace is allowed; mid-sentence or
+   backtick-quoted mentions are ignored). Only assistant-role messages are scanned; user-role
+   nudges injected between iterations do not trigger false positives. ``TASK_COMPLETE:`` is
+   checked first. Read the result with :func:`~agent_framework.get_loop_exit_reason`, which returns a
    :class:`~agent_framework.LoopExitReason` string (``"completed"``, ``"iteration_cap_reached"``,
    ``"need_input"``). When ``max_iterations`` fires the loop stamps
    ``additional_properties["loop_exit_reason"] = "iteration_cap_reached"``; signal tokens always win
@@ -38,6 +39,7 @@ In every case, the input for the next iteration is controlled by the ``next_mess
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -148,6 +150,12 @@ DEFAULT_JUDGE_MAX_ITERATIONS = 5
 # Case-sensitive: the agent is instructed to emit the exact tokens.
 TASK_COMPLETE_TOKEN: str = "TASK_COMPLETE:"  # ruff: ignore[hardcoded-password-string]
 NEED_INPUT_TOKEN: str = "NEED_INPUT:"  # ruff: ignore[hardcoded-password-string]
+
+# A token only counts when it starts a line (leading spaces/tabs allowed), so a mid-sentence or
+# backtick-quoted mention such as "I'll emit `TASK_COMPLETE:` when done" is not a signal.
+# The ``text`` group captures the rest of the token's line.
+_TASK_COMPLETE_PATTERN = re.compile(rf"^[ \t]*{re.escape(TASK_COMPLETE_TOKEN)}(?P<text>[^\n]*)", re.MULTILINE)
+_NEED_INPUT_PATTERN = re.compile(rf"^[ \t]*{re.escape(NEED_INPUT_TOKEN)}(?P<text>[^\n]*)", re.MULTILINE)
 
 # Key used in AgentResponse.additional_properties to surface the loop exit reason.
 LOOP_EXIT_REASON_KEY: str = "loop_exit_reason"
@@ -1126,6 +1134,10 @@ class SignalParser:
     and :attr:`NEED_INPUT_TOKEN` and returns the appropriate continuation
     decision for :class:`~agent_framework.AgentLoopMiddleware`.
 
+    A token only counts as a signal when it starts a line in an assistant
+    message (leading spaces/tabs are allowed). A mention mid-sentence or after
+    other text on the same line, including markdown backticks, is ignored.
+
     ``TASK_COMPLETE:`` is checked before ``NEED_INPUT:``; if an agent emits
     both, the loop treats the run as completed.
 
@@ -1151,19 +1163,33 @@ class SignalParser:
 
     def __call__(self, *, last_result: AgentResponse, **kwargs: Any) -> tuple[bool, str | None]:
         """Return ``(False, extracted_text)`` on a terminal signal, ``(True, None)`` otherwise."""
-        text = "\n".join(m.text or "" for m in last_result.messages if m.role == "assistant")
+        signal = _find_signal(last_result)
+        if signal is None:
+            return (True, None)
+        return (False, signal[1] or None)
 
-        idx = text.find(TASK_COMPLETE_TOKEN)
-        if idx != -1:
-            summary = text[idx + len(TASK_COMPLETE_TOKEN) :].split("\n", 1)[0].strip()
-            return (False, summary or None)
 
-        idx = text.find(NEED_INPUT_TOKEN)
-        if idx != -1:
-            question = text[idx + len(NEED_INPUT_TOKEN) :].split("\n", 1)[0].strip()
-            return (False, question or None)
+def _find_signal(response: AgentResponse) -> tuple[str, str] | None:
+    """Find the terminal signal in the assistant-role messages of ``response``.
 
-        return (True, None)
+    This is the single detection rule shared by :class:`SignalParser` and
+    :func:`get_loop_exit_reason`: a token counts only when it starts a line (after
+    optional spaces/tabs) in an assistant-role message. ``TASK_COMPLETE:`` takes
+    precedence over ``NEED_INPUT:``.
+
+    Returns:
+        ``(exit_reason, text_after_token)`` where the text is stripped and cut at the
+        end of the token's line, or ``None`` when no signal is present.
+    """
+    text = "\n".join(m.text or "" for m in response.messages if m.role == "assistant")
+    for pattern, reason in (
+        (_TASK_COMPLETE_PATTERN, LoopExitReason.completed),
+        (_NEED_INPUT_PATTERN, LoopExitReason.need_input),
+    ):
+        match = pattern.search(text)
+        if match is not None:
+            return (reason, match.group("text").strip())
+    return None
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -1181,7 +1207,8 @@ def signal_should_continue() -> SignalParser:
 def get_loop_exit_reason(response: AgentResponse) -> str | None:
     """Return the typed exit reason for a completed loop run, or ``None`` if unknown.
 
-    Scans the agent's own (assistant-role) response messages for signal tokens first,
+    Scans the agent's own (assistant-role) response messages for signal tokens first
+    (a token counts only at the start of a line, the same rule :class:`SignalParser` uses),
     then falls back to ``response.additional_properties["loop_exit_reason"]``
     (set by :class:`~agent_framework.AgentLoopMiddleware` when the iteration cap fires).
 
@@ -1216,11 +1243,9 @@ def get_loop_exit_reason(response: AgentResponse) -> str | None:
     """
     # Scan only assistant messages - the agent's own output. User-role nudges injected
     # by the loop between iterations must not trigger a false completion signal.
-    assistant_text = "\n".join(m.text or "" for m in response.messages if m.role == "assistant")
-    if TASK_COMPLETE_TOKEN in assistant_text:
-        return LoopExitReason.completed
-    if NEED_INPUT_TOKEN in assistant_text:
-        return LoopExitReason.need_input
+    signal = _find_signal(response)
+    if signal is not None:
+        return signal[0]
     # Fall back to additional_properties for framework-set reasons (e.g. iteration cap).
     # additional_properties accepts arbitrary values, so only return non-empty strings.
     reason = response.additional_properties.get(LOOP_EXIT_REASON_KEY)

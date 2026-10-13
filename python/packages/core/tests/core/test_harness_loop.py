@@ -1929,3 +1929,104 @@ async def test_loop_continues_when_no_signal() -> None:
 
     assert client.call_count == 3
     assert get_loop_exit_reason(response) == LoopExitReason.completed
+
+
+# Signal tokens only count at the start of a line (leading whitespace allowed).
+_NON_SIGNAL_MENTIONS = [
+    "I'll emit TASK_COMPLETE: when done.",
+    "I'll emit `TASK_COMPLETE:` when done.",
+    "I'll ask with NEED_INPUT: if I get stuck.",
+    "I'll emit `NEED_INPUT:` if I get stuck.",
+    "Working...\nWhen finished I will print `TASK_COMPLETE: summary`.",
+]
+
+
+@pytest.mark.parametrize("text", _NON_SIGNAL_MENTIONS)
+def test_signal_parser_ignores_mid_line_mentions(text: str) -> None:
+    response = _make_signal_response(text)
+    assert SignalParser()(last_result=response) == (True, None)
+    assert get_loop_exit_reason(response) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_reason", "expected_feedback"),
+    [
+        ("Here is my analysis.\nTASK_COMPLETE: wrote the report", LoopExitReason.completed, "wrote the report"),
+        ("I looked at both options.\nNEED_INPUT: which one?", LoopExitReason.need_input, "which one?"),
+        ("Mentioning `TASK_COMPLETE:` here.\nTASK_COMPLETE: real", LoopExitReason.completed, "real"),
+    ],
+)
+def test_signal_parser_detects_token_at_start_of_later_line(
+    text: str, expected_reason: str, expected_feedback: str
+) -> None:
+    response = _make_signal_response(text)
+    assert SignalParser()(last_result=response) == (False, expected_feedback)
+    assert get_loop_exit_reason(response) == expected_reason
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_reason", "expected_feedback"),
+    [
+        ("   TASK_COMPLETE: indented", LoopExitReason.completed, "indented"),
+        ("prose\n\tNEED_INPUT: tabbed", LoopExitReason.need_input, "tabbed"),
+    ],
+)
+def test_signal_parser_allows_leading_whitespace(text: str, expected_reason: str, expected_feedback: str) -> None:
+    response = _make_signal_response(text)
+    assert SignalParser()(last_result=response) == (False, expected_feedback)
+    assert get_loop_exit_reason(response) == expected_reason
+
+
+def test_signal_parser_mid_line_task_complete_does_not_shadow_need_input() -> None:
+    response = _make_signal_response("I'll say `TASK_COMPLETE:` later.\nNEED_INPUT: which file?")
+    assert SignalParser()(last_result=response) == (False, "which file?")
+    assert get_loop_exit_reason(response) == LoopExitReason.need_input
+
+
+@pytest.mark.parametrize("text", _NON_SIGNAL_MENTIONS)
+async def test_loop_ignores_mid_line_signal_mentions(text: str) -> None:
+    client = RecordingChatClient(texts=[text, text])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 2
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+@pytest.mark.parametrize("text", _NON_SIGNAL_MENTIONS)
+async def test_loop_ignores_mid_line_signal_mentions_streaming(text: str) -> None:
+    client = RecordingChatClient(texts=[text, text])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=2)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 2
+    assert get_loop_exit_reason(response) == LoopExitReason.iteration_cap_reached
+
+
+async def test_loop_stops_on_task_complete_at_start_of_later_line() -> None:
+    client = RecordingChatClient(texts=["Summary of work.\n  TASK_COMPLETE: done"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
+
+    response = await agent.run("task")
+
+    assert client.call_count == 1
+    assert get_loop_exit_reason(response) == LoopExitReason.completed
+    assert LOOP_EXIT_REASON_KEY not in response.additional_properties
+
+
+async def test_loop_stops_on_need_input_at_start_of_later_line_streaming() -> None:
+    client = RecordingChatClient(texts=["I compared the options.\nNEED_INPUT: which one?"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(signal_should_continue(), max_iterations=10)])
+
+    stream = agent.run("task", stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert client.call_count == 1
+    assert get_loop_exit_reason(response) == LoopExitReason.need_input
