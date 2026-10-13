@@ -5563,7 +5563,11 @@ class MCPSkillsSource(SkillsSource):
 
     def _current_client(self) -> Client | ClientSession:
         connection = self._session_provider()
-        return connection.client if connection.client is not None else connection.session
+        if connection.client is not None:
+            return connection.client
+        if connection.session is not None:
+            return connection.session
+        raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
 
     def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
         """Attempt to create an :class:`MCPSkill` from a ``skill-md`` index entry.
