@@ -30,7 +30,7 @@ from agent_framework._middleware import (
     MiddlewareTermination,
     categorize_middleware,
 )
-from agent_framework._tools import FunctionTool
+from agent_framework._tools import FunctionTool, ToolTypes
 
 
 class TestAgentContext:
@@ -109,6 +109,84 @@ class TestFunctionInvocationContext:
         assert context.function is mock_function
         assert context.arguments == arguments
         assert context.metadata == metadata
+
+
+def test_remove_flat_function_mapping_by_name() -> None:
+    """Flat Responses-style function mappings can be removed by name."""
+    lookup = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {"type": "object"},
+    }
+    tools: list[ToolTypes] = [lookup]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    context.remove_tools("lookup")
+
+    assert tools == []
+
+
+def test_add_rejects_duplicate_flat_function_mapping() -> None:
+    """Flat function mappings participate in duplicate-name checks."""
+    lookup = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {"type": "object"},
+    }
+    duplicate = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+        },
+    }
+    tools: list[ToolTypes] = [lookup]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    with pytest.raises(ValueError, match="lookup"):
+        context.add_tools(duplicate)
+
+
+def test_remove_name_preserves_non_function_builtin_mapping() -> None:
+    """A named non-function built-in mapping is not treated as a function."""
+    builtin_tool = {
+        "type": "web_search_preview",
+        "name": "lookup",
+    }
+    tools: list[ToolTypes] = [builtin_tool]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    context.remove_tools("lookup")
+
+    assert tools == [builtin_tool]
 
 
 class TestChatContext:

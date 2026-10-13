@@ -28,14 +28,38 @@ if sys.platform == "win32":
             with contextlib.suppress(OSError, ValueError):
                 reconfigure(encoding="utf-8")
 
-import tomli
 from rich import print
+
+from scripts._toml import tomllib
+from scripts.tool_requirements import requirement_file
+
+_TASK_TOOL_BUNDLES = {
+    "syntax-check": ("quality",),
+    "syntax-format": ("quality",),
+    "mypy": ("typing",),
+    "pyright": ("typing",),
+}
+_TEST_TASKS = {"integration-tests", "test", "test-integration"}
+
+
+def _subprocess_env() -> dict[str, str]:
+    """Return an environment that lets nested uv commands select the project env."""
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    return env
+
+
+def _has_dependency_group(project_root: Path, group_name: str) -> bool:
+    """Return whether a project declares the requested dependency group."""
+    with (project_root / "pyproject.toml").open("rb") as file:
+        config = tomllib.load(file)
+    return group_name in (config.get("dependency-groups", {}) or {})
 
 
 def discover_projects(workspace_pyproject_file: Path) -> list[Path]:
     """Discover all workspace projects from pyproject.toml."""
     with workspace_pyproject_file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     projects = data["tool"]["uv"]["workspace"]["members"]
     exclude = data["tool"]["uv"]["workspace"].get("exclude", [])
@@ -65,7 +89,7 @@ def discover_projects(workspace_pyproject_file: Path) -> list[Path]:
 def extract_poe_tasks(file: Path) -> set[str]:
     """Extract poe task names from a pyproject.toml file."""
     with file.open("rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     tasks = set(data.get("tool", {}).get("poe", {}).get("tasks", {}).keys())
 
@@ -148,26 +172,50 @@ def _run_task_subprocess(
     """Run a single poe task in a project directory via subprocess."""
     start = time.monotonic()
     cwd = workspace_root / project
+    command = _poe_task_command(cwd, task, task_args)
     result = subprocess.run(
-        ["uv", "run", "poe", task, *task_args],
+        command,
         cwd=cwd,
         capture_output=True,
         text=True,
+        env=_subprocess_env(),
     )
     elapsed = time.monotonic() - start
     return (project, task, result.returncode, result.stdout, result.stderr, elapsed)
 
 
-def _run_sequential(work_items: list[tuple[Path, str]], task_args: Sequence[str] = ()) -> None:
-    """Run tasks sequentially using in-process PoeThePoet (streaming output)."""
-    from poethepoet.app import PoeThePoet
+def _poe_task_command(
+    cwd: Path,
+    task: str,
+    task_args: Sequence[str],
+) -> list[str]:
+    """Build a pinned Poe command for one package-local task."""
+    bundles = _TASK_TOOL_BUNDLES.get(task, ())
+    command = ["uv", "run", "--project", str(cwd), "--locked", "--group", "dev"]
+    if task in _TEST_TASKS and _has_dependency_group(cwd, "test"):
+        command.extend(["--group", "test"])
+    for bundle in bundles:
+        command.extend(["--with-requirements", str(requirement_file(bundle))])
+    command.extend(["python", "-m", "poethepoet", "--executor", "simple", task, *task_args])
+    return command
 
+
+def _run_sequential(
+    work_items: list[tuple[Path, str]],
+    workspace_root: Path,
+    task_args: Sequence[str] = (),
+) -> None:
+    """Run tasks sequentially with streaming output."""
     for project, task in work_items:
         print(f"Running task {task} in {project}")
-        app = PoeThePoet(cwd=project)
-        result = app(cli_args=[task, *task_args])
-        if result:
-            sys.exit(result)
+        cwd = workspace_root / project
+        result = subprocess.run(
+            _poe_task_command(cwd, task, task_args),
+            cwd=cwd,
+            env=_subprocess_env(),
+        )
+        if result.returncode:
+            sys.exit(result.returncode)
 
 
 def _run_parallel(work_items: list[tuple[Path, str]], workspace_root: Path, task_args: Sequence[str] = ()) -> None:
@@ -225,7 +273,7 @@ def run_tasks(
         return
 
     if sequential or len(work_items) == 1:
-        _run_sequential(work_items, task_args)
+        _run_sequential(work_items, workspace_root, task_args)
     else:
         _run_parallel(work_items, workspace_root, task_args)
 
@@ -237,7 +285,13 @@ def _run_command_subprocess(
 ) -> tuple[str, int, str, str, float]:
     """Run a single labelled command in ``workspace_root`` and capture its output."""
     start = time.monotonic()
-    result = subprocess.run(command, cwd=workspace_root, capture_output=True, text=True)
+    result = subprocess.run(
+        command,
+        cwd=workspace_root,
+        capture_output=True,
+        text=True,
+        env=_subprocess_env(),
+    )
     elapsed = time.monotonic() - start
     return (label, result.returncode, result.stdout, result.stderr, elapsed)
 
@@ -261,7 +315,7 @@ def run_command_items(
     if sequential or len(command_items) == 1:
         for label, command in command_items:
             print(f"[cyan]>> {label}[/cyan]")
-            result = subprocess.run(command, cwd=workspace_root)
+            result = subprocess.run(command, cwd=workspace_root, env=_subprocess_env())
             if result.returncode:
                 sys.exit(result.returncode)
         return

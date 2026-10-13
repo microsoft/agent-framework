@@ -63,6 +63,7 @@ updates:
   - package-ecosystem: "pip"
     directories:
       - "python/"
+      - "python/tooling/"
       - "python/packages/lab/"
     schedule:
       interval: "weekly"
@@ -70,12 +71,15 @@ updates:
     groups:
       basics:
         patterns:
-          - "uv"
           - "ruff"
           - "prek"
           - "poethepoet"
           - "tomli"
           - "rich"
+          - "packaging"
+          - "pygments"
+          - "griffe"
+          - "opentelemetry-sdk"
       pytest:
         patterns:
           - "pytest*"
@@ -89,6 +93,10 @@ updates:
           - "pyrefly"
           - "ty"
           - "zuban"
+    # Root uv upgrades must update required-version, workflow pins, and the
+    # pre-commit revision together. Lab retains its independent uv updater.
+    ignore:
+      - dependency-name: "uv"
     labels:
       - "python"
       - "dependencies"
@@ -101,27 +109,26 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      # Single-version tools in python/tooling/requirements-*.txt are handled
+      # by the pip updater above. This entry covers pyproject.toml and uv.lock.
       basics:
         patterns:
-          - "uv"
-          - "ruff"
           - "prek"
           - "poethepoet"
           - "tomli"
           - "rich"
+          - "packaging"
+          - "pygments"
+          - "opentelemetry-sdk"
       pytest:
         patterns:
           - "pytest*"
       flit:
         patterns:
           - "flit*"
-      python-type-checkers:
-        patterns:
-          - "mypy"
-          - "pyright"
-          - "pyrefly"
-          - "ty"
-          - "zuban"
+    # Avoid partial root uv bumps; coordinated uv upgrades are manual.
+    ignore:
+      - dependency-name: "uv"
     labels:
       - "python"
       - "dependencies"
@@ -134,6 +141,9 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      agent-framework:
+        patterns:
+          - "agent-framework-*"
       basics:
         patterns:
           - "uv"
@@ -166,6 +176,13 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+      # Update shared packages once across all frontend workspaces.
+      shared-frontend-dependencies:
+        group-by: dependency-name
     labels:
       - "dependencies"
     cooldown:
@@ -190,6 +207,15 @@ updates:
         patterns:
           - "actions/upload-artifact"
           - "actions/download-artifact"
+      routine-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Keep repeated major action updates aligned across action directories.
+      shared-actions:
+        group-by: dependency-name
     schedule:
       interval: "weekly"
       day: "sunday"
