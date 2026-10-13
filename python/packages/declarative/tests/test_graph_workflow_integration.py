@@ -197,6 +197,47 @@ class TestGraphBasedWorkflowExecution:
 class TestWorkflowFactory:
     """Tests for WorkflowFactory."""
 
+    @pytest.mark.parametrize("function", ["Concat", "Concatenate"])
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            ('"hello", " world"', "hello world"),
+            ('"", ""', ""),
+            ('"a""b", "c"', 'a"bc'),
+            ('"""", """"', '""'),
+            ('"a" & "b", "c"', "abc"),
+            ('"a" & Local.word & "b", "c"', "aWORDbc"),
+            ('"a,b(c)", "d"', "a,b(c)d"),
+            ('"a"",b(c)", "d"', 'a",b(c)d'),
+            ('"路径", "与文本"', "路径与文本"),
+            ('"a\\b", "c"', "a\\bc"),
+            ('Local.word, "!"', "WORD!"),
+            ('Concatenate("a""b", "c"), "d"', 'a"bcd'),
+            ('MessageText(Local.messages), "!"', "hello!"),
+            ('Local.missing, "!"', "!"),
+        ],
+    )
+    async def test_concatenation_arguments(self, function: str, arguments: str, expected: str) -> None:
+        """Render literals and expressions through factory-created workflow state."""
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "name": "concatenation_arguments",
+            "actions": [
+                {"kind": "SetValue", "id": "set_word", "path": "Local.word", "value": "WORD"},
+                {
+                    "kind": "SetValue",
+                    "id": "set_messages",
+                    "path": "Local.messages",
+                    "value": [{"role": "user", "text": "hello"}],
+                },
+                {"kind": "SendActivity", "id": "send", "activity": {"text": f"={function}({arguments})"}},
+            ],
+        })
+
+        events = await workflow.run({})
+
+        # SendActivity omits empty rendered activities.
+        assert events.get_outputs() == ([expected] if expected else [])
+
     def test_factory_creates_workflow(self):
         """Test creating workflow."""
         factory = WorkflowFactory()

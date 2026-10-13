@@ -983,7 +983,9 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
         set_resilient_tasks_enabled(enabled)
 
 
-async def test_legacy_wrapper_warns_once_per_host_and_keeps_message_semantics() -> None:
+async def test_legacy_wrapper_warns_once_per_host_and_keeps_message_semantics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class _Legacy(Executor):
         def __init__(self) -> None:
             super().__init__("legacy")
@@ -1004,3 +1006,9 @@ async def test_legacy_wrapper_warns_once_per_host_and_keeps_message_semantics() 
     assert _texts(first) == ["legacy"]
     assert _texts(second) == ["again"]
     assert sum("Hosting WorkflowAgent" in str(item.message) for item in captured) == 1
+    message = next(str(item.message) for item in captured if "Hosting WorkflowAgent" in str(item.message))
+    assert "should be avoided" in message
+    assert "stateful" in message
+    assert "parse_response" in message
+    logged = [record for record in caplog.records if "DEPRECATION: Hosting WorkflowAgent" in record.getMessage()]
+    assert [record.levelno for record in logged] == [logging.WARNING]

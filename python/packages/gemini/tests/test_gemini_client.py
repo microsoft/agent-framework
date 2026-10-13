@@ -11,7 +11,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, Message, ResponseStream
 from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
@@ -2927,3 +2927,26 @@ async def test_integration_code_execution() -> None:
 
     assert response.messages
     assert response.messages[0].text
+
+
+async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
+    """Stopping early must close the Gemini SDK stream instead of leaving it to garbage collection."""
+    closed = False
+
+    async def sdk_stream():
+        nonlocal closed
+        try:
+            yield _make_response([_make_part(text="first")], finish_reason=None)
+            yield _make_response([_make_part(text="second")])
+        finally:
+            closed = True
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=sdk_stream())
+    stream = client._inner_get_response(messages=[Message(role="user", contents=["hello"])], options={}, stream=True)
+    assert isinstance(stream, ResponseStream)
+    async with stream:
+        async for _ in stream:
+            break
+
+    assert closed

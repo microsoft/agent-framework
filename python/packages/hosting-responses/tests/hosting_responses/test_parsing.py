@@ -82,6 +82,14 @@ class TestMessagesFromResponsesInput:
         assert [m.role for m in msgs] == ["system", "user"]
         assert msgs[0].text == "be brief"
 
+    def test_message_envelope_without_type(self) -> None:
+        msgs = messages_from_responses_input([
+            {"role": "developer", "content": "be brief"},
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ])
+        assert [m.role for m in msgs] == ["developer", "user"]
+        assert [m.text for m in msgs] == ["be brief", "hi"]
+
     def test_message_envelope_with_content_parts(self) -> None:
         msgs = messages_from_responses_input([
             {
@@ -164,6 +172,20 @@ class TestMessagesFromResponsesInput:
             {"type": "input_image", "image_url": {"url": "https://example.com/cat.png"}}
         ])
         assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
+
+    @pytest.mark.parametrize("as_object", [False, True])
+    def test_image_data_url_keeps_its_media_type(self, as_object: bool) -> None:
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        image_url: Any = {"url": data_url} if as_object else data_url
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": image_url}])
+        image = msgs[0].contents[0]
+        assert image.type == "data"
+        assert image.uri == data_url
+        assert image.media_type == "image/png"
+
+    def test_image_https_url_keeps_generic_image_media_type(self) -> None:
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        assert msgs[0].contents[0].media_type == "image/*"
 
     def test_unknown_input_type_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported"):
@@ -536,7 +558,7 @@ class TestResponsesRunHelpers:
         raw_usage = ResponseUsage.model_validate(_native_usage_payload())
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
-            usage_details=cast("UsageDetails", {"input_token_count": True}),
+            usage_details={"input_token_count": True},
             raw_representation=SimpleNamespace(object="response", usage=raw_usage),
         )
 

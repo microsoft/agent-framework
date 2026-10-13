@@ -774,6 +774,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
+                must never serve requests from different users or conversations. Use `workflow=` instead.
             workflow: A built, unrun native workflow for one-shot execution, or a request-aware
                 sync/async factory returning fresh built graphs, executors, agents, clients, tools,
                 and providers with stable graph/executor IDs. Cannot be combined with ``agent``.
@@ -995,13 +997,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     def _warn_legacy_workflow(self) -> None:
         if not self._warned_workflow_agent:
             self._warned_workflow_agent = True
-            warnings.warn(
-                "Hosting WorkflowAgent through agent= is deprecated for this beta release. "
+            message = (
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
+                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
+                "never serve requests from different users or conversations. "
                 "Use workflow=a_request_aware_factory with an explicit parse_response. "
-                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped.",
-                DeprecationWarning,
-                stacklevel=3,
+                "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
+                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped."
             )
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
+            # warning there; log it as well.
+            logger.warning("DEPRECATION: %s", message)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.

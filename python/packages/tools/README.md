@@ -58,7 +58,10 @@ Defenses (in priority order):
   Disabling this requires `acknowledge_unsafe=True`. Direct calls to
   `run()` do not request approval, regardless of the configured approval mode.
 - **Process-tree termination on timeout** via `psutil`, so child
-  processes (`make`, watchers, network tools) cannot survive the timeout.
+  processes (`make`, watchers, network tools) cannot survive the timeout. On
+  Windows, a timed-out persistent session is closed even if the interrupted
+  command emits its completion marker. The next command starts a fresh shell;
+  shell-local variables and working-directory changes from that session are lost.
 - **Output truncation** to 64 KiB (head + tail with marker).
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
 - **Optional command-pattern filter** via `ShellPolicy(denylist=[...],

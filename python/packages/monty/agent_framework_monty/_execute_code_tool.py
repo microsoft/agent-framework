@@ -13,6 +13,7 @@ scoped host directories, and the tool will capture any files written under
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial
@@ -32,8 +33,21 @@ from ._instructions import build_codeact_instructions, build_execute_code_descri
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
 from ._types import FileMount, FileMountInput
 
+logger = logging.getLogger("agent_framework")
+
 EXECUTE_CODE_TOOL_NAME = "execute_code"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in a Monty interpreter."
+
+_FIDES_TOOL_PROPERTY_KEYS = frozenset({
+    "source_integrity",
+    "confidentiality",
+    "max_allowed_confidentiality",
+    "accepts_untrusted",
+    "standing_guidance",
+    "agent_framework.security.principals",
+    "_agent_framework_internal_security_tool",
+    "_mcp_trust_server_ifc",
+})
 
 #: Virtual path that the optional ``workspace_root`` directory is mounted at,
 #: matching the Hyperlight default. Use ``file_mounts`` for any other path.
@@ -258,7 +272,18 @@ class MontyExecuteCodeTool(FunctionTool):
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
     ) -> None:
         """Add Monty-side tools to this execute_code surface."""
-        self._managed_tools = _collect_tools(self._managed_tools, tools)
+        new_tools = _collect_tools(tools)
+        self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        for tool_obj in new_tools:
+            if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
+                tool_obj.additional_properties
+            ):
+                logger.warning(
+                    "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                    "through function middleware for calls made inside generated code. "
+                    "Keep FIDES-dependent tools as direct agent tools.",
+                    tool_obj.name,
+                )
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:

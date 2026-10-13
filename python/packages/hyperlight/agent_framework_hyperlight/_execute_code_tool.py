@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import logging
 import mimetypes
 import os
 import shutil
@@ -32,9 +33,21 @@ from agent_framework._tools import (
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountHostPath, FileMountInput
 
+logger = logging.getLogger("agent_framework")
+
 DEFAULT_HYPERLIGHT_BACKEND = "wasm"
 DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in an isolated Hyperlight sandbox."
+_FIDES_TOOL_PROPERTY_KEYS = frozenset({
+    "source_integrity",
+    "confidentiality",
+    "max_allowed_confidentiality",
+    "accepts_untrusted",
+    "standing_guidance",
+    "agent_framework.security.principals",
+    "_agent_framework_internal_security_tool",
+    "_mcp_trust_server_ifc",
+})
 OUTPUT_FILE_RETRY_ATTEMPTS = 10
 OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
 DEFAULT_MAX_OUTPUT_FILES = 20
@@ -1607,8 +1620,19 @@ class HyperlightExecuteCodeTool(FunctionTool):
     ) -> None:
         """Add sandbox-managed tools to this execute_code surface."""
         with self._state_lock:
-            combined_tools = _collect_tools(self._managed_tools, tools)
+            new_tools = _collect_tools(tools)
+            combined_tools = _collect_tools(self._managed_tools, new_tools)
             self._managed_tools = combined_tools
+            for tool_obj in new_tools:
+                if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
+                    tool_obj.additional_properties
+                ):
+                    logger.warning(
+                        "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                        "through function middleware for calls made inside generated code. "
+                        "Keep FIDES-dependent tools as direct agent tools.",
+                        tool_obj.name,
+                    )
             self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
