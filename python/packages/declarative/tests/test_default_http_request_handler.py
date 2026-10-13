@@ -768,6 +768,47 @@ class TestValidation:
 
 
 class TestResponseBodyLimits:
+    @pytest.mark.parametrize("client_source", ["caller", "provider"])
+    @pytest.mark.parametrize(
+        ("client_encoding", "request_encoding", "expected"),
+        [
+            ("identity", None, "identity"),
+            ("deflate;q=0.5", None, "deflate;q=0.5"),
+            ("identity", "gzip", "gzip"),
+        ],
+    )
+    async def test_selected_client_encoding_policy_is_preserved(
+        self, client_source: str, client_encoding: str, request_encoding: str | None, expected: str
+    ) -> None:
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, text="ok")
+
+        async with httpx.AsyncClient(
+            headers={"Accept-Encoding": client_encoding}, transport=httpx.MockTransport(respond)
+        ) as client:
+
+            async def provider(info: HttpRequestInfo) -> httpx.AsyncClient:
+                return client
+
+            async with DefaultHttpRequestHandler(
+                client=client if client_source == "caller" else None,
+                client_provider=provider if client_source == "provider" else None,
+            ) as handler:
+                result = await handler.send(
+                    HttpRequestInfo(
+                        method="GET",
+                        url="https://api.example.test/items",
+                        headers={"Accept-Encoding": request_encoding} if request_encoding is not None else {},
+                    )
+                )
+            assert result.body == "ok"
+            assert requests[0].headers["Accept-Encoding"] == expected
+            assert client.headers["Accept-Encoding"] == client_encoding
+            assert not client.is_closed
+
     @pytest.mark.parametrize("encoding", ["identity", "gzip", "gzip, gzip"])
     async def test_response_body_above_default_limit_is_rejected(self, encoding: str) -> None:
         body = b"a" * (10 * 1024 * 1024 + 1)

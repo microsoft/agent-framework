@@ -29,6 +29,7 @@ from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
+from httpx._client import ACCEPT_ENCODING
 
 __all__ = [
     "DefaultHttpRequestHandler",
@@ -210,7 +211,7 @@ class DefaultHttpRequestHandler:
             timeout = httpx.USE_CLIENT_DEFAULT
 
         headers = dict(info.headers)
-        if not _has_header(headers, "accept-encoding"):
+        if not _has_header(headers, "accept-encoding") and client.headers.get("accept-encoding") == ACCEPT_ENCODING:
             headers["Accept-Encoding"] = "gzip, deflate"
         content: bytes | str | None = None
         if info.body is not None:
