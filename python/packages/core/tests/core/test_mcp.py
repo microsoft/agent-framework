@@ -6164,9 +6164,8 @@ async def test_connect_cancelled_error_during_session_creation_log_respects_sens
     sdk_client = _mock_sdk_client()
     sdk_client.__aenter__.side_effect = asyncio.CancelledError(f"cancel scope: {private_error_detail}")
 
-    with patch("mcp.Client", return_value=sdk_client):
-        with caplog.at_level(logging.DEBUG), pytest.raises(ToolException):
-            await tool.connect()
+    with patch("mcp.Client", return_value=sdk_client), caplog.at_level(logging.DEBUG), pytest.raises(ToolException):
+        await tool.connect()
 
     assert (private_error_detail in caplog.text) is enable_sensitive_data
     if not enable_sensitive_data:
@@ -7538,10 +7537,11 @@ async def test_connect_sets_logging_level_when_logger_level_is_set():
     with (
         patch("mcp.Client", return_value=sdk_client) as mock_client_class,
         patch.object(logger, "level", logging.DEBUG),  # Set logger level to DEBUG
+        pytest.warns(DeprecationWarning, match="The logging capability is deprecated"),
     ):
         async with tool:
             assert mock_client_class.call_args.kwargs["log_level"] == "debug"
-            mock_session.set_logging_level.assert_awaited_once_with("debug")
+            mock_session.set_logging_level.assert_not_awaited()
 
 
 async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
@@ -7571,49 +7571,36 @@ async def test_connect_does_not_set_logging_level_when_logger_level_is_notset():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_connect_handles_set_logging_level_exception(
+async def test_connect_handles_session_set_logging_level_exception(
     span_exporter: Any,
     enable_sensitive_data: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test that connect() handles exceptions from set_logging_level gracefully."""
+    """Test that caller-supplied session logging errors follow the sensitive-data policy."""
     private_error_detail = "founder-secret-token"
 
+    session = _mock_unnegotiated_session(types.ServerCapabilities(logging=types.LoggingCapability()))
+    session.set_logging_level = AsyncMock(
+        side_effect=MCPError(types.INTERNAL_ERROR, f"Failed to configure logging: {private_error_detail}")
+    )
     tool = MCPStdioTool(
         name="test_server",
         command="test_command",
-        args=["arg1"],
         load_tools=False,
         load_prompts=False,
+        session=session,
     )
+    tool.is_connected = True
 
-    mock_session = Mock(spec=ClientSession)
-    # Make set_logging_level raise an exception
-    mock_session.set_logging_level = AsyncMock(
-        side_effect=RuntimeError(f"Server doesn't support logging level: {private_error_detail}")
-    )
+    with patch.object(logger, "level", logging.INFO), caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await tool._connect_on_owner()
 
-    sdk_client = _mock_sdk_client(
-        session=mock_session, capabilities=types.ServerCapabilities(logging=types.LoggingCapability())
-    )
-
-    with (
-        patch("mcp.Client", return_value=sdk_client) as mock_client_class,
-        patch.object(logger, "level", logging.INFO),  # Set logger level to INFO
-    ):
-        async with tool:
-            assert mock_client_class.call_args.kwargs["log_level"] == "info"
-            mock_session.set_logging_level.assert_awaited_once_with("info")
-            mock_warning.assert_called_once()
-            call_args = mock_warning.call_args
-            assert "Failed to set log level" in call_args[0][0]
-
-
+    session.set_logging_level.assert_awaited_once_with("info")
     assert (private_error_detail in caplog.text) is enable_sensitive_data
     if enable_sensitive_data:
         assert "Failed to set log level" in caplog.text
     else:
-        assert "Failed to set MCP server log level (RuntimeError)." in caplog.text
+        assert "Failed to set MCP server log level (MCPError)." in caplog.text
 
 
 async def test_connect_does_not_use_legacy_logging_method_for_modern_server() -> None:
