@@ -33,6 +33,9 @@ resumption. Changes to workflow state while a request is pending do not change
 that invocation's automatic-send behavior.
 Replacement MCP approvals after restoration retain the same setting while
 refreshing headers and revalidating connection names.
+For JSON checkpoints, pass `DeclarativeWorkflowJsonOptions.Default` to
+`CheckpointManager.CreateJson`; its source-generated context includes the
+per-invocation automatic-send settings.
 
 ### MCP session lifetime
 

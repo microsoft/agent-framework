@@ -3,12 +3,15 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -16,6 +19,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Moq;
+using Xunit.Sdk;
 using ApprovalSnapshot = Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.InvokeFunctionToolExecutor.ApprovalSnapshot;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
@@ -313,6 +317,110 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
 
         // Assert
         Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task AutoSendSnapshotSurvivesJsonCheckpointAsync(bool requireApproval, bool autoSend)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendSnapshotSurvivesJsonCheckpointAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => "result", name: "test_function")]);
+        List<WorkflowEvent> events = [];
+        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"af-function-{Guid.NewGuid():N}"));
+        try
+        {
+            using FileSystemJsonCheckpointStore store = new(checkpointFolder);
+            CheckpointManager checkpointManager = CheckpointManager.CreateJson(store, DeclarativeWorkflowJsonOptions.Default);
+            (RequestInfoEvent? request, CheckpointInfo? checkpoint) = await WatchAsync(
+                await InProcessExecution.RunStreamingAsync(BuildWorkflow(this.State), this.State, checkpointManager));
+            Assert.NotNull(request);
+            Assert.NotNull(checkpoint);
+            ExternalInputRequest input = Assert.IsType<ExternalInputRequest>(request.Request.Data.As<ExternalInputRequest>());
+            ExternalInputResponse response;
+            if (requireApproval)
+            {
+                response = CreateApprovalResponseForRequest(input, approved: true);
+            }
+            else
+            {
+                FunctionCallContent call = Assert.Single(input.AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+                response = new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(call.CallId, "result")]));
+            }
+            WorkflowFormulaState restoredState = new(RecalcEngineFactory.Create());
+
+            // Act
+            (RequestInfoEvent? remainingRequest, _) = await WatchAsync(
+                await InProcessExecution.ResumeStreamingAsync(BuildWorkflow(restoredState), checkpoint, checkpointManager),
+                request.Request.CreateResponse(response));
+
+            // Assert
+            Assert.Null(remainingRequest);
+            Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+            Assert.Equal(!autoSend, Assert.IsType<BooleanValue>(restoredState.Get("Control")).Value);
+        }
+        finally
+        {
+            checkpointFolder.Delete(recursive: true);
+        }
+
+        Workflow BuildWorkflow(WorkflowFormulaState state)
+        {
+            TestWorkflowExecutor root = new();
+            InvokeFunctionToolExecutor action = new(model, provider, state);
+            RequestPort port = RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(
+                InvokeFunctionToolExecutor.Steps.ExternalInput(action.Id));
+            DelegateActionExecutor<ExternalInputResponse> resume = new(
+                InvokeFunctionToolExecutor.Steps.Resume(action.Id), state,
+                (context, response, cancellationToken) =>
+                {
+                    state.Set("Control", FormulaValue.New(!autoSend));
+                    state.Bind();
+                    return action.CaptureResponseAsync(context, response, cancellationToken);
+                });
+            return new WorkflowBuilder(root)
+                .AddEdge(root, action)
+                .AddEdge(action, port)
+                .AddEdge(port, resume)
+                .Build();
+        }
+
+        async Task<(RequestInfoEvent? Request, CheckpointInfo? Checkpoint)> WatchAsync(StreamingRun run, ExternalResponse? response = null)
+        {
+            await using StreamingRun ownedRun = run;
+            if (response is not null)
+            {
+                await run.SendResponseAsync(response);
+            }
+
+            RequestInfoEvent? request = null;
+            CheckpointInfo? checkpoint = null;
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                events.Add(workflowEvent);
+                switch (workflowEvent)
+                {
+                    case RequestInfoEvent requestEvent when requestEvent.Request.RequestId != response?.RequestId:
+                        request = requestEvent;
+                        break;
+                    case SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } completedCheckpoint }:
+                        checkpoint = completedCheckpoint;
+                        break;
+                    case WorkflowErrorEvent errorEvent:
+                        throw errorEvent.Data as Exception ?? new XunitException("Unexpected workflow failure.");
+                }
+            }
+            return (request, checkpoint);
+        }
     }
 
     [Theory]
