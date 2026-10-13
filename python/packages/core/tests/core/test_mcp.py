@@ -860,13 +860,14 @@ async def test_load_prompts_with_tool_name_prefix() -> None:
 async def test_load_prompts_refresh_replaces_prompt_catalog() -> None:
     """A complete prompts/list refresh removes, updates, and keeps prompts without touching other functions."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = AsyncMock()
-    tool.session.list_tools = AsyncMock(
-        return_value=types.ListToolsResult(tools=[types.Tool(name="search", inputSchema={"type": "object"})])
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(tools=[types.Tool(name="search", input_schema={"type": "object"})])
     )
     await tool.load_tools()
     tool_function = tool._functions[0]
-    tool.session.list_prompts = AsyncMock(
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(
             prompts=[
                 types.Prompt(name="keep", description="Keep"),
@@ -881,9 +882,9 @@ async def test_load_prompts_refresh_replaces_prompt_catalog() -> None:
     tool._functions.append(custom_function)
     tool._progressive_loaded_tool_names.update({"keep", "removed"})
 
-    tool.session.list_prompts = AsyncMock(
+    mock_session.list_prompts = AsyncMock(
         side_effect=[
-            types.ListPromptsResult(prompts=[types.Prompt(name="keep", description="Keep")], nextCursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="keep", description="Keep")], next_cursor="second"),
             types.ListPromptsResult(
                 prompts=[
                     types.Prompt(
@@ -910,8 +911,9 @@ async def test_load_prompts_refresh_replaces_prompt_catalog() -> None:
 async def test_load_prompts_refresh_forgets_progressive_state_on_normalized_name_collision() -> None:
     """A different remote prompt that normalizes to the same local name must not inherit load state."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = AsyncMock()
-    tool.session.list_prompts = AsyncMock(
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(prompts=[types.Prompt(name="a/b", description="Same")])
     )
     await tool.load_prompts()
@@ -919,7 +921,7 @@ async def test_load_prompts_refresh_forgets_progressive_state_on_normalized_name
     assert old_prompt.name == "a-b"
     tool._progressive_loaded_tool_names.add("a-b")
 
-    tool.session.list_prompts = AsyncMock(
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(prompts=[types.Prompt(name="a-b", description="Same")])
     )
     await tool.load_prompts()
@@ -935,15 +937,16 @@ async def test_load_prompts_refresh_forgets_progressive_state_on_normalized_name
 async def test_load_prompts_refresh_keeps_progressive_state_when_metadata_changes() -> None:
     """A prompt rebuilt for changed metadata keeps load state while its remote identity is unchanged."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = AsyncMock()
-    tool.session.list_prompts = AsyncMock(
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary", description="Old")])
     )
     await tool.load_prompts()
     old_prompt = tool._functions[0]
     tool._progressive_loaded_tool_names.add("summary")
 
-    tool.session.list_prompts = AsyncMock(
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(
             prompts=[
                 types.Prompt(
@@ -967,13 +970,14 @@ async def test_load_prompts_refresh_keeps_progressive_state_when_metadata_change
 async def test_load_prompts_empty_snapshot_clears_prompts() -> None:
     """A successful empty prompts/list snapshot clears previously loaded prompts."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = AsyncMock()
-    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
     await tool.load_prompts()
     custom_function = FunctionTool(name="custom", func=lambda: "custom")
     tool._functions.append(custom_function)
 
-    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
+    mock_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[]))
     await tool.load_prompts()
 
     assert tool._functions == [custom_function]
@@ -982,16 +986,17 @@ async def test_load_prompts_empty_snapshot_clears_prompts() -> None:
 async def test_load_prompts_failed_pagination_keeps_previous_catalog() -> None:
     """A failed page request must not publish a partial prompt snapshot."""
     tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-    tool.session = AsyncMock()
-    tool.session.list_prompts = AsyncMock(
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
         return_value=types.ListPromptsResult(prompts=[types.Prompt(name="first"), types.Prompt(name="second")])
     )
     await tool.load_prompts()
     original_functions = list(tool._functions)
 
-    tool.session.list_prompts = AsyncMock(
+    mock_session.list_prompts = AsyncMock(
         side_effect=[
-            types.ListPromptsResult(prompts=[types.Prompt(name="first")], nextCursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second"),
             MCPError(-32603, "boom"),
         ]
     )
