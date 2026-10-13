@@ -40,6 +40,22 @@ Explicit `Cookie` request headers remain supported. Response `Set-Cookie` header
 remain available in `HttpRequestResult.headers`; disabling persistence does not redact
 the response.
 
+## HTTP response body limits
+
+`DefaultHttpRequestHandler` limits response bodies to **10 MiB** by default.
+Configure a positive integer `max_response_body_bytes` on the handler when a host
+requires a different bound. The bound applies to received bytes and each decoded
+stage, including intermediate redirect and authentication responses. Responses
+above the bound raise `httpx.StreamError` before text conversion or workflow
+assignment, and their streams are closed without closing caller-owned clients.
+
+The handler advertises `gzip, deflate` and supports identity, gzip, and deflate
+responses, including up to four encoding stages. Unsupported encodings,
+incomplete encoded bodies, and trailing encoded data raise `httpx.DecodingError`.
+Explicit request `Accept-Encoding` headers are preserved but do not enable
+additional decoders. Caller-supplied response hooks and transports must not
+buffer response bodies before the handler applies its limit.
+
 ## MCP handler session lifetime
 
 `DefaultMCPToolHandler()` reuses MCP sessions through a bounded LRU cache.
