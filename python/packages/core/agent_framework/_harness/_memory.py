@@ -1411,29 +1411,31 @@ class MemoryContextProvider(HistoryProvider):
             await self.save_messages(session.session_id, messages_to_store, state=state)
 
         current_time = datetime.now(timezone.utc).replace(microsecond=0)
-        extracted_topics = await self._extract_memories(
-            client=self._chat_client(agent),
-            session=session,
-            context=context,
-            now=current_time,
-        )
-        if extracted_topics:
-            self.store.rebuild_index(
-                session,
-                source_id=self.source_id,
-                line_limit=self.index_line_limit,
-                line_length=self.index_line_length,
+        try:
+            extracted_topics = await self._extract_memories(
+                client=self._chat_client(agent),
+                session=session,
+                context=context,
+                now=current_time,
             )
-
-        # Register the session only after its extraction has written its topics, so a consolidation
-        # pass that sees this session as pending has also seen the memories it extracted.
-        async with self._state_async_lock(session):
-            maintenance_state = self.store.read_state(session, source_id=self.source_id)
-            session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
-            if session.session_id not in session_ids_since_consolidation:
-                session_ids_since_consolidation.append(session.session_id)
-            maintenance_state["sessions_since_consolidation"] = session_ids_since_consolidation
-            self.store.write_state(session, maintenance_state, source_id=self.source_id)
+            if extracted_topics:
+                self.store.rebuild_index(
+                    session,
+                    source_id=self.source_id,
+                    line_limit=self.index_line_limit,
+                    line_length=self.index_line_length,
+                )
+        finally:
+            # Register the session only once its extraction is over, so a consolidation pass that sees
+            # this session as pending has also seen the memories it extracted. Registering in `finally`
+            # keeps topics already written by a run that then failed or was cancelled pending too.
+            async with self._state_async_lock(session):
+                maintenance_state = self.store.read_state(session, source_id=self.source_id)
+                session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
+                if session.session_id not in session_ids_since_consolidation:
+                    session_ids_since_consolidation.append(session.session_id)
+                maintenance_state["sessions_since_consolidation"] = session_ids_since_consolidation
+                self.store.write_state(session, maintenance_state, source_id=self.source_id)
 
         await self._run_consolidation(
             client=self._chat_client(agent, override=self.consolidation_client),

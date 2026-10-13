@@ -915,6 +915,94 @@ async def test_memory_consolidation_retires_only_sessions_in_its_snapshot(tmp_pa
     }
 
 
+class _TwoTopicExtractionClient:
+    """Chat client whose extraction returns two memories in different topics."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self) -> None:
+        self.additional_properties = {}
+
+    async def get_response(self, messages: Sequence[Message], **kwargs: object) -> ChatResponse[Any]:
+        del kwargs
+        system_text = messages[0].text.lower() if messages and messages[0].role == "system" else ""
+        if "extract durable memory candidates" in system_text:
+            memories = [{"topic": "First", "memory": "First fact"}, {"topic": "Second", "memory": "Second fact"}]
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps({"memories": memories})])])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
+
+
+def _two_topic_setup(tmp_path: Path) -> tuple[MemoryFileStore, MemoryContextProvider, Agent]:
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)
+    agent = Agent(client=_TwoTopicExtractionClient(), context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    return store, provider, agent
+
+
+@pytest.mark.parametrize("failing_step", ["second_topic_write", "rebuild_index"])
+async def test_memory_session_stays_pending_when_extraction_fails_after_a_topic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_step: str
+) -> None:
+    """A run that persisted a topic and then failed still registers its session for consolidation."""
+    store, _, agent = _two_topic_setup(tmp_path)
+    if failing_step == "second_topic_write":
+        original_write_topic = store.write_topic
+        written_topics: list[str] = []
+
+        def write_topic(session: AgentSession, record: MemoryTopicRecord, **kwargs: Any) -> None:
+            if written_topics:
+                raise OSError("disk full")
+            written_topics.append(record.topic)
+            original_write_topic(session, record, **kwargs)
+
+        monkeypatch.setattr(store, "write_topic", write_topic)
+    else:
+        original_rebuild_index = store.rebuild_index
+
+        def rebuild_index(session: AgentSession, **kwargs: Any) -> list[MemoryIndexEntry]:
+            # ``before_run`` also rebuilds the index; fail only the rebuild after extraction wrote topics.
+            if store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID):
+                raise OSError("disk full")
+            return original_rebuild_index(session, **kwargs)
+
+        monkeypatch.setattr(store, "rebuild_index", rebuild_index)
+
+    with pytest.raises(OSError, match="disk full"):
+        await _run_turn(agent, "Remember this.", "session-1")
+
+    first_topic = store.get_topic(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID, topic="First")
+    assert first_topic.memories == ["First fact"]
+    assert _pending_sessions(store) == ["session-1"]
+
+
+async def test_memory_session_stays_pending_when_extraction_is_cancelled_after_a_topic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run cancelled after persisting a topic still registers its session for consolidation."""
+    store, provider, agent = _two_topic_setup(tmp_path)
+    original_merge_memory = provider._merge_memory  # pyright: ignore[reportPrivateUsage]
+    second_merge_started = asyncio.Event()
+
+    async def merge_memory(**kwargs: Any) -> MemoryTopicRecord:
+        if kwargs["topic"] == "Second":
+            second_merge_started.set()
+            await asyncio.Event().wait()
+        return await original_merge_memory(**kwargs)
+
+    monkeypatch.setattr(provider, "_merge_memory", merge_memory)
+
+    run = asyncio.create_task(_run_turn(agent, "Remember this.", "session-1"))
+    await second_merge_started.wait()
+    assert _pending_sessions(store) == []
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    first_topic = store.get_topic(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID, topic="First")
+    assert first_topic.memories == ["First fact"]
+    assert _pending_sessions(store) == ["session-1"]
+
+
 def test_memory_harness_classes_are_marked_experimental() -> None:
     """Memory harness public classes should expose HARNESS experimental metadata."""
     assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
