@@ -21,7 +21,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 
-namespace Test.WorkflowProviders;
+namespace Test.WorkflowProviders.LoopContinue;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -73,6 +73,10 @@ public static class WorkflowProvider
         {
             this._index = 0;
             EvaluationResult<object?> evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
+            if (evaluatedValue.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException("Cannot use a sensitive value for loop items.");
+            }
     
             if (evaluatedValue.Value == null)
             {
@@ -138,10 +142,17 @@ public static class WorkflowProvider
                 return;
             }
 
+            SensitivityLevel sensitivity =
+                await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException("Cannot use a sensitive value for loop items.");
+            }
+
             this._values = savedValues;
             this._index = await context.ReadStateAsync<int>(IndexStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
             this.HasValue = await context.ReadStateAsync<bool>(HasValueStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-            this._sensitivity = await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            this._sensitivity = sensitivity;
 
             await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
         }
