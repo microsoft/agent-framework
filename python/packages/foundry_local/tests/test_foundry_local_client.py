@@ -15,7 +15,7 @@ import pytest
 from agent_framework import Agent, Message, SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
-from agent_framework.foundry import FoundryLocalClient
+from agent_framework.foundry import FoundryLocalChatOptions, FoundryLocalClient
 from foundry_local_sdk import Configuration, DeviceType, IModel
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
@@ -136,9 +136,15 @@ def test_foundry_local_client_serializes_concurrent_setup(
     first_manager.catalog.get_model_variant.return_value.download.side_effect = prepare_first_model
     first_manager.start_web_service.side_effect = lambda: setattr(first_manager, "urls", ["http://localhost:5272"])
 
+    def create_client(prepare_model: bool = True) -> FoundryLocalClient[FoundryLocalChatOptions[None]]:
+        return FoundryLocalClient(model="test-model-id", prepare_model=prepare_model)
+
     with (
         patch("agent_framework_foundry_local._foundry_local_client.FoundryLocalManager") as manager_class,
         patch("agent_framework_foundry_local._foundry_local_client._MANAGER_SETUP_LOCK", observed_lock, create=True),
+        patch(
+            "agent_framework_foundry_local._foundry_local_client.AsyncOpenAI", return_value=MagicMock(spec=AsyncOpenAI)
+        ),
         ThreadPoolExecutor(max_workers=2) as executor,
     ):
         manager_class.instance = None
@@ -150,11 +156,11 @@ def test_foundry_local_client_serializes_concurrent_setup(
             manager_class.instance = None
 
         first_manager.close.side_effect = close_first_manager
-        first = executor.submit(FoundryLocalClient, model="test-model-id")
+        first = executor.submit(create_client)
         try:
             assert preparing.wait(5), "First client did not reach model preparation."
             lock_attempts.get(timeout=5)
-            second = executor.submit(FoundryLocalClient, model="test-model-id", prepare_model=False)
+            second = executor.submit(create_client, prepare_model=False)
             lock_attempts.get(timeout=5)
             assert not second.done()
             manager_class.initialize.assert_called_once()
