@@ -1258,7 +1258,12 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, BaseModel):
             # JSON mode, so enums, datetimes, UUIDs and JSON-only field serializers apply. Values
             # Pydantic cannot serialize to JSON (arbitrary types) fall back to str individually.
-            return value.model_dump(mode="json", fallback=str)
+            try:
+                return value.model_dump(mode="json", fallback=str)
+            except ValueError:
+                # e.g. bytes that aren't valid UTF-8. The python-mode dump still drops excluded
+                # fields, unlike the str(result) fallback in invoke.
+                return value.model_dump()
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
