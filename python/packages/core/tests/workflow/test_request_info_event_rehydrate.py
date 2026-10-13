@@ -532,3 +532,24 @@ async def test_apply_checkpoint_preserves_streaming_flag() -> None:
     await target.apply_checkpoint(checkpoint)
 
     assert target.is_streaming() is True
+
+
+async def test_send_request_info_response_union_type_mismatch_message() -> None:
+    """A union response_type must produce a readable TypeError, not crash on __name__.
+
+    ``types.UnionType`` (e.g. ``int | str``) has no ``__name__`` on Python 3.10/3.11
+    (AttributeError) and only yields the unhelpful ``"Union"`` on 3.12+. The mismatch
+    message should name the union itself.
+    """
+    event = WorkflowEvent.request_info(
+        request_id="union-req",
+        source_executor_id="gateway",
+        request_data=MockRequest(),
+        response_type=int | str,
+    )
+
+    runner_context = InProcRunnerContext(InMemoryCheckpointStorage())
+    await runner_context.add_request_info_event(event)
+
+    with pytest.raises(TypeError, match=r"expected int \| str, got float"):
+        await runner_context.send_request_info_response("union-req", 3.14)
