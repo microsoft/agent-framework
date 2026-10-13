@@ -266,6 +266,7 @@ class LocalShellTool:
             command=command,
             policy_decision=decision.decision,
             denial_reason=decision.reason if decision.decision == "deny" else "",
+            workdir=request.workdir,
         )
         if decision.decision == "deny":
             raise ShellCommandError(f"Command rejected by policy: {decision.reason}")

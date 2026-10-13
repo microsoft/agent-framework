@@ -24,6 +24,13 @@ class ShellCommandRecord:
     policy_decision: str
     """The :class:`~agent_framework_tools.shell.ShellDecision` outcome: ``"allow"`` or ``"deny"``."""
 
+    workdir: str | None = None
+    """Working directory used for policy evaluation and execution.
+
+    ``None`` means no working directory was configured and the command ran in
+    the host process's current working directory.
+    """
+
     timestamp_utc: str = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
     """UTC ISO 8601 timestamp when the command was evaluated."""
 
@@ -55,11 +62,19 @@ class ShellAuditLog:
     def __init__(self) -> None:
         self._records: list[ShellCommandRecord] = []
 
-    def record(self, command: str, policy_decision: str, denial_reason: str = "") -> ShellCommandRecord:
+    def record(
+        self,
+        command: str,
+        policy_decision: str,
+        denial_reason: str = "",
+        *,
+        workdir: str | None = None,
+    ) -> ShellCommandRecord:
         """Add a new record at evaluation time (before execution)."""
         rec = ShellCommandRecord(
             command=command,
             policy_decision=policy_decision,
+            workdir=workdir,
             denial_reason=denial_reason,
         )
         self._records.append(rec)

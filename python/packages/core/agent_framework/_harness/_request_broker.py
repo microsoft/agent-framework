@@ -19,7 +19,7 @@ Usage::
     broker = AsyncRequestBroker()
 
     # Server side - suspend until answered (or timeout)
-    result = await broker.request_async("req-123", timeout=30.0)
+    result = await broker.request("req-123", timeout=30.0)
 
     # Client side - deliver the answer
     broker.resolve("req-123", decision)
@@ -56,7 +56,7 @@ class AsyncRequestBroker(Generic[T]):
         self._pending: dict[str, asyncio.Future[T]] = {}
         self._settled: collections.deque[str] = collections.deque(maxlen=settled_deque_size)
 
-    async def request_async(self, request_id: str, *, timeout: float | None = None) -> T:
+    async def request(self, request_id: str, *, timeout: float | None = None) -> T:
         """Suspend until the request is resolved or rejected.
 
         Args:
@@ -94,7 +94,7 @@ class AsyncRequestBroker(Generic[T]):
             raise
 
     def resolve(self, request_id: str, result: T) -> bool:
-        """Deliver a successful result to a waiting :meth:`request_async` call.
+        """Deliver a successful result to a waiting :meth:`request` call.
 
         Returns:
             ``True`` if a waiter was notified or the request was recently settled
@@ -110,7 +110,7 @@ class AsyncRequestBroker(Generic[T]):
         return True
 
     def reject(self, request_id: str, exception: BaseException) -> bool:
-        """Deliver an exception to a waiting :meth:`request_async` call.
+        """Deliver an exception to a waiting :meth:`request` call.
 
         Returns:
             ``True`` if a waiter was notified or the request was recently settled

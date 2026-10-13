@@ -588,6 +588,7 @@ async def test_audit_log_records_allowed_command() -> None:
     assert record.command == cmd
     assert record.policy_decision == "allow"
     assert record.exit_code == 0
+    assert record.workdir is None
     assert record.timestamp_utc
 
 
@@ -605,6 +606,43 @@ async def test_audit_log_records_denied_command() -> None:
     assert record.policy_decision == "deny"
     assert record.exit_code is None
     assert record.denial_reason
+    assert record.workdir is None
+
+
+async def test_audit_log_records_workdir_for_denied_command(tmp_path: Any) -> None:
+    tool = LocalShellTool(
+        mode="stateless",
+        policy=ShellPolicy(denylist=[r"forbidden"]),
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+        workdir=tmp_path,
+    )
+    with pytest.raises(ShellCommandError):
+        await tool.run("echo forbidden")
+
+    record = tool.audit_log.records[0]
+    assert record.policy_decision == "deny"
+    assert record.workdir == str(tmp_path)
+
+
+async def test_audit_log_records_distinct_workdirs_for_same_command(tmp_path: Any) -> None:
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
+
+    tool_a = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, workdir=dir_a)
+    tool_b = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, workdir=dir_b)
+    await tool_a.run(cmd)
+    await tool_b.run(cmd)
+
+    record_a = tool_a.audit_log.records[0]
+    record_b = tool_b.audit_log.records[0]
+    assert record_a.command == record_b.command == cmd
+    assert record_a.workdir == str(dir_a)
+    assert record_b.workdir == str(dir_b)
+    assert record_a.workdir != record_b.workdir
 
 
 async def test_audit_log_accumulates_multiple() -> None:
@@ -624,6 +662,7 @@ async def test_audit_log_records_are_detached_snapshots() -> None:
     snapshot.command = "tampered"
     snapshot.policy_decision = "deny"
     snapshot.exit_code = 99
+    snapshot.workdir = "tampered"
     tool.audit_log.records.clear()
 
     record = tool.audit_log.records[0]
@@ -631,3 +670,4 @@ async def test_audit_log_records_are_detached_snapshots() -> None:
     assert record.command == cmd
     assert record.policy_decision == "allow"
     assert record.exit_code == 0
+    assert record.workdir is None
