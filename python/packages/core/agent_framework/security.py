@@ -3388,12 +3388,12 @@ class SecureAgentConfig(ContextProvider):
             )
 
             # Create secure agent - tools and instructions injected automatically
-             agent = Agent(
-                 client=client,
-                 instructions=base_instructions,
-                 tools=[my_tool],
-                 context_providers=[security],
-             )
+            agent = Agent(
+                client=client,
+                instructions=base_instructions,
+                tools=[my_tool],
+                context_providers=[security],
+            )
     """
 
     DEFAULT_SOURCE_ID = "secure_agent"

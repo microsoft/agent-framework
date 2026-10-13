@@ -55,6 +55,11 @@ uv run poe pyright -S
 uv run poe markdown-code-lint
 ```
 
+Poe and the pytest toolchain stay in the cross-version development
+environment. Ruff and the type checkers use pinned
+`tooling/requirements-*.txt` files; prek is selected from the `tool-hooks`
+dependency group only when needed.
+
 ## Pre-commit Hooks (prek)
 
 Prek hooks run automatically on commit. They stay lightweight and only check
@@ -65,10 +70,10 @@ changed files.
 uv run poe prek-install
 
 # Run all hooks manually
-uv run prek run -a
+uv run --group tool-hooks prek run -a
 
 # Run on last commit
-uv run prek run --last-commit
+uv run --group tool-hooks prek run --last-commit
 ```
 
 They run changed-package syntax formatting/checking, markdown code lint only
