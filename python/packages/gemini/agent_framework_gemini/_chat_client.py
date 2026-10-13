@@ -492,8 +492,13 @@ class RawGeminiChatClient(
                     # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
                     # instead of leaving the response open until the generator is garbage collected.
                     try:
+                        # Once the server names a version, later chunks that omit it keep that version
+                        # instead of reverting to the requested alias.
+                        fallback_model = model
                         async for chunk in response_stream:
-                            yield self._process_chunk(chunk)
+                            if chunk.model_version:
+                                fallback_model = chunk.model_version
+                            yield self._process_chunk(chunk, fallback_model)
                     finally:
                         aclose = getattr(response_stream, "aclose", None)
                         if aclose is not None:
@@ -1071,13 +1076,15 @@ class RawGeminiChatClient(
             raw_representation=response,
         )
 
-    def _process_chunk(self, chunk: types.GenerateContentResponse) -> ChatResponseUpdate:
+    def _process_chunk(self, chunk: types.GenerateContentResponse, model: str) -> ChatResponseUpdate:
         """Convert a single streaming chunk to a framework ChatResponseUpdate.
 
         Usage details are attached only to the final chunk, identified by a non-None finish reason.
 
         Args:
             chunk: A streaming ``GenerateContentResponse`` chunk from the Gemini API.
+            model: The model to report when the chunk carries no model version: the last version the
+                server reported in this stream, or the model resolved for this request.
 
         Returns:
             A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
@@ -1096,7 +1103,7 @@ class RawGeminiChatClient(
 
         return ChatResponseUpdate(
             contents=contents,
-            model=chunk.model_version,
+            model=chunk.model_version or model,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )

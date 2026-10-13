@@ -23,6 +23,7 @@ from agent_framework import (
     Content,
     FunctionTool,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -513,9 +514,15 @@ class AGUIChatClient(
             resume=_serialize_resume(options.get("resume")),
         )
         body_failed = False
+        local_client_tool_call_started = False
         try:
             async for event in events:
                 logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+                event_type = str(event.get("type", "")).upper()
+                if event_type == "RUN_ERROR" and local_client_tool_call_started:
+                    raise ResponseInvalidatedException(
+                        "The AG-UI server invalidated partial output containing a local client tool call."
+                    )
                 update = converter.convert_event(event)
                 if update is not None:
                     logger.debug(
@@ -529,7 +536,7 @@ class AGUIChatClient(
                                 f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
                             )
                             if content.name in client_tool_set:
-                                # Client tool - let function invocation execute it
+                                local_client_tool_call_started = True
                                 if not content.additional_properties:
                                     content.additional_properties = {}
                                 content.additional_properties["agui_thread_id"] = thread_id
@@ -537,7 +544,10 @@ class AGUIChatClient(
                                 # Server tool - wrap so function invocation ignores it
                                 logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
                                 self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
-                                update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
+                                update.contents[i] = Content(
+                                    type=cast(Any, "server_function_call"),
+                                    function_call=content,
+                                )
 
                     yield update
         except GeneratorExit:
