@@ -29,7 +29,6 @@ logger = logging.getLogger("agent_framework.a2a")
 
 # Key in ``SendMessageRequest.metadata`` that carries forwarded ``function_invocation_kwargs`` and ``client_kwargs``.
 AGENT_FRAMEWORK_METADATA_KEY = "agent_framework"
-_FORWARDED_KWARGS_NAMES = ("function_invocation_kwargs", "client_kwargs")
 # Names owned by the framework (chat client and tool invocation parameters). A remote caller must never be able to
 # set them, since a duplicate keyword would fail the task or override framework behavior.
 _RESERVED_KWARGS = frozenset({
@@ -106,10 +105,13 @@ class A2AExecutor(AgentExecutor):
         agent: The AI agent to execute.
         stream: Whether to stream the agent response. Defaults to False.
         run_kwargs: Additional keyword arguments to pass to the agent's run method.
-        accepted_kwargs: Names of keys the executor accepts from the caller's request. A client that
-            forwards ``function_invocation_kwargs`` and ``client_kwargs`` (see ``A2AAgent``) sends them
-            in the request metadata, and only the keys named here are passed to the agent's run
-            method. The default (``None``) accepts nothing.
+        accepted_function_invocation_kwargs: Names of keys the executor accepts from the caller's
+            forwarded ``function_invocation_kwargs`` (see ``A2AAgent``). A client sends them in the
+            request metadata, and only the keys named here are passed to the agent's run method.
+            The default (``None``) accepts nothing.
+        accepted_client_kwargs: Names of keys the executor accepts from the caller's forwarded
+            ``client_kwargs``. Authorized independently of ``accepted_function_invocation_kwargs``,
+            because these values reach the chat client. The default (``None``) accepts nothing.
     """
 
     def __init__(
@@ -117,7 +119,8 @@ class A2AExecutor(AgentExecutor):
         agent: SupportsAgentRun,
         stream: bool = False,
         run_kwargs: Mapping[str, Any] | None = None,
-        accepted_kwargs: Sequence[str] | None = None,
+        accepted_function_invocation_kwargs: Sequence[str] | None = None,
+        accepted_client_kwargs: Sequence[str] | None = None,
     ):
         """Initialize the A2AExecutor with the specified agent.
 
@@ -126,16 +129,21 @@ class A2AExecutor(AgentExecutor):
             stream: Whether to stream the agent response. Defaults to False.
             run_kwargs: Additional keyword arguments to pass to the agent's run method.
                 Cannot contain 'session' or 'stream' as these are managed by the executor.
-            accepted_kwargs: Names of keys to accept from the request's forwarded
-                ``function_invocation_kwargs`` and ``client_kwargs``. Accepted values are passed to the
-                agent's run method. Values configured in ``run_kwargs`` take precedence on conflict.
-                Defaults to accepting nothing. Framework-owned names (for example ``stream``,
-                ``messages``, ``options`` and ``session``) and names starting with an underscore are
-                rejected.
+            accepted_function_invocation_kwargs: Names of keys to accept from the request's forwarded
+                ``function_invocation_kwargs``. Accepted values are passed to the agent's run method.
+                Values configured in ``run_kwargs`` take precedence on conflict. Defaults to accepting
+                nothing.
+            accepted_client_kwargs: Names of keys to accept from the request's forwarded
+                ``client_kwargs``. Authorized separately from ``accepted_function_invocation_kwargs``,
+                so opting into a tool-context key does not also let the caller inject it into the
+                chat client. Defaults to accepting nothing.
+
+        Framework-owned names (for example ``stream``, ``messages``, ``options`` and ``session``) and
+        names starting with an underscore are rejected in both allowlists.
 
         Raises:
-            ValueError: If run_kwargs contains 'session' or 'stream', or accepted_kwargs contains a
-                framework-owned name.
+            ValueError: If run_kwargs contains 'session' or 'stream', or an accepted kwargs allowlist
+                contains a framework-owned name.
         """
         super().__init__()
         self._agent: SupportsAgentRun = agent
@@ -146,10 +154,17 @@ class A2AExecutor(AgentExecutor):
             if "stream" in run_kwargs:
                 raise ValueError("run_kwargs cannot contain 'stream' as it is managed by the executor.")
         self._run_kwargs: Mapping[str, Any] = run_kwargs or {}
-        reserved = sorted(key for key in accepted_kwargs or () if key in _RESERVED_KWARGS or key.startswith("_"))
-        if reserved:
-            raise ValueError(f"accepted_kwargs cannot contain framework-owned names: {', '.join(reserved)}.")
-        self._accepted_kwargs: frozenset[str] = frozenset(accepted_kwargs or ())
+        for allowlist_name, allowlist in (
+            ("accepted_function_invocation_kwargs", accepted_function_invocation_kwargs),
+            ("accepted_client_kwargs", accepted_client_kwargs),
+        ):
+            reserved = sorted(key for key in allowlist or () if key in _RESERVED_KWARGS or key.startswith("_"))
+            if reserved:
+                raise ValueError(f"{allowlist_name} cannot contain framework-owned names: {', '.join(reserved)}.")
+        self._accepted_kwargs: dict[str, frozenset[str]] = {
+            "function_invocation_kwargs": frozenset(accepted_function_invocation_kwargs or ()),
+            "client_kwargs": frozenset(accepted_client_kwargs or ()),
+        }
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -223,18 +238,16 @@ class A2AExecutor(AgentExecutor):
     def _build_run_kwargs(self, context: RequestContext) -> dict[str, Any]:
         """Merge the accepted request kwargs under the configured ``run_kwargs``."""
         run_kwargs: dict[str, Any] = dict(self._run_kwargs)
-        if not self._accepted_kwargs:
+        if not any(self._accepted_kwargs.values()):
             return run_kwargs
         forwarded = context.metadata.get(AGENT_FRAMEWORK_METADATA_KEY)
         if not isinstance(forwarded, Mapping):
             return run_kwargs
-        for name in _FORWARDED_KWARGS_NAMES:
+        for name, allowed in self._accepted_kwargs.items():
             values = cast("Mapping[str, Any]", forwarded).get(name)
             if not isinstance(values, Mapping):
                 continue
-            accepted = {
-                key: value for key, value in cast("Mapping[str, Any]", values).items() if key in self._accepted_kwargs
-            }
+            accepted = {key: value for key, value in cast("Mapping[str, Any]", values).items() if key in allowed}
             if accepted:
                 configured = run_kwargs.get(name)
                 run_kwargs[name] = {**accepted, **(configured or {})}

@@ -957,7 +957,9 @@ class TestA2AExecutorForwardedKwargs:
     async def test_accepted_keys_are_passed_to_agent_run(
         self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
     ) -> None:
-        executor = A2AExecutor(mock_agent, accepted_kwargs=["tenant", "trace"])
+        executor = A2AExecutor(
+            mock_agent, accepted_function_invocation_kwargs=["tenant"], accepted_client_kwargs=["trace"]
+        )
         metadata = self._forwarded(
             function_invocation_kwargs={"tenant": "acme", "other": 1},
             client_kwargs={"trace": {"id": "abc"}, "other": 2},
@@ -968,6 +970,34 @@ class TestA2AExecutorForwardedKwargs:
         kwargs = run.call_args.kwargs
         assert kwargs["function_invocation_kwargs"] == {"tenant": "acme"}
         assert kwargs["client_kwargs"] == {"trace": {"id": "abc"}}
+
+    async def test_each_destination_is_authorized_independently(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(mock_agent, accepted_function_invocation_kwargs=["tenant"])
+        metadata = self._forwarded(
+            function_invocation_kwargs={"tenant": "acme"},
+            client_kwargs={"tenant": "injected"},
+        )
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        assert run.call_args.kwargs["function_invocation_kwargs"] == {"tenant": "acme"}
+        assert "client_kwargs" not in run.call_args.kwargs
+
+    async def test_client_kwargs_require_their_own_opt_in(
+        self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
+    ) -> None:
+        executor = A2AExecutor(mock_agent, accepted_client_kwargs=["trace"])
+        metadata = self._forwarded(
+            function_invocation_kwargs={"trace": "tool"},
+            client_kwargs={"trace": "abc"},
+        )
+
+        run = await self._execute(executor, metadata, mock_event_queue, mock_task)
+
+        assert "function_invocation_kwargs" not in run.call_args.kwargs
+        assert run.call_args.kwargs["client_kwargs"] == {"trace": "abc"}
 
     async def test_nothing_is_accepted_by_default(
         self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
@@ -986,7 +1016,7 @@ class TestA2AExecutorForwardedKwargs:
         executor = A2AExecutor(
             mock_agent,
             run_kwargs={"function_invocation_kwargs": {"tenant": "server", "fixed": True}},
-            accepted_kwargs=["tenant", "extra"],
+            accepted_function_invocation_kwargs=["tenant", "extra"],
         )
         metadata = self._forwarded(function_invocation_kwargs={"tenant": "caller", "extra": "x"})
 
@@ -998,9 +1028,12 @@ class TestA2AExecutorForwardedKwargs:
         "reserved",
         ["stream", "messages", "options", "session", "middleware", "client_kwargs", "_internal"],
     )
-    def test_framework_owned_names_cannot_be_accepted(self, mock_agent: MagicMock, reserved: str) -> None:
+    @mark.parametrize("allowlist", ["accepted_function_invocation_kwargs", "accepted_client_kwargs"])
+    def test_framework_owned_names_cannot_be_accepted(
+        self, mock_agent: MagicMock, reserved: str, allowlist: str
+    ) -> None:
         with raises(ValueError, match=reserved):
-            A2AExecutor(mock_agent, accepted_kwargs=["tenant", reserved])
+            A2AExecutor(mock_agent, **{allowlist: ["tenant", reserved]})
 
     @mark.parametrize(
         "metadata",
@@ -1010,17 +1043,19 @@ class TestA2AExecutorForwardedKwargs:
     async def test_malformed_metadata_is_ignored(
         self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task, metadata: Any
     ) -> None:
-        executor = A2AExecutor(mock_agent, accepted_kwargs=["tenant"])
+        executor = A2AExecutor(
+            mock_agent, accepted_function_invocation_kwargs=["tenant"], accepted_client_kwargs=["tenant"]
+        )
 
         run = await self._execute(executor, metadata, mock_event_queue, mock_task)
 
         assert "client_kwargs" not in run.call_args.kwargs
         assert "function_invocation_kwargs" not in run.call_args.kwargs
 
-    async def test_accepted_kwargs_are_passed_when_streaming(
+    async def test_accepted_function_invocation_kwargs_are_passed_when_streaming(
         self, mock_agent: MagicMock, mock_event_queue: MagicMock, mock_task: Task
     ) -> None:
-        executor = A2AExecutor(mock_agent, stream=True, accepted_kwargs=["tenant"])
+        executor = A2AExecutor(mock_agent, stream=True, accepted_function_invocation_kwargs=["tenant"])
         stream = MagicMock()
         stream.with_transform_hook = MagicMock(return_value=stream)
         stream.get_final_response = AsyncMock()
