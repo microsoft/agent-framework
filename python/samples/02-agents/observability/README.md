@@ -147,8 +147,8 @@ and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
 and optional for HostedAgents. Run from `python/` using the workspace packages:
 
 ```powershell
-uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py
-uv run --group test python samples\02-agents\observability\foundry_agent_tracing.py --stream
+uv run python samples\02-agents\observability\foundry_agent_tracing.py
+uv run python samples\02-agents\observability\foundry_agent_tracing.py --stream
 ```
 
 View the connected trace under **Build > Agents > your agent > Traces** in
