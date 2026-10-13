@@ -618,6 +618,35 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
     ]
 
 
+@pytest.mark.parametrize(
+    ("outputs", "expected"),
+    [
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        ([Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ((Content.from_uri("data:image/png;base64,iVBORw0KGgo="),), "iVBORw0KGgo="),
+        ([Content.from_text("caption"), Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), "https://example.com/cat.png"),
+        ("iVBORw0KGgo=", "iVBORw0KGgo="),
+    ],
+    ids=["data-uri-content", "content-list", "content-tuple", "image-after-text", "https-uri", "base64-string"],
+)
+async def test_output_item_tracker_emits_image_generation_result_as_base64(outputs: Any, expected: str) -> None:
+    stream = ResponseEventStream(response_id="resp_image")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    async for event in tracker.handle(Content.from_image_generation_tool_result(image_id="ig_1", outputs=outputs)):
+        events.append(event)
+    events.extend(tracker.close())
+
+    done = [e for e in events if (e.get("type") if isinstance(e, Mapping) else e.type) == "response.output_item.done"]
+    assert len(done) == 1
+    assert done[0]["item"]["type"] == "image_generation_call"
+    assert done[0]["item"]["result"] == expected
+
+
 async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
     stream = ResponseEventStream(response_id="resp_mixed")
     stream.emit_created()

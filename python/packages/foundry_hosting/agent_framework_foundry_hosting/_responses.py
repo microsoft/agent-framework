@@ -2511,7 +2511,8 @@ class _OutputItemTracker:
         elif content.type == "image_generation_tool_result" and content.outputs is not None:
             for event in self._close():
                 yield event
-            async for event in self._stream.output_item_image_gen_call(str(content.outputs)):
+            result = _image_generation_result(content.outputs) or str(content.outputs)
+            async for event in self._stream.output_item_image_gen_call(result):
                 yield event
 
         elif content.type == "mcp_server_tool_call":
@@ -3532,6 +3533,19 @@ def _json_safe_to_str(value: Any | None) -> str:
         return json.dumps(value, default=_json_default)
     except (TypeError, ValueError):
         return json.dumps(str(value))
+
+
+def _image_generation_result(outputs: Any) -> str | None:
+    """Return the base64 image of an image generation tool result, as the Responses API expects."""
+    items: Sequence[Any] = [outputs]
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, bytearray)):
+        items = cast(Sequence[Any], outputs)
+    for item in items:
+        if isinstance(item, Content) and item.uri:
+            return item.uri.split(";base64,", 1)[1] if ";base64," in item.uri else item.uri
+        if isinstance(item, str):
+            return item
+    return None
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:
