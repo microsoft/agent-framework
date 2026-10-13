@@ -2036,7 +2036,7 @@ class Message(SerializationMixin):
             # Create a message with mixed content types
             assistant_msg = Message(
                 "assistant",
-                ["The weather is sunny!", Content.from_image_uri("https://...")],
+                ["The weather is sunny!", Content.from_uri("https://example.com/image.png", media_type="image/png")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
