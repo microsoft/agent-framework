@@ -143,6 +143,25 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     }
 
     [Fact]
+    public async Task ForeachRejectsSensitiveItemsAsync()
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        Foreach model = this.CreateModel(
+            nameof(ForeachRejectsSensitiveItemsAsync),
+            ValueExpression.Expression("If(Local.Control, [1, 2], [1])"),
+            "CurrentValue", indexName: null);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("loop items", exception.Message);
+    }
+
+    [Fact]
     public async Task ForeachTakeNextWithMultiFieldRecordAsync()
     {
         // Arrange
@@ -353,6 +372,29 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
     /// When no checkpoint state has been written for the executor (e.g. first run), the restore
     /// hook must be a no-op and leave constructor defaults in place.
     /// </summary>
+    [Fact]
+    public async Task ForeachRejectsSensitiveCheckpointItemsAsync()
+    {
+        // Arrange
+        Foreach model = this.CreateModel(
+            nameof(ForeachRejectsSensitiveCheckpointItemsAsync), ValueExpression.Literal(DataValue.EmptyTable),
+            "CurrentValue", indexName: null);
+        ForeachExecutor action = new(model, this.State);
+        InMemoryWorkflowContext checkpoint = new();
+        await checkpoint.QueueStateUpdateAsync("_values", new PortableValue[] { new(1) });
+        await checkpoint.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.Sensitive);
+        await checkpoint.QueueStateUpdateAsync("_index", 1);
+        await checkpoint.QueueStateUpdateAsync("HasValue", true);
+
+        // Act
+        Task RestoreAsync() => InvokeOnCheckpointRestoredAsync(action, checkpoint);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(RestoreAsync);
+        Assert.Contains("loop items", exception.Message);
+        Assert.False(action.HasValue);
+    }
+
     [Fact]
     public async Task ForeachRestoreWithNoSavedStateAsync()
     {

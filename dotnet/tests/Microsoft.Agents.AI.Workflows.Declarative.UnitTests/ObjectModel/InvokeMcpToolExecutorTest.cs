@@ -191,6 +191,49 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task InvokeMcpToolRejectsSensitiveControlValueAsync(bool approval, bool value)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(value), sensitivity: SensitivityLevel.Sensitive);
+        InvokeMcpTool.Builder builder = this.CreateModel(
+            nameof(InvokeMcpToolRejectsSensitiveControlValueAsync), TestServerUrl, TestToolName,
+            requireApproval: false).ToBuilder();
+        BoolExpression.Builder expression = BoolExpression.Expression("Local.Control").ToBuilder();
+        if (approval)
+        {
+            builder.RequireApproval = expression;
+        }
+        else
+        {
+            builder.Output = new InvokeToolOutput.Builder { AutoSend = expression };
+        }
+        MockMcpToolProvider handler = new();
+        InvokeMcpToolExecutor action = new(
+            AssignParent<InvokeMcpTool>(builder), handler.Object, new MockAgentProvider().Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(approval ? "require approval" : "auto send", exception.Message);
+        if (approval)
+        {
+            handler.Verify(
+                h => h.InvokeToolAsync(
+                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
+                    It.IsAny<IDictionary<string, object?>?>(), It.IsAny<IDictionary<string, string>?>(),
+                    It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+                Times.Never);
+        }
+    }
+
     [Fact]
     public async Task InvokeMcpToolExecuteWithEmptyConversationIdAsync()
     {

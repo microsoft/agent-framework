@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -100,6 +101,56 @@ public sealed class ConditionGroupExecutorTest(ITestOutputHelper output) : Workf
 
         Assert.NotEmpty(events);
         VerifyCompletionEvent(events);
+    }
+
+    [Theory]
+    [InlineData(VariableScopeNames.Environment, "Env", true)]
+    [InlineData(VariableScopeNames.Environment, "Env", false)]
+    [InlineData(VariableScopeNames.Local, "Local", true)]
+    [InlineData(VariableScopeNames.Local, "Local", false)]
+    public async Task ConditionGroupRejectsSensitiveConditionAsync(string scope, string alias, bool matches)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(matches ? "enabled" : "disabled"), scope, SensitivityLevel.Sensitive);
+        ConditionGroup.Builder builder = this.CreateModel(
+            nameof(ConditionGroupRejectsSensitiveConditionAsync), [true], includeElse: true).ToBuilder();
+        builder.Conditions[0].Condition = BoolExpression.Expression($"Left({alias}.Setting, 2) = \"en\"").ToBuilder();
+        ConditionGroupExecutor action = new(AssignParent<ConditionGroup>(builder), this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("condition", exception.Message);
+        Assert.DoesNotContain(matches ? "enabled" : "disabled", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConditionGroupAllowsNonSensitiveConditionAsync(bool matches)
+    {
+        // Arrange
+        this.State.Set("Setting", FormulaValue.New(matches ? "enabled" : "disabled"));
+        ConditionGroup.Builder builder = this.CreateModel(
+            nameof(ConditionGroupAllowsNonSensitiveConditionAsync), [true], includeElse: true).ToBuilder();
+        builder.Conditions[0].Condition = BoolExpression.Expression("Left(Local.Setting, 2) = \"en\"").ToBuilder();
+        ConditionGroup model = AssignParent<ConditionGroup>(builder);
+        ConditionGroupExecutor action = new(model, this.State);
+        string? selectedStep = null;
+
+        // Act
+        await this.ExecuteAsync(action, "capture_condition", (context, message, cancellationToken) =>
+        {
+            selectedStep = Assert.IsType<string>(message.Result);
+            return default;
+        });
+
+        // Assert
+        Assert.Equal(
+            matches ? ConditionGroupExecutor.Steps.Item(model, model.Conditions[0]) : ConditionGroupExecutor.Steps.Else(model),
+            selectedStep);
     }
 
     [Fact]

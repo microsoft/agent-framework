@@ -529,7 +529,7 @@ internal sealed class InvokeFunctionToolExecutor(
             return false;
         }
 
-        return this.Evaluator.GetValue(this.Model.RequireApproval).Value;
+        return this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.RequireApproval), "require approval");
     }
 
     private bool GetAutoSendValue()
@@ -540,7 +540,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // default as autoSend = true (the historical behavior).
         if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
         {
-            return this.Evaluator.GetValue(output.AutoSend).Value;
+            return this.GetNonSensitiveValue(this.Evaluator.GetValue(output.AutoSend), "auto send");
         }
 
         return true;

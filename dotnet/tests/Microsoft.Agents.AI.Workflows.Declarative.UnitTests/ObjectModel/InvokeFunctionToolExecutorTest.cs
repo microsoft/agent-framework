@@ -236,6 +236,44 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
 
     #region CaptureResponseAsync Tests
 
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task InvokeFunctionToolRejectsSensitiveControlValueAsync(bool approval, bool value)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(value), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(InvokeFunctionToolRejectsSensitiveControlValueAsync), "test_function").ToBuilder();
+        BoolExpression.Builder expression = BoolExpression.Expression("Local.Control").ToBuilder();
+        if (approval)
+        {
+            builder.RequireApproval = expression;
+        }
+        else
+        {
+            builder.Output = new InvokeToolOutput.Builder { AutoSend = expression };
+        }
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), new MockAgentProvider().Object, this.State);
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext();
+
+        // Act
+        ValueTask ExecuteAsync() => approval
+            ? action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None)
+            : action.CaptureResponseAsync(context.Object, new ExternalInputResponse([]), CancellationToken.None);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(async () => await ExecuteAsync());
+        Assert.Contains(approval ? "require approval" : "auto send", exception.Message);
+        context.Verify(
+            c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [Fact]
     public async Task InvokeFunctionToolCaptureResponseWithNoOutputConfiguredAsync()
     {
