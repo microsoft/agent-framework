@@ -468,7 +468,10 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
                 )
 
     if isinstance(binary_id, str) and binary_id:
-        return Content.from_uri(uri=f"ag-ui://binary/{binary_id}", media_type=mime_type)
+        raise ValueError(
+            "Unresolved AG-UI multimodal binary references are unsupported; "
+            "resolve them through application-owned policy before submitting content."
+        )
 
     return None
 
@@ -492,14 +495,17 @@ def sanitize_legacy_snapshot_media(
                 part_type = part_type.removeprefix("input_")
             if part_type not in {"audio", "binary", "document", "image", "video"}:
                 continue
-            url, _, _, _ = _extract_multimodal_source_fields(part)
-            if not isinstance(url, str) or not url:
+            url, data, binary_id, _ = _extract_multimodal_source_fields(part)
+            if isinstance(url, str) and url:
+                try:
+                    scheme = _multimodal_uri_scheme(url)
+                except ValueError:
+                    scheme = ""
+                if scheme in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+                    continue
+            elif isinstance(data, str) and data:
                 continue
-            try:
-                scheme = _multimodal_uri_scheme(url)
-            except ValueError:
-                scheme = ""
-            if scheme in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+            elif not isinstance(binary_id, str) or not binary_id:
                 continue
             content[index] = {"type": "text", "text": _LEGACY_MEDIA_PLACEHOLDER}
             replacements += 1

@@ -150,10 +150,11 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
-- AG-UI multimodal request URLs accept only web/data schemes. Do not pass file, FTP, or application-defined URI
-  schemes from request content into provider clients; broader outbound access requires an application-owned policy.
-  Backend-loaded legacy Thread Snapshots replace previously accepted unsupported media parts with inert placeholder
-  text before hydration or provider replay, so strict current-request validation does not brick an existing thread.
+- AG-UI multimodal request content accepts only web/data URLs and inline payloads. Do not pass file, FTP,
+  application-defined URI schemes, or unresolved client-owned `id`/`file` references into provider clients; broader
+  outbound access and binary-reference resolution require an application-owned policy. Backend-loaded legacy Thread
+  Snapshots replace previously accepted unsupported media parts with inert placeholder text before hydration or
+  provider replay, so strict current-request validation does not brick an existing thread.
 
 ## Usage
 

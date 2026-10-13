@@ -2640,17 +2640,18 @@ def test_convert_agui_content_data_uri_prefix():
     assert result.uri == "data:image/png;base64,abc"
 
 
-def test_convert_agui_content_binary_id():
-    """Source with 'id' field creates ag-ui:// URI."""
-    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
-
-    part = {
-        "type": "image",
-        "source": {"type": "id", "id": "file123"},
-    }
-    result = _parse_multimodal_media_part(part)
-    assert result is not None
-    assert result.uri == "ag-ui://binary/file123"
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "image", "source": {"type": "id", "id": "file123"}},
+        {"type": "image", "source": {"type": "file", "id": "file123"}},
+        {"type": "image", "id": "file123"},
+    ],
+)
+def test_convert_agui_content_rejects_unresolved_binary_id(part: dict[str, Any]) -> None:
+    """Client-owned binary references require application resolution."""
+    with pytest.raises(ValueError, match="Unresolved AG-UI multimodal binary references"):
+        agui_messages_to_agent_framework([{"role": "user", "content": [part]}])
 
 
 def test_convert_agui_content_string_items_in_list():

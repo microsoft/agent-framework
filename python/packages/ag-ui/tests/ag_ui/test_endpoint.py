@@ -10051,12 +10051,37 @@ async def test_agent_endpoint_prepends_stored_snapshot_for_new_user_turn(streami
     assert state_snapshots[0]["snapshot"] == {"recipe": "pasta"}
 
 
-@pytest.mark.parametrize("legacy_uri", ["file:///tmp/legacy-secret.png", "http://[::1"])
+@pytest.mark.parametrize(
+    ("legacy_media_part", "forbidden_value"),
+    [
+        (
+            {"type": "image", "source": {"type": "url", "url": "file:///tmp/legacy-secret.png"}},
+            "file:///tmp/legacy-secret.png",
+        ),
+        (
+            {"type": "image", "source": {"type": "url", "url": "http://[::1"}},
+            "http://[::1",
+        ),
+        (
+            {"type": "image", "source": {"type": "id", "id": "legacy-file-id"}},
+            "legacy-file-id",
+        ),
+        (
+            {"type": "image", "source": {"type": "file", "id": "legacy-file-id"}},
+            "legacy-file-id",
+        ),
+        (
+            {"type": "binary", "id": "legacy-file-id", "mimeType": "image/png"},
+            "legacy-file-id",
+        ),
+    ],
+)
 async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
     streaming_chat_client_stub,
-    legacy_uri: str,
+    legacy_media_part: dict[str, Any],
+    forbidden_value: str,
 ) -> None:
-    """A legacy snapshot URI is replaced before provider replay and later persistence."""
+    """Unsupported legacy media is replaced before provider replay and persistence."""
     app = FastAPI()
     captured_messages: list[list[Message]] = []
 
@@ -10077,10 +10102,7 @@ async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "Inspect this file"},
-                        {
-                            "type": "image",
-                            "source": {"type": "url", "url": legacy_uri},
-                        },
+                        legacy_media_part,
                     ],
                 }
             ]
@@ -10116,7 +10138,7 @@ async def test_agent_endpoint_sanitizes_unsupported_media_from_legacy_snapshot(
     )
     stored = await store.get(scope="tenant-a", thread_id="legacy-media-thread")
     assert stored is not None
-    assert legacy_uri not in json.dumps(stored.messages)
+    assert forbidden_value not in json.dumps(stored.messages)
 
 
 async def test_agent_endpoint_keeps_request_thread_key_when_provider_returns_conversation_id(
