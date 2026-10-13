@@ -198,17 +198,15 @@ response2 = client.responses.create(
 
 ### Voice Input
 
-DevUI chat supports microphone input in browsers that allow `getUserMedia` on `localhost` or HTTPS origins. Voice
-recordings are normalized to mono WAV audio and sent as OpenAI Responses `input_audio` content. Uploaded WAV and MP3
-files are also sent as `input_audio`.
+DevUI chat supports microphone input in browsers that allow recording from `localhost` or HTTPS pages. Use the
+microphone button to record audio, or upload a WAV or MP3 file.
 
-DevUI does not transcribe audio. The selected agent/model must support audio input directly. Other uploaded audio
-formats are not accepted as agent audio input.
+DevUI sends the audio to the selected agent without transcribing it. The selected agent or model must be able to work
+with audio. Other uploaded audio formats are not supported.
 
-Audio settings are available from Settings → General. Browser capture options such as echo cancellation, noise
-suppression, and auto gain control are best-effort `getUserMedia` constraints, so browser and device support may vary.
-Users can click to record, hold the microphone button for push-to-talk, and optionally enable auto-stop on silence from
-the audio settings.
+Audio settings are available from Settings → General. Users can click to record, hold the microphone button for
+push-to-talk, preview recordings before sending, and optionally enable auto-stop on silence. Browser options such as
+echo cancellation, noise suppression, and auto gain control may vary by browser and device.
 
 ### OpenAI Proxy Mode
 
