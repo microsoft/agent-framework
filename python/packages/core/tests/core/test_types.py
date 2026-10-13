@@ -4572,6 +4572,15 @@ def test_parse_content_list_with_dicts():
     assert result[0].text == "hello"
 
 
+def test_parse_content_list_with_single_string():
+    """Test _parse_content_list treats a bare string as one text item, not one per character."""
+    result = _parse_content_list("hello")
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
 def test_parse_content_list_with_mixed_content_and_dict():
     """Test _parse_content_list handles a mix of Content objects and dicts."""
     content = Content(type="text", text="hello")

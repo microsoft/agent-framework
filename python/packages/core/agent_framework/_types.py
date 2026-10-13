@@ -56,11 +56,16 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     """Parse a list of content data into appropriate Content objects.
 
     Args:
-        contents_data: List of content data (strings, dicts, or already constructed objects)
+        contents_data: List of content data (strings, dicts, or already constructed objects).
+            A single string is treated as one text item.
 
     Returns:
         List of Content objects with unknown types logged and ignored
     """
+    if isinstance(contents_data, str):
+        # A string is itself a sequence of strings, so iterating it would create one text
+        # content per character.
+        contents_data = [contents_data]
     contents: list[Content] = []
     for content_data in contents_data:
         if content_data is None:
@@ -2082,10 +2087,6 @@ class Message(SerializationMixin):
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
-        if isinstance(contents, str):
-            # A string is itself a sequence of strings, so iterating it would create one text
-            # content per character.
-            contents = [contents]
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
         self.role: str = role
