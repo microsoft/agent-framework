@@ -583,6 +583,10 @@ class _MCPConnection(Protocol):
         """Set the legacy logging level through this connection."""
         ...
 
+    async def check_connection(self) -> None:
+        """Check the connection with the MCP server, depending on the version."""
+        ...
+
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through this connection."""
         ...
@@ -633,6 +637,10 @@ class _ClientMCPConnection:
         del level
         return
 
+    async def check_connection(self) -> None:
+        """Let high-level Client requests determine connection availability."""
+        return
+
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through the high-level Client while honoring server cache hints."""
         return await self._client.read_resource(uri, cache_mode="use")
@@ -678,6 +686,12 @@ class _SessionMCPConnection:
         if self._session.initialize_result is None:
             return
         await self._session.set_logging_level(level)  # pyright: ignore[reportDeprecated]
+
+    async def check_connection(self) -> None:
+        """Check the connection with the MCP server through this session."""
+        if self._session.initialize_result is None:
+            return
+        await self._session.send_ping()
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         """Read a resource through this connection."""
@@ -3162,7 +3176,7 @@ class MCPTool:
             return
 
         try:
-            await self.session.send_ping()  # type: ignore[union-attr]
+            await self._require_connection().check_connection()
         except MCPError as mcp_exc:
             if mcp_exc.error.code == -32601:
                 self._ping_available = False
