@@ -651,16 +651,32 @@ def test_emit_text_continues_existing_message():
 
 
 def test_emit_text_skips_duplicate_full_message_delta():
-    """Test _emit_text skips replayed full-message chunks on an open message."""
+    """Test _emit_text skips a replay of the full text after multi-chunk streaming."""
     flow = FlowState()
-    flow.message_id = "existing-id"
-    flow.accumulated_text = "Case complete."
+    _emit_text(Content.from_text("Case"), flow)
+    _emit_text(Content.from_text(" complete."), flow)
     content = Content.from_text("Case complete.")
 
     events = _emit_text(content, flow)
 
     assert events == []
     assert flow.accumulated_text == "Case complete."
+
+
+def test_emit_text_keeps_repeated_single_chunk_delta():
+    """A repeated token equal to the whole short text streams as a real delta (#9336)."""
+    flow = FlowState()
+    first = _emit_text(Content.from_text("2"), flow)
+    second = _emit_text(Content.from_text("2"), flow)
+    assert len(first) == 2  # message start + first delta
+    assert len(second) == 1
+    assert flow.accumulated_text == "22"
+
+    fresh_flow = FlowState()
+    _emit_text(Content.from_text("ha"), fresh_flow)
+    repeated = _emit_text(Content.from_text("ha"), fresh_flow)
+    assert len(repeated) == 1
+    assert fresh_flow.accumulated_text == "haha"
 
 
 def test_emit_text_skips_when_waiting_for_approval():
