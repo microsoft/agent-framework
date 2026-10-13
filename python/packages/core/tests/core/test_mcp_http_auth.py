@@ -8,7 +8,7 @@ import json
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextvars import ContextVar
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx2 as httpx
@@ -1126,7 +1126,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 ) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = _connected_client(source).session
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         original_hooks = list(client.event_hooks["request"])
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
@@ -1171,7 +1171,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = _connected_client(source).session
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         borrowed = MCPStreamableHTTPTool(
             name="borrowed",
             url="https://must-not-connect.example/mcp",
@@ -1257,7 +1257,7 @@ async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_serve
 async def test_cancelled_borrowed_session_caller_can_retry(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = _connected_client(source).session
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
         )

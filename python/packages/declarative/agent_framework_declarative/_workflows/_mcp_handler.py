@@ -27,6 +27,7 @@ must trust the MCP server they invoke.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -369,7 +370,7 @@ class DefaultMCPToolHandler:
     async def _invoke_list_tools(entry: _CacheEntry) -> MCPToolResult:
         """Handle the reserved :attr:`LIST_TOOLS_TOOL_NAME` invocation.
 
-        Pages through ``session.list_tools()`` (mirroring the pagination loop
+        Pages through the normalized MCP connection (mirroring the pagination loop
         in :meth:`agent_framework.MCPTool.load_tools`) and serialises the
         full catalog as a single ``TextContent`` containing JSON of shape
         ``{"tools": [{name, description, inputSchema, outputSchema}, ...]}``.
@@ -383,8 +384,16 @@ class DefaultMCPToolHandler:
         """
         from agent_framework import Content
 
-        session = getattr(entry.tool, "session", None)
-        if session is None:
+        require_connection: Any = getattr(entry.tool, "_require_connection", None)
+        connection: Any | None = None
+        session: Any | None = None
+        if callable(require_connection):
+            with contextlib.suppress(RuntimeError):
+                connection = require_connection()
+        else:
+            session = getattr(entry.tool, "session", None)
+
+        if connection is None and session is None:
             message = "MCP session is not connected; cannot list tools."
             return MCPToolResult(
                 outputs=[Content.from_text(f"Error: {message}")],
@@ -398,7 +407,12 @@ class DefaultMCPToolHandler:
         collected: list[Any] = []
         params: mcp_types.PaginatedRequestParams | None = None
         while True:
-            tool_list = await session.list_tools(params=params)
+            if connection is not None:
+                tool_list = await connection.list_tools_page(params)
+            elif session is not None:
+                tool_list = await session.list_tools(params=params)
+            else:  # pragma: no cover - guarded before entering the loop
+                raise RuntimeError("MCP connection became unavailable while listing tools.")
             collected.extend(tool_list.tools)
             next_cursor = getattr(tool_list, "next_cursor", getattr(tool_list, "nextCursor", None))
             if not next_cursor:

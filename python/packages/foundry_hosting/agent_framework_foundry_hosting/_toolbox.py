@@ -364,16 +364,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             connection = self._require_connection()
             if headers or connection.is_framework_owned:
                 await self._ensure_session_identity(headers, {})
-            session = self.session
-            if session is None:
-                raise RuntimeError(
-                    "FoundryToolbox is not connected, so its resources cannot be read. "
-                    "Pass the toolbox to the agent (tools=...) or enter it as an async "
-                    "context manager before reading resources."
-                )
+                connection = self._require_connection()
             self._active_call_headers = headers
             try:
-                return await session.read_resource(cast(str, uri))
+                return await connection.read_resource(cast(str, uri))
             finally:
                 self._active_call_headers = None
 
