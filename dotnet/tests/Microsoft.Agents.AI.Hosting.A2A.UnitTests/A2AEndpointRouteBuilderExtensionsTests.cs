@@ -59,7 +59,7 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
     public void MapA2AHttpJson_WithAgentBuilder_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
-        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
+        IEndpointRouteBuilder endpoints = null!;
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
@@ -276,7 +276,7 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
     public void MapA2AHttpJson_WithAgentName_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
-        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
+        IEndpointRouteBuilder endpoints = null!;
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
@@ -292,7 +292,7 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
     public void MapA2AJsonRpc_WithAgentName_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
-        AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
+        IEndpointRouteBuilder endpoints = null!;
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
