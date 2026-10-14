@@ -1361,11 +1361,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents.append(
                         Content.from_text(
                             text=MessageToJson(part.data),
-                            merge_mode=merge_mode,
+                            merge_mode=next_text_merge_mode,
                             additional_properties=part_metadata,
                             raw_representation=part,
                         )
                     )
+                    if next_text_merge_mode == "replace":
+                        next_text_merge_mode = "append"
                 case _:
                     raise ValueError(f"Unknown Part content type: {content_type}")
         return contents

@@ -460,6 +460,27 @@ def test_parse_snapshot_contents_replaces_once_then_appends_text_parts(a2a_agent
     assert response.text == "Choose blue"
 
 
+@mark.parametrize("data_first", [False, True], ids=["text-data", "data-text"])
+def test_parse_snapshot_contents_replaces_once_across_text_and_data_parts(
+    a2a_agent: A2AAgent, *, data_first: bool
+) -> None:
+    from google.protobuf.json_format import ParseDict
+    from google.protobuf.struct_pb2 import Value  # ty: ignore[unresolved-import]
+
+    data_part = Part(data=ParseDict({"choice": "blue"}, Value()))
+    parts = [data_part, Part(text=" selected")] if data_first else [Part(text="Selected "), data_part]
+    contents = a2a_agent._parse_contents_from_a2a(parts, merge_mode="replace")
+
+    assert [content.merge_mode for content in contents] == ["replace", "append"]
+
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[Content.from_text("old")], role="assistant"),
+        AgentResponseUpdate(contents=contents, role="assistant"),
+    ])
+
+    assert response.text == "".join(content.text or "" for content in contents)
+
+
 def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with ErrorContent."""
 
