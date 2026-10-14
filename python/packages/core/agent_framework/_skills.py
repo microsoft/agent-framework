@@ -2857,6 +2857,16 @@ class SkillsProvider(ContextProvider):
             ),
         ]
 
+    @property
+    def tools(self) -> list[FunctionTool]:
+        """Tool definitions exposed by this provider for skill interaction.
+
+        Returns:
+            The canonical skill tool definitions (``load_skill``,
+            ``read_skill_resource``, and ``run_skill_script``).
+        """
+        return self._create_tools([])
+
     @staticmethod
     def _find_skill(skills: Sequence[Skill], name: str) -> Skill | None:
         """Find a skill by name (case-insensitive linear scan)."""

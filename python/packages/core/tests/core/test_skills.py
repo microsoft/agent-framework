@@ -6245,6 +6245,17 @@ class TestSkillsProviderFactories:
         unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
         assert SkillsProvider.all_tools_auto_approval_rule(unrelated) is False
 
+    def test_tools_property_exposes_canonical_skill_tools(self) -> None:
+        """The provider exposes canonical skill tools via its tools property."""
+        provider = SkillsProvider([])
+        tools = provider.tools
+        names = [tool.name for tool in tools]
+        assert names == [
+            SkillsProvider.LOAD_SKILL_TOOL_NAME,
+            SkillsProvider.READ_SKILL_RESOURCE_TOOL_NAME,
+            SkillsProvider.RUN_SKILL_SCRIPT_TOOL_NAME,
+        ]
+
     async def test_code_script_exception_propagates_by_default(self) -> None:
         """A code script function that raises should propagate by default."""
 

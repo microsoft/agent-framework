@@ -842,6 +842,27 @@ class AgentEvalConverter:
                         "parameters": tool.parameters(),
                     })
                     seen.add(tool.name)
+        for provider in getattr(agent, "context_providers", []):
+            provider_tools = getattr(provider, "tools", None)
+            if callable(provider_tools):
+                try:
+                    provider_tools = provider_tools()
+                except Exception:
+                    provider_tools = None
+            elif provider_tools is None and hasattr(provider, "get_tools"):
+                try:
+                    provider_tools = provider.get_tools()
+                except Exception:
+                    provider_tools = None
+            if provider_tools:
+                for tool in normalize_tools(provider_tools):
+                    if isinstance(tool, FunctionTool) and tool.name not in seen:
+                        tools.append({
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters(),
+                        })
+                        seen.add(tool.name)
         return tools
 
     @staticmethod
@@ -883,6 +904,23 @@ def _to_eval_item(
                 if isinstance(tool, FunctionTool) and tool.name not in seen:
                     typed_tools.append(tool)
                     seen.add(tool.name)
+        for provider in getattr(agent, "context_providers", []):
+            provider_tools = getattr(provider, "tools", None)
+            if callable(provider_tools):
+                try:
+                    provider_tools = provider_tools()
+                except Exception:
+                    provider_tools = None
+            elif provider_tools is None and hasattr(provider, "get_tools"):
+                try:
+                    provider_tools = provider.get_tools()
+                except Exception:
+                    provider_tools = None
+            if provider_tools:
+                for tool in normalize_tools(provider_tools):
+                    if isinstance(tool, FunctionTool) and tool.name not in seen:
+                        typed_tools.append(tool)
+                        seen.add(tool.name)
 
     return EvalItem(
         conversation=all_msgs,

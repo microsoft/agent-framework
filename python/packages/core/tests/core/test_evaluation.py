@@ -11,6 +11,7 @@ import pytest
 
 from agent_framework import AgentEvalConverter as ExportedAgentEvalConverter
 from agent_framework._evaluation import AgentEvalConverter, ConversationSplit, EvalItem, _to_eval_item
+from agent_framework._skills import SkillsProvider
 from agent_framework._tools import FunctionTool
 from agent_framework._types import AgentResponse, Content, Message
 
@@ -54,6 +55,22 @@ class TestAgentEvalConverterCompatibility:
 
         assert item.query == "Weather?"
         assert item.response == "Sunny."
+
+    def test_extract_tools_with_context_providers(self) -> None:
+        provider_tool = FunctionTool(name="provider_tool", description="From provider", func=lambda: "result")
+        provider = MagicMock()
+        provider.tools = [provider_tool]
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            tools = AgentEvalConverter.extract_tools(agent)
+
+        assert len(tools) == 1
+        assert tools[0]["name"] == "provider_tool"
+        assert tools[0]["description"] == "From provider"
 
 
 class TestToEvalItem:
@@ -112,6 +129,51 @@ class TestToEvalItem:
         item = _to_eval_item(query="Research this", response=response, agent=agent)
 
         assert item.tools == [agent_tool, mcp_tool]
+
+    def test_with_agent_context_providers(self) -> None:
+        provider_tool = FunctionTool(name="provider_tool", description="From provider", func=lambda: "result")
+        provider = MagicMock()
+        provider.tools = [provider_tool]
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Test provider", response=response, agent=agent)
+
+        assert item.tools == [provider_tool]
+
+    def test_with_agent_skills_provider(self) -> None:
+        provider = SkillsProvider([])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Test skills", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert "load_skill" in tool_names
+        assert "read_skill_resource" in tool_names
+        assert "run_skill_script" in tool_names
+
+    def test_with_agent_context_providers_deduplication(self) -> None:
+        agent_tool = FunctionTool(name="common_tool", description="Agent version", func=lambda: "agent")
+        provider_tool = FunctionTool(name="common_tool", description="Provider version", func=lambda: "provider")
+        provider = MagicMock()
+        provider.tools = [provider_tool]
+        agent = MagicMock()
+        agent.default_options = {"tools": [agent_tool]}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Test dedup", response=response, agent=agent)
+
+        assert item.tools == [agent_tool]
 
     def test_explicit_tools_override_agent(self) -> None:
         agent_tool = FunctionTool(name="agent_tool", description="from agent", func=lambda: "")
