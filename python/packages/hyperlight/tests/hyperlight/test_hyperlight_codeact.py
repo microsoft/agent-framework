@@ -3495,3 +3495,14 @@ def test_sandbox_survives_external_thread_holding_stale_reference(
         gc.collect()
 
     assert drop_violations == []
+
+
+def test_hyperlight_codeact_provider_tools_property() -> None:
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    provider = HyperlightCodeActProvider(tools=[add])
+    tools = provider.tools
+    assert len(tools) == 1
+    assert tools[0].name == "execute_code"
+    assert isinstance(tools[0], HyperlightExecuteCodeTool)

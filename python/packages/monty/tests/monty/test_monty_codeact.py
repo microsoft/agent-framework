@@ -1625,3 +1625,14 @@ async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
             assert payload["exc_type"] == "ToolException"
             assert "maximum invocation limit" in payload["message"]
         assert limited.invocation_count == 1
+
+
+def test_provider_tools_property_exposes_execute_code() -> None:
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    provider = MontyCodeActProvider(tools=[add])
+    tools = provider.tools
+    assert len(tools) == 1
+    assert tools[0].name == "execute_code"
+    assert isinstance(tools[0], MontyExecuteCodeTool)

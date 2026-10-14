@@ -63,6 +63,11 @@ class MontyCodeActProvider(ContextProvider):
         """Add provider-owned Monty tools."""
         self._execute_code_tool.add_tools(tools)
 
+    @property
+    def tools(self) -> list[FunctionTool]:
+        """Model-facing tool definitions contributed by this provider."""
+        return [self._execute_code_tool.create_run_tool()]
+
     def get_tools(self) -> list[FunctionTool]:
         """Return the provider-owned Monty tools."""
         return self._execute_code_tool.get_tools()

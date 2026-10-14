@@ -72,6 +72,24 @@ class TestAgentEvalConverterCompatibility:
         assert tools[0]["name"] == "provider_tool"
         assert tools[0]["description"] == "From provider"
 
+    def test_extract_tools_with_codeact_provider(self) -> None:
+        sandbox_helper = FunctionTool(name="sandbox_helper", description="Sandbox helper", func=lambda: "helper")
+        codeact_tool = FunctionTool(name="execute_code", description="Run code", func=lambda: "ok")
+        provider = MagicMock()
+        provider.tools = [codeact_tool]
+        provider.get_tools = MagicMock(return_value=[sandbox_helper])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            tools = AgentEvalConverter.extract_tools(agent)
+
+        tool_names = [t["name"] for t in tools]
+        assert tool_names == ["execute_code"]
+        assert "sandbox_helper" not in tool_names
+
 
 class TestToEvalItem:
     def test_string_query(self) -> None:
@@ -174,6 +192,62 @@ class TestToEvalItem:
         item = _to_eval_item(query="Test dedup", response=response, agent=agent)
 
         assert item.tools == [agent_tool]
+
+    def test_with_agent_codeact_provider(self) -> None:
+        sandbox_helper = FunctionTool(name="sandbox_helper", description="Sandbox helper", func=lambda: "helper")
+        codeact_tool = FunctionTool(name="execute_code", description="Run code", func=lambda: "ok")
+        provider = MagicMock()
+        provider.tools = [codeact_tool]
+        provider.get_tools = MagicMock(return_value=[sandbox_helper])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Run some code", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert tool_names == ["execute_code"]
+        assert "sandbox_helper" not in tool_names
+
+    def test_with_agent_codeact_provider_fallback(self) -> None:
+        execute_code_tool = FunctionTool(name="execute_code", description="Run code", func=lambda: "ok")
+        mock_execute = MagicMock()
+        mock_execute.create_run_tool.return_value = execute_code_tool
+        provider = MagicMock(spec=["_execute_code_tool"])
+        provider._execute_code_tool = mock_execute
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Run some code", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert tool_names == ["execute_code"]
+
+    def test_with_real_monty_codeact_provider(self) -> None:
+        pytest.importorskip("agent_framework_monty")
+        from agent_framework_monty import MontyCodeActProvider
+
+        sandbox_tool = FunctionTool(name="calculate_sum", description="Sum numbers", func=lambda a, b: a + b)
+        provider = MontyCodeActProvider(tools=[sandbox_tool])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Compute 1+1", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert tool_names == ["execute_code"]
+        assert "calculate_sum" not in tool_names
 
     def test_explicit_tools_override_agent(self) -> None:
         agent_tool = FunctionTool(name="agent_tool", description="from agent", func=lambda: "")
