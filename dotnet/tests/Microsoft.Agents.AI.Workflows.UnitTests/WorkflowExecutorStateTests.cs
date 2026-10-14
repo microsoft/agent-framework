@@ -14,6 +14,20 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public sealed class WorkflowExecutorStateTests
 {
     [Fact]
+    public async Task StatefulExecutor_PreservesNestedReadUpdatesDuringInitializationAsync()
+    {
+        // Arrange
+        SessionStateExecutor executor = new(true);
+        TestWorkflowContext context = new(executor.Id);
+
+        // Act
+        List<string> state = await executor.UpdateWithNestedReadAsync(context);
+
+        // Assert
+        Assert.Equal(["outer", "inner"], state);
+    }
+
+    [Fact]
     public async Task MixedWorkflow_RequiresExplicitResetSupportForReuseAsync()
     {
         // Arrange
@@ -188,6 +202,19 @@ public sealed class WorkflowExecutorStateTests
 
     private sealed class SessionStateExecutor(bool useInvocation) : StatefulExecutor<List<string>>("state", () => [])
     {
+        public async ValueTask<List<string>> UpdateWithNestedReadAsync(IWorkflowContext context)
+        {
+            await this.InvokeWithStateAsync(async (state, ctx, cancellationToken) =>
+            {
+                state.Add("outer");
+                List<string> nestedState = await this.ReadStateAsync(ctx, cancellationToken: cancellationToken);
+                nestedState.Add("inner");
+                return state;
+            }, context);
+
+            return await this.ReadStateAsync(context);
+        }
+
         protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
         {
             return protocolBuilder.ConfigureRoutes(routes => routes

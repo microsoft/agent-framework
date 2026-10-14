@@ -159,7 +159,7 @@ internal sealed class StateManager
 
             Debug.Assert(initOnDefault);
 
-            await this.WriteStateAsync(scopeId, key, defaultValueFactory()).ConfigureAwait(false);
+            await this.WriteStateAsync(scopeId, key, result).ConfigureAwait(false);
         }
 
         return result;
