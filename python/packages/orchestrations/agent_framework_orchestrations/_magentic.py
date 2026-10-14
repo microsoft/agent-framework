@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
@@ -39,6 +38,7 @@ from ._base_group_chat_orchestrator import (
     ParticipantRegistry,
 )
 from ._feature_usage import FeatureIndex
+from ._orchestrator_helpers import extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -414,9 +414,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 
     The `text` method is concatenating multiple text contents from diff msgs into a single string.
     """
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
-    if fence:
-        candidate = fence.group(1)
+    fenced_object = next(
+        (body for body in extract_markdown_fence_bodies(text) if body.startswith("{") and body.endswith("}")),
+        None,
+    )
+    if fenced_object is not None:
+        candidate = fenced_object
     else:
         # Find first balanced JSON object
         start = text.find("{")

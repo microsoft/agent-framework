@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import inspect
 import json
 import os
@@ -43,6 +44,27 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
 )
+
+
+class _FakeAsyncStream:
+    """Test double for the SDK's AsyncStream: an async context manager over chunks."""
+
+    def __init__(self, chunks: Any) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    async def __aenter__(self) -> "_FakeAsyncStream":
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        self.closed = True
+
+    def __aiter__(self) -> Any:
+        async def generate() -> Any:
+            for chunk in self._chunks:
+                yield chunk
+
+        return generate()
 
 
 def test_init(openai_unit_test_env: dict[str, str]) -> None:
@@ -602,9 +624,42 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
     assert result["input_audio"]["format"] == "mp3"
 
+    # Test DataContent with MP3 audio using the registered media type
+    mpeg_data_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==",
+        media_type="audio/mpeg",
+    )
+
+    result = client._prepare_content_for_openai(mpeg_data_content)  # type: ignore
+
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
+    assert result["input_audio"]["format"] == "mp3"
+
+    # Test MP3 aliases with media type parameters and mixed case
+    parameterized_content = Content.from_uri(
+        uri="data:audio/mpeg;base64,//uQAAAAWGluZwAAAA8AAAACAAACcQ==",
+        media_type="Audio/MPEG; codecs=mpeg-3",
+    )
+
+    result = client._prepare_content_for_openai(parameterized_content)  # type: ignore
+
+    assert result["type"] == "input_audio"
+    assert result["input_audio"]["format"] == "mp3"
+
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,abc123", media_type="audio/ogg")
 
     assert client._prepare_content_for_openai(unsupported_audio) == {}  # type: ignore
+
+
+def test_prepare_content_for_openai_non_mp3_mpeg_audio_is_unsupported() -> None:
+    """Test _prepare_content_for_openai omits MPEG audio that is not MP3."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    for media_type in ("audio/mpegurl", "audio/mpeg4-generic"):
+        content = Content.from_uri(uri=f"data:{media_type};base64,abc123", media_type=media_type)
+
+        assert client._prepare_content_for_openai(content) == {}  # type: ignore
 
 
 def test_prepare_message_for_openai_omits_unsupported_content() -> None:
@@ -2163,6 +2218,113 @@ async def test_streaming_exception_handling(
             pass
 
 
+def _make_content_chunk(text: str) -> Any:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    return ChatCompletionChunk.model_validate({
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "id": "stream-close",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": None,
+            }
+        ],
+    })
+
+
+async def test_streaming_closes_provider_stream_when_consumer_stops_early(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """An early consumer exit must close the SDK stream, not leave it to GC (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        # No manual close(): the async-with protocol is what an early break
+        # relies on to release the provider stream.
+        async with stream:
+            async for _ in stream:
+                break
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_when_transform_hook_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A hook failing after a yielded update must also close the SDK stream (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    def failing_hook(update: Any) -> Any:
+        raise RuntimeError("hook blew up")
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(failing_hook)
+        with pytest.raises(RuntimeError, match="hook blew up"):
+            async for _ in stream:
+                pass
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_cancellation(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Cancellation after a yielded update must close the SDK stream too (#8762)."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("hello"), _make_content_chunk("world")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    async def cancelling_hook(update: Any) -> Any:
+        raise asyncio.CancelledError
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        stream._transform_hooks.append(cancelling_hook)
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in stream:
+                pass
+
+    assert sdk_stream.closed
+
+
+async def test_streaming_closes_provider_stream_on_completion(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Full consumption closes the SDK stream too, not just early exits."""
+    client = OpenAIChatCompletionClient()
+    sdk_stream = _FakeAsyncStream([_make_content_chunk("done")])
+
+    async def create(**kwargs: Any) -> Any:
+        return sdk_stream
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(messages=[Message(role="user", contents=["test"])], stream=True, options={})
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            pass
+
+    assert sdk_stream.closed
+
+
 async def test_streaming_feature_is_marked_when_request_is_sent(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -2171,11 +2333,7 @@ async def test_streaming_feature_is_marked_when_request_is_sent(
         telemetry._feature_mask = 0
 
     async def create(**kwargs: Any) -> Any:
-        async def chunks() -> Any:
-            if False:
-                yield None
-
-        return chunks()
+        return _FakeAsyncStream([])
 
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         stream = client._inner_get_response(
@@ -2729,11 +2887,7 @@ async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choic
         ]
 
     async def create(**kwargs: Any) -> Any:
-        async def stream_chunks() -> Any:
-            for chunk in chunks():
-                yield chunk
-
-        return stream_chunks()
+        return _FakeAsyncStream(chunks())
 
     request_occurrence_ids: list[dict[tuple[int, int], str | None]] = []
     with patch.object(client.client.chat.completions, "create", side_effect=create):
@@ -2836,11 +2990,7 @@ async def test_streaming_tool_call_adopts_late_provider_id_without_changing_occu
     ]
 
     async def create(**kwargs: Any) -> Any:
-        async def stream_chunks() -> Any:
-            for chunk in chunks:
-                yield chunk
-
-        return stream_chunks()
+        return _FakeAsyncStream(chunks)
 
     with patch.object(client.client.chat.completions, "create", side_effect=create):
         response_stream = client._inner_get_response(

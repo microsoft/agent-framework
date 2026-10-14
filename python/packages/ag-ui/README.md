@@ -119,6 +119,42 @@ and response-cookie handling, and must be closed by the caller. Scope a cookie-b
 client to a single authenticated principal; do not share it across users. AG-UI thread IDs
 are correlation identifiers, not authentication boundaries.
 
+## Citations and annotations
+
+Text content carrying `Content.annotations` emits a message-linked `CUSTOM` event named `annotations`.
+This includes annotation-only updates received after the response text, such as SharePoint grounding
+citations from the Responses API. The event arrives before `RUN_FINISHED` and does not repeat response text:
+
+```json
+{
+  "type": "CUSTOM",
+  "name": "annotations",
+  "value": {
+    "messageId": "assistant-message-id",
+    "annotations": [
+      {
+        "type": "citation",
+        "title": "Document",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "annotated_regions": [
+          {"type": "text_span", "start_index": 0, "end_index": 6}
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each event contains a batch of newly emitted annotations for the indicated text message. Frontends can
+append those annotations to that message and use the citation URL, title, or file ID to render sources.
+Framework annotation fields and additional properties are retained, but provider `raw_representation`
+objects are omitted.
+
+`AGUIChatClient` restores these batches as `Content.annotations` in streaming updates and aggregated
+responses, while retaining the custom-event payload in `update.additional_properties["ag_ui_custom_event"]`.
+Custom events are live run metadata: citation rendering and persistence alongside frontend message history
+remain application responsibilities; `MESSAGES_SNAPSHOT` does not restore these custom events.
+
 ## Tool Return Helpers
 
 Use `state_update` when a backend tool needs to send different payloads to the model, the UI, and shared state. The `text` value remains the LLM-bound tool result, `tool_result` becomes the AG-UI `ToolCallResultEvent.content` for frontend rendering, and `state` is merged into durable shared state.
