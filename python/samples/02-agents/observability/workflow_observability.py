@@ -14,7 +14,7 @@ from opentelemetry.trace.span import format_trace_id
 from typing_extensions import Never
 
 """
-This sample shows the telemetry collected when running a Agent Framework workflow.
+This sample shows the telemetry collected when running an Agent Framework workflow.
 
 This simple workflow consists of two executors arranged sequentially:
 1. An executor that converts input text to uppercase.

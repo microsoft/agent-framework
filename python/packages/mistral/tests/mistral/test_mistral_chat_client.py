@@ -318,6 +318,7 @@ async def test_get_response_includes_extended_usage() -> None:
     assert usage_details["mistral.prompt_audio_seconds"] == 4
     assert usage_details["mistral.prompt_audio_tokens"] == 12
     assert response.additional_properties["service_tier"] == "priority"
+    assert response.additional_properties["mistral"]["service_tier"] == "priority"
 
 
 @pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
@@ -1110,6 +1111,9 @@ async def test_streaming_response() -> None:
     stream = client.get_response([Message("user", ["hi"])], stream=True)
     updates = [update async for update in stream]
     assert [u.text for u in updates] == ["Hel", "lo", ""]
+    assert updates[0].contents[0].merge_mode == "append"
+    assert updates[1].contents[0].merge_mode == "append"
+    assert updates[2].contents[0].merge_mode == "replace"
 
     response = await stream.get_final_response()
     assert response.text == "Hello"
