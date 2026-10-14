@@ -58,7 +58,7 @@ public static class ToolApprovalRequestContentExtensions
     /// The resulting standing rule persists in session state and is not tied to the agent or tool instance that
     /// created the request. Before reusing the session with a different agent or tool set, especially one that can
     /// load tools from an outside source such as MCP, ensure the rule is still appropriate for every matching tool
-    /// name and argument set. Otherwise, use a new session or clear the standing approval state.
+    /// name and argument set. Otherwise, use a new session.
     /// </remarks>
     public static AlwaysApproveToolApprovalResponseContent CreateAlwaysApproveToolWithArgumentsResponse(
         this ToolApprovalRequestContent request,
