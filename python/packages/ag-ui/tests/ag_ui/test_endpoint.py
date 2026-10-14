@@ -8791,6 +8791,25 @@ async def test_owned_checkpoint_storage_stamps_owner_without_pending_events() ->
     assert stored.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
 
 
+async def test_owned_checkpoint_storage_accepts_generated_thread_alias_only_within_scope() -> None:
+    """A checkpoint of a run without threadId is also owned by its generated id, in the same scope only."""
+    storage = InMemoryCheckpointStorage()
+    writer = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", None), generated_thread_id="generated-1")
+    checkpoint_id = await writer.save(WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="sig"))
+
+    for owner in (("scope-1", None), ("scope-1", "generated-1")):
+        loaded = await _OwnedWorkflowCheckpointStorage(storage, owner).load(checkpoint_id)
+        assert loaded.checkpoint_id == checkpoint_id
+    for owner in (("scope-1", "other-thread"), ("scope-2", "generated-1"), (None, "generated-1")):
+        with pytest.raises(PermissionError):
+            await _OwnedWorkflowCheckpointStorage(storage, owner).load(checkpoint_id)
+
+    supplied = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", "supplied-1"), generated_thread_id=None)
+    supplied_id = await supplied.save(WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="sig"))
+    with pytest.raises(PermissionError):
+        await _OwnedWorkflowCheckpointStorage(storage, ("scope-1", None)).load(supplied_id)
+
+
 async def test_owned_checkpoint_storage_filters_and_rejects_foreign_checkpoints() -> None:
     """Owned storage never exposes or deletes another request owner's checkpoints."""
     storage = InMemoryCheckpointStorage()
@@ -9287,6 +9306,54 @@ async def test_endpoint_builder_checkpoint_storage_ignores_stale_runtime_owner()
         "snapshot_scope": None,
         "thread_id": "current-thread",
     }
+
+
+async def test_endpoint_workflow_checkpoint_resume_with_reported_thread_id():
+    """After a restart, a run without threadId resumes from its checkpoint using the id its events reported."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(first_app, first_workflow, path="/workflow", checkpoint_storage=storage)
+
+    with TestClient(first_app) as client:
+        pause_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={"runId": "run-pause", "messages": [{"role": "user", "content": "Book me a flight"}]},
+            )
+        )
+    thread_id = next(event["threadId"] for event in pause_events if event.get("type") == "RUN_STARTED")
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
+        "snapshot_scope": None,
+        "thread_id": None,
+        "generated_thread_id": thread_id,
+    }
+
+    def resume_payload(thread_id_value: str) -> dict[str, Any]:
+        return {
+            "runId": "run-resume",
+            "threadId": thread_id_value,
+            "messages": [],
+            "forwardedProps": {"checkpointId": checkpoint.checkpoint_id},
+            "resume": [{"interruptId": "flight-choice", "status": "resolved", "payload": {"airline": "KLM"}}],
+        }
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app, _build_flight_choice_workflow(), path="/workflow", checkpoint_storage=storage
+    )
+    with TestClient(second_app) as client:
+        rejected = _decode_sse_events(client.post("/workflow", json=resume_payload("other-thread")))
+        _assert_resume_not_found(rejected)
+
+        resumed = _decode_sse_events(client.post("/workflow", json=resume_payload(thread_id)))
+        assert not [event for event in resumed if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resumed if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked KLM" in text_deltas
 
 
 async def test_endpoint_workflow_checkpoint_resume_without_thread_remains_supported():

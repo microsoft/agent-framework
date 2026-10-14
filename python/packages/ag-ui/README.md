@@ -489,7 +489,8 @@ users who submit the same `threadId` do not share a live `Workflow` instance.
 
 A workflow request that omits `threadId` is assigned a generated Thread id. It is reported in `RUN_STARTED`, keys the
 `workflow_factory` instance and Thread Snapshot, and owns that run's pending `request_info` interrupts. Send it back as
-`threadId` to continue the run; a continuation that omits it receives `WORKFLOW_RESUME_NOT_FOUND`.
+`threadId` to continue the run; a continuation that omits it receives `WORKFLOW_RESUME_NOT_FOUND`. A checkpoint created
+by such a run resumes with `checkpointId` and either the reported `threadId` or, as before, no `threadId`.
 
 Authenticate and authorize the current scope on every request, including hydration and approval resume, rather than
 trusting a scope supplied through Shared State or forwarded properties. A configured resolver must return a non-empty

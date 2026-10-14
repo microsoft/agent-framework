@@ -246,6 +246,15 @@ def _checkpoint_request_owner(metadata: dict[str, Any]) -> WorkflowRequestOwner 
     return snapshot_scope, thread_id
 
 
+def _checkpoint_generated_thread_id(metadata: dict[str, Any]) -> str | None:
+    """Read the generated thread id recorded for a checkpoint whose run omitted ``threadId``."""
+    raw_owner = metadata.get(_CHECKPOINT_REQUEST_OWNER_KEY)
+    if not isinstance(raw_owner, dict):
+        return None
+    generated_thread_id = raw_owner.get("generated_thread_id")
+    return generated_thread_id if isinstance(generated_thread_id, str) else None
+
+
 def _workflow_checkpoint_storage(workflow: Workflow) -> CheckpointStorage | None:
     """Return the workflow's build-time checkpoint storage."""
     runner = getattr(workflow, "_runner", None)
@@ -258,21 +267,33 @@ def _workflow_checkpoint_storage(workflow: Workflow) -> CheckpointStorage | None
 class _OwnedWorkflowCheckpointStorage:
     """Attach one AG-UI request owner to checkpoints in their original save."""
 
-    def __init__(self, storage: CheckpointStorage, owner: WorkflowRequestOwner) -> None:
+    def __init__(
+        self, storage: CheckpointStorage, owner: WorkflowRequestOwner, generated_thread_id: str | None = None
+    ) -> None:
         self._storage = storage
         self._owner = owner
+        self._generated_thread_id = generated_thread_id
 
     def _owns(self, checkpoint: WorkflowCheckpoint) -> bool:
         checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
-        return checkpoint_owner == self._owner or (checkpoint_owner is None and self._owner == (None, None))
+        if checkpoint_owner == self._owner or (checkpoint_owner is None and self._owner == (None, None)):
+            return True
+        # A run that omitted threadId also records the id it reported, so a continuation can echo that id.
+        generated_thread_id = _checkpoint_generated_thread_id(checkpoint.metadata)
+        return (
+            checkpoint_owner is not None
+            and checkpoint_owner[1] is None
+            and generated_thread_id is not None
+            and self._owner == (checkpoint_owner[0], generated_thread_id)
+        )
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint with ownership for any pending request occurrences."""
         checkpoint.metadata = dict(checkpoint.metadata)
-        checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] = {
-            "snapshot_scope": self._owner[0],
-            "thread_id": self._owner[1],
-        }
+        owner_metadata: dict[str, str | None] = {"snapshot_scope": self._owner[0], "thread_id": self._owner[1]}
+        if self._generated_thread_id is not None:
+            owner_metadata["generated_thread_id"] = self._generated_thread_id
+        checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] = owner_metadata
         return await self._storage.save(checkpoint)
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -664,12 +685,15 @@ class AgentFrameworkWorkflow:
         self.checkpoint_storage = checkpoint_storage
 
     @staticmethod
+    def _supplied_thread_id_from_input(input_data: dict[str, Any]) -> str | None:
+        """Return the client-supplied thread id, treating an empty value as omitted."""
+        thread_id = input_data.get("thread_id") or input_data.get("threadId")
+        return str(thread_id) if thread_id else None
+
+    @staticmethod
     def _thread_id_from_input(input_data: dict[str, Any]) -> str:
         """Resolve a stable thread id from AG-UI input payload."""
-        thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        if thread_id:
-            return str(thread_id)
-        return str(uuid.uuid4())
+        return AgentFrameworkWorkflow._supplied_thread_id_from_input(input_data) or str(uuid.uuid4())
 
     def _resolve_workflow(self, thread_id: str, snapshot_scope: str | None = None) -> Workflow:
         """Get the workflow instance for the current run."""
@@ -742,20 +766,33 @@ class AgentFrameworkWorkflow:
 
         checkpoint_id = _checkpoint_id_from_input(input_data)
 
-        supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        request_owner = (snapshot_scope, str(supplied_thread_id) if supplied_thread_id is not None else None)
+        supplied_thread_id = self._supplied_thread_id_from_input(input_data)
+        request_owner = (snapshot_scope, supplied_thread_id)
         # Live interrupts bind to the resolved thread id, including a generated one that RUN_STARTED reports, so a
-        # continuation must echo it. Checkpoint ownership keeps binding only client-supplied ids.
+        # continuation must echo it. Checkpoint ownership keeps binding only client-supplied ids and records a
+        # generated id as an alias, which keeps legacy id-less checkpoint restores working.
         live_owner = (snapshot_scope, thread_id)
         resume_interrupt_ids = {
             str(interrupt["id"])
             for interrupt in _normalize_resume_interrupts(resume_payload)
             if interrupt.get("id") is not None
         }
+        if self.workflow is None and resume_interrupt_ids and checkpoint_id is None and supplied_thread_id is None:
+            # Factory runs that omit threadId report a new generated id, so nothing can be pending on it.
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(
+                message="No pending interrupt found for this AG-UI thread.",
+                code="WORKFLOW_RESUME_NOT_FOUND",
+            )
+            return
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
         checkpoint_storage = self.checkpoint_storage or _workflow_checkpoint_storage(workflow)
         owned_checkpoint_storage = (
-            _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
+            _OwnedWorkflowCheckpointStorage(
+                checkpoint_storage,
+                request_owner,
+                generated_thread_id=thread_id if supplied_thread_id is None else None,
+            )
             if checkpoint_storage is not None
             else None
         )

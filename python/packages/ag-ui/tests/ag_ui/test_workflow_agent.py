@@ -24,6 +24,8 @@ from agent_framework import (
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+from agent_framework_ag_ui._workflow import _CHECKPOINT_REQUEST_OWNER_KEY
 
 
 class _HitlMessageRequestExecutor(Executor):
@@ -240,6 +242,101 @@ async def test_workflow_wrapper_treats_empty_thread_ids_as_omitted() -> None:
     resumed = await _run(agent, _choice_resume(reported[0]))
     assert "RUN_ERROR" not in [event.type for event in resumed]
     assert handled == ["a"]
+
+
+async def _newest_pending_checkpoint(storage: InMemoryCheckpointStorage, workflow: Workflow) -> Any:
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    return max((item for item in checkpoints if item.pending_request_info_events), key=lambda item: item.timestamp)
+
+
+@pytest.mark.parametrize(
+    "empty_ids",
+    [{"thread_id": ""}, {"threadId": ""}, {"thread_id": "", "threadId": ""}],
+    ids=["snake-case", "camel-case", "both"],
+)
+async def test_workflow_wrapper_empty_thread_ids_own_checkpoints_like_omitted(empty_ids: dict[str, str]) -> None:
+    """An empty thread id is not stamped as checkpoint owner, so id-less restores keep working."""
+    storage = InMemoryCheckpointStorage()
+    handled: list[str] = []
+    first_workflow = WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+    first = AgentFrameworkWorkflow(workflow=first_workflow, checkpoint_storage=storage)
+    await _run(first, {"messages": [{"role": "user", "content": "start"}], **empty_ids})
+
+    checkpoint = await _newest_pending_checkpoint(storage, first_workflow)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY]["thread_id"] is None
+
+    restarted = AgentFrameworkWorkflow(
+        workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build(), checkpoint_storage=storage
+    )
+    resumed = await _run(
+        restarted, {**_choice_resume(), "forwarded_props": {"checkpoint_id": checkpoint.checkpoint_id}}
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+
+
+async def test_workflow_wrapper_factory_rejects_resume_without_thread_id() -> None:
+    """A factory run cannot be continued without a thread id, and the rejection builds no workflow instance."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    reported = _reported_thread_ids(first_events)
+    assert factory_thread_ids == reported
+
+    rejected = await _run(agent, _choice_resume())
+    assert [event.code for event in rejected if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert factory_thread_ids == reported
+    assert handled == []
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+
+
+async def test_workflow_wrapper_checkpoint_resumes_with_reported_or_omitted_thread_id() -> None:
+    """A checkpoint of a run without threadId resumes with the reported id or, as before, with no id."""
+    storage = InMemoryCheckpointStorage()
+    handled: list[str] = []
+
+    def restart() -> AgentFrameworkWorkflow:
+        workflow = WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+        return AgentFrameworkWorkflow(workflow=workflow, checkpoint_storage=storage)
+
+    first = restart()
+    first_events = await _run(
+        first, {"messages": [{"role": "user", "content": "start"}], _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"}
+    )
+    reported = _reported_thread_ids(first_events)[0]
+    assert first.workflow is not None
+    checkpoint = await _newest_pending_checkpoint(storage, first.workflow)
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
+        "snapshot_scope": "tenant-a",
+        "thread_id": None,
+        "generated_thread_id": reported,
+    }
+    forwarded = {"forwarded_props": {"checkpoint_id": checkpoint.checkpoint_id}}
+
+    for wrong_thread_id, wrong_scope in (("other-thread", "tenant-a"), (reported, "tenant-b")):
+        rejected = await _run(
+            restart(), {**_choice_resume(wrong_thread_id), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: wrong_scope}
+        )
+        assert [event.code for event in rejected if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert handled == []
+
+    echoed = await _run(restart(), {**_choice_resume(reported), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    assert "RUN_ERROR" not in [event.type for event in echoed]
+    assert handled == ["a"]
+
+    legacy = await _run(restart(), {**_choice_resume(), **forwarded, _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a"})
+    assert "RUN_ERROR" not in [event.type for event in legacy]
+    assert handled == ["a", "a"]
 
 
 async def test_workflow_wrapper_without_workflow_raises_not_implemented() -> None:
