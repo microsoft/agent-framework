@@ -240,13 +240,18 @@ def a2a_to_run(
     if not contents:
         raise ValueError("A2A message has no supported text, URL, raw, or data parts to convert to a run.")
 
+    message_metadata = MessageToDict(message.metadata) if message.metadata else None
     return AgentRunArgs(
         messages=[
             Message(
                 "user",
                 contents,
                 message_id=message.message_id or None,
-                additional_properties={"a2a_metadata": MessageToDict(message.metadata)} if message.metadata else None,
+                additional_properties=(
+                    {"a2a": message_metadata, "a2a_metadata": message_metadata}
+                    if message_metadata is not None
+                    else None
+                ),
                 raw_representation=message,
             )
         ],

@@ -1932,8 +1932,7 @@ class TestWorkflowAgentMergeUpdates:
             "source": "executor2",  # From resp-2 (latest source value)
             "priority": "high",  # From resp-1 first update (resp-1 processed before resp-2)
             "category": "analysis",  # From resp-2 (only place this appears)
-            # "details": "merged" is NOT in final result because resp-1's aggregated
-            # properties only include final merged result from its own updates
+            "details": "merged",  # Preserved from the later resp-1 update
         }
         assert result.additional_properties == expected_properties
 

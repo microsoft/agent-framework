@@ -99,6 +99,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   remains the provider/service `call_id`. Hosted approvals preserve the provider-issued approval request id. The
   lifecycle stores these identities separately so resume responses carry the authoritative approval occurrence id
   without rewriting tool-result correlation ids.
+- Hosted/local execution ownership comes from `function_call.hosted`; `server_name` supplies the hosted-server
+  boundary persisted as `ApprovalOccurrence.server_label`. Legacy `additional_properties["server_label"]` remains a
+  compatibility input, not the primary routing signal.
 - Default stateless conversation history is client-controlled, including historical tool calls and results. Never
   document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
   server-validated approvals, or scoped authoritative snapshots.
