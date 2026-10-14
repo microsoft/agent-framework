@@ -2912,6 +2912,294 @@ class TestHITLInStepWithCaching:
         resumed = await wf.run(responses={"r": 1})
         assert resumed.get_outputs() == [[]]
 
+    async def test_non_deepcopyable_state_pauses_without_checkpoint_storage(self):
+        import threading
+
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> str:
+            if ctx.get_state("lock") is None:
+                ctx.set_state("lock", lock)
+            answer = await ctx.request_info("continue?", int, request_id="r")
+            return f"{answer}:{ctx.get_state('lock') is lock}"
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"r": 5})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == ["5:True"]
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_nested_mutable_state_isolated_with_non_deepcopyable_leaf(self):
+        import threading
+
+        background_started = asyncio.Event()
+        release_background = asyncio.Event()
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> tuple[list[str], bool]:
+            if ctx.get_state("bundle") is None:
+                items: list[str] = []
+                bundle = {"items": items, "lock": lock}
+                ctx.set_state("bundle", bundle)
+
+                async def background() -> None:
+                    background_started.set()
+                    await release_background.wait()
+                    items.append("leaked")
+
+                asyncio.create_task(background())
+                await background_started.wait()
+
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("continue?", int, request_id="r")
+            release_background.set()
+            await asyncio.sleep(0)
+            restored = ctx.get_state("bundle")
+            return restored["items"], restored["lock"] is lock
+
+        paused = await wf.run(1)
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert wf._last_state["bundle"]["items"] == []  # pyright: ignore[reportPrivateUsage]
+        assert wf._last_state["bundle"]["lock"] is lock  # pyright: ignore[reportPrivateUsage]
+
+        resumed = await wf.run(responses={"r": 1})
+        assert resumed.get_outputs() == [([], True)]
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_mutable_dict_key_isolated_with_non_deepcopyable_value(self):
+        import threading
+
+        class MutableKey:
+            def __init__(self) -> None:
+                self.items: list[str] = []
+
+        background_started = asyncio.Event()
+        release_background = asyncio.Event()
+        key = MutableKey()
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> tuple[list[str], bool]:
+            if ctx.get_state("bundle") is None:
+                ctx.set_state("bundle", {key: "value", "lock": lock})
+
+                async def background() -> None:
+                    background_started.set()
+                    await release_background.wait()
+                    key.items.append("leaked")
+
+                asyncio.create_task(background())
+                await background_started.wait()
+
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("continue?", int, request_id="r")
+            release_background.set()
+            await asyncio.sleep(0)
+            restored = ctx.get_state("bundle")
+            restored_key = next(item for item in restored if isinstance(item, MutableKey))
+            return restored_key.items, restored["lock"] is lock
+
+        paused = await wf.run(1)
+        restored_key = next(
+            item
+            for item in wf._last_state["bundle"]  # pyright: ignore[reportPrivateUsage]
+            if isinstance(item, MutableKey)
+        )
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert restored_key is not key
+        assert restored_key.items == []
+
+        resumed = await wf.run(responses={"r": 1})
+        assert resumed.get_outputs() == [([], True)]
+
+    async def test_repeated_key_with_unhashable_copy_preserves_original(self):
+        class HashableBadCopy:
+            def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+                return []
+
+        key = HashableBadCopy()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> bool:
+            if ctx.get_state("bundle") is None:
+                ctx.set_state("bundle", {"items": [key], "mapping": {key: "value"}})
+            answer = await ctx.request_info("continue?", int, request_id="r")
+            assert answer == 1
+            restored = ctx.get_state("bundle")
+            restored_key = next(iter(restored["mapping"]))
+            return restored["items"][0] is restored_key is key
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"r": 1})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == [True]
+
+    async def test_tuple_alias_uses_finalized_hashable_key_snapshot(self):
+        class HashableBadCopy:
+            def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+                return []
+
+        key = HashableBadCopy()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> bool:
+            if ctx.get_state("bundle") is None:
+                ctx.set_state("bundle", {"items": [(key,)], "mapping": {key: "value"}})
+            answer = await ctx.request_info("continue?", int, request_id="r")
+            assert answer == 1
+            restored = ctx.get_state("bundle")
+            restored_key = next(iter(restored["mapping"]))
+            return restored["items"][0][0] is restored_key is key
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"r": 1})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == [True]
+
+    async def test_tuple_alias_revisited_when_later_used_as_state_dict_key(self):
+        class HashableBadCopy:
+            def __deepcopy__(self, memo: dict[int, Any]) -> list[Any]:
+                return []
+
+        key = HashableBadCopy()
+        tuple_key = (key,)
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> bool:
+            if ctx.get_state("items") is None:
+                ctx.set_state("items", [tuple_key])
+                ctx.set_state("mapping", {tuple_key: "value"})
+            answer = await ctx.request_info("continue?", int, request_id="r")
+            assert answer == 1
+            restored_items = ctx.get_state("items")
+            restored_key = next(iter(ctx.get_state("mapping")))
+            return restored_items[0] is restored_key and restored_key[0] is key
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"r": 1})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == [True]
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_mutable_container_subclass_isolated_with_non_deepcopyable_leaf(self):
+        import threading
+
+        class Bundle(dict[str, Any]):
+            lock: Any
+
+        background_started = asyncio.Event()
+        release_background = asyncio.Event()
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> tuple[list[str], bool]:
+            if ctx.get_state("bundle") is None:
+                items: list[str] = []
+                bundle = Bundle(items=items)
+                bundle.lock = lock
+                ctx.set_state("bundle", bundle)
+
+                async def background() -> None:
+                    background_started.set()
+                    await release_background.wait()
+                    items.append("leaked")
+
+                asyncio.create_task(background())
+                await background_started.wait()
+
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("continue?", int, request_id="r")
+            release_background.set()
+            await asyncio.sleep(0)
+            restored = ctx.get_state("bundle")
+            return restored["items"], restored.lock is lock
+
+        paused = await wf.run(1)
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert wf._last_state["bundle"]["items"] == []  # pyright: ignore[reportPrivateUsage]
+
+        resumed = await wf.run(responses={"r": 1})
+        assert resumed.get_outputs() == [([], True)]
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_custom_object_state_isolated_with_non_deepcopyable_leaf(self):
+        import threading
+
+        @dataclass
+        class Bundle:
+            items: list[str]
+            lock: Any
+
+        background_started = asyncio.Event()
+        release_background = asyncio.Event()
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> tuple[list[str], bool]:
+            if ctx.get_state("bundle") is None:
+                items: list[str] = []
+                bundle = Bundle(items=items, lock=lock)
+                ctx.set_state("bundle", bundle)
+
+                async def background() -> None:
+                    background_started.set()
+                    await release_background.wait()
+                    items.append("leaked")
+
+                asyncio.create_task(background())
+                await background_started.wait()
+
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("continue?", int, request_id="r")
+            release_background.set()
+            await asyncio.sleep(0)
+            restored = ctx.get_state("bundle")
+            return restored.items, restored.lock is lock
+
+        paused = await wf.run(1)
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert wf._last_state["bundle"].items == []  # pyright: ignore[reportPrivateUsage]
+
+        resumed = await wf.run(responses={"r": 1})
+        assert resumed.get_outputs() == [([], True)]
+
+    async def test_tuple_cycle_preserved_with_non_deepcopyable_leaf(self):
+        import threading
+
+        lock = threading.Lock()
+
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> tuple[bool, bool]:
+            if ctx.get_state("cycle") is None:
+                cyclic_list: list[Any] = []
+                cyclic_tuple = (cyclic_list, lock)
+                cyclic_list.append(cyclic_tuple)
+                ctx.set_state("cycle", cyclic_tuple)
+            answer = await ctx.request_info("continue?", int, request_id="r")
+            assert answer == 1
+            restored = ctx.get_state("cycle")
+            return restored is restored[0][0], restored[1] is lock
+
+        paused = await wf.run(1)
+        restored = wf._last_state["cycle"]  # pyright: ignore[reportPrivateUsage]
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert restored is restored[0][0]
+        assert restored[1] is lock
+
+        resumed = await wf.run(responses={"r": 1})
+        assert resumed.get_outputs() == [(True, True)]
+
     async def test_pause_owned_task_cannot_mutate_state_after_step_finishes(self):
         sibling_started = asyncio.Event()
         interrupting = asyncio.Event()
@@ -3183,6 +3471,30 @@ class TestHITLInStepWithCaching:
             return list(await asyncio.gather(ask(), fail()))
 
         with pytest.raises(RuntimeError, match="boom"):
+            await wf.run(1)
+
+    async def test_concurrent_user_cancellation_replaces_pause(self):
+        cancel_started = asyncio.Event()
+        interrupting = asyncio.Event()
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await cancel_started.wait()
+            interrupting.set()
+            return await ctx.request_info("y?", int, request_id="y")
+
+        @step(replay_key=lambda: "cancel")
+        async def cancel() -> None:
+            cancel_started.set()
+            await interrupting.wait()
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError("user cancel")
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), cancel()))
+
+        with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
 
     async def test_concurrent_plain_failure_cancels_hanging_sibling(self):

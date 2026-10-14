@@ -429,6 +429,105 @@ def _snapshot_replayed_step_cache_value(value: Any) -> Any:
     raise ValueError("@step result cannot be safely copied for replay.")
 
 
+def _prepare_workflow_state_snapshot(
+    value: Any,
+    memo: dict[int, Any],
+    seen: dict[int, bool],
+    *,
+    hash_required: bool = False,
+) -> None:
+    """Pre-register non-copyable leaves before standard deepcopy."""
+    value_id = id(value)
+    if value_id in memo:
+        if hash_required:
+            try:
+                hash(memo[value_id])
+            except Exception:
+                memo[value_id] = value
+        return
+    previous_requirement = seen.get(value_id)
+    if previous_requirement is True or (previous_requirement is False and not hash_required):
+        return
+    seen[value_id] = hash_required or bool(previous_requirement)
+
+    if isinstance(value, dict):
+        for key, item in cast(dict[Any, Any], value).items():
+            _prepare_workflow_state_snapshot(key, memo, seen, hash_required=True)
+            _prepare_workflow_state_snapshot(item, memo, seen)
+        if type(cast(Any, value)) is dict:
+            return
+
+    if isinstance(value, list):
+        for item in cast(list[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen)
+        if type(cast(Any, value)) is list:
+            return
+
+    if isinstance(value, tuple):
+        for item in cast(tuple[Any, ...], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=hash_required)
+        if type(cast(Any, value)) is tuple:
+            return
+    if isinstance(value, set):
+        for item in cast(set[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=True)
+        if type(cast(Any, value)) is set:
+            return
+    if isinstance(value, frozenset):
+        for item in cast(frozenset[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=True)
+        if type(cast(Any, value)) is frozenset:
+            return
+
+    value_any = cast(Any, value)
+    if getattr(value_any.__class__, "__deepcopy__", None) is None:
+        has_object_state = False
+        object_dict = getattr(cast(Any, value), "__dict__", None)
+        if isinstance(object_dict, dict):
+            has_object_state = True
+            for item in cast(dict[str, Any], object_dict).values():
+                _prepare_workflow_state_snapshot(item, memo, seen)
+
+        for cls in value_any.__class__.__mro__:
+            raw_slots = cls.__dict__.get("__slots__", ())
+            slots = (raw_slots,) if isinstance(raw_slots, str) else raw_slots
+            for raw_slot in slots:
+                if raw_slot in ("__dict__", "__weakref__"):
+                    continue
+                slot = (
+                    f"_{cls.__name__.lstrip('_')}{raw_slot}"
+                    if raw_slot.startswith("__") and not raw_slot.endswith("__")
+                    else raw_slot
+                )
+                try:
+                    item = getattr(cast(Any, value), slot)
+                except AttributeError:
+                    continue
+                has_object_state = True
+                _prepare_workflow_state_snapshot(item, memo, seen)
+
+        if has_object_state:
+            return
+
+    candidate_memo = dict(memo)
+    try:
+        snapshot: Any = deepcopy(value_any, candidate_memo)
+        if hash_required:
+            hash(snapshot)
+    except Exception:
+        memo[value_id] = value
+    else:
+        memo.update(candidate_memo)
+
+
+def _snapshot_workflow_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Snapshot state while retaining only specific non-copyable leaves."""
+    state_dict = dict(state)
+    memo: dict[int, Any] = {}
+    _prepare_workflow_state_snapshot(state_dict, memo, {})
+    return deepcopy(state_dict, memo)
+
+
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
 def get_run_context() -> RunContext | None:
     """Return the active :class:`RunContext`, or ``None`` if not inside a ``@workflow``.
@@ -685,10 +784,7 @@ class RunContext:
                 value = _coerce_request_info_response(value, response_type, rid)
             return value
 
-        try:
-            self._state = deepcopy(self._state)
-        except Exception as exc:
-            raise ValueError("Workflow state could not be snapshotted before request_info interruption.") from exc
+        self._state = _snapshot_workflow_state(self._state)
 
         # No response — emit event and interrupt
         event = WorkflowEvent.request_info(
@@ -919,9 +1015,19 @@ class RunContext:
             for task in settled_tasks:
                 if task in inspected_tasks or not task.done():
                     continue
-                if task is current_task or task is self._root_task or task.cancelled():
+                if task is current_task or task is self._root_task:
                     inspected_tasks.add(task)
                     continue
+                if task.cancelled():
+                    inspected_tasks.add(task)
+                    cancelling = getattr(task, "cancelling", None)
+                    cancelling_count = cast(Callable[[], int], cancelling)() if callable(cancelling) else 0
+                    if (
+                        self._get_new_descendant_interruption(cast(asyncio.Task[Any], task), {}) is not None
+                        or cancelling_count > 0
+                    ):
+                        continue
+                    task.result()
                 if task in self._pause_failure_boundaries:
                     if self._pause_boundary_was_handled(task):
                         inspected_tasks.add(task)
