@@ -165,6 +165,19 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   Shared serialization normalizes stored data; codecs and connector overrides remain trusted Python code
 - **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
+### Compaction (`_compaction.py`)
+
+- **`AgentTriggeredCompactionStrategy`** - Wraps one existing compaction strategy and invokes it only after its
+  explicitly registered trigger tool completes in the latest message group. Trigger consumption is stored on that
+  group rather than on the strategy instance so shared agents remain safe across concurrent runs. The trigger group
+  is temporarily excluded while the inner strategy runs, so it does not consume retention counts, then restored by
+  default; set `exclude_trigger=True` to remove a trigger-only group from the next model call. Mixed groups that
+  contain unrelated tool calls are always restored atomically.
+- **`UnloadSkillsCompactionStrategy`** - Intended as an inner agent-triggered strategy. It supplies an
+  `unload_skill` trigger-tool factory that `AgentTriggeredCompactionStrategy` adopts automatically, then removes
+  complete `load_skill` and `read_skill_resource` groups for one named skill, or all skills when no name is
+  supplied. Mixed tool groups and `run_skill_script` results remain intact.
+
 ### Middleware (`_middleware.py`)
 
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
