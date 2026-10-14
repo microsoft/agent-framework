@@ -71,14 +71,20 @@ def _make_output_item_event(
     item_type: str = "oauth_consent_request",
     consent_link: Any = "https://consent.example.com/auth",
     item_id: str = "oauth-item-1",
+    server_label: str = "Foundry Toolbox",
 ) -> MagicMock:
-    """Create a mock ``response.output_item.added`` event."""
+    """Create a mock ``response.output_item.added`` event.
+
+    OAuth consent items use the Responses wire field ``server_label``. First-class
+    ``server_name`` is the Agent Framework field for function-call content.
+    """
     event = MagicMock()
     event.type = "response.output_item.added"
     item = MagicMock()
     item.type = item_type
     item.consent_link = consent_link
     item.id = item_id
+    item.server_label = server_label
     event.item = item
     return event
 
@@ -87,12 +93,14 @@ def _make_top_level_event(
     *,
     consent_link: Any = "https://consent.example.com/authorize",
     event_id: str = "consent-event-1",
+    server_label: str = "Foundry Toolbox",
 ) -> MagicMock:
     """Create a mock ``response.oauth_consent_requested`` event."""
     event = MagicMock()
     event.type = "response.oauth_consent_requested"
     event.consent_link = consent_link
     event.id = event_id
+    event.server_label = server_label
     return event
 
 
@@ -121,6 +129,8 @@ def test_parses_output_item_added_with_valid_link() -> None:
     consent = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent) == 1
     assert consent[0].consent_link == "https://consent.example.com/auth"
+    assert consent[0].additional_properties["openai"]["server_label"] == "Foundry Toolbox"
+    assert consent[0].additional_properties["server_label"] == "Foundry Toolbox"
 
 
 def test_parses_top_level_consent_requested_event() -> None:
@@ -132,6 +142,7 @@ def test_parses_top_level_consent_requested_event() -> None:
     consent = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent) == 1
     assert consent[0].consent_link == "https://consent.example.com/authorize"
+    assert consent[0].additional_properties["openai"]["server_label"] == "Foundry Toolbox"
 
 
 def test_empty_contents_for_non_https_link(caplog: pytest.LogCaptureFixture) -> None:

@@ -942,7 +942,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if text:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text(text=text, raw_representation=message)],
+                                contents=[
+                                    Content.from_text(
+                                        text=text,
+                                        merge_mode="append",
+                                        raw_representation=message,
+                                    )
+                                ],
                                 raw_representation=message,
                             )
                     elif delta_type == "thinking_delta":
@@ -950,7 +956,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if thinking:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
+                                contents=[
+                                    Content.from_text_reasoning(
+                                        text=thinking,
+                                        merge_mode="append",
+                                        raw_representation=message,
+                                    )
+                                ],
                                 raw_representation=message,
                             )
             elif isinstance(message, AssistantMessage):
@@ -1006,7 +1018,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 )
                 if usage_details or finish_reason:
                     yield AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=message)]
+                        contents=[Content.from_usage(usage_details, merge_mode="replace", raw_representation=message)]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),

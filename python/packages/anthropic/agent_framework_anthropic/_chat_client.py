@@ -1269,14 +1269,21 @@ class RawAnthropicClient(
                 usage_details: list[Content] = []
                 if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
                     usage_details.append(
-                        Content.from_usage(usage_details=self._incremental_usage(details, emitted_usage))
+                        Content.from_usage(
+                            usage_details=self._incremental_usage(details, emitted_usage),
+                            merge_mode="append",
+                        )
                     )
 
                 return ChatResponseUpdate(
                     role="assistant",
                     response_id=event.message.id,
                     contents=[
-                        *self._parse_contents_from_anthropic(event.message.content, request_state=request_state),
+                        *self._parse_contents_from_anthropic(
+                            event.message.content,
+                            request_state=request_state,
+                            streaming=True,
+                        ),
                         *usage_details,
                     ],
                     model=event.message.model,
@@ -1289,6 +1296,7 @@ class RawAnthropicClient(
                     contents=[
                         Content.from_usage(
                             usage_details=self._incremental_usage(usage, emitted_usage),
+                            merge_mode="append",
                             raw_representation=event.usage,
                         )
                     ]
@@ -1300,13 +1308,21 @@ class RawAnthropicClient(
             case "message_stop":
                 logger.debug("Received message_stop event; no content to process.")
             case "content_block_start":
-                contents = self._parse_contents_from_anthropic([event.content_block], request_state=request_state)
+                contents = self._parse_contents_from_anthropic(
+                    [event.content_block],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
                 )
             case "content_block_delta":
-                contents = self._parse_contents_from_anthropic([event.delta], request_state=request_state)
+                contents = self._parse_contents_from_anthropic(
+                    [event.delta],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
@@ -1370,8 +1386,15 @@ class RawAnthropicClient(
         self,
         content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock],
         request_state: _AnthropicRequestState | None = None,
+        *,
+        streaming: bool = False,
     ) -> list[Content]:
-        """Parse contents from the Anthropic message."""
+        """Parse contents from the Anthropic message.
+
+        Anthropic does not supply Agent Framework merge modes. Streaming context selects the
+        type-specific mapping: text and function-call deltas append, while complete streamed
+        code-execution result snapshots replace.
+        """
         request_state = request_state or _AnthropicRequestState()
         contents: list[Content] = []
         for content_block in content:
@@ -1380,6 +1403,7 @@ class RawAnthropicClient(
                     contents.append(
                         Content.from_text(
                             text=content_block.text,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
@@ -1407,6 +1431,7 @@ class RawAnthropicClient(
                                         raw_representation=content_block,
                                     )
                                 ],
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1418,6 +1443,8 @@ class RawAnthropicClient(
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
                                 informational_only=content_block.type == "server_tool_use",
+                                hosted=content_block.type == "server_tool_use",
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1425,7 +1452,11 @@ class RawAnthropicClient(
                     parsed_output: list[Content] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
-                            parsed_output = self._parse_contents_from_anthropic(content_block.content, request_state)
+                            parsed_output = self._parse_contents_from_anthropic(
+                                content_block.content,
+                                request_state,
+                                streaming=streaming,
+                            )
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
                                 Content.from_text(
@@ -1434,7 +1465,11 @@ class RawAnthropicClient(
                                 )
                             ]
                         else:
-                            parsed_output = self._parse_contents_from_anthropic([content_block.content], request_state)
+                            parsed_output = self._parse_contents_from_anthropic(
+                                [content_block.content],
+                                request_state,
+                                streaming=streaming,
+                            )
                     contents.append(
                         Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
@@ -1500,6 +1535,7 @@ class RawAnthropicClient(
                             call_id=content_block.tool_use_id,
                             raw_representation=content_block,
                             outputs=code_outputs,
+                            merge_mode="replace" if streaming else None,
                         )
                     )
                 case "bash_code_execution_tool_result":
@@ -1656,6 +1692,7 @@ class RawAnthropicClient(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1664,6 +1701,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
                             protected_data=getattr(content_block, "signature", None),
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )
@@ -1672,6 +1710,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=None,
                             protected_data=content_block.signature,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )

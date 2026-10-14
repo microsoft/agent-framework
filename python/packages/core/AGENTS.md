@@ -76,6 +76,12 @@ agent_framework/
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
 - **`Content`** - Base class for message content (text, function calls, images, etc.)
+- **Content identity and metadata** - `function_call.id` is Agent Framework occurrence identity; provider item IDs
+  belong in the provider namespace. `function_call.hosted` controls execution ownership, while `server_name` is the
+  descriptive hosted-server boundary and never implies `hosted=True`. Provider metadata uses one-level
+  `additional_properties` namespaces and streamed mergeable content uses `merge_mode`; response updates can use the
+  same field to replace all contents of one logical message; see
+  [spec 005](../../../docs/specs/005-python-content-identity-and-protocol-metadata.md).
 - **Computer use** - `ComputerSafetyCheck` and the `Content.from_computer_tool_call` / `from_computer_tool_result`
   constructors are experimental under `COMPUTER_USE`; the rest of `Content` retains its existing stage. Computer
   results can omit screenshots in core; OpenAI-based connectors require them when converting to Responses items.
