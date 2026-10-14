@@ -61,6 +61,41 @@ def _interrupts_from_finished(event: Any) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], interrupts)
 
 
+class _ChoiceRecorder(Executor):
+    """Pauses on a stable request id and records every response it dispatches."""
+
+    def __init__(self, handled: list[str]) -> None:
+        super().__init__(id="choice_recorder")
+        self._handled = handled
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        del message
+        await ctx.request_info({"message": "Choose an option"}, dict, request_id="choice")
+
+    @response_handler
+    async def handle_choice(
+        self, original_request: dict[str, Any], response: dict[str, Any], ctx: WorkflowContext[Any, str]
+    ) -> None:
+        del original_request
+        self._handled.append(response["selection"])
+        await ctx.yield_output(f"Chose {response['selection']}")
+
+
+def _choice_resume(thread_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "messages": [],
+        "resume": {"interrupts": [{"id": "choice", "value": {"selection": "a"}}]},
+    }
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    return payload
+
+
+def _reported_thread_ids(events: list[Any]) -> list[str]:
+    return [event.thread_id for event in events if event.type == "RUN_STARTED"]
+
+
 async def test_workflow_wrapper_rejects_workflow_and_factory_at_once() -> None:
     """Workflow wrapper should reject ambiguous workflow source configuration."""
 
@@ -139,6 +174,72 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
         },
     )
     assert factory_calls["thread-a"] == 2
+
+
+async def test_workflow_wrapper_omitted_thread_id_binds_live_interrupt_to_reported_id() -> None:
+    """A generated thread id is reported consistently and is the only id that continues the interrupt."""
+    handled: list[str] = []
+    agent = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build())
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"]
+    assert _interrupts_from_finished(first_finished[0])[0]["id"] == "choice"
+    reported = {event.thread_id for event in first_events if event.type in {"RUN_STARTED", "RUN_FINISHED"}}
+    assert len(reported) == 1
+    thread_id = reported.pop()
+
+    for rejected in (_choice_resume(), _choice_resume("other-thread")):
+        events = await _run(agent, rejected)
+        assert [event.code for event in events if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert handled == []
+
+    resumed = await _run(agent, _choice_resume(thread_id))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert _reported_thread_ids(resumed) == [thread_id]
+    assert handled == ["a"]
+
+
+async def test_workflow_wrapper_factory_receives_reported_thread_id_when_omitted() -> None:
+    """Echoing the reported thread id reuses the factory instance that holds the pending interrupt."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first_events = await _run(agent, {"messages": [{"role": "user", "content": "start"}]})
+    reported = _reported_thread_ids(first_events)
+    assert len(reported) == 1
+    assert factory_thread_ids == reported
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
+    assert factory_thread_ids == reported
+
+    await _run(agent, {"messages": [{"role": "user", "content": "start again"}]})
+    assert len(factory_thread_ids) == 2
+    assert factory_thread_ids[1] != reported[0]
+
+
+async def test_workflow_wrapper_treats_empty_thread_ids_as_omitted() -> None:
+    """Empty snake_case and camelCase thread ids resolve to one generated id like an omitted id."""
+    handled: list[str] = []
+    agent = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build())
+
+    first_events = await _run(
+        agent, {"thread_id": "", "threadId": "", "messages": [{"role": "user", "content": "start"}]}
+    )
+    reported = _reported_thread_ids(first_events)
+    assert len(reported) == 1
+    assert reported[0]
+
+    resumed = await _run(agent, _choice_resume(reported[0]))
+    assert "RUN_ERROR" not in [event.type for event in resumed]
+    assert handled == ["a"]
 
 
 async def test_workflow_wrapper_without_workflow_raises_not_implemented() -> None:

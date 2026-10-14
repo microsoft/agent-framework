@@ -667,7 +667,7 @@ class AgentFrameworkWorkflow:
     def _thread_id_from_input(input_data: dict[str, Any]) -> str:
         """Resolve a stable thread id from AG-UI input payload."""
         thread_id = input_data.get("thread_id") or input_data.get("threadId")
-        if thread_id is not None:
+        if thread_id:
             return str(thread_id)
         return str(uuid.uuid4())
 
@@ -744,6 +744,9 @@ class AgentFrameworkWorkflow:
 
         supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
         request_owner = (snapshot_scope, str(supplied_thread_id) if supplied_thread_id is not None else None)
+        # Live interrupts bind to the resolved thread id, including a generated one that RUN_STARTED reports, so a
+        # continuation must echo it. Checkpoint ownership keeps binding only client-supplied ids.
+        live_owner = (snapshot_scope, thread_id)
         resume_interrupt_ids = {
             str(interrupt["id"])
             for interrupt in _normalize_resume_interrupts(resume_payload)
@@ -766,7 +769,7 @@ class AgentFrameworkWorkflow:
         if self.workflow is not None and checkpoint_id is None:
             for request_event in live_pending_events.values():
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
-                if owner != request_owner and (owner is not None or request_owner != (None, None)):
+                if owner != live_owner and (owner is not None or request_owner != (None, None)):
                     yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                     yield RunErrorEvent(
                         message="No pending interrupt found for this AG-UI thread.",
@@ -801,7 +804,7 @@ class AgentFrameworkWorkflow:
             for interrupt_id in resume_interrupt_ids:
                 request_event = live_pending_events.get(interrupt_id)
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
-                if owner != request_owner and (owner is not None or request_owner != (None, None)):
+                if owner != live_owner and (owner is not None or request_owner != (None, None)):
                     yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                     yield RunErrorEvent(
                         message=f"No pending interrupt found for resume interruptId '{interrupt_id}'.",
@@ -880,6 +883,7 @@ class AgentFrameworkWorkflow:
             checkpoint_id=checkpoint_id,
             pending_request_events=effective_pending_events,
             on_conversational_responses=append_conversational_responses,
+            resolved_thread_id=thread_id,
         ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)
@@ -891,7 +895,7 @@ class AgentFrameworkWorkflow:
                 interrupt_id = str(event.tool_call_id)
                 pending_event = (await _pending_request_events(workflow)).get(interrupt_id)
                 if pending_event is not None and getattr(pending_event, _REQUEST_OWNER_ATTRIBUTE, None) is None:
-                    setattr(pending_event, _REQUEST_OWNER_ATTRIBUTE, request_owner)
+                    setattr(pending_event, _REQUEST_OWNER_ATTRIBUTE, live_owner)
             if isinstance(event, RunErrorEvent):
                 run_error_emitted = True
                 if getattr(event, "code", None) == "WORKFLOW_RESUME_CANCELLED":

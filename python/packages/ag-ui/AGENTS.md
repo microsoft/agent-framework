@@ -105,6 +105,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
   or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
   when the application intentionally uses a provider continuation id as its AG-UI Thread id.
+- A workflow run resolves its Thread id once. A generated id for an omitted `threadId` is the id reported in
+  `RUN_STARTED`, keys the `workflow_factory` cache and Thread Snapshot, and owns the run's live `request_info`
+  interrupts, so a continuation must send it back. Checkpoint ownership still binds only client-supplied Thread ids,
+  which keeps legacy unthreaded checkpoint resumes working.
 - A configured Snapshot Scope and the client-owned Thread id are combined into a deterministic internal
   `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
   in different trusted scopes cannot collide in context-provider state. The deprecated

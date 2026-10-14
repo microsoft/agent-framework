@@ -516,13 +516,17 @@ async def test_workflow_endpoint_accepts_canonical_tool_approval_resume() -> Non
 
     pause_response = client.post(
         "/workflow-approval",
-        json={"messages": [{"role": "user", "content": "Refund the order"}]},
+        json={
+            "threadId": "thread-approval",
+            "messages": [{"role": "user", "content": "Refund the order"}],
+        },
     )
     assert pause_response.status_code == 200
 
     resume_response = client.post(
         "/workflow-approval",
         json={
+            "threadId": "thread-approval",
             "messages": [],
             "resume": [{"interruptId": "approval-1", "status": "resolved", "payload": {"approved": True}}],
         },
@@ -1048,13 +1052,17 @@ async def test_workflow_endpoint_applies_canonical_approval_edited_args() -> Non
     client = TestClient(app)
     pause_response = client.post(
         "/workflow-approval",
-        json={"messages": [{"role": "user", "content": "Refund the order"}]},
+        json={
+            "threadId": "thread-approval",
+            "messages": [{"role": "user", "content": "Refund the order"}],
+        },
     )
     assert pause_response.status_code == 200
 
     resume_response = client.post(
         "/workflow-approval",
         json={
+            "threadId": "thread-approval",
             "messages": [],
             "resume": [
                 {
@@ -1115,13 +1123,17 @@ async def test_workflow_endpoint_accepts_legacy_partial_approval_edits() -> None
     client = TestClient(app)
     pause_response = client.post(
         "/workflow-approval",
-        json={"messages": [{"role": "user", "content": "Refund the order"}]},
+        json={
+            "threadId": "thread-approval",
+            "messages": [{"role": "user", "content": "Refund the order"}],
+        },
     )
     assert pause_response.status_code == 200
 
     resume_response = client.post(
         "/workflow-approval",
         json={
+            "threadId": "thread-approval",
             "messages": [],
             "resume": [
                 {
@@ -1179,7 +1191,10 @@ async def test_workflow_endpoint_hosted_approval_rejects_argument_edits() -> Non
     client = TestClient(app)
     pause_response = client.post(
         "/workflow-approval",
-        json={"messages": [{"role": "user", "content": "Refund the order"}]},
+        json={
+            "threadId": "thread-approval",
+            "messages": [{"role": "user", "content": "Refund the order"}],
+        },
     )
 
     assert pause_response.status_code == 200
@@ -1190,6 +1205,7 @@ async def test_workflow_endpoint_hosted_approval_rejects_argument_edits() -> Non
     resume_response = client.post(
         "/workflow-approval",
         json={
+            "threadId": "thread-approval",
             "messages": [],
             "resume": [
                 {
@@ -8528,6 +8544,164 @@ async def test_endpoint_workflow_request_info_rejects_cancellation_from_differen
         assert "Booked United" in text_deltas
 
 
+def _flight_choice_resume(airline: str, *, thread_id: str | None = None, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "runId": f"run-resume-{airline}",
+        "messages": [],
+        "resume": [{"interruptId": "flight-choice", "status": "resolved", "payload": {"airline": airline}}],
+        **extra,
+    }
+    if thread_id is not None:
+        payload["threadId"] = thread_id
+    return payload
+
+
+def _reported_thread_ids(events: list[dict[str, Any]]) -> set[str]:
+    return {event["threadId"] for event in events if event.get("type") in {"RUN_STARTED", "RUN_FINISHED"}}
+
+
+def _assert_resume_not_found(events: list[dict[str, Any]]) -> None:
+    assert [event["code"] for event in events if event.get("type") == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
+    assert not [event for event in events if event.get("type") in {"TEXT_MESSAGE_CONTENT", "TOOL_CALL_START"}]
+
+
+async def test_endpoint_workflow_request_info_omitted_thread_binds_interrupt_to_reported_thread():
+    """A run without threadId reports one generated id, and only that id continues its interrupt."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={"runId": "run-pause", "messages": [{"role": "user", "content": "Book me a flight"}]},
+            )
+        )
+        reported = _reported_thread_ids(pause_events)
+        assert len(reported) == 1
+        thread_id = reported.pop()
+
+        for rejected in (
+            _flight_choice_resume("KLM"),
+            _flight_choice_resume("KLM", thread_id="other-thread"),
+            {"runId": "run-observe", "messages": []},
+        ):
+            _assert_resume_not_found(_decode_sse_events(client.post("/workflow", json=rejected)))
+
+        resume_events = _decode_sse_events(
+            client.post("/workflow", json=_flight_choice_resume("United", thread_id=thread_id))
+        )
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        assert _reported_thread_ids(resume_events) == {thread_id}
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert text_deltas.count("Booked United") == 1
+        assert "Booked KLM" not in text_deltas
+
+
+async def test_endpoint_workflow_request_info_omitted_thread_rejects_cancellation_from_other_omitted_thread():
+    """A caller that also omits threadId cannot cancel another run's pending interrupt."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={"runId": "run-pause", "messages": [{"role": "user", "content": "Book me a flight"}]},
+            )
+        )
+        thread_id = next(iter(_reported_thread_ids(pause_events)))
+
+        cancel_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={
+                    "runId": "run-cancel",
+                    "messages": [],
+                    "resume": [{"interruptId": "flight-choice", "status": "cancelled"}],
+                },
+            )
+        )
+        _assert_resume_not_found(cancel_events)
+
+        resume_events = _decode_sse_events(
+            client.post("/workflow", json=_flight_choice_resume("United", thread_id=thread_id))
+        )
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked United" in text_deltas
+
+
+async def test_endpoint_workflow_request_info_omitted_thread_rejects_resume_from_different_scope():
+    """With a Snapshot Scope, neither an omitted nor the reported thread id lets another scope resume."""
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
+    app = _build_workflow_request_info_app(snapshot_scope_resolver=resolve_scope)
+
+    with TestClient(app) as client:
+        pause_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={
+                    "runId": "run-pause",
+                    "messages": [{"role": "user", "content": "Book me a flight"}],
+                    "forwardedProps": {"tenant": "tenant-a"},
+                },
+            )
+        )
+        thread_id = next(iter(_reported_thread_ids(pause_events)))
+
+        for rejected in (
+            _flight_choice_resume("KLM", forwardedProps={"tenant": "tenant-b"}),
+            _flight_choice_resume("KLM", thread_id=thread_id, forwardedProps={"tenant": "tenant-b"}),
+        ):
+            _assert_resume_not_found(_decode_sse_events(client.post("/workflow", json=rejected)))
+
+        resume_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json=_flight_choice_resume("United", thread_id=thread_id, forwardedProps={"tenant": "tenant-a"}),
+            )
+        )
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked United" in text_deltas
+
+
+async def test_endpoint_workflow_omitted_thread_snapshot_hydrates_by_reported_thread_id():
+    """The Thread Snapshot of a run without threadId is stored under the id its events report."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+
+    with TestClient(app) as client:
+        pause_events = _decode_sse_events(
+            client.post(
+                "/workflow",
+                json={"runId": "run-pause", "messages": [{"role": "user", "content": "Book me a flight"}]},
+            )
+        )
+        thread_id = next(iter(_reported_thread_ids(pause_events)))
+        assert await store.get(scope="tenant-a", thread_id=thread_id) is not None
+
+        hydrate_events = _decode_sse_events(
+            client.post("/workflow", json={"runId": "run-hydrate", "threadId": thread_id, "messages": []})
+        )
+        snapshots = [event for event in hydrate_events if event.get("type") == "MESSAGES_SNAPSHOT"]
+        assert snapshots
+        assert "Book me a flight" in json.dumps(snapshots[-1]["messages"])
+
+
 async def test_endpoint_workflow_request_info_remains_owned_after_client_disconnect():
     """Disconnecting after an interrupt is visible does not release its thread ownership."""
     app = _build_workflow_request_info_app()
@@ -11806,7 +11980,10 @@ async def test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_ap
 
     first_pause = client.post(
         "/workflow-agent-approval",
-        json={"messages": [{"role": "user", "content": "First refund"}]},
+        json={
+            "threadId": "thread-agent-approval",
+            "messages": [{"role": "user", "content": "First refund"}],
+        },
     )
     assert first_pause.status_code == 200
     first_finished = [event for event in _decode_sse_events(first_pause) if event.get("type") == "RUN_FINISHED"]
@@ -11815,6 +11992,7 @@ async def test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_ap
     cancelled = client.post(
         "/workflow-agent-approval",
         json={
+            "threadId": "thread-agent-approval",
             "messages": [],
             "resume": [{"interruptId": "approval-1", "status": "cancelled"}],
         },
@@ -11824,7 +12002,10 @@ async def test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_ap
     agent.updates = [approval_update("approval-2", "refund-call-2")]
     second_pause = client.post(
         "/workflow-agent-approval",
-        json={"messages": [{"role": "user", "content": "Second refund"}]},
+        json={
+            "threadId": "thread-agent-approval",
+            "messages": [{"role": "user", "content": "Second refund"}],
+        },
     )
     assert second_pause.status_code == 200
     second_finished = [event for event in _decode_sse_events(second_pause) if event.get("type") == "RUN_FINISHED"]
@@ -11836,6 +12017,7 @@ async def test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_ap
     resumed = client.post(
         "/workflow-agent-approval",
         json={
+            "threadId": "thread-agent-approval",
             "messages": [],
             "resume": [{"interruptId": "approval-2", "status": "resolved", "payload": {"approved": True}}],
         },

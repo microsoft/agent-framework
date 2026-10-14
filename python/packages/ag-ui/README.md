@@ -487,6 +487,10 @@ AG-UI events and snapshot operations. When using `AgentFrameworkWorkflow(workflo
 also scopes the in-memory workflow cache even without a snapshot store; provide it in multi-user deployments so two
 users who submit the same `threadId` do not share a live `Workflow` instance.
 
+A workflow request that omits `threadId` is assigned a generated Thread id. It is reported in `RUN_STARTED`, keys the
+`workflow_factory` instance and Thread Snapshot, and owns that run's pending `request_info` interrupts. Send it back as
+`threadId` to continue the run; a continuation that omits it receives `WORKFLOW_RESUME_NOT_FOUND`.
+
 Authenticate and authorize the current scope on every request, including hydration and approval resume, rather than
 trusting a scope supplied through Shared State or forwarded properties. A configured resolver must return a non-empty
 string. Returning `None`, an empty string, or another type fails the request with a generic HTTP 500 configuration
