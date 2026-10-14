@@ -3861,18 +3861,54 @@ def test_parse_result_pydantic_model_with_arbitrary_type():
     assert json.loads(parsed[0].text) == {"handle": "handle-1", "created": "2024-01-01T12:00:00", "token": "***"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
-def test_parse_result_pydantic_model_with_non_utf8_bytes_keeps_excluded_fields_out():
-    """Bytes that JSON mode cannot encode don't fail the whole result, and excluded fields stay out."""
-    from pydantic import Field
+def test_parse_result_pydantic_model_with_non_utf8_bytes_falls_back_per_field():
+    """Only the bytes fall back; JSON-only serializers still run and excluded fields stay out."""
+    from pydantic import Field, field_serializer
 
     class Result(BaseModel):
         data: bytes
+        created: datetime
+        token: str
         api_key: str = Field(exclude=True)
 
-    parsed = FunctionTool.parse_result(Result(data=b"\xff\xfe", api_key="secret"))
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
 
-    assert "secret" not in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-    assert set(json.loads(parsed[0].text)) == {"data"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    result = Result(data=b"\xff\xfe", created=datetime(2024, 1, 1, 12), token="secret", api_key="key")
+    parsed = FunctionTool.parse_result(result)
+
+    assert json.loads(parsed[0].text) == {  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        "data": str(b"\xff\xfe"),
+        "created": "2024-01-01T12:00:00",
+        "token": "***",
+    }
+
+
+def test_parse_result_nested_pydantic_model_with_non_utf8_bytes():
+    """A nested model with bytes JSON mode cannot encode keeps its JSON-only serializers."""
+    from pydantic import field_serializer
+
+    class Inner(BaseModel):
+        data: bytes
+        token: str
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
+
+    class Outer(BaseModel):
+        inner: Inner
+        created: datetime
+
+    parsed = FunctionTool.parse_result(
+        Outer(inner=Inner(data=b"\xff\xfe", token="secret"), created=datetime(2024, 1, 1, 12))
+    )
+
+    assert json.loads(parsed[0].text) == {  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        "inner": {"data": str(b"\xff\xfe"), "token": "***"},
+        "created": "2024-01-01T12:00:00",
+    }
 
 
 # region FunctionTool.parse_result with MCP TextContent-like objects
