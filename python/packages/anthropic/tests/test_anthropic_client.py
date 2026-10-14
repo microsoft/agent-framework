@@ -1869,6 +1869,7 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].informational_only is True
+    assert result[0].hosted is True
     assert request_state.active_call_content_type == "server_tool_use"
 
     # input_json_delta events after server_tool_use must be silently ignored
@@ -1905,6 +1906,20 @@ def test_process_stream_event_simple(mock_anthropic_client: MagicMock) -> None:
 
     # message_stop events return None
     assert result is None
+
+
+def test_streaming_content_uses_explicit_append_mode(mock_anthropic_client: MagicMock) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    text_delta = MagicMock()
+    text_delta.type = "text_delta"
+    text_delta.text = "hello"
+    text_delta.citations = None
+
+    contents = client._parse_contents_from_anthropic([text_delta], streaming=True)
+
+    assert len(contents) == 1
+    assert contents[0].type == "text"
+    assert contents[0].merge_mode == "append"
 
 
 async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
@@ -2727,6 +2742,9 @@ def test_streaming_usage_not_double_counted(mock_anthropic_client: MagicMock) ->
 
     response = ChatResponse.from_updates(updates)
 
+    assert all(
+        content.merge_mode == "append" for update in updates for content in update.contents if content.type == "usage"
+    )
     assert response.usage_details is not None
     assert response.usage_details["output_token_count"] == 25
     assert response.usage_details["input_token_count"] == 10

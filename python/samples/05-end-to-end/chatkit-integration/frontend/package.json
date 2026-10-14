@@ -13,13 +13,13 @@
         "npm": ">=9"
     },
     "dependencies": {
-        "@openai/chatkit-react": "^0",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0"
+        "@openai/chatkit-react": "^1.6.1",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0"
     },
     "devDependencies": {
-        "@types/react": "^19.2.0",
-        "@types/react-dom": "^19.2.0",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react-swc": "^4.3.1",
         "typescript": "^7.0.2",
         "vite": "^8.3.2"

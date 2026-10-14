@@ -641,10 +641,10 @@ class AgentExecutor(Executor):
         ):
             cancellation_result = Content.from_function_result(
                 call_id=cancelled_request.call_id,
+                id=cancelled_request.id,
                 result="Error: Tool call was cancelled.",
                 additional_properties={"cancelled": True},
             )
-            cancellation_result.id = cancelled_request.id
             self._queue_pending_response(request_id, cancellation_result)
         elif cancelled_request is not None and cancelled_request.type == "computer_tool_call":
             self._queue_pending_response(

@@ -1013,11 +1013,9 @@ def _serialize_content(content: Content) -> dict[str, Any]:
     else:
         payload.pop("protected_data", None)
     additional_properties = payload.get("additional_properties")
-    if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
-        typed_properties = cast("dict[str, Any]", additional_properties)
-        payload["additional_properties"] = {
-            key: value for key, value in typed_properties.items() if key != "encrypted_content"
-        }
+    if isinstance(additional_properties, dict) and additional_properties:
+        filtered_properties = _strip_opaque_reasoning_payload(additional_properties)
+        payload["additional_properties"] = filtered_properties or {}
     return payload
 
 

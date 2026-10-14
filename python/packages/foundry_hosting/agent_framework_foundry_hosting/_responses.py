@@ -48,6 +48,7 @@ from agent_framework import (
     Workflow,
     WorkflowAgent,
     add_usage_details,
+    get_namespaced_value,
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
@@ -227,7 +228,33 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
+
+
+def _openai_value(content: Content, key: str, *legacy_keys: str, default: Any = None) -> Any:
+    value = get_namespaced_value(content.additional_properties, "openai", key, None)
+    if value is not None:
+        return value
+    for legacy_key in legacy_keys:
+        if legacy_key in content.additional_properties:
+            return content.additional_properties[legacy_key]
+    return default
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -2380,6 +2407,21 @@ class _OutputItemTracker:
             return
         self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
+    def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        """Update the authoritative text buffer and return the wire delta still needed."""
+        if merge_mode != "replace":
+            self._accumulated.append(text)
+            return text
+
+        previous = "".join(self._accumulated)
+        if text.startswith(previous):
+            self._accumulated[:] = [text]
+            return text[len(previous) :]
+        if not previous:
+            self._accumulated[:] = [text]
+            return text
+        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+
     async def handle_update(
         self,
         update: AgentResponseUpdate,
@@ -2418,17 +2460,17 @@ class _OutputItemTracker:
             for event in self._ensure_message_content("refusal", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._refusal_content is not None:
-                yield self._refusal_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
             for event in self._ensure_message_content("text", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._text_content is not None:
-                yield self._text_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._text_content is not None:
+                yield self._text_content.emit_delta(delta)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -2439,9 +2481,9 @@ class _OutputItemTracker:
             if encrypted_content := _reasoning_encrypted_content(content):
                 self._reasoning_encrypted_content = encrypted_content
             if content.text:
-                self._accumulated.append(content.text)
-                if self._summary_part is not None:
-                    yield self._summary_part.emit_text_delta(content.text)
+                delta = self._consume_text_update(content.text, content.merge_mode)
+                if delta and self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(delta)
 
         elif content.type == "function_call" and content.call_id is not None:
             # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
@@ -2606,7 +2648,7 @@ class _OutputItemTracker:
                 pending_safety_checks=cast(list[ComputerCallSafetyCheckParam], content.pending_safety_checks or []),
                 status=status,
             )
-            if content.additional_properties.get("computer_action_format") == "single":
+            if _openai_value(content, "computer_action_format", "computer_action_format") == "single":
                 if len(content.actions) != 1:
                     raise ValueError("A preview computer call requires exactly one action.")
                 item.pop("actions")
@@ -2648,7 +2690,7 @@ class _OutputItemTracker:
             for event in self._close():
                 yield event
             function_call: Content = content.function_call  # type: ignore
-            server_label = function_call.additional_properties.get("server_label", "agent_framework")
+            server_label = function_call.server_name or "agent_framework"
             request_saved = False
             async for event in self._stream.output_item_mcp_approval_request(
                 server_label,
@@ -2683,7 +2725,12 @@ class _OutputItemTracker:
             if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
                 raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
-            server_label = content.additional_properties.get("server_label")
+            server_label = get_namespaced_value(
+                content.additional_properties,
+                "openai",
+                "server_label",
+                content.additional_properties.get("server_label"),
+            )
             if not isinstance(server_label, str) or not server_label:
                 server_label = getattr(content.raw_representation, "server_label", None)
             if not isinstance(server_label, str) or not server_label:
@@ -3051,13 +3098,24 @@ def _computer_screenshot_from_output(output: Mapping[str, Any]) -> Content:
         raise ValueError("Computer call output must contain a computer screenshot.")
     image_url = output.get("image_url")
     file_id = output.get("file_id")
-    additional_properties: dict[str, Any] = {}
+    openai_properties: dict[str, Any] = {}
+    legacy_properties: dict[str, Any] = {}
     if detail := output.get("detail"):
-        additional_properties["detail"] = detail
+        openai_properties["image_detail"] = detail
+        legacy_properties["detail"] = detail
+    additional_properties = {
+        "openai": openai_properties,
+        **legacy_properties,
+    }
     if isinstance(image_url, str) and image_url:
-        if file_id is not None:
-            additional_properties["file_id"] = file_id
-        return Content.from_uri(image_url, additional_properties=additional_properties)
+        return Content.from_uri(
+            image_url,
+            file_id=file_id if isinstance(file_id, str) else None,
+            additional_properties={
+                **additional_properties,
+                **({"file_id": file_id} if isinstance(file_id, str) else {}),
+            },
+        )
     if isinstance(file_id, str) and file_id:
         return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     raise ValueError("Computer screenshot is missing its image URL or file ID.")
@@ -3067,13 +3125,13 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     output: dict[str, Any] = {"type": "computer_screenshot"}
     if screenshot.type in ("data", "uri") and screenshot.uri:
         output["image_url"] = screenshot.uri
-        if file_id := screenshot.additional_properties.get("file_id"):
+        if file_id := screenshot.file_id or screenshot.additional_properties.get("file_id"):
             output["file_id"] = file_id
     elif screenshot.type == "hosted_file" and screenshot.file_id:
         output["file_id"] = screenshot.file_id
     else:
         raise ValueError("A computer screenshot requires image data, a URI, or a hosted file.")
-    if detail := screenshot.additional_properties.get("detail"):
+    if detail := _openai_value(screenshot, "image_detail", "detail"):
         output["detail"] = detail
     return output
 
@@ -3118,6 +3176,14 @@ async def _item_to_message(
         return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
 
     if item["type"] == "function_call":
+        item_data = cast("Mapping[str, Any]", item)
+        item_id = item_data.get("id")
+        status = item_data.get("status")
+        additional_properties: dict[str, Any] = {}
+        if isinstance(item_id, str):
+            additional_properties.update({"openai": {"item_id": item_id}, "fc_id": item_id})
+        if status is not None:
+            additional_properties["status"] = status
         return Message(
             role="assistant",
             contents=[
@@ -3125,6 +3191,8 @@ async def _item_to_message(
                     item["call_id"],
                     item["name"],
                     arguments=item["arguments"],
+                    status=status if isinstance(status, str) else None,
+                    additional_properties=additional_properties,
                 )
             ],
         )
@@ -3133,9 +3201,25 @@ async def _item_to_message(
         call_id = item.get("call_id")
         if call_id is None:
             raise ValueError("Function call output item is missing a call_id.")
+        item_id = item.get("id")
+        result_additional_properties = (
+            {
+                "openai": {"item_id": item_id},
+                "item_id": item_id,
+            }
+            if isinstance(item_id, str) and item_id
+            else None
+        )
         return Message(
             role="tool",
-            contents=[Content.from_function_result(call_id, result=_json_safe_to_str(item["output"]))],
+            contents=[
+                Content.from_function_result(
+                    call_id,
+                    result=_json_safe_to_str(item["output"]),
+                    status=item.get("status"),
+                    additional_properties=result_additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "reasoning":
@@ -3252,6 +3336,7 @@ async def _item_to_message(
                     "file_search",
                     arguments=_json_safe_to_str({"queries": item["queries"]}),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3259,7 +3344,7 @@ async def _item_to_message(
     if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True, hosted=True)],
         )
 
     if item["type"] == "computer_call":
@@ -3268,7 +3353,14 @@ async def _item_to_message(
         actions = plural_actions or ([singular_action] if singular_action is not None else [])
         if not actions:
             raise ValueError("Computer call is missing its ordered actions.")
-        props = {"computer_action_format": "single"} if not plural_actions and singular_action is not None else None
+        props = (
+            {
+                "openai": {"computer_action_format": "single"},
+                "computer_action_format": "single",
+            }
+            if not plural_actions and singular_action is not None
+            else None
+        )
         return Message(
             role="assistant",
             contents=[
@@ -3306,6 +3398,7 @@ async def _item_to_message(
                     item["name"],
                     arguments=item["input"],
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3338,6 +3431,7 @@ async def _item_to_message(
                     "apply_patch",
                     arguments=_json_safe_to_str(item["operation"]),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3389,9 +3483,24 @@ async def _output_item_to_message(
         ValueError: If the OutputItem type is not supported.
     """
     if item["type"] == "oauth_consent_request":
+        item_data = cast("Mapping[str, Any]", item)
+        server_label = item_data.get("server_label")
+        additional_properties = (
+            {
+                "openai": {"server_label": server_label},
+                "server_label": server_label,
+            }
+            if isinstance(server_label, str) and server_label
+            else None
+        )
         return Message(
             role="assistant",
-            contents=[Content.from_oauth_consent_request(item["consent_link"])],
+            contents=[
+                Content.from_oauth_consent_request(
+                    item["consent_link"],
+                    additional_properties=additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "structured_outputs":
@@ -3421,7 +3530,7 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
@@ -3450,8 +3559,19 @@ def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
             else:
                 prefix = f"[File: {filename}]\n" if filename else ""
                 return Content.from_text(f"{prefix}{decoded_text}")
-    additional_properties = {"filename": filename} if filename else None
-    return Content.from_uri(data_uri, additional_properties=additional_properties)
+    additional_properties = (
+        {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            "filename": filename,
+        }
+        if filename
+        else {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+        }
+    )
+    return Content.from_uri(data_uri, name=filename, additional_properties=additional_properties)
 
 
 def _convert_message_content(content: MessageContent) -> Content:
@@ -3477,22 +3597,45 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":
+        detail = content.get("detail")
+        additional_properties = {
+            "openai": {
+                "content_type": "input_image",
+                **({"image_detail": detail} if isinstance(detail, str) else {}),
+            },
+            "openai_content_type": "input_image",
+            **({"detail": detail} if isinstance(detail, str) else {}),
+        }
         if image_url := content.get("image_url"):
             if image_url.startswith("data:"):
-                return Content.from_uri(image_url)
-            return Content.from_uri(image_url, media_type="image/*")
+                return Content.from_uri(image_url, additional_properties=additional_properties)
+            return Content.from_uri(image_url, media_type="image/*", additional_properties=additional_properties)
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id)
+            return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     if content["type"] == "input_file":
+        filename = content.get("filename")
+        additional_properties = {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            **({"filename": filename} if isinstance(filename, str) else {}),
+        }
         if file_url := content.get("file_url"):
-            return Content.from_uri(file_url)
+            return Content.from_uri(
+                file_url,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id, name=content.get("filename"))
+            return Content.from_hosted_file(
+                file_id,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_data := content.get("file_data"):
             return _convert_file_data(file_data, content.get("filename"))
     if content["type"] == "computer_screenshot":

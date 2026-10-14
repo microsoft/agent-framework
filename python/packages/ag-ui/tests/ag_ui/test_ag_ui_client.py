@@ -1239,8 +1239,8 @@ class TestAGUIChatClient:
 
         assert response is not None
 
-    async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch: MonkeyPatch) -> None:
-        """Ensure server-side tool calls are exposed as FunctionCallContent after processing."""
+    async def test_server_tool_calls_are_marked_hosted(self, monkeypatch: MonkeyPatch) -> None:
+        """Ensure server-side tool calls remain function calls and are not locally actionable."""
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -1267,6 +1267,7 @@ class TestAGUIChatClient:
         ]
         assert function_calls
         assert function_calls[0].name == "get_time_zone"
+        assert function_calls[0].hosted is True
 
         assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
 
@@ -1344,15 +1345,6 @@ class TestAGUIChatClient:
         result_messages, state = client.extract_state_from_messages([])
         assert result_messages == []
         assert state is None
-
-    async def test_register_server_tool_non_dict_config(self) -> None:
-        """Non-dict function_invocation_configuration is a no-op."""
-        client = StubAGUIChatClient(
-            endpoint="http://localhost:8888/",
-            function_invocation_configuration=None,  # type: ignore[arg-type]
-        )
-        # Should not raise
-        client._register_server_tool_placeholder("some_tool")
 
     async def test_non_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
         """Non-streaming path collects updates into ChatResponse."""
