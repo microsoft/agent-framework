@@ -29,21 +29,25 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    ToolApprovalState,
 )
 from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    _TOOL_APPROVAL_STATE_FIELDS,
     _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
+    _carries_tool_approval_authority,
     _create_state_context_message,
     _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _normalize_response_stream,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    _tool_approval_state_keys,
     run_agent_stream,
 )
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -3758,6 +3762,53 @@ async def test_reserved_service_session_keys_protected_without_agent_declaration
     ]
 
     assert observed_state == [{"client_value": "available"}]
+
+
+def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
+    """Any non-empty approval list is authority whatever its item encoding; inert shapes are not."""
+    authority_states: list[Any] = [
+        {"rules": [{"tool_name": "gated_tool"}]},
+        {"rules": [[["tool_name", "gated_tool"]]]},
+        {"rules": ["not-a-rule"]},
+        {"rules": [], "queued_approval_requests": [{}]},
+        {"queued_approval_requests": [{}]},
+        {"collected_approval_responses": [{}]},
+    ]
+    inert_states: list[Any] = [
+        None,
+        "text",
+        1,
+        [],
+        {},
+        {"rules": []},
+        {"rules": None},
+        {"rules": {"tool_name": "gated_tool"}},
+        {"rules": "gated_tool"},
+        {"unrelated": [1]},
+    ]
+
+    for authority in authority_states:
+        assert _carries_tool_approval_authority(authority), authority
+    for inert in inert_states:
+        assert not _carries_tool_approval_authority(inert), inert
+
+
+def test_tool_approval_state_keys_find_server_state_whatever_the_source_id() -> None:
+    """Server-held approval state is recognized by its fields, so any ``source_id`` is protected once it exists."""
+    session_state = {
+        "custom_approvals": {"rules": []},
+        "queued_only": {"queued_approval_requests": []},
+        "document": {"title": "synthetic"},
+        "text": "value",
+        "empty": {},
+    }
+
+    assert _tool_approval_state_keys(session_state) == {"custom_approvals", "queued_only"}
+
+
+def test_tool_approval_state_fields_match_tool_approval_state() -> None:
+    """The literal field names guarding client state track ``ToolApprovalState``, so a new field cannot slip by."""
+    assert set(_TOOL_APPROVAL_STATE_FIELDS) == set(ToolApprovalState().to_dict(exclude={"type"}))
 
 
 async def test_request_state_cannot_assign_service_session_id():

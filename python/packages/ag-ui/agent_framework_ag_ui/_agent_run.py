@@ -2570,7 +2570,11 @@ def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) 
 
 
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
-    """Return session-state namespaces that client Shared State cannot own."""
+    """Return session-state namespaces that client Shared State cannot own.
+
+    Names come from optional attributes of ``agent``, which a wrapper may hide, so ``run_agent_stream`` also protects
+    tool approval state by shape; see :func:`_carries_tool_approval_authority`.
+    """
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
     agent_middleware = categorize_middleware(getattr(agent, "middleware", None))["agent"]
     return {
@@ -2581,6 +2585,35 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
         *_provider_service_session_state_keys(agent),
         *(middleware.source_id for middleware in agent_middleware if isinstance(middleware, ToolApprovalMiddleware)),
     }
+
+
+# Field names ToolApprovalMiddleware reads from ``session.state[source_id]`` (``ToolApprovalState``). They are spelled
+# literally so this check does not depend on the installed core version; a test pins them to ``ToolApprovalState``.
+_TOOL_APPROVAL_STATE_FIELDS: tuple[str, ...] = ("rules", "queued_approval_requests", "collected_approval_responses")
+
+
+def _tool_approval_state_keys(session_state: Mapping[str, Any]) -> set[str]:
+    """Return trusted session-state keys holding ToolApprovalMiddleware state, whatever ``source_id`` named them."""
+    return {
+        key
+        for key, value in session_state.items()
+        if isinstance(value, Mapping)
+        and any(field in cast(Mapping[str, Any], value) for field in _TOOL_APPROVAL_STATE_FIELDS)
+    }
+
+
+def _carries_tool_approval_authority(value: Any) -> bool:
+    """Return whether client state would give ToolApprovalMiddleware approvals the server never recorded.
+
+    ``ToolApprovalMiddleware`` names its state with an application-chosen ``source_id``, so approval authority is
+    recognized by shape rather than by name. Any non-empty approval list counts whatever its item encoding, because
+    ``ToolApprovalState`` loads more than JSON objects (for example key/value pair lists), so matching the item
+    shape would leave gaps.
+    """
+    if not isinstance(value, Mapping):
+        return False
+    state = cast(Mapping[str, Any], value)
+    return any(isinstance(state.get(field), list) and bool(state[field]) for field in _TOOL_APPROVAL_STATE_FIELDS)
 
 
 def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:
@@ -3192,7 +3225,24 @@ async def _run_agent_stream(
         restore_service_session_id=config.use_service_session,
         excluded_state_keys=set() if config.use_service_session else _provider_service_session_state_keys(agent),
     )
-    protected_session_state_keys = _request_state_protected_keys(agent)
+    # A wrapper can hide ToolApprovalMiddleware from the agent AG-UI was handed, so its application-chosen source_id
+    # may be unknown here. Approval authority is therefore also protected by shape: namespaces the server already
+    # holds, and client values that would supply approvals.
+    named_protected_keys = _request_state_protected_keys(agent)
+    authority_state_keys = {key for key, value in flow.current_state.items() if _carries_tool_approval_authority(value)}
+    protected_session_state_keys = {
+        *named_protected_keys,
+        *_tool_approval_state_keys(session.state),
+        *authority_state_keys,
+    }
+    if ignored_authority_keys := authority_state_keys.difference(named_protected_keys):
+        shown_keys = sorted(ignored_authority_keys)[:5]
+        omitted = len(ignored_authority_keys) - len(shown_keys)
+        logger.warning(
+            "Ignoring client Shared State %s%s: it carries tool approval authority, which is server-owned.",
+            ", ".join(repr(key[:120]) for key in shown_keys),
+            f" and {omitted} more" if omitted else "",
+        )
     session.state.update(
         {
             key: copy.deepcopy(value)
