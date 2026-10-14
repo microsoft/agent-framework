@@ -8,17 +8,17 @@ documentation and package metadata before adding dependencies or promising featu
 
 ## Python version compatibility
 
-Agent Framework supports Python 3.10 through 3.15. Python 3.10 remains supported and tested for the current release but
-is deprecated because upstream Python 3.10 has reached end of life. New environments should use Python 3.11 or later.
+Agent Framework supports Python 3.11 through 3.15. Build new environments with the latest supported Python release, or
+at least the previous release (N-1), unless a required integration has a narrower compatibility range.
 
-Python 3.15 supports the core framework and most integrations, with these current limitations:
+Python 3.14 and 3.15 support the core framework, with these current integration limitations:
 
-| Area | Python 3.15 limitation |
-| --- | --- |
-| Declarative Power Fx | `agent-framework-declarative` installs without its `powerfx` dependency. Expressions beginning with `=` are not evaluated. |
-| Redis | `agent-framework-redis` is unavailable because RedisVL requires Python earlier than 3.15. |
-| Hyperlight | `agent-framework-hyperlight` is unavailable until a compatible sandbox backend wheel is published. |
-| AG-UI A2UI | Base `agent-framework-ag-ui` works, but its optional `a2ui` extra is unavailable because the toolkit requires Python earlier than 3.15. |
+| Area | Affected versions | Limitation |
+| --- | --- | --- |
+| Declarative Power Fx | Python 3.14-3.15 | `agent-framework-declarative` installs without its `powerfx` dependency. Expressions beginning with `=` are not evaluated. |
+| Redis | Python 3.15 | `agent-framework-redis` is unavailable because RedisVL requires Python earlier than 3.15. |
+| Hyperlight | Python 3.15 | `agent-framework-hyperlight` is unavailable until a compatible sandbox backend wheel is published. |
+| AG-UI A2UI | Python 3.15 | Base `agent-framework-ag-ui` works, but its optional `a2ui` extra is unavailable because the toolkit requires Python earlier than 3.15. |
 
 Check each selected distribution's `Requires-Python` metadata instead of assuming every integration supports the full
 framework range.

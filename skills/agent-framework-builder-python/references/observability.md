@@ -6,7 +6,14 @@ token use. Observability provides runtime evidence; it does not define whether a
 ## OpenTelemetry configuration
 
 Agent Framework instrumentation is enabled by default, but the application must configure OpenTelemetry providers and
-exporters. The helper below configures them from arguments and standard environment variables:
+exporters. Narrow Agent Framework installations include `opentelemetry-api` but not the SDK. Install
+`opentelemetry-sdk` and the exporter package required by the application's telemetry backend before using the helper:
+
+```bash
+python -m pip install opentelemetry-sdk opentelemetry-exporter-otlp
+```
+
+The helper configures providers from arguments and standard environment variables:
 
 ```python
 from agent_framework.observability import configure_otel_providers
