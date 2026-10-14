@@ -2201,6 +2201,13 @@ class FunctionalWorkflow:
                 result = workflow_task.result()
             except BaseException as exc:
                 interruption, remaining = _split_workflow_interruption(exc)
+                if (
+                    interruption is None
+                    and isinstance(exc, asyncio.CancelledError)
+                    and ctx._workflow_interruption is not None
+                ):
+                    await ctx._settle_workflow_tasks(propagate_failures=True)
+                    raise ctx._workflow_interruption from None
                 if interruption is None:
                     await ctx._cancel_workflow_tasks()
                     raise

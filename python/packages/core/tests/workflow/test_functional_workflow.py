@@ -3426,6 +3426,24 @@ class TestHITLInStepWithCaching:
         with pytest.raises(RuntimeError, match="boom"):
             await wf.run(1)
 
+    @pytest.mark.parametrize("wrapper", ["wait_for", "shield"])
+    async def test_wrapped_request_info_pauses_and_resumes(self, wrapper: str):
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            return await ctx.request_info("y?", int, request_id="y")
+
+        @built_workflow
+        async def wf(_: int) -> int:
+            if wrapper == "wait_for":
+                return await asyncio.wait_for(ask(), timeout=10)
+            return await asyncio.shield(ask())
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"y": 5})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == [5]
+
     async def test_concurrent_unhandled_step_failure_replaces_pause(self):
         ask_started = asyncio.Event()
         fail_started = asyncio.Event()
