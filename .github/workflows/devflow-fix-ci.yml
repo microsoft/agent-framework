@@ -148,7 +148,7 @@ jobs:
       - if: ${{ steps.team.outputs.permitted == 'true' }}
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: '0.11.x'
+          version: '0.13.1'
           enable-cache: false
       - name: Install trusted controller dependencies
         if: ${{ steps.team.outputs.permitted == 'true' }}
@@ -231,7 +231,7 @@ jobs:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: '0.11.x'
+          version: '0.13.1'
           enable-cache: false
       - name: Install trusted controller dependencies
         run: uv sync --frozen --directory "$DEVFLOW_PATH"
@@ -407,7 +407,7 @@ jobs:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          version: '0.11.x'
+          version: '0.13.1'
           enable-cache: false
       - name: Install trusted controller dependencies
         run: uv sync --frozen --directory "$DEVFLOW_PATH"

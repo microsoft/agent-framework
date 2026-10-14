@@ -34,7 +34,8 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: false
-          version: "0.13.1"
+          version-file: "python/pyproject.toml"
+          python-version: "3.13"
 
       - name: Compare public API with the PR base
         working-directory: ${{ runner.temp }}
