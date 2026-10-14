@@ -1201,7 +1201,7 @@ class MCPTool:
             return ""
         if len(parts) == 1:
             return parts[0]
-        return json.dumps(parts, default=str)
+        return json.dumps(parts, default=str, ensure_ascii=False)
 
     def _parse_message_from_mcp(
         self,
