@@ -269,6 +269,66 @@ public class ChatHistoryMemoryProviderTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task InvokedAsync_WhenCallerCancels_PropagatesCancellationAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), cts.Token))
+            .Callback(() => cts.Cancel())
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            loggerFactory: this._loggerFactoryMock.Object);
+        var requestMsg = new ChatMessage(ChatRole.User, "request text");
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsg], []);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.InvokedAsync(invokedContext, cts.Token).AsTask());
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        this._vectorStoreCollectionMock.Verify(
+            c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), cts.Token),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_WhenProviderCancelsWithoutCallerCancellation_DoesNotThrowAsync()
+    {
+        // Arrange
+        this._vectorStoreCollectionMock
+            .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("Provider cancelled"));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            loggerFactory: this._loggerFactoryMock.Object);
+        var requestMsg = new ChatMessage(ChatRole.User, "request text");
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, new TestAgentSession(), [requestMsg], []);
+
+        // Act
+        await provider.InvokedAsync(invokedContext, CancellationToken.None);
+
+        // Assert
+        this._loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
     [Theory]
     [InlineData(false, false, false, 0)]
     [InlineData(false, false, true, 0)]
@@ -791,6 +851,87 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal("External message", stored[0]["Content"]);
         Assert.Equal("From history", stored[1]["Content"]);
         Assert.Equal("Response", stored[2]["Content"]);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WhenCallerCancels_PropagatesCancellationAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                cts.Token))
+            .Callback(() => cts.Cancel())
+            .Throws(new OperationCanceledException(cts.Token));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            },
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = [new ChatMessage(ChatRole.User, "What was discussed?")] });
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.InvokingAsync(invokingContext, cts.Token).AsTask());
+        Assert.Equal(cts.Token, exception.CancellationToken);
+        this._vectorStoreCollectionMock.Verify(
+            c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                cts.Token),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_WhenProviderCancelsWithoutCallerCancellation_DoesNotThrowAsync()
+    {
+        // Arrange
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Throws(new OperationCanceledException("Provider cancelled"));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            },
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = [new ChatMessage(ChatRole.User, "What was discussed?")] });
+
+        // Act
+        var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(aiContext.Messages);
+        Assert.Single(aiContext.Messages);
+        Assert.Equal("What was discussed?", aiContext.Messages.Single().Text);
     }
 
     #endregion

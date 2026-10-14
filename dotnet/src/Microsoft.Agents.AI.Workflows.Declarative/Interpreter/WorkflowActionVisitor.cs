@@ -519,11 +519,12 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         // Capture response when external input is received
         string resumeId = InvokeMcpToolExecutor.Steps.Resume(action.Id);
-        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync), action.ParentId);
+        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync, emitResult: false), action.ParentId);
         this._workflowModel.AddLink(externalInputPortId, resumeId);
 
-        // After resume, transition to post action
-        this._workflowModel.AddLink(resumeId, postId);
+        // After resume, either request approval again or transition to post action.
+        this._workflowModel.AddLink(resumeId, externalInputPortId, InvokeMcpToolExecutor.RequiresInput);
+        this._workflowModel.AddLink(resumeId, postId, InvokeMcpToolExecutor.RequiresNothing);
 
         // Define post action (completion)
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);

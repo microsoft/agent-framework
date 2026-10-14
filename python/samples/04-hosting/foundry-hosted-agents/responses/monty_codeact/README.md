@@ -8,9 +8,8 @@ tools (`compute`, `fetch_data`) are only reachable from inside the sandbox via
 typed `await compute(...)` calls or the generic `call_tool(...)` fallback.
 
 > [!NOTE]
-> `agent-framework-monty` is a **beta** package, so the `pyproject.toml`
-> sets `[tool.uv] prerelease = "allow"` to let `uv sync` pick up the
-> `1.0.0b*` release from PyPI.
+> `agent-framework-monty` is a **beta** package. Its dependency is declared in
+> `main.py`'s PEP 723 script metadata; use `--prerelease=allow` when running it.
 
 ## How It Works
 
@@ -21,6 +20,19 @@ endpoint and the model deployment. The agent supports both streaming (SSE
 events) and non-streaming (JSON) response modes.
 
 See [main.py](main.py) for the full implementation.
+
+`ResponsesHostServer(agent=create_agent, history_source="agent_server")`
+constructs a fresh CodeAct provider, client and credential for each request.
+No interpreter/provider instance, tool connection or model client is reused
+from an earlier caller. The factory's client context closes its owned SDK
+transports and credential after the request. Local calls use
+`AzureCliCredential`; hosted calls use managed identity.
+
+The host supplies conversation history and disables inner model storage. The
+registered host tools operate only on the explicit **shared illustrative data**
+in this sample, not user-private external records. Real tools must enforce
+their own trusted user/sandbox authorization; Monty's interpreter isolation
+does not scope an external database or token.
 
 ### CodeAct context provider
 
@@ -45,35 +57,31 @@ sandbox; the registered host tools retain full Python access.
 Agent Framework's [native OpenTelemetry instrumentation](https://learn.microsoft.com/en-us/agent-framework/agents/observability?pivots=programming-language-python) is enabled by setting these env vars in `agent.yaml` / `agent.manifest.yaml`:
 
 - `ENABLE_INSTRUMENTATION=true` — turns on the framework's span/metric/log emitters.
-- `ENABLE_SENSITIVE_DATA=true` — includes prompts, tool inputs, tool outputs, and completions in telemetry. **Dev/test only.**
+- `ENABLE_SENSITIVE_DATA=false` — the default; sensitive payload capture is opt-in for approved debugging only.
 
-`main.py` wires Azure Monitor at startup:
-
-1. Reads `APPLICATIONINSIGHTS_CONNECTION_STRING` (Foundry hosting injects this automatically for the project's attached Application Insights resource; set it yourself when running locally).
-2. Calls `azure.monitor.opentelemetry.configure_azure_monitor(connection_string=...)` to register Azure Monitor exporters with the global OTel tracer/meter/logger providers.
-3. Calls `agent_framework.observability.enable_instrumentation()` so Agent Framework emits its `invoke_agent`, `chat`, `execute_tool`, and `execute_code` spans on those providers.
+The Foundry runtime manages exporters when hosted or launched through
+`azd ai agent run`. This entry point does **not** install Azure Monitor exporters
+at startup. A direct local `python main.py` run needs separately configured
+exporters if exported telemetry is desired. Do not log platform identities or
+tokens, and do not enable sensitive payloads in a shared production sample.
 
 Trace linking happens automatically: the Foundry hosting layer's incoming `Responses` request becomes the **parent span**, and every framework / tool span (including the `execute_code` invocation that runs Monty) becomes a child via OpenTelemetry context propagation since both layers share the same global tracer provider. In Application Insights you can click any operation and see the full tree from inbound HTTP all the way down to individual `compute(...)` / `fetch_data(...)` calls inside the Monty sandbox.
 
 ## Running the Agent Host
 
-This sample uses `pyproject.toml` + `uv sync` rather than the parent
-README's `requirements.txt` flow. To run locally:
+Set the environment variables described in the
+[parent README](../../README.md#running-the-agent-host-locally), then run using
+the dependencies declared in the script:
 
-1. Install dependencies into a local virtual environment:
+```bash
+uv run --script --prerelease=allow main.py
+```
 
-   ```bash
-   uv sync
-   ```
-
-2. Set the environment variables described in the
-   [parent README](../../README.md#running-the-agent-host-locally) (Foundry
-   project endpoint, model deployment, optional Application Insights), then
-   start the host:
-
-   ```bash
-   uv run python main.py
-   ```
+Additional sample imports belong in inline script metadata, not a workspace,
+package or sample `pyproject.toml`. Before the coordinated hosting beta is
+published, use the current workspace's installed packages
+(`uv run --no-sync python main.py`) rather than assuming an older PyPI wheel
+contains the current hosting API.
 
 Refer to the parent README for the shared `azd` / Docker / invocation /
 deployment guidance.
@@ -114,3 +122,8 @@ print(result)
 To host the agent on Foundry, follow the instructions in the
 [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry)
 section of the README in the parent directory.
+
+Monty does not require KVM. The separate
+[Hyperlight container example](../../../container/hyperlight_codeact/) requires
+KVM/hypervisor access unavailable in the default Foundry runtime; this sample
+does not validate or claim that Hyperlight deployment works.

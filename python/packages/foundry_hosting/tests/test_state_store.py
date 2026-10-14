@@ -291,19 +291,19 @@ async def test_delete_reports_whether_checkpoint_existed(deleted_id: str | None,
     store.delete_item.assert_awaited_once_with("checkpoint-1", call_id="call-1")
 
 
-async def test_get_latest_uses_timestamp_and_list_ids_filters() -> None:
+async def test_get_latest_uses_timestamp_and_list_ids_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = FoundryCheckpointStore("context-1", _platform_context())
     older = _checkpoint("older", timestamp="2026-01-01T00:00:00+00:00")
     newer = _checkpoint("newer", timestamp="2026-01-02T00:00:00+00:00")
-    storage.list_checkpoints = AsyncMock(return_value=[newer, older])  # zuban:ignore
+    monkeypatch.setattr(storage, "list_checkpoints", AsyncMock(return_value=[newer, older]))
 
     assert await storage.get_latest(workflow_name="workflow") == newer
     assert await storage.list_checkpoint_ids(workflow_name="workflow") == ["newer", "older"]
 
 
-async def test_get_latest_returns_none_when_no_checkpoints_exist() -> None:
+async def test_get_latest_returns_none_when_no_checkpoints_exist(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = FoundryCheckpointStore("context-1", _platform_context())
-    storage.list_checkpoints = AsyncMock(return_value=[])  # zuban:ignore
+    monkeypatch.setattr(storage, "list_checkpoints", AsyncMock(return_value=[]))
 
     assert await storage.get_latest(workflow_name="workflow") is None
 

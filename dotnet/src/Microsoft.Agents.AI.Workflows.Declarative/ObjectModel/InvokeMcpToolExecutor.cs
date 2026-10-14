@@ -41,6 +41,12 @@ internal sealed class InvokeMcpToolExecutor(
     private readonly ConcurrentDictionary<string, ApprovalSnapshot> _approvalSnapshots = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Header values captured at approval-request time. These snapshots are intentionally
+    /// kept in memory only so transport credentials are never persisted to workflow state.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, HeaderSnapshot> _approvalHeaderSnapshots = new(StringComparer.Ordinal);
+
+    /// <summary>
     /// Step identifiers for the MCP tool invocation workflow.
     /// </summary>
     public static class Steps
@@ -84,34 +90,20 @@ internal sealed class InvokeMcpToolExecutor(
         bool requireApproval = this.GetRequireApproval();
         Dictionary<string, object?>? arguments = this.GetArguments();
         Dictionary<string, string>? headers = this.GetHeaders();
+        string? conversationId = this.GetConversationId();
         string? connectionName = this.GetConnectionName();
 
         if (requireApproval)
         {
-            // Per-invocation request id stamped on the outbound content.
-            string requestId = Guid.NewGuid().ToString("N");
-
-            // Capture the evaluated parameters keyed by request id; the matching response
-            // resumes from this snapshot.
-            this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName);
-
-            // Create tool call content for approval request.
-            // Transport headers (e.g. Authorization) are intentionally excluded from the
-            // approval event: they must not cross into the externally-surfaced approval request.
-            McpServerToolCallContent toolCall = new(requestId, toolName, serverLabel ?? serverUrl)
-            {
-                Arguments = arguments
-            };
-
-            ToolApprovalRequestContent approvalRequest = new(requestId, toolCall);
-
-            ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
-            AgentResponse agentResponse = new([requestMessage]);
-
-            // Yield to the caller for approval
-            ExternalInputRequest inputRequest = new(agentResponse);
-            await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
-
+            await this.RequestApprovalAsync(
+                context,
+                serverUrl,
+                serverLabel,
+                toolName,
+                arguments,
+                headers,
+                connectionName,
+                cancellationToken).ConfigureAwait(false);
             return default;
         }
 
@@ -125,7 +117,7 @@ internal sealed class InvokeMcpToolExecutor(
             connectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
 
         // Signal completion so the workflow routes via RequiresNothing
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -140,6 +132,8 @@ internal sealed class InvokeMcpToolExecutor(
     /// <param name="response">The external input response.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    [SendsMessage(typeof(ExternalInputRequest))]
+    [SendsMessage(typeof(ActionExecutorResult))]
     public async ValueTask CaptureResponseAsync(
         IWorkflowContext context,
         ExternalInputResponse response,
@@ -153,26 +147,49 @@ internal sealed class InvokeMcpToolExecutor(
         if (approvalResponse is null)
         {
             await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
         if (!approvalResponse.Approved)
         {
             this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out _);
+            this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
             await this.AssignErrorAsync(context, "MCP tool invocation was not approved by user.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        // Source invocation fields from the snapshot captured at approval-request time.
-        // Headers are re-evaluated (they may contain auth secrets not persisted to state).
         if (!this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
         {
             await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        Dictionary<string, string>? headers = this.GetHeaders();
+        if (snapshot.ConnectionName is not null && !snapshot.ConnectionNameValidated)
+        {
+            this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
+            await this.RequestApprovalAsync(context, cancellationToken).ConfigureAwait(false);
+            return;
+        }
 
+        Dictionary<string, string>? headers;
+        if (this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out HeaderSnapshot? headerSnapshot))
+        {
+            headers = headerSnapshot.Headers;
+        }
+        else if (snapshot.RequiresHeaderReapprovalAfterRestore || this.Model.Headers is { Count: > 0 })
+        {
+            await this.RequestApprovalAsync(context, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        else
+        {
+            headers = null;
+        }
+
+        string? conversationId = this.GetConversationId();
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             snapshot.ServerUrl,
             snapshot.ServerLabel,
@@ -182,7 +199,8 @@ internal sealed class InvokeMcpToolExecutor(
             snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
+        await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -197,6 +215,7 @@ internal sealed class InvokeMcpToolExecutor(
     public override ValueTask ResetAsync()
     {
         this._approvalSnapshots.Clear();
+        this._approvalHeaderSnapshots.Clear();
         return default;
     }
 
@@ -221,6 +240,7 @@ internal sealed class InvokeMcpToolExecutor(
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
 
         this._approvalSnapshots.Clear();
+        this._approvalHeaderSnapshots.Clear();
         Dictionary<string, ApprovalSnapshot>? snapshots = await context.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(
             ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
         if (snapshots is not null)
@@ -243,10 +263,56 @@ internal sealed class InvokeMcpToolExecutor(
         }
     }
 
-    private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
+    private ValueTask RequestApprovalAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        return this.RequestApprovalAsync(
+            context,
+            this.GetServerUrl(),
+            this.GetServerLabel(),
+            this.GetToolName(),
+            this.GetArguments(),
+            this.GetHeaders(),
+            this.GetConnectionName(),
+            cancellationToken);
+    }
+
+    private async ValueTask RequestApprovalAsync(
+        IWorkflowContext context,
+        string serverUrl,
+        string? serverLabel,
+        string toolName,
+        Dictionary<string, object?>? arguments,
+        Dictionary<string, string>? headers,
+        string? connectionName,
+        CancellationToken cancellationToken)
+    {
+        string requestId = Guid.NewGuid().ToString("N");
+
+        this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName)
+        {
+            ConnectionNameValidated = true,
+            RequiresHeaderReapprovalAfterRestore = this.Model.Headers is { Count: > 0 }
+        };
+        this._approvalHeaderSnapshots[requestId] = new HeaderSnapshot(headers);
+
+        // Transport headers are intentionally excluded from externally-surfaced approval content.
+        McpServerToolCallContent toolCall = new(requestId, toolName, serverLabel ?? serverUrl)
+        {
+            Arguments = arguments
+        };
+
+        ToolApprovalRequestContent approvalRequest = new(requestId, toolCall);
+        ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
+        await context.SendMessageAsync(new ExternalInputRequest(new AgentResponse([requestMessage])), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ProcessResultAsync(
+        IWorkflowContext context,
+        McpServerToolResultContent resultContent,
+        string? conversationId,
+        CancellationToken cancellationToken)
     {
         bool autoSend = this.GetAutoSendValue();
-        string? conversationId = this.GetConversationId();
 
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
         ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
@@ -363,7 +429,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -398,7 +466,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.Connection.Name).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.Connection.Name),
+            ConnectionNameLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -427,7 +497,7 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        Dictionary<string, string> result = [];
+        Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
         foreach (KeyValuePair<string, StringExpression> header in this.Model.Headers)
         {
             string value = this.GetInvocationValue(
@@ -461,5 +531,12 @@ internal sealed class InvokeMcpToolExecutor(
         string? ServerLabel,
         string ToolName,
         Dictionary<string, object?>? Arguments,
-        string? ConnectionName);
+        string? ConnectionName)
+    {
+        public bool ConnectionNameValidated { get; init; }
+
+        public bool RequiresHeaderReapprovalAfterRestore { get; init; }
+    }
+
+    private sealed record HeaderSnapshot(Dictionary<string, string>? Headers);
 }

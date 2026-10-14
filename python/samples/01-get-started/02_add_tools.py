@@ -1,62 +1,36 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Give an agent a function tool.
+
+The weather function is registered with @tool and passed to the agent.
+Safety guidance: https://learn.microsoft.com/agent-framework/concepts/agents/safety
+"""
+
 import asyncio
-from random import randint
-from typing import Annotated
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from pydantic import Field
-
-"""
-Add Tools — Give your agent a function tool
-
-This sample shows how to define a function tool with the @tool decorator
-and wire it into an agent so the model can call it.
-"""
 
 
-# <define_tool>
-# NOTE: approval_mode="never_require" is for sample brevity.
-# Use "always_require" in production for user confirmation before tool execution.
-# For tools processing untrusted external data or performing privileged operations,
-# review the Agent Safety guidance at
-# https://learn.microsoft.com/en-us/agent-framework/concepts/agents/safety
-# and see samples/02-agents/security/email_security_example.py for SecureAgentConfig
-# and quarantined_llm defense patterns.
+# This read-only sample tool can run without approval.
 @tool(approval_mode="never_require")
-def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
-) -> str:
+def get_weather(location: str) -> str:
     """Get the weather for a given location."""
-    conditions = ["sunny", "cloudy", "rainy", "stormy"]
-    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
-
-
-# </define_tool>
+    return f"The weather in {location} is sunny."
 
 
 async def main() -> None:
-    client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
-        credential=AzureCliCredential(),
-    )
-
-    # <create_agent_with_tools>
     agent = Agent(
-        client=client,
-        name="WeatherAgent",
-        instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
+        client=FoundryChatClient(
+            project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
+            model="gpt-6-luna",
+            credential=AzureCliCredential(),
+        ),
+        instructions="Use the weather tool to answer questions.",
         tools=[get_weather],
     )
-    # </create_agent_with_tools>
-
-    # <run_agent>
-    result = await agent.run("What's the weather like in Seattle?")
-    print(f"Agent: {result}")
-    # </run_agent>
+    print(await agent.run("What's the weather like in Seattle?"))
 
 
 if __name__ == "__main__":

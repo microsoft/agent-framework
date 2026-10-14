@@ -137,7 +137,7 @@ def _build_reply_contents(
     if handoff_to and call_id:
         contents.append(
             Content.from_function_call(
-                call_id=call_id, name=f"handoff_to_{handoff_to}", arguments={"handoff_to": handoff_to}
+                call_id=call_id, name=get_handoff_tool_name(handoff_to), arguments={"handoff_to": handoff_to}
             )
         )
     text = f"{agent_name} reply"
@@ -1327,6 +1327,40 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     assert requests[0].source_executor_id == worker.name
 
 
+async def test_autonomous_mode_zero_turn_limit_returns_control_immediately():
+    """A turn limit of 0 means no autonomous continuation, not the default turn limit."""
+    triage_client = MockChatClient(name="triage", handoff_to="worker")
+    worker_client = MockChatClient(name="worker")
+    triage: Agent[Any] = Agent(
+        id="triage",
+        name="triage",
+        client=triage_client,
+        require_per_service_call_history_persistence=True,
+    )
+    worker: Agent[Any] = Agent(
+        id="worker",
+        name="worker",
+        client=worker_client,
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, worker), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(triage))
+        .with_autonomous_mode(agents=[worker], turn_limits={resolve_agent_id(worker): 0})
+        .build()
+    )
+
+    events = await _drain(workflow.run("Start", stream=True))
+
+    # Swallowing 0 into the default limit lets the agent run on for 50 injected prompts,
+    # so the worker's client being called once is what distinguishes the two readings.
+    assert len(worker_client.received_messages) == 1, "A zero turn limit must not grant autonomous turns"
+    requests = [ev for ev in events if ev.type == "request_info"]
+    assert requests and len(requests) == 1, "A zero turn limit should request user input at once"
+    assert requests[0].source_executor_id == worker.name
+
+
 def test_build_fails_without_start_agent():
     """Verify that build() raises ValueError when with_start_agent() was not called."""
     triage = MockHandoffAgent(name="triage")
@@ -1514,6 +1548,90 @@ async def test_context_provider_preserved_during_handoff():
         "Context provider should be called during workflow execution, "
         "indicating it was properly preserved during agent cloning"
     )
+
+
+@pytest.mark.parametrize(
+    ("target_id", "expected"),
+    [
+        ("refund_agent", "handoff_to_refund_agent"),
+        ("order-status", "handoff_to_order-status"),
+        ("Billing Agent", "handoff_to_Billing_Agent"),
+        ("support.v2", "handoff_to_support_v2"),
+    ],
+)
+def test_handoff_tool_name_uses_only_valid_tool_name_characters(target_id: str, expected: str) -> None:
+    assert get_handoff_tool_name(target_id) == expected
+
+
+def test_handoff_tool_name_stays_within_provider_length_limit() -> None:
+    long_name = "customer_billing_and_refund_escalation_specialist_for_enterprise_accounts"
+
+    tool_name = get_handoff_tool_name(long_name)
+
+    assert len(tool_name) == 64
+    assert tool_name == f"handoff_to_{long_name}"[:64]
+
+
+def test_handoff_builder_rejects_long_targets_with_the_same_tool_name() -> None:
+    prefix = "customer_billing_and_refund_escalation_specialist_for_enterprise"
+    triage = MockHandoffAgent(name="triage")
+    first = MockHandoffAgent(name=f"{prefix}_north")
+    second = MockHandoffAgent(name=f"{prefix}_south")
+
+    with pytest.raises(ValueError, match="conflicts with existing tool"):
+        HandoffBuilder(participants=_as_handoff_agents(triage, first, second)).with_start_agent(
+            _as_handoff_agent(triage)
+        ).build()
+
+
+class ToolNameRecordingClient(MockChatClient):
+    """Mock chat client that records the tool names offered to the model."""
+
+    def __init__(self, *, name: str, handoff_to: str | None = None) -> None:
+        super().__init__(name=name, handoff_to=handoff_to)
+        self.offered_tool_names: list[str] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.offered_tool_names.extend(tool.name for tool in options.get("tools") or [])
+        return super()._inner_get_response(messages=messages, stream=stream, options=options, **kwargs)
+
+
+async def test_handoff_between_agents_with_spaces_in_names() -> None:
+    """Agent names with spaces still produce tool names that model providers accept."""
+    triage_client = ToolNameRecordingClient(name="Triage Desk", handoff_to="Billing Agent")
+    billing_client = ToolNameRecordingClient(name="Billing Agent")
+    triage = Agent(client=triage_client, name="Triage Desk", require_per_service_call_history_persistence=True)
+    billing = Agent(client=billing_client, name="Billing Agent", require_per_service_call_history_persistence=True)
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, billing))
+        .with_start_agent(_as_handoff_agent(triage))
+        .build()
+    )
+    async for _ in workflow.run("I was charged twice", stream=True):
+        pass
+
+    assert "handoff_to_Billing_Agent" in triage_client.offered_tool_names
+    assert all(re.fullmatch(r"[a-zA-Z0-9_-]+", name) for name in triage_client.offered_tool_names)
+    assert billing_client.received_messages
+
+
+def test_handoff_builder_rejects_targets_with_the_same_tool_name() -> None:
+    triage = MockHandoffAgent(name="triage")
+    spaced = MockHandoffAgent(name="Billing Agent")
+    underscored = MockHandoffAgent(name="Billing_Agent")
+
+    with pytest.raises(ValueError, match="handoff_to_Billing_Agent"):
+        HandoffBuilder(participants=_as_handoff_agents(triage, spaced, underscored)).with_start_agent(
+            _as_handoff_agent(triage)
+        ).build()
 
 
 def test_handoff_builder_accepts_all_instances_in_add_handoff():

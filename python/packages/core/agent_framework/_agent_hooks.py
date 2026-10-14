@@ -825,42 +825,6 @@ class _OutputCodec:
 # region Enforcement helpers
 
 
-def _chat_updates_from_response(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled chat response."""
-    updates = [
-        ChatResponseUpdate(
-            contents=list(message.contents),
-            role=cast(Any, message.role),
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-            model=response.model,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [ChatResponseUpdate(role="assistant", response_id=response.response_id)]
-    updates[-1].finish_reason = response.finish_reason
-    return updates
-
-
-def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResponseUpdate]:
-    """Re-derive stream updates from a (transformed) assembled agent response."""
-    updates = [
-        AgentResponseUpdate(
-            contents=list(message.contents),
-            role=message.role,
-            author_name=message.author_name,
-            message_id=message.message_id,
-            response_id=response.response_id,
-        )
-        for message in response.messages
-    ]
-    if not updates:
-        updates = [AgentResponseUpdate(role="assistant", response_id=response.response_id)]
-    return updates
-
-
 def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
     """Normalize a tools value for projection; empty (with a warning) when it cannot be.
 
@@ -1313,7 +1277,7 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             await self._emit_shutdown(state, "cancelled" if isinstance(exc, asyncio.CancelledError) else "error")
 
         context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
-        context._stream_terminal_result_to_updates = _agent_updates_from_response  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = AgentResponse.to_updates  # pyright: ignore[reportPrivateUsage]
         context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
         context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
         context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]
@@ -1443,7 +1407,7 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
             gate_handle.drop()
 
         context._stream_terminal_result_transforms.append(_transform)  # pyright: ignore[reportPrivateUsage]
-        context._stream_terminal_result_to_updates = _chat_updates_from_response  # pyright: ignore[reportPrivateUsage]
+        context._stream_terminal_result_to_updates = ChatResponse.to_updates  # pyright: ignore[reportPrivateUsage]
         context._stream_terminal_result_is_authoritative = True  # pyright: ignore[reportPrivateUsage]
         context._stream_release_hooks.append(_release)  # pyright: ignore[reportPrivateUsage]
         context._stream_release_error_hooks.append(_release_error)  # pyright: ignore[reportPrivateUsage]

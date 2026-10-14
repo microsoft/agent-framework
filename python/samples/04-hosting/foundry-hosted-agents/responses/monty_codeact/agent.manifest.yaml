@@ -21,7 +21,7 @@ template:
     - name: ENABLE_INSTRUMENTATION
       value: "true"
     - name: ENABLE_SENSITIVE_DATA
-      value: "true"
+      value: "false"
 resources:
   - kind: model
     id: gpt-4.1-mini

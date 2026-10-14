@@ -11,28 +11,36 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, Message, ResponseStream
 from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
 )
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini import (
+    GeminiChatClient,
+    GeminiChatOptions,
+    GeminiEmbeddingClient,
+    RawGeminiChatClient,
+    ThinkingConfig,
+)
 from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
-    """Return whether integration credentials for either Gemini API or Vertex AI appear to be configured."""
-    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+    """Return whether Developer API or Enterprise credentials appear to be configured."""
+    if os.getenv("GOOGLE_API_KEY"):
         return True
 
-    if os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"true", "1", "yes", "on"}:
+    enterprise_mode = os.getenv("GOOGLE_GENAI_USE_ENTERPRISE") or os.getenv("GOOGLE_GENAI_USE_VERTEXAI") or ""
+    if enterprise_mode.lower() in {"true", "1", "yes", "on"}:
         return bool(
             os.getenv("GOOGLE_CLOUD_PROJECT")
             or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -47,7 +55,34 @@ skip_if_no_credentials = pytest.mark.skipif(
     reason="Gemini Developer API or Vertex AI credentials not set; skipping integration tests.",
 )
 
-_TEST_MODEL = os.getenv("GOOGLE_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+_TEST_MODEL = os.getenv("GOOGLE_MODEL") or "gemini-2.5-flash-lite"
+
+
+@pytest.fixture(autouse=True)
+def clear_enterprise_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests without removing the configured mode from integration tests."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+
+
+@pytest.mark.parametrize("mode", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv(mode, "true")
+
+    assert _has_gemini_integration_credentials()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() not in {"true", "1", "yes", "on"},
+    reason="Enterprise mode not configured.",
+)
+def test_integration_fixture_preserves_enterprise_mode() -> None:
+    assert os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() in {"true", "1", "yes", "on"}
 
 
 class _ToolListItem(TypedDict):
@@ -223,7 +258,7 @@ def test_model_stored_on_instance() -> None:
 
 def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Initialises successfully when the API key is supplied via environment variable."""
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key-123")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-123")
     client = GeminiChatClient(model="gemini-2.5-flash")
     assert client.model == "gemini-2.5-flash"
 
@@ -233,8 +268,6 @@ def test_client_created_from_google_api_key_env(
     monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
 ) -> None:
     """Initialises successfully when the SDK-standard Google API key environment variable is set."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
@@ -258,7 +291,6 @@ def test_client_created_from_google_api_key_env(
 
 def test_client_created_from_vertex_ai_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Initialises a Vertex AI client when the SDK-standard Vertex AI environment variables are set."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
@@ -278,8 +310,42 @@ def test_client_created_from_vertex_ai_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
-def test_google_settings_take_precedence_over_gemini_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prefers SDK-standard ``GOOGLE_*`` settings when both env families are present."""
+def test_chat_clients_created_from_enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both chat layers share the current Enterprise settings with the embedding client."""
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    mock_client = MagicMock()
+    mock_client._api_client.vertexai = True
+    mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=mock_client) as factory:
+        raw = RawGeminiChatClient()
+        full = GeminiChatClient()
+
+    assert factory.call_count == 2
+    for call in factory.call_args_list:
+        assert call.kwargs["enterprise"] is True
+        assert "vertexai" not in call.kwargs
+        assert call.kwargs["project"] == "project"
+        assert call.kwargs["location"] == "global"
+        assert "api_key" not in call.kwargs
+    assert raw.service_url() == full.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_chat_rejects_conflicting_enterprise_and_vertex_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+    with pytest.raises(ValueError, match="cannot disagree"):
+        GeminiChatClient(model="gemini-2.5-flash")
+
+
+def test_google_settings_are_used_when_gemini_aliases_are_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only ``GOOGLE_*`` settings configure the connector."""
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-model")
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
@@ -303,10 +369,40 @@ def test_google_settings_take_precedence_over_gemini_aliases(monkeypatch: pytest
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
+def test_gemini_only_environment_is_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_MODEL", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "legacy-key")
+    monkeypatch.setenv("GEMINI_MODEL", "legacy-model")
+
+    with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+        GeminiChatClient()
+
+    injected, _ = _make_gemini_client(model=None)
+    assert injected.model is None
+
+
+@pytest.mark.parametrize("google_key", ["", " "])
+def test_blank_google_key_does_not_fall_back_to_gemini_key(monkeypatch: pytest.MonkeyPatch, google_key: str) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", google_key)
+    monkeypatch.setenv("GEMINI_API_KEY", "legacy-key")
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+    with (
+        patch("agent_framework_gemini._sdk_client.genai.Client") as factory,
+        pytest.raises(ValueError, match="GOOGLE_API_KEY"),
+    ):
+        GeminiChatClient(model="gemini-2.5-flash")
+    factory.assert_not_called()
+
+
 def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Raises ValueError at construction when neither Gemini API nor Vertex AI settings are available."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    """Raises ValueError when the configured Google credentials are missing."""
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -321,8 +417,6 @@ def test_vertex_ai_express_mode_uses_api_key(
     monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
 ) -> None:
     """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key-123")
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -345,7 +439,6 @@ def test_vertex_ai_express_mode_uses_api_key(
 
 def test_vertex_ai_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises a deterministic error when Vertex AI is enabled without any auth configuration."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -357,7 +450,6 @@ def test_vertex_ai_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises a deterministic error when only one Vertex AI location setting is present."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
@@ -369,7 +461,6 @@ def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.Mo
 
 async def test_missing_model_raises_on_get_response(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises ValueError at call time when no model is set on the client or in options."""
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GOOGLE_MODEL", raising=False)
     client, mock = _make_gemini_client(model=None)  # type: ignore[arg-type]
     mock.aio.models.generate_content = AsyncMock()
@@ -455,6 +546,74 @@ async def test_get_response_model_from_response() -> None:
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_streaming_model_from_chunk() -> None:
+    """Populates the update model from the model_version field on each chunk."""
+    client, mock = _make_gemini_client()
+    chunks = [_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_streaming_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when a chunk carries no model_version."""
+    client, mock = _make_gemini_client()
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-flash"
+
+
+async def test_get_response_streaming_model_falls_back_to_requested_model() -> None:
+    """Falls back to the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro"
+
+
+async def test_get_response_streaming_keeps_model_version_seen_earlier() -> None:
+    """A later chunk without model_version must not replace a version already seen in the stream."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    first = _make_response([_make_part(text="Hi")], finish_reason=None, model_version="gemini-2.5-pro-002")
+    last = _make_response([_make_part(text="!")], finish_reason="STOP")
+    last.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([first, last]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.model for update in updates] == ["gemini-2.5-pro-002", "gemini-2.5-pro-002"]
+    assert final.model == "gemini-2.5-pro-002"
 
 
 async def test_get_response_uses_model_from_options() -> None:
@@ -601,6 +760,12 @@ async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chu
     updates = [update async for update in stream]
 
     assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert all(
+        content.merge_mode == "append" for update in updates for content in update.contents if content.type == "text"
+    )
+    assert all(
+        content.merge_mode == "replace" for update in updates for content in update.contents if content.type == "usage"
+    )
     assert any(c.type == "usage" for c in updates[-1].contents)
 
 
@@ -1127,6 +1292,7 @@ def test_server_side_tool_call_part_is_informational_only() -> None:
     assert contents[0].name == "FILE_SEARCH"
     assert contents[0].parse_arguments() == {"query": "docs"}
     assert contents[0].informational_only is True
+    assert contents[0].hosted is True
 
 
 def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
@@ -1151,6 +1317,38 @@ def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
     assert parts[0].tool_call.id == "search-1"
     assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
     assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_replays_from_first_class_fields_without_raw_part() -> None:
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = client._parse_parts([raw_part])[0]
+    content.raw_representation = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_rejects_unsupported_replay_tool_name() -> None:
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="UNKNOWN_SERVER_TOOL",
+        arguments={"query": "docs"},
+        informational_only=True,
+        hosted=True,
+    )
+
+    with pytest.raises(ContentError, match="supported tool name"):
+        client._convert_message_contents([content], {})
 
 
 def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
@@ -2673,6 +2871,19 @@ def test_service_url_falls_back_when_sdk_base_url_is_unavailable() -> None:
     assert vertex_client.service_url() == "https://aiplatform.googleapis.com"
 
 
+def test_injected_sdk_routing_is_shared_with_embeddings() -> None:
+    sdk = MagicMock()
+    sdk._api_client.vertexai = True
+    sdk._api_client._http_options.base_url = "https://custom.example.test/"
+
+    chat = GeminiChatClient(client=sdk, model="gemini-2.5-flash", vertexai=False)
+    embeddings = GeminiEmbeddingClient(client=sdk, model="gemini-embedding-2", vertexai=False)
+
+    assert chat._genai_client is embeddings._genai_client is sdk
+    assert chat._vertexai is embeddings._vertexai is True
+    assert chat.service_url() == embeddings.service_url() == "https://custom.example.test"
+
+
 # integration tests
 
 
@@ -2824,3 +3035,26 @@ async def test_integration_code_execution() -> None:
 
     assert response.messages
     assert response.messages[0].text
+
+
+async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
+    """Stopping early must close the Gemini SDK stream instead of leaving it to garbage collection."""
+    closed = False
+
+    async def sdk_stream():
+        nonlocal closed
+        try:
+            yield _make_response([_make_part(text="first")], finish_reason=None)
+            yield _make_response([_make_part(text="second")])
+        finally:
+            closed = True
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=sdk_stream())
+    stream = client._inner_get_response(messages=[Message(role="user", contents=["hello"])], options={}, stream=True)
+    assert isinstance(stream, ResponseStream)
+    async with stream:
+        async for _ in stream:
+            break
+
+    assert closed

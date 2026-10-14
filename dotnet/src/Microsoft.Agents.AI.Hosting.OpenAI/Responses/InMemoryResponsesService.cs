@@ -397,15 +397,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             itemResources.Reverse();
         }
 
-        // Apply pagination
-        var filtered = itemResources.AsEnumerable();
+        // Apply pagination. Both cursors are item ids, looked up in the full ordered list, so the
+        // window is computed from their indexes rather than by applying one to what the other already cut.
+        int start = 0;
+        int end = itemResources.Count;
 
         if (!string.IsNullOrEmpty(after))
         {
             int afterIndex = itemResources.FindIndex(m => m.Id == after);
             if (afterIndex >= 0)
             {
-                filtered = itemResources.Skip(afterIndex + 1);
+                start = afterIndex + 1;
             }
         }
 
@@ -414,9 +416,11 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             int beforeIndex = itemResources.FindIndex(m => m.Id == before);
             if (beforeIndex >= 0)
             {
-                filtered = filtered.Take(beforeIndex);
+                end = beforeIndex;
             }
         }
+
+        var filtered = itemResources.Skip(start).Take(Math.Max(0, end - start));
 
         var result = filtered.Take(effectiveLimit + 1).ToList();
         var hasMore = result.Count > effectiveLimit;
@@ -587,7 +591,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             // Update response status to completed if not already in a terminal state
             if (!state.IsTerminal)
             {
-                state.Response = state.Response! with
+                var completedResponse = state.Response! with
                 {
                     Status = ResponseStatus.Completed
                 };
@@ -596,7 +600,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
                 var completedEvent = new StreamingResponseCompleted
                 {
                     SequenceNumber = sequenceNumber,
-                    Response = state.Response
+                    Response = completedResponse
                 };
 
                 state.AddStreamingEvent(completedEvent);
@@ -605,7 +609,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         catch (OperationCanceledException)
         {
             // Update response status to cancelled
-            state.Response = state.Response! with
+            var cancelledResponse = state.Response! with
             {
                 Status = ResponseStatus.Cancelled
             };
@@ -614,7 +618,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             var cancelledEvent = new StreamingResponseCancelled
             {
                 SequenceNumber = sequenceNumber,
-                Response = state.Response
+                Response = cancelledResponse
             };
 
             state.AddStreamingEvent(cancelledEvent);
@@ -622,7 +626,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         catch (Exception ex)
         {
             // Update response status to failed
-            state.Response = state.Response! with
+            var failedResponse = state.Response! with
             {
                 Status = ResponseStatus.Failed,
                 Error = new ResponseError
@@ -636,7 +640,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             var failedEvent = new StreamingResponseFailed
             {
                 SequenceNumber = sequenceNumber,
-                Response = state.Response
+                Response = failedResponse
             };
 
             state.AddStreamingEvent(failedEvent);

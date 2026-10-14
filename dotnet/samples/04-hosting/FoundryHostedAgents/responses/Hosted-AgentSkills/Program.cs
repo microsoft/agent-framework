@@ -34,8 +34,8 @@ Env.TraversePath().Load();
 string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;
 string skillNames = FirstNonBlank(System.Environment.GetEnvironmentVariable("SKILL_NAMES"))
     ?? throw new InvalidOperationException("SKILL_NAMES is not set. Provide a comma-separated list of skill names (e.g., support-style,escalation-policy).");

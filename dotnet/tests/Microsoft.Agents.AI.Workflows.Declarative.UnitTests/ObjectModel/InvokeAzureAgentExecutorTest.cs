@@ -113,6 +113,71 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task SensitiveAgentNameThrowsBeforeProviderInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("AgentName", FormulaValue.New("BrainSensitive"), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(SensitiveAgentNameThrowsBeforeProviderInvocationAsync),
+                agentName: StringExpression.Variable(PropertyPath.TopicVariable("AgentName")));
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive agent name", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
+    }
+
+    [Fact]
+    public async Task SensitiveAgentVersionThrowsBeforeProviderInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("AgentVersion", FormulaValue.New(7), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(SensitiveAgentVersionThrowsBeforeProviderInvocationAsync),
+                agentName: StringExpression.Literal("BrainVersioned"),
+                agentVersion: IntExpression.Variable(PropertyPath.TopicVariable("AgentVersion")));
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive agent version", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
+    }
+
+    [Fact]
+    public async Task SensitiveConversationIdThrowsBeforeProviderInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(SensitiveConversationIdThrowsBeforeProviderInvocationAsync),
+                agentName: "BrainSensitiveConversation",
+                conversationId: StringExpression.Variable(PropertyPath.TopicVariable("ConversationId")));
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
+    }
+
+    [Fact]
     public async Task RecordValuedArgumentIsBoundAsRecordAsync()
     {
         // Arrange
@@ -143,6 +208,31 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     }
 
     [Fact]
+    public async Task CompositeSensitiveStructuredInputThrowsBeforeProviderInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("SecretInput", FormulaValue.New("sensitive-value"), sensitivity: SensitivityLevel.Sensitive);
+        CapturingAgentProvider provider = new("acknowledged");
+        InvokeAzureAgent model =
+            this.CreateModel(
+                displayName: nameof(CompositeSensitiveStructuredInputThrowsBeforeProviderInvocationAsync),
+                agentName: StringExpression.Literal("BrainStructuredInput"),
+                arguments:
+                [
+                    ("input", ValueExpression.Expression("""{ Public: "visible", Secret: Local.SecretInput }""")),
+                ]);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(new InvokeAzureAgentExecutor(model, provider, this.State), isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive agent input argument", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
+    }
+
+    [Fact]
     public async Task SensitiveInputMessagesThrowAsync()
     {
         // Arrange
@@ -165,6 +255,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         // Act & Assert
         DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
         Assert.Contains("Cannot send sensitive agent input messages", exception.Message);
+        Assert.Equal(0, provider.InvocationCount);
         Assert.Null(provider.CapturedMessages);
     }
 
@@ -505,7 +596,27 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
         IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
         ValueExpression? messages = null,
         string? responseObjectVariable = null,
-        string? externalLoopWhen = null)
+        string? externalLoopWhen = null,
+        StringExpression? conversationId = null) =>
+        this.CreateModel(
+            displayName,
+            StringExpression.Literal(agentName),
+            agentVersion is null ? null : IntExpression.Literal(agentVersion.Value),
+            arguments,
+            messages,
+            responseObjectVariable,
+            externalLoopWhen,
+            conversationId);
+
+    private InvokeAzureAgent CreateModel(
+        string displayName,
+        StringExpression agentName,
+        IntExpression? agentVersion = null,
+        IReadOnlyList<(string Key, ValueExpression Value)>? arguments = null,
+        ValueExpression? messages = null,
+        string? responseObjectVariable = null,
+        string? externalLoopWhen = null,
+        StringExpression? conversationId = null)
     {
         InvokeAzureAgent.Builder builder =
             new()
@@ -515,13 +626,14 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
                 Agent =
                     new AzureAgentUsage.Builder
                     {
-                        Name = new StringExpression.Builder(StringExpression.Literal(agentName)),
+                        Name = new StringExpression.Builder(agentName),
                     },
+                ConversationId = conversationId is null ? null : new StringExpression.Builder(conversationId),
             };
 
         if (agentVersion is not null)
         {
-            builder.Agent.Version = new IntExpression.Builder(IntExpression.Literal(agentVersion.Value));
+            builder.Agent.Version = new IntExpression.Builder(agentVersion);
         }
 
         AzureAgentInput.Builder? inputBuilder = null;
@@ -597,6 +709,8 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
     /// </summary>
     private sealed class CapturingAgentProvider(string responseText) : ResponseAgentProvider
     {
+        public int InvocationCount { get; private set; }
+
         public string? CapturedAgentVersion { get; private set; }
 
         public IDictionary<string, object?>? CapturedArguments { get; private set; }
@@ -611,6 +725,7 @@ public sealed class InvokeAzureAgentExecutorTest(ITestOutputHelper output) : Wor
             IDictionary<string, object?>? inputArguments,
             CancellationToken cancellationToken = default)
         {
+            this.InvocationCount++;
             this.CapturedAgentVersion = agentVersion;
             this.CapturedArguments = inputArguments;
             this.CapturedMessages = messages;

@@ -45,7 +45,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 - **Follow `python-package-management` for package lifecycle and versioning rules** — do not duplicate those
   rules in this release workflow.
 - **No `Co-Authored-By` trailer** on any commit.
-- **Use `uv run`** for all Python/poe commands (`uv run poe ...`, `uv run pytest ...`).
+- **Use `uv run`** for cross-version Python/Poe commands and add the relevant
+  `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
 
@@ -286,6 +287,20 @@ done
 If the user opts into a cohort-wide beta bump regardless of per-package changes, enumerate every beta package from `PACKAGE_STATUS.md` and stamp all of them. State that this is a cohort bump in the commit message.
 
 Spot-check with `grep '^version' python/pyproject.toml python/packages/*/pyproject.toml | sort` before moving on.
+
+### 5a. Refresh the `core[all]` release cohort
+
+When Core bumps, update every Agent Framework dependency in
+`python/packages/core/pyproject.toml` `[project.optional-dependencies].all`:
+
+- Workspace packages use their post-bump version as the lower bound, or their unchanged current version when they
+  are not otherwise releasing this cycle.
+- External Agent Framework packages such as Azure Functions and Durable Task retain a bounded known-good floor.
+- Every entry keeps an upper bound for its supported major version.
+- Preserve environment markers for packages that do not support every Python/platform combination.
+
+These bounds prevent pip from backtracking across old cyclic `core[all] -> integration -> core` combinations. The
+release validator rejects missing, stale, or unbounded cohort entries.
 
 ### 6. Floor bound updates on `agent-framework-core`
 

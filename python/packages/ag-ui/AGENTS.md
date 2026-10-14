@@ -27,6 +27,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 
 - Outbound custom events are emitted as AG-UI `CUSTOM`.
 - Usage metadata from `Content(type="usage")` is surfaced as `CUSTOM` events with `name="usage"`.
+- Text annotations are surfaced as `CUSTOM` events with `name="annotations"` and
+  `value={"messageId": ..., "annotations": [...]}`. Annotation-only updates announce a text message if needed
+  without emitting empty text deltas. Provider `raw_representation` is omitted; `AGUIChatClient` restores the
+  annotations on text content. These live custom events are not replayed by `MESSAGES_SNAPSHOT`.
 - Inbound custom event aliases are accepted: `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`.
 - Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
@@ -48,6 +52,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.
+- `AGUIChatClient` follows the shared function-loop completion contract rather than requiring provider-specific
+  finish markers. Complete arguments may execute without `TOOL_CALL_END`; when `RUN_ERROR` invalidates a response
+  after a local client-tool call has been exposed, raise `ResponseInvalidatedException` so the function loop and
+  direct stream consumers discard that call.
 - A2UI continuation retains the inner response's original model-turn and reasoning/call/result groups. UI
   rendering and its accounting remain adapter-owned while server tools use the existing function loop.
   Streaming uses an executable adapter handoff tool that returns a private control request through the existing
@@ -62,6 +70,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   control outcomes and the original middleware's relative order.
   Adapter-side compatibility execution is limited to non-core agents without context providers; unsupported
   provider preparation fails explicitly instead of executing with a partial policy.
+  Client `forwardedProps.injectA2UITool` is only a per-request request to use a capability the backend has already
+  enabled with `a2ui_config["inject_a2ui_tool"]`; request metadata alone must never activate a server tool or sub-agent.
+  Resolve that backend opt-in before importing optional A2UI support so a client flag cannot make an otherwise
+  non-A2UI deployment fail on a missing optional dependency.
 - Local approval resume checks the current function-invocation configuration before any approved side effect begins.
   When invocation is disabled, grants remain pending under their original retention deadline and the endpoint emits
   `APPROVAL_INVOCATION_DISABLED`; only a later explicit retry after re-enablement can execute them. Rejections and
@@ -87,6 +99,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   remains the provider/service `call_id`. Hosted approvals preserve the provider-issued approval request id. The
   lifecycle stores these identities separately so resume responses carry the authoritative approval occurrence id
   without rewriting tool-result correlation ids.
+- Hosted/local execution ownership comes from `function_call.hosted`; `server_name` supplies the hosted-server
+  boundary persisted as `ApprovalOccurrence.server_label`. Legacy `additional_properties["server_label"]` remains a
+  compatibility input, not the primary routing signal.
 - Default stateless conversation history is client-controlled, including historical tool calls and results. Never
   document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
   server-validated approvals, or scoped authoritative snapshots.
@@ -102,6 +117,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  When state is exposed to the model, keep it in an explicitly untrusted user-data message; never promote request
+  state values into system/developer instruction authority.
   Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
   object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
   `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
@@ -112,9 +129,35 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
+- Configured stateless agent Thread Snapshot stores persist after function/MCP tool-result and approval safe points,
+  then persist the terminal state. Never treat a yielded `finish_reason` or a following metadata update as successful
+  model-turn finalization: inner finalizers and result hooks may still reject that output. Save only after the complete
+  result/approval update and lifecycle side effects are applied, and project only completed call/result groups and
+  current approval controls into the intermediate snapshot. Sibling text, reasoning, and unrelated pending calls remain
+  terminal-only. Do not write every text delta or schedule unordered background snapshot writes. Service-session and
+  workflow Thread Snapshots retain terminal-save cadence so replayable messages cannot advance without matching
+  provider continuation state; workflow checkpoints own incremental workflow runtime state.
+- Disconnect-safe execution is endpoint-owned and opt-in through
+  `add_agent_framework_fastapi_endpoint(detached_runs=True)`. Keep its producer queue bounded, retain and observe
+  producer/drainer tasks, and let the producer own final snapshot/checkpoint/approval persistence after the SSE reader
+  disconnects. Bound endpoint-wide producer admission and cancel abandoned producers after the configured timeout.
+  This mode discards unread events; it is not a resumable event log.
+- While a detached mutation is active, the endpoint may serve an empty Snapshot Hydrate Request but must reject another
+  mutation for the same `(Snapshot Scope, threadId)` with HTTP 409. Classify hydration once and keep it on the direct
+  response path so it bypasses detached admission and producer wrapping. Endpoint admission, agent hydration, and
+  workflow hydration must all use `_run_common._is_snapshot_hydration_request`; pass workflow checkpoint capability
+  explicitly so checkpoint resumes never become hydration. The guard is process-local and does not replace cross-replica
+  coordination.
+- Detached runs may outlive FastAPI request-scoped disposable resources. Resolve authorization and Snapshot Scope before
+  spawning the producer, and do not rely on request-owned clients or sessions remaining open after disconnect.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
+- AG-UI multimodal request content accepts only web/data URLs and inline payloads. Do not pass file, FTP,
+  application-defined URI schemes, or unresolved client-owned `id`/`file` references into provider clients; broader
+  outbound access and binary-reference resolution require an application-owned policy. Backend-loaded legacy Thread
+  Snapshots replace previously accepted unsupported media parts with inert placeholder text before hydration or
+  provider replay, so strict current-request validation does not brick an existing thread.
 
 ## Usage
 

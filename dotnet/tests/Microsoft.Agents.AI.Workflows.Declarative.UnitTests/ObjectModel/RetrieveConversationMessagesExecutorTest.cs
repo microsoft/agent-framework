@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.PowerFx.Types;
+using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -34,6 +37,84 @@ public sealed class RetrieveConversationMessagesExecutorTest(ITestOutputHelper o
             after: StringExpression.Literal("11/01/2025"),
             before: StringExpression.Literal("12/01/2025"),
             sortOrder: EnumExpression<AgentMessageSortOrderWrapper>.Literal(AgentMessageSortOrderWrapper.Get(AgentMessageSortOrder.NewestFirst)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetrieveMessagesWithSensitiveCursorThrowsAsync(bool useAfter)
+    {
+        // Arrange
+        this.State.Set("MessageCursor", FormulaValue.New("sensitive-message"), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        StringExpression cursor = StringExpression.Variable(PropertyPath.TopicVariable("MessageCursor"));
+        RetrieveConversationMessages.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(RetrieveMessagesWithSensitiveCursorThrowsAsync)),
+            Messages = PropertyPath.Create(FormatVariablePath("TestMessages")),
+            ConversationId = StringExpression.Literal("DefaultConversationId"),
+        };
+        if (useAfter)
+        {
+            builder.MessageAfter = cursor;
+        }
+        else
+        {
+            builder.MessageBefore = cursor;
+        }
+
+        RetrieveConversationMessages model = AssignParent<RetrieveConversationMessages>(builder);
+        RetrieveConversationMessagesExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains(useAfter ? "message-after cursor" : "message-before cursor", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.GetMessagesAsync(
+                It.IsAny<string>(),
+                It.IsAny<int?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RetrieveMessagesWithSensitiveConversationIdThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        RetrieveConversationMessages.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(RetrieveMessagesWithSensitiveConversationIdThrowsAsync)),
+            Messages = PropertyPath.Create(FormatVariablePath("TestMessages")),
+            ConversationId = StringExpression.Variable(PropertyPath.TopicVariable("ConversationId")),
+        };
+        RetrieveConversationMessages model = AssignParent<RetrieveConversationMessages>(builder);
+        RetrieveConversationMessagesExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.GetMessagesAsync(
+                It.IsAny<string>(),
+                It.IsAny<int?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     private async Task ExecuteTestAsync(
