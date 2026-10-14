@@ -22,16 +22,18 @@ namespace Microsoft.Agents.AI.Workflows.InProc;
 /// scenarios where workflow execution does not require executor distribution. </para></remarks>
 internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 {
-    public static InProcessRunner CreateTopLevelRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateTopLevelRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null, bool hasAgentRunOptions = false, AgentRunOptions? agentRunOptions = null)
     {
         return new InProcessRunner(workflow,
                                    checkpointManager,
                                    sessionId,
                                    enableConcurrentRuns: enableConcurrentRuns,
-                                   knownValidInputTypes: knownValidInputTypes);
+                                   knownValidInputTypes: knownValidInputTypes,
+                                   hasAgentRunOptions: hasAgentRunOptions,
+                                   agentRunOptions: agentRunOptions);
     }
 
-    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    public static InProcessRunner CreateSubworkflowRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null, bool hasAgentRunOptions = false, AgentRunOptions? agentRunOptions = null)
     {
         return new InProcessRunner(workflow,
                                    checkpointManager,
@@ -39,10 +41,12 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                                    existingOwnerSignoff: existingOwnerSignoff,
                                    enableConcurrentRuns: enableConcurrentRuns,
                                    knownValidInputTypes: knownValidInputTypes,
+                                   hasAgentRunOptions: hasAgentRunOptions,
+                                   agentRunOptions: agentRunOptions,
                                    subworkflow: true);
     }
 
-    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null)
+    private InProcessRunner(Workflow workflow, ICheckpointManager? checkpointManager, string? sessionId = null, object? existingOwnerSignoff = null, bool subworkflow = false, bool enableConcurrentRuns = false, IEnumerable<Type>? knownValidInputTypes = null, bool hasAgentRunOptions = false, AgentRunOptions? agentRunOptions = null)
     {
         if (enableConcurrentRuns && !workflow.AllowConcurrent)
         {
@@ -54,7 +58,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StartExecutorId = workflow.StartExecutorId;
 
         this.Workflow = Throw.IfNull(workflow);
-        this.RunContext = new InProcessRunnerContext(workflow, this.SessionId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns);
+        this.RunContext = new InProcessRunnerContext(workflow, this.SessionId, checkpointingEnabled: checkpointManager != null, this.OutgoingEvents, this.StepTracer, existingOwnerSignoff, subworkflow, enableConcurrentRuns, hasAgentRunOptions, agentRunOptions);
         this.CheckpointManager = checkpointManager;
 
         this._knownValidInputTypes = knownValidInputTypes != null
@@ -258,6 +262,15 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             while (envelopes.TryDequeue(out var envelope))
             {
                 (object message, TypeId messageType) = await TranslateMessageAsync(envelope).ConfigureAwait(false);
+
+                // A restored token can contain options from an earlier in-memory run or no options after
+                // serialization. The options supplied for the current invocation take precedence.
+                if (message is TurnToken turnToken
+                    && this.RunContext.TryGetAgentRunOptions(out AgentRunOptions? runOptions)
+                    && !ReferenceEquals(turnToken.RunOptions, runOptions))
+                {
+                    message = new TurnToken(turnToken.EmitEvents, runOptions);
+                }
 
                 await executor.ExecuteCoreAsync(
                     message,

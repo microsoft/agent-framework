@@ -24,6 +24,66 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 /// </summary>
 public class GroupChatOrchestrationTests
 {
+    [Fact]
+    public async Task GroupChat_AsAgent_PropagatesRunOptionsToEveryParticipantAsync()
+    {
+        // Arrange
+        RecordingEchoAgent firstAgent = new("first-agent", "FirstAgent");
+        RecordingEchoAgent secondAgent = new("second-agent", "SecondAgent");
+        AIAgent workflowAgent = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
+            .AddParticipants(firstAgent, secondAgent)
+            .Build()
+            .AsAIAgent();
+        AgentRunOptions runOptions = new() { AdditionalProperties = new() { ["test-property"] = "test-value" } };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Hello", options: runOptions);
+
+        // Assert
+        Assert.NotEmpty(firstAgent.RecordedRunOptions);
+        Assert.All(firstAgent.RecordedRunOptions, options => Assert.Same(runOptions, options));
+        Assert.NotEmpty(secondAgent.RecordedRunOptions);
+        Assert.All(secondAgent.RecordedRunOptions, options => Assert.Same(runOptions, options));
+    }
+
+    [Fact]
+    public async Task GroupChat_AsAgent_CheckpointRecoveryUsesCurrentRunOptionsAsync()
+    {
+        // Arrange
+        RecordingEchoAgent firstAgent = new("first-agent", "FirstAgent");
+        RecordingEchoAgent secondAgent = new("second-agent", "SecondAgent");
+        Workflow workflow = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
+            .AddParticipants(firstAgent, secondAgent)
+            .Build();
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = workflow.AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions recoveryRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "recovery" } };
+
+        CheckpointInfo checkpoint = await OrchestrationTestHelpers.RunWorkflowAgentUntilCheckpointAsync(
+            workflowAgent,
+            session,
+            firstRunOptions,
+            checkpointNumber: 2);
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+        Assert.True(recovery.TryPrepare(checkpoint.CheckpointId));
+
+        // Act
+        List<AgentResponseUpdate> recoveryUpdates = await workflowAgent
+            .RunStreamingAsync([], session, recoveryRunOptions)
+            .ToListAsync();
+
+        // Assert
+        Assert.Empty(recoveryUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
+        Assert.Same(firstRunOptions, Assert.Single(firstAgent.RecordedRunOptions));
+        Assert.Same(recoveryRunOptions, Assert.Single(secondAgent.RecordedRunOptions));
+    }
+
     /// <summary>
     /// End-to-end tool-approval checkpoint/resume scenario through a <see cref="RoundRobinGroupChatManager"/>
     /// with a single participant. Mirrors the maximal repro added in PR #5952 (Track A2 in

@@ -91,11 +91,16 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                 this._checkpointManager ??= new InMemoryCheckpointManager();
             }
 
+            AgentRunOptions? agentRunOptions = null;
+            bool hasAgentRunOptions = this.JoinContext is IWorkflowAgentRunOptionsContext runOptionsContext
+                && runOptionsContext.TryGetAgentRunOptions(out agentRunOptions);
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
                                                                          this._checkpointManager,
                                                                          this._sessionId,
                                                                          this._ownershipToken,
-                                                                         this.JoinContext.ConcurrentRunsEnabled);
+                                                                         this.JoinContext.ConcurrentRunsEnabled,
+                                                                         hasAgentRunOptions: hasAgentRunOptions,
+                                                                         agentRunOptions: agentRunOptions);
         }
 
         return this._activeRunner;

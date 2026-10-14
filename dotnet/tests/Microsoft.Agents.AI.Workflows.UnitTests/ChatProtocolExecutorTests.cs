@@ -3,9 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -19,11 +21,15 @@ public class ChatProtocolExecutorTests
     {
         public List<ChatMessage> ReceivedMessages { get; } = [];
         public int TurnCount { get; private set; }
+        public TurnToken? ReceivedTurnToken { get; private set; }
 
         public TestChatProtocolExecutor(string id = "test-executor", ChatProtocolExecutorOptions? options = null)
             : base(id, options)
         {
         }
+
+        public ValueTask InvokeLegacyTurnAsync(List<ChatMessage> messages, IWorkflowContext context)
+            => this.TakeTurnAsync(messages, context, null);
 
         protected override async ValueTask TakeTurnAsync(
             List<ChatMessage> messages,
@@ -36,6 +42,16 @@ public class ChatProtocolExecutorTests
 
             // Send messages back to context so they can be collected
             await context.SendMessageAsync(messages, cancellationToken: cancellationToken);
+        }
+
+        protected override ValueTask TakeTurnWithTokenAsync(
+            List<ChatMessage> messages,
+            IWorkflowContext context,
+            TurnToken turnToken,
+            CancellationToken cancellationToken = default)
+        {
+            this.ReceivedTurnToken = turnToken;
+            return base.TakeTurnWithTokenAsync(messages, context, turnToken, cancellationToken);
         }
     }
 
@@ -72,6 +88,108 @@ public class ChatProtocolExecutorTests
         Assert.Equal("Hello", executor.ReceivedMessages[0].Text);
         Assert.Equal("World", executor.ReceivedMessages[1].Text);
         Assert.Equal(1, executor.TurnCount);
+    }
+
+    [Fact]
+    public async Task ChatProtocolExecutor_LegacyNullEmitEventsCallRemainsUnambiguousAsync()
+    {
+        // Arrange
+        TestChatProtocolExecutor executor = new();
+        TestWorkflowContext context = new(executor.Id);
+        ChatMessage message = new(ChatRole.User, "Hello");
+
+        // Act
+        await executor.InvokeLegacyTurnAsync([message], context);
+
+        // Assert
+        Assert.Same(message, Assert.Single(executor.ReceivedMessages));
+        Assert.Equal(1, executor.TurnCount);
+    }
+
+    [Fact]
+    public async Task ChatProtocolExecutor_ReceivesAndForwardsFullTurnTokenAsync()
+    {
+        // Arrange
+        TestChatProtocolExecutor executor = new();
+        TestWorkflowContext context = new(executor.Id);
+        AgentRunOptions runOptions = new() { AdditionalProperties = new() { ["test-property"] = "test-value" } };
+        TurnToken turnToken = new(emitEvents: false, runOptions);
+
+        // Act
+        await executor.TakeTurnAsync(turnToken, context);
+
+        // Assert
+        Assert.Same(turnToken, executor.ReceivedTurnToken);
+        Assert.Same(runOptions, executor.ReceivedTurnToken!.RunOptions);
+        Assert.Same(turnToken, Assert.Single(context.SentMessages.OfType<TurnToken>()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChatProtocolExecutor_CheckpointRecoveryUsesCurrentRunOptionsAsync(bool serializeSession)
+    {
+        // Arrange
+        TestChatProtocolExecutor firstExecutor = new("first-executor");
+        TestChatProtocolExecutor secondExecutor = new("second-executor");
+        ExecutorBinding firstBinding = firstExecutor.BindExecutor();
+        ExecutorBinding secondBinding = secondExecutor.BindExecutor();
+        Workflow workflow = new WorkflowBuilder(firstBinding)
+            .AddEdge<List<ChatMessage>>(firstBinding, secondBinding, messages => messages is not null)
+            .AddEdge<TurnToken>(firstBinding, secondBinding, token => token is not null)
+            .WithOutputFrom(secondBinding)
+            .Build();
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = workflow.AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions recoveryRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "recovery" } };
+
+        CheckpointInfo checkpoint = await OrchestrationTestHelpers.RunWorkflowAgentUntilCheckpointAsync(
+            workflowAgent,
+            session,
+            firstRunOptions,
+            checkpointNumber: 1);
+        if (serializeSession)
+        {
+            JsonElement serializedSession = await workflowAgent.SerializeSessionAsync(session);
+            session = await workflowAgent.DeserializeSessionAsync(serializedSession);
+        }
+
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+        Assert.True(recovery.TryPrepare(checkpoint.CheckpointId));
+
+        // Act
+        _ = await workflowAgent.RunStreamingAsync([], session, recoveryRunOptions).ToListAsync();
+
+        // Assert
+        Assert.NotNull(firstExecutor.ReceivedTurnToken);
+        Assert.Same(firstRunOptions, firstExecutor.ReceivedTurnToken!.RunOptions);
+        Assert.NotNull(secondExecutor.ReceivedTurnToken);
+        Assert.Same(recoveryRunOptions, secondExecutor.ReceivedTurnToken!.RunOptions);
+    }
+
+    [Fact]
+    public void TurnToken_RunOptionsAreNotSerialized()
+    {
+        // Arrange
+        ChatClientAgentRunOptions runOptions = new()
+        {
+            ChatClientFactory = static chatClient => chatClient,
+        };
+        TurnToken turnToken = new(emitEvents: false, runOptions);
+
+        // Act
+        string json = JsonSerializer.Serialize(turnToken);
+        TurnToken? deserialized = JsonSerializer.Deserialize<TurnToken>(json);
+
+        // Assert
+        Assert.DoesNotContain(nameof(TurnToken.RunOptions), json);
+        Assert.NotNull(deserialized);
+        Assert.False(deserialized!.EmitEvents);
+        Assert.Null(deserialized.RunOptions);
     }
 
     [Fact]
