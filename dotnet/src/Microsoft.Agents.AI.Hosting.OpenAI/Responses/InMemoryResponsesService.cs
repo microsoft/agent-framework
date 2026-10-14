@@ -676,6 +676,9 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         }
         finally
         {
+            // Stored responses outlive execution, so release the executor and the agent graph it references.
+            state.Executor = null;
+
             // Signal one final time to unblock any waiting consumers
             state.SignalUpdate();
         }
