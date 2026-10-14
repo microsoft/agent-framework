@@ -109,7 +109,7 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
             image_url = cast("Mapping[str, Any]", image_url).get("url")
         if not isinstance(image_url, str) or not image_url:
             raise ValueError("input_image requires a non-empty string `image_url`")
-        return Content.from_uri(uri=image_url, media_type="image/*")
+        return Content.from_uri(uri=image_url, media_type=None if image_url.startswith("data:image/") else "image/*")
     if item_type == "input_file":
         file_url = item.get("file_url")
         if file_url is not None:

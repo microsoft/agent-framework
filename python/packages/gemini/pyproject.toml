@@ -101,5 +101,5 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_gemini --cov-report=ter
 name = "agent_framework_gemini"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

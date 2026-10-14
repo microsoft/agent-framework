@@ -100,5 +100,5 @@ help = "Run the package integration test suite."
 cmd = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

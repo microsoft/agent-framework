@@ -740,10 +740,11 @@ class AgentFactory:
             chat_options["stop"] = options.stopSequences
         if options.allowMultipleToolCalls is not None:
             chat_options["allow_multiple_tool_calls"] = options.allowMultipleToolCalls
-        if (chat_tool_mode := options.additionalProperties.pop("chatToolMode", None)) is not None:
+        additional_properties = options.additionalProperties.copy()
+        if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if options.additionalProperties:
-            chat_options["additional_chat_options"] = options.additionalProperties
+        if additional_properties:
+            chat_options["additional_chat_options"] = additional_properties
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:

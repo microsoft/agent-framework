@@ -1327,6 +1327,40 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     assert requests[0].source_executor_id == worker.name
 
 
+async def test_autonomous_mode_zero_turn_limit_returns_control_immediately():
+    """A turn limit of 0 means no autonomous continuation, not the default turn limit."""
+    triage_client = MockChatClient(name="triage", handoff_to="worker")
+    worker_client = MockChatClient(name="worker")
+    triage: Agent[Any] = Agent(
+        id="triage",
+        name="triage",
+        client=triage_client,
+        require_per_service_call_history_persistence=True,
+    )
+    worker: Agent[Any] = Agent(
+        id="worker",
+        name="worker",
+        client=worker_client,
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, worker), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(triage))
+        .with_autonomous_mode(agents=[worker], turn_limits={resolve_agent_id(worker): 0})
+        .build()
+    )
+
+    events = await _drain(workflow.run("Start", stream=True))
+
+    # Swallowing 0 into the default limit lets the agent run on for 50 injected prompts,
+    # so the worker's client being called once is what distinguishes the two readings.
+    assert len(worker_client.received_messages) == 1, "A zero turn limit must not grant autonomous turns"
+    requests = [ev for ev in events if ev.type == "request_info"]
+    assert requests and len(requests) == 1, "A zero turn limit should request user input at once"
+    assert requests[0].source_executor_id == worker.name
+
+
 def test_build_fails_without_start_agent():
     """Verify that build() raises ValueError when with_start_agent() was not called."""
     triage = MockHandoffAgent(name="triage")

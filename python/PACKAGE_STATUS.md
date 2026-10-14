@@ -10,54 +10,62 @@ Status is grouped into these buckets:
 - `released` - stable packages without a prerelease suffix, these are stable packages that should not have breaking changes between versions
 - `deprecated` - removed or deprecated packages that should not be used for new work
 
+Lifecycle state and membership in the root `agent-framework` meta-package are independent. The `Meta package`
+column records whether `pip install agent-framework` installs the workspace package:
+
+- `yes` - included directly or through `agent-framework-core[all]`; environment markers may still limit supported
+  Python versions or platforms
+- `no` - installed separately when needed
+- `n/a` - the root meta-package itself
+
 ## Current packages
 
-| Package | Path | State |
-| --- | --- | --- |
-| `agent-framework` | `python/` | `released` |
-| `agent-framework-a2a` | `python/packages/a2a` | `beta` |
-| `agent-framework-ag-ui` | `python/packages/ag-ui` | `released` |
-| `agent-framework-anthropic` | `python/packages/anthropic` | `beta` |
-| `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` |
-| `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
-| `agent-framework-azure-documentdb` | `python/packages/azure-documentdb` | `alpha` |
-| `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
-| `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
-| `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
-| `agent-framework-chatkit` | `python/packages/chatkit` | `beta` |
-| `agent-framework-claude` | `python/packages/claude` | `beta` |
-| `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` |
-| `agent-framework-core` | `python/packages/core` | `released` |
-| `agent-framework-declarative` | `python/packages/declarative` | `released` |
-| `agent-framework-devui` | `python/packages/devui` | `beta` |
-| `agent-framework-duckdb` | `python/packages/duckdb` | `alpha` |
-| `agent-framework-foundry` | `python/packages/foundry` | `released` |
-| `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
-| `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
-| `agent-framework-gemini` | `python/packages/gemini` | `beta` |
-| `agent-framework-github-copilot` | `python/packages/github_copilot` | `released` |
-| `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
-| `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` |
-| `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` |
-| `agent-framework-hosting-responses` | `python/packages/hosting-responses` | `alpha` |
-| `agent-framework-hosting-telegram` | `python/packages/hosting-telegram` | `alpha` |
-| `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` |
-| `agent-framework-lab` | `python/packages/lab` | `beta` |
-| `agent-framework-mem0` | `python/packages/mem0` | `beta` |
-| `agent-framework-mistral` | `python/packages/mistral` | `beta` |
-| `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` |
-| `agent-framework-monty` | `python/packages/monty` | `beta` |
-| `agent-framework-ollama` | `python/packages/ollama` | `beta` |
-| `agent-framework-openai` | `python/packages/openai` | `released` |
-| `agent-framework-oracle` | `python/packages/oracle` | `alpha` |
-| `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
-| `agent-framework-postgres` | `python/packages/postgres` | `alpha` |
-| `agent-framework-purview` | `python/packages/purview` | `beta` |
-| `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` |
-| `agent-framework-redis` | `python/packages/redis` | `beta` |
-| `agent-framework-sql-server` | `python/packages/sql-server` | `alpha` |
-| `agent-framework-tools` | `python/packages/tools` | `beta` |
-| `agent-framework-typesafe` | `python/packages/typesafe` | `alpha` |
+| Package | Path | State | Meta package |
+| --- | --- | --- | --- |
+| `agent-framework` | `python/` | `released` | `n/a` |
+| `agent-framework-a2a` | `python/packages/a2a` | `beta` | `yes` |
+| `agent-framework-ag-ui` | `python/packages/ag-ui` | `released` | `yes` |
+| `agent-framework-anthropic` | `python/packages/anthropic` | `beta` | `yes` |
+| `agent-framework-azure-contentunderstanding` | `python/packages/azure-contentunderstanding` | `beta` | `yes` |
+| `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` | `yes` |
+| `agent-framework-azure-documentdb` | `python/packages/azure-documentdb` | `alpha` | `no` |
+| `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` | `yes` |
+| `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` | `no` |
+| `agent-framework-bedrock` | `python/packages/bedrock` | `beta` | `yes` |
+| `agent-framework-chatkit` | `python/packages/chatkit` | `beta` | `yes` |
+| `agent-framework-claude` | `python/packages/claude` | `beta` | `yes` |
+| `agent-framework-copilotstudio` | `python/packages/copilotstudio` | `beta` | `yes` |
+| `agent-framework-core` | `python/packages/core` | `released` | `yes` |
+| `agent-framework-declarative` | `python/packages/declarative` | `released` | `yes` |
+| `agent-framework-devui` | `python/packages/devui` | `beta` | `yes` |
+| `agent-framework-duckdb` | `python/packages/duckdb` | `alpha` | `no` |
+| `agent-framework-foundry` | `python/packages/foundry` | `released` | `yes` |
+| `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` | `yes` |
+| `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` | `yes` |
+| `agent-framework-gemini` | `python/packages/gemini` | `beta` | `yes` |
+| `agent-framework-github-copilot` | `python/packages/github_copilot` | `released` | `yes` |
+| `agent-framework-hosting` | `python/packages/hosting` | `alpha` | `no` |
+| `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` | `no` |
+| `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` | `no` |
+| `agent-framework-hosting-responses` | `python/packages/hosting-responses` | `alpha` | `no` |
+| `agent-framework-hosting-telegram` | `python/packages/hosting-telegram` | `alpha` | `no` |
+| `agent-framework-hyperlight` | `python/packages/hyperlight` | `beta` | `yes` |
+| `agent-framework-lab` | `python/packages/lab` | `beta` | `no` |
+| `agent-framework-mem0` | `python/packages/mem0` | `beta` | `yes` |
+| `agent-framework-mistral` | `python/packages/mistral` | `beta` | `yes` |
+| `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` | `no` |
+| `agent-framework-monty` | `python/packages/monty` | `beta` | `yes` |
+| `agent-framework-ollama` | `python/packages/ollama` | `beta` | `yes` |
+| `agent-framework-openai` | `python/packages/openai` | `released` | `yes` |
+| `agent-framework-oracle` | `python/packages/oracle` | `alpha` | `no` |
+| `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` | `yes` |
+| `agent-framework-postgres` | `python/packages/postgres` | `alpha` | `no` |
+| `agent-framework-purview` | `python/packages/purview` | `beta` | `yes` |
+| `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` | `no` |
+| `agent-framework-redis` | `python/packages/redis` | `beta` | `yes` |
+| `agent-framework-sql-server` | `python/packages/sql-server` | `alpha` | `no` |
+| `agent-framework-tools` | `python/packages/tools` | `beta` | `yes` |
+| `agent-framework-typesafe` | `python/packages/typesafe` | `alpha` | `no` |
 
 ## Deprecated / removed packages
 

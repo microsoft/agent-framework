@@ -8213,10 +8213,12 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].inputs[0].type == "text"
     assert result.contents[0].inputs[0].text is not None
     assert "import pandas as pd" in result.contents[0].inputs[0].text
-    # Verify additional_properties for stream ordering
+    # Verify additional_properties for stream ordering and authoritative snapshot
     assert result.contents[0].additional_properties["output_index"] == 0
     assert result.contents[0].additional_properties["sequence_number"] == 5
     assert result.contents[0].additional_properties["item_id"] == "ci_456"
+    assert result.contents[0].additional_properties["stream_complete"] is True
+    assert result.contents[0].inputs[0].additional_properties["stream_complete"] is True
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:

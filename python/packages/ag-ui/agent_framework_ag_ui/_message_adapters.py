@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import json
 import logging
 from typing import Any, cast, get_args
+from urllib.parse import urlsplit
 
 from agent_framework import (
     Content,
@@ -43,7 +45,9 @@ from ._utils import (
 
 logger = logging.getLogger(__name__)
 _VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
+_ALLOWED_MULTIMODAL_URI_SCHEMES = frozenset({"data", "http", "https"})
 _APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
+_LEGACY_MEDIA_PLACEHOLDER = "[Unsupported legacy media omitted by AG-UI URI policy.]"
 
 
 def _append_synthetic_tool_results(
@@ -412,6 +416,14 @@ def _extract_multimodal_source_fields(
     return url, data, binary_id, mime_type
 
 
+def _multimodal_uri_scheme(uri: str) -> str:
+    """Return a normalized URI scheme or raise a stable validation error."""
+    try:
+        return urlsplit(uri).scheme.lower()
+    except ValueError as exc:
+        raise ValueError("Invalid AG-UI multimodal URI.") from exc
+
+
 def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
     """Convert a multimodal media part into Agent Framework content."""
     part_type = str(part.get("type", "")).lower()
@@ -427,6 +439,9 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         }.get(part_type, "application/octet-stream")
 
     if isinstance(url, str) and url:
+        scheme = _multimodal_uri_scheme(url)
+        if scheme not in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+            raise ValueError(f"Unsupported AG-UI multimodal URI scheme: {scheme or '<missing>'}.")
         return Content.from_uri(uri=url, media_type=mime_type)
 
     if isinstance(data, str) and data:
@@ -453,9 +468,48 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
                 )
 
     if isinstance(binary_id, str) and binary_id:
-        return Content.from_uri(uri=f"ag-ui://binary/{binary_id}", media_type=mime_type)
+        raise ValueError(
+            "Unresolved AG-UI multimodal binary references are unsupported; "
+            "resolve them through application-owned policy before submitting content."
+        )
 
     return None
+
+
+def sanitize_legacy_snapshot_media(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Replace unsupported media URIs in backend-owned legacy snapshot history."""
+    sanitized = copy.deepcopy(messages)
+    replacements = 0
+    for message in sanitized:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for index, item in enumerate(content):
+            if not isinstance(item, dict):
+                continue
+            part = cast(dict[str, Any], item)
+            part_type = str(part.get("type", "")).lower()
+            if part_type.startswith("input_"):
+                part_type = part_type.removeprefix("input_")
+            if part_type not in {"audio", "binary", "document", "image", "video"}:
+                continue
+            url, data, binary_id, _ = _extract_multimodal_source_fields(part)
+            if isinstance(url, str) and url:
+                try:
+                    scheme = _multimodal_uri_scheme(url)
+                except ValueError:
+                    scheme = ""
+                if scheme in _ALLOWED_MULTIMODAL_URI_SCHEMES:
+                    continue
+            elif isinstance(data, str) and data:
+                continue
+            elif not isinstance(binary_id, str) or not binary_id:
+                continue
+            content[index] = {"type": "text", "text": _LEGACY_MEDIA_PLACEHOLDER}
+            replacements += 1
+    return sanitized, replacements
 
 
 def _convert_agui_content_to_framework(content: Any) -> list[Content]:
@@ -799,8 +853,11 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 accepted = parsed.get("accepted") is True if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
-                # Log the full approval payload to debug modified arguments
-                logger.info(f"Approval payload received: {parsed}")
+                logger.debug(
+                    "Approval response received for tool_call_id=%s accepted=%s",
+                    tool_call_id,
+                    accepted,
+                )
 
                 approval_call_id = tool_call_id
                 resolved_call_id = _resolve_approval_call_id(tool_call_id, parsed)
@@ -887,7 +944,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                             arguments=json.dumps(filtered_args),
                         )
                         func_call_for_approval.id = matching_func_call.id or str(approval_call_id)
-                        logger.info(f"Using modified arguments from approval: {filtered_args}")
+                        logger.debug(
+                            "Using modified arguments from approval for call_id=%s",
+                            approval_call_id,
+                        )
                     else:
                         # No modified arguments - use the original function call
                         func_call_for_approval = matching_func_call
