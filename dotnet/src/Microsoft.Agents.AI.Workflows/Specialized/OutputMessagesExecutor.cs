@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Provides an executor that batches received chat messages that it then publishes as the final result
 /// when receiving a <see cref="TurnToken"/>.
 /// </summary>
-internal sealed class OutputMessagesExecutor(ChatProtocolExecutorOptions? options = null) : ChatProtocolExecutor(ExecutorId, options, declareCrossRunShareable: true), IResettableExecutor
+internal sealed class OutputMessagesExecutor(ChatProtocolExecutorOptions? options = null) : ChatProtocolExecutor(ExecutorId, options, declareCrossRunShareable: true)
 {
     public const string ExecutorId = "OutputMessages";
 
@@ -21,6 +21,4 @@ internal sealed class OutputMessagesExecutor(ChatProtocolExecutorOptions? option
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
         => context.YieldOutputAsync(messages, cancellationToken);
-
-    ValueTask IResettableExecutor.ResetAsync() => default;
 }

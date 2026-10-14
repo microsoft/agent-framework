@@ -5,12 +5,58 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
+using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class WorkflowExecutorStateTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OutputExecutor_ResetClearsMessagesAfterInterruptedTurnAsync(bool cancel)
+    {
+        // Arrange
+        OutputMessagesExecutor executor = new(new ChatProtocolExecutorOptions { AutoSendTurnToken = false });
+        TestWorkflowContext firstContext = new(executor.Id);
+        using CancellationTokenSource cancellation = new();
+        Mock<IWorkflowContext> interruptedContext = new();
+        interruptedContext.Setup(context => context.YieldOutputAsync(It.IsAny<object>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (cancel)
+                {
+                    cancellation.Cancel();
+                    return ValueTask.FromCanceled(cancellation.Token);
+                }
+
+                return ValueTask.FromException(new InvalidOperationException("Output interrupted."));
+            });
+        await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "first"), new TypeId(typeof(ChatMessage)), firstContext);
+        if (cancel)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => executor.TakeTurnAsync(new TurnToken(), interruptedContext.Object, cancellation.Token).AsTask());
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => executor.TakeTurnAsync(new TurnToken(), interruptedContext.Object).AsTask());
+        }
+
+        // Act
+        Assert.True(await new ExecutorInstanceBinding(executor).TryResetAsync());
+        TestWorkflowContext secondContext = new(executor.Id);
+        await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "second"), new TypeId(typeof(ChatMessage)), secondContext);
+        await executor.TakeTurnAsync(new TurnToken(), secondContext);
+
+        // Assert
+        List<ChatMessage> output = Assert.IsType<List<ChatMessage>>(Assert.Single(secondContext.YieldedOutputs));
+        Assert.Equal(["second"], output.Select(message => message.Text));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
