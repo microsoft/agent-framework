@@ -1227,7 +1227,8 @@ public sealed class ScopedContentProcessorTests
             [
                 new TextContent("see sources") { Annotations = [new CitationAnnotation { Title = "cited-title-111", Url = new Uri("https://example.com/cited") }] },
                 new ErrorContent("failed") { Details = "error-details-222" },
-                new DataContent(new byte[] { 1, 2, 3 }, "application/octet-stream") { Name = "file-name-333.bin" }
+                new DataContent(new byte[] { 1, 2, 3 }, "application/octet-stream") { Name = "file-name-333.bin" },
+                new DataContent(ReadOnlyMemory<byte>.Empty, "application/octet-stream") { Name = "empty-file-name-444.bin" }
             ])
         ];
         PurviewSettings settings = CreateValidPurviewSettings();
@@ -1262,6 +1263,7 @@ public sealed class ScopedContentProcessorTests
         Assert.Contains(texts, t => t.Contains("cited-title-111", StringComparison.Ordinal));
         Assert.Contains("error-details-222", texts);
         Assert.Contains("file-name-333.bin", texts);
+        Assert.Contains("empty-file-name-444.bin", texts);
     }
 
     [Fact]

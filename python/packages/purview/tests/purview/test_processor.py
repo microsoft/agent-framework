@@ -205,7 +205,12 @@ class TestScopedContentProcessor:
 
         requests, _ = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
-        texts = [r.content_to_process.content_entries[0].content.data for r in requests]
+        texts = [
+            entry.content.data
+            for r in requests
+            for entry in r.content_to_process.content_entries
+            if isinstance(entry.content, PurviewTextContent)
+        ]
         assert "see sources" in texts
         assert any("cited-title-111" in text for text in texts)
 

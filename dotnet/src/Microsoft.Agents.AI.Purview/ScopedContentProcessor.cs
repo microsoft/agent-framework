@@ -305,7 +305,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                 mapped.Add(new PurviewTextContent(details));
                 break;
 
-            case DataContent { Name: { Length: > 0 } name, Data.IsEmpty: false }:
+            case DataContent { Name: { Length: > 0 } name }:
                 mapped.Add(new PurviewTextContent(name));
                 break;
         }
