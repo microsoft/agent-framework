@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,10 +33,67 @@ public sealed class AgentMcpListedSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [], client);
+        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [Resource(SkillUri, SkillContent)], client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_ResourceList_FindsInstructionsByExactUriAsync()
+    {
+        // Arrange
+        const string NestedUri = SkillRootUri + "nested/SKILL.md";
+        List<string> reads = [];
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = new AgentMcpListedSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri,
+        [
+            Resource(NestedUri, "Nested instructions."),
+            Resource(SkillUri, SkillContent),
+        ], client);
+
+        // Act
+        string instructions = await skill.GetContentAsync();
+        var nestedResource = await skill.GetResourceAsync("nested/SKILL.md");
+
+        // Assert
+        Assert.Equal(SkillContent, instructions);
+        Assert.NotNull(nestedResource);
+        Assert.Equal("Nested instructions.", await nestedResource.ReadAsync());
+        Assert.Equal([SkillUri, NestedUri], reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_MissingInstructionResource_ThrowsWithoutReadingAsync(bool includeNestedInstructions)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, SkillContent));
+        });
+        await using var client = await server.CreateClientAsync();
+        var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.");
+        McpListedSkillResourceEntry[] resources = includeNestedInstructions
+            ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
+            : [];
+        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, resources, client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+
+        // Assert
+        Assert.Contains("must include the skill's SKILL.md", exception.Message);
+        Assert.Contains(SkillUri, exception.Message);
+        Assert.Empty(reads);
     }
 
     [Fact]
@@ -45,11 +104,11 @@ public sealed class AgentMcpListedSkillTests
         await using var server = CreateServer((uri, _) =>
         {
             reads.Add(uri);
-            return ValueTask.FromResult(Text(uri, "Supporting content."));
+            return ValueTask.FromResult(Text(uri, "Checklist."));
         });
         await using var client = await server.CreateClientAsync();
         var first = CreateSkill(client);
-        var updated = CreateSkill(client, resources: [new() { Uri = SkillRootUri + "references/updated.md" }]);
+        var updated = CreateSkill(client, resources: [Resource(SkillRootUri + "references/updated.md", "Checklist.")]);
 
         // Act
         var originalResource = await first.GetResourceAsync("references/checklist.md");
@@ -90,7 +149,7 @@ public sealed class AgentMcpListedSkillTests
     }
 
     [Fact]
-    public async Task GetResourceAsync_DuplicateManifestUri_ReadsSupportingResourceAsync()
+    public async Task GetResourceAsync_MultipleManifestEntries_VerifiesRequestedResourceAsync()
     {
         // Arrange
         List<string> reads = [];
@@ -102,8 +161,8 @@ public sealed class AgentMcpListedSkillTests
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client, resources:
         [
-            new() { Uri = SkillRootUri + "references/checklist.md" },
-            new() { Uri = SkillRootUri + "references/checklist.md" },
+            Resource(SkillRootUri + "references/other.md", "Different."),
+            Resource(SkillRootUri + "references/checklist.md", "Checklist."),
         ]);
 
         // Act
@@ -129,7 +188,7 @@ public sealed class AgentMcpListedSkillTests
         });
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client, resources: includeSupportingResources
-            ? [new() { Uri = SkillRootUri + "references/checklist.md" }]
+            ? [Resource(SkillRootUri + "references/checklist.md", "Checklist.")]
             : []);
 
         // Act
@@ -167,7 +226,7 @@ public sealed class AgentMcpListedSkillTests
         await using var client = await server.CreateClientAsync();
 
         // Act
-        var skill = CreateSkill(client, root);
+        var skill = CreateSkill(client, root, content: SkillContent + "\nAdditional instructions.");
         Assert.Empty(reads);
         string content = await skill.GetContentAsync();
         string cached = await skill.GetContentAsync();
@@ -229,7 +288,7 @@ public sealed class AgentMcpListedSkillTests
                 ],
             }));
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, content: SkillContent + "\nSecond text block.");
 
         // Act
         string content = await skill.GetContentAsync();
@@ -246,8 +305,8 @@ public sealed class AgentMcpListedSkillTests
         await using var secondServer = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nSecond server.")));
         await using var firstClient = await firstServer.CreateClientAsync();
         await using var secondClient = await secondServer.CreateClientAsync();
-        var firstSkill = CreateSkill(firstClient);
-        var secondSkill = CreateSkill(secondClient);
+        var firstSkill = CreateSkill(firstClient, content: SkillContent + "\nFirst server.");
+        var secondSkill = CreateSkill(secondClient, content: SkillContent + "\nSecond server.");
 
         // Act & Assert
         Assert.Equal(SkillContent + "\nFirst server.", await firstSkill.GetContentAsync());
@@ -270,7 +329,7 @@ public sealed class AgentMcpListedSkillTests
             return ValueTask.FromResult(Text(uri, content));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, content: content);
         var advertised = skill.Frontmatter;
 
         // Act & Assert
@@ -304,7 +363,7 @@ public sealed class AgentMcpListedSkillTests
             return ValueTask.FromResult(Text(uri, content));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, content: content);
 
         // Act & Assert
         for (int i = 0; i < 2; i++)
@@ -348,7 +407,7 @@ public sealed class AgentMcpListedSkillTests
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
-        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [], client);
+        var skill = new AgentMcpListedSkill(frontmatter, SkillUri, [Resource(SkillUri, Content)], client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -418,7 +477,7 @@ public sealed class AgentMcpListedSkillTests
                 ],
             }));
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, resources: [Resource(SkillRootUri + "references/checklist.md", bytes)]);
 
         // Act
         var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
@@ -471,7 +530,7 @@ public sealed class AgentMcpListedSkillTests
             return ValueTask.FromResult(Text(uri, "Must not be read."));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client, resources: [new() { Uri = SkillRootUri + name }]);
+        var skill = CreateSkill(client, resources: [Resource(SkillRootUri + name, "Checklist.")]);
 
         // Act
         var resource = await skill.GetResourceAsync(name);
@@ -542,7 +601,7 @@ public sealed class AgentMcpListedSkillTests
                     : [new TextResourceContents { Uri = "skill://other/SKILL.md", Text = SkillContent }],
             }));
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, content: duplicate ? SkillContent + "\n" + SkillContent : SkillContent);
 
         // Act
         string content = await skill.GetContentAsync();
@@ -565,7 +624,10 @@ public sealed class AgentMcpListedSkillTests
                     : [new TextResourceContents { Uri = "skill://other/checklist.md", Text = "Checklist." }],
             }));
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client);
+        var skill = CreateSkill(client, resources:
+        [
+            Resource(SkillRootUri + "references/checklist.md", duplicate ? "Checklist.\nChecklist." : "Checklist."),
+        ]);
 
         // Act
         var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
@@ -591,16 +653,161 @@ public sealed class AgentMcpListedSkillTests
         Assert.Null(content);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_IntegrityFailure_RetriesAndCachesOnlyVerifiedContentAsync(bool sizeMismatch)
+    {
+        // Arrange
+        string changed = sizeMismatch ? SkillContent + "\nChanged." : SkillContent.Replace("Instructions.", "Changed text.");
+        Assert.Equal(SkillContent.Length, changed.Length - (sizeMismatch ? "\nChanged.".Length : 0));
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+            ValueTask.FromResult(Text(uri, ++reads == 1 ? changed : SkillContent)));
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        string content = await skill.GetContentAsync();
+        string cached = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Contains(sizeMismatch ? "byte size" : "SHA-256 digest", exception.Message);
+        Assert.Contains(SkillUri, exception.Message);
+        Assert.Equal(SkillContent, content);
+        Assert.Equal(content, cached);
+        Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GetResourceAsync_IntegrityFailure_ThrowsWithoutReturningContentAsync(bool binary, bool sizeMismatch)
+    {
+        // Arrange
+        const string Uri = SkillRootUri + "references/checklist.md";
+        byte[] expected = Encoding.UTF8.GetBytes("Checklist.");
+        byte[] changed = Encoding.UTF8.GetBytes(sizeMismatch ? "Changed checklist." : "Different.");
+        await using var server = CreateServer((uri, _) =>
+            ValueTask.FromResult(binary
+                ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(changed, uri, "application/octet-stream")] }
+                : Text(uri, Encoding.UTF8.GetString(changed))));
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client, resources: [Resource(Uri, expected)]);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+
+        // Assert
+        Assert.Contains(sizeMismatch ? "byte size" : "SHA-256 digest", exception.Message);
+        Assert.Contains(Uri, exception.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_Utf8Content_UsesByteCountAsync(bool useCharacterCount)
+    {
+        // Arrange
+        const string Content = SkillContent + "\n\u00e9\U0001f600\r\n";
+        var instructions = Resource(SkillUri, Content);
+        Assert.True(instructions.Size > Content.Length);
+        if (useCharacterCount)
+        {
+            instructions = new() { Uri = instructions.Uri, Digest = instructions.Digest, Size = Content.Length };
+        }
+
+        await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
+        await using var client = await server.CreateClientAsync();
+        var skill = new AgentMcpListedSkill(new AgentSkillFrontmatter("unit-converter", "Convert units."), SkillUri, [instructions], client);
+
+        // Act & Assert
+        if (useCharacterCount)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+            Assert.Contains("byte size", exception.Message);
+        }
+        else
+        {
+            Assert.Equal(Content, await skill.GetContentAsync());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResourceAsync_Utf8Content_VerifiesTextAndDecodedBlobAsync(bool binary)
+    {
+        // Arrange
+        const string Content = "\u00e9\U0001f600\r\n";
+        const string Uri = SkillRootUri + "references/checklist.md";
+        byte[] bytes = Encoding.UTF8.GetBytes(Content);
+        await using var server = CreateServer((uri, _) =>
+            ValueTask.FromResult(binary
+                ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(bytes, uri, "text/plain")] }
+                : Text(uri, Content)));
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client, resources: [Resource(Uri, bytes)]);
+
+        // Act
+        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var content = await resource.ReadAsync();
+
+        // Assert
+        if (binary)
+        {
+            Assert.Equal(bytes, Assert.IsType<DataContent>(content).Data.ToArray());
+        }
+        else
+        {
+            Assert.Equal(Content, content);
+        }
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_MissingContent_ThrowsEvenWhenEmptyFileIsListedAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult(new ReadResourceResult { Contents = [] }));
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("empty.txt"));
+
+        // Assert
+        Assert.Contains("returned no content", exception.Message);
+        Assert.Contains(SkillRootUri + "empty.txt", exception.Message);
+    }
+
     private static AgentMcpListedSkill CreateSkill(
         McpClient client,
         string root = SkillRootUri,
-        IReadOnlyList<McpListedSkillResourceEntry>? resources = null) =>
-        new(new AgentSkillFrontmatter("unit-converter", "Convert units."), root + "SKILL.md", resources ??
+        IReadOnlyList<McpListedSkillResourceEntry>? resources = null,
+        string content = SkillContent) =>
+        new(new AgentSkillFrontmatter("unit-converter", "Convert units."), root + "SKILL.md",
         [
-            new() { Uri = root + "references/checklist.md" },
-            new() { Uri = root + "assets/icon.bin" },
-            new() { Uri = root + "empty.txt" },
+            Resource(root + "SKILL.md", content),
+            .. resources ??
+            [
+                Resource(root + "references/checklist.md", "Checklist."),
+                Resource(root + "assets/icon.bin", new byte[] { 1, 2, 3, 4 }),
+                Resource(root + "empty.txt", ""),
+            ],
         ], client);
+
+    private static McpListedSkillResourceEntry Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
+
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Resource digests require lowercase hexadecimal characters.")]
+    private static McpListedSkillResourceEntry Resource(string uri, byte[] bytes) => new()
+    {
+        Uri = uri,
+        Digest = "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+        Size = bytes.Length,
+    };
 
     private static ReadResourceResult Text(string uri, string text) => new()
     {

@@ -13,6 +13,8 @@
 // to discover and inject the skill into a ChatClientAgent.
 
 using System.ComponentModel;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -163,7 +165,7 @@ internal sealed class SkillResources
         | kilograms   | pounds      | 2.20462  |
         """;
 
-    private const string SkillsListJson = $$"""
+    private static readonly string s_skillsListJson = $$"""
         {
             "resultType": "complete",
             "skills": [
@@ -175,10 +177,14 @@ internal sealed class SkillResources
                     },
                     "resources": [
                         {
-                            "uri": "{{SkillUri}}"
+                            "uri": "{{SkillUri}}",
+                            "digest": "{{ComputeDigest(SkillMd)}}",
+                            "size": {{Encoding.UTF8.GetByteCount(SkillMd)}}
                         },
                         {
-                            "uri": "{{ConversionTableUri}}"
+                            "uri": "{{ConversionTableUri}}",
+                            "digest": "{{ComputeDigest(ConversionTable)}}",
+                            "size": {{Encoding.UTF8.GetByteCount(ConversionTable)}}
                         }
                     ]
                 }
@@ -189,7 +195,10 @@ internal sealed class SkillResources
     /// <summary>
     /// Lists the available skills and their resource metadata.
     /// </summary>
-    public static JsonNode? ListSkills() => JsonNode.Parse(SkillsListJson);
+    public static JsonNode? ListSkills() => JsonNode.Parse(s_skillsListJson);
+
+    private static string ComputeDigest(string content) =>
+        "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
 
     /// <summary>
     /// Returns the unit-converter skill instructions.

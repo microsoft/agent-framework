@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI;
 
@@ -66,4 +67,15 @@ internal sealed class McpListedSkillResourceEntry
     /// Gets the file's resource URI.
     /// </summary>
     public required string Uri { get; init; }
+
+    /// <summary>
+    /// Gets the SHA-256 digest of the file's bytes as <c>sha256:</c> followed by 64 lowercase hexadecimal characters.
+    /// </summary>
+    public required string Digest { get; init; }
+
+    /// <summary>
+    /// Gets the file's length in bytes.
+    /// </summary>
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public required long Size { get; init; }
 }

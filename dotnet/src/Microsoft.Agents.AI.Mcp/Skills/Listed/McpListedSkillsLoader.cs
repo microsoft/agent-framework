@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Instructions and resources are fetched later, when requested.
 /// </remarks>
-internal sealed class McpListedSkillsLoader
+internal sealed partial class McpListedSkillsLoader
 {
     private const string CompleteResultType = "complete";
 
@@ -130,6 +131,10 @@ internal sealed class McpListedSkillsLoader
         return new AgentSkillFrontmatter(entry.Frontmatter.Name, entry.Frontmatter.Description);
     }
 
+    /// <summary>
+    /// Validates and returns all resources listed for the skill, including <c>SKILL.md</c>, which contains
+    /// the skill's instructions.
+    /// </summary>
     private static List<McpListedSkillResourceEntry> CreateSupportingResources(McpListedSkillEntry entry)
     {
         string skillUri = entry.Uri;
@@ -138,6 +143,7 @@ internal sealed class McpListedSkillsLoader
         string skillRootUri = skillUri[..^"SKILL.md".Length];
 
         List<McpListedSkillResourceEntry> resources = [];
+        HashSet<string> resourceUris = new(StringComparer.Ordinal);
 
         foreach (McpListedSkillResourceEntry? resource in entry.Resources)
         {
@@ -155,16 +161,33 @@ internal sealed class McpListedSkillsLoader
                 throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
             }
 
-            // The server also supplies SKILL.md as a resource. Skip it here because we read it separately
-            // as skill instructions and do not include it in the list of supporting resources.
-            if (string.Equals(resource.Uri, skillUri, StringComparison.Ordinal))
+            if (!ResourceDigestRegex().IsMatch(resource.Digest))
             {
-                continue;
+                throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a digest as 'sha256:' followed by 64 lowercase hexadecimal characters.");
+            }
+
+            if (resource.Size < 0)
+            {
+                throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a nonnegative size in bytes.");
+            }
+
+            // Each resource URI must appear only once in the skill's resource list.
+            if (!resourceUris.Add(resource.Uri))
+            {
+                throw new InvalidOperationException($"Skill '{skillUri}' contains a duplicate resource URI '{resource.Uri}'.");
             }
 
             resources.Add(resource);
         }
 
+        if (!resourceUris.Contains(skillUri))
+        {
+            throw new InvalidOperationException($"Skill '{skillUri}' must include SKILL.md in its resource manifest.");
+        }
+
         return resources;
     }
+
+    [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ResourceDigestRegex();
 }
