@@ -186,6 +186,38 @@ dynamically for a run or session.
 - Define when the provider loads and persists data, and keep its session-state keys distinct from other providers.
 - Treat retrieved and persisted context as sensitive and enforce tenant and user boundaries outside the model.
 
+### Build a custom ContextProvider
+
+Build a custom `ContextProvider` when an application needs reusable context engineering that runs with an agent, such
+as retrieval, user or tenant memory, dynamic instructions, per-run tools, request-scoped data, or post-run extraction.
+Use middleware instead when the requirement is primarily execution control around the agent, model, or tools.
+
+1. Subclass `ContextProvider` and give each provider instance a stable, unique `source_id`.
+2. Override `before_run(...)` to add context through `SessionContext`:
+   - `extend_instructions(...)` for dynamic instructions;
+   - `extend_messages(...)` for retrieved or remembered messages;
+   - `extend_tools(...)` for tools available only to this invocation;
+   - `extend_middleware(...)` for invocation-scoped chat or function middleware.
+3. Override `after_run(...)` to inspect the input and response, extract new information, or persist provider-owned
+   state.
+4. Store mutable provider data in the supplied provider-scoped `state` dictionary. Use `session.state` directly only
+   when deliberate coordination across providers is required.
+5. Register custom persisted classes with `register_state_type(...)` at module import time so restored sessions can
+   deserialize them before the application loads a session.
+
+Set `after_run_once_per_turn=True` when an `AgentLoopMiddleware` should defer `after_run` until the whole user turn is
+complete. Context providers may add chat or function middleware, but not agent middleware.
+
+Test context attribution, multiple sessions, serialization and restoration, provider ordering, missing data, and
+failure behavior. For cross-session memory, include origin session attribution and enforce authorization before
+injecting content.
+
+Current references:
+
+- [Context Provider concepts](https://learn.microsoft.com/agent-framework/concepts/agents/conversations/context-providers)
+- [ContextProvider API](https://learn.microsoft.com/python/api/agent-framework-core/agent_framework.contextprovider)
+- [Custom ContextProvider sample](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/context_providers/simple_context_provider.py)
+
 ## Middleware
 
 Use middleware for reusable behavior that belongs around an execution boundary rather than in agent instructions,
