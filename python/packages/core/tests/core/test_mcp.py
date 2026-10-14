@@ -1034,6 +1034,25 @@ def test_parse_tool_result_from_mcp_structured_content_only():
     assert parsed == {"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]}
 
 
+def test_parse_tool_result_from_mcp_structured_content_unicode_unescaped():
+    """Test that non-ASCII unicode characters in structuredContent are not escaped to \\uXXXX."""
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent={"columns": ["Año", "Género", "Categoría"]},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text is not None
+    assert "Año" in result[0].text
+    assert "Género" in result[0].text
+    assert "Categoría" in result[0].text
+    assert "\\u00f1" not in result[0].text
+    assert "\\u00e9" not in result[0].text
+    assert "\\u00ed" not in result[0].text
+
+
 def test_parse_tool_result_from_mcp_structured_content_with_text():
     """Default structured_first prefers structuredContent when both are present (#7866)."""
     mcp_result = types.CallToolResult(

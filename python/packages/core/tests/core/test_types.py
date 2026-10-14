@@ -4628,6 +4628,37 @@ def test_parse_result_mixed_content_list():
     assert result[1].type == "data"
 
 
+def test_parse_result_non_ascii_unicode():
+    """Test that non-ASCII unicode characters in dict results are not escaped to \\uXXXX."""
+    data = {"columns": ["Año", "Género", "Categoría"]}
+    parsed = FunctionTool.parse_result(data)
+    assert len(parsed) == 1
+    assert "Año" in parsed[0].text
+    assert "Género" in parsed[0].text
+    assert "\\u00f1" not in parsed[0].text
+    assert "\\u00e9" not in parsed[0].text
+
+
+def test_parse_result_list_non_ascii_unicode():
+    """Test that non-ASCII unicode in list-of-items results are not escaped to \\uXXXX."""
+    data = [{"name": "Año"}, {"name": "Género"}]
+    parsed = FunctionTool.parse_result(data)
+    assert len(parsed) == 1
+    assert "Año" in parsed[0].text
+    assert "Género" in parsed[0].text
+    assert "\\u00f1" not in parsed[0].text
+
+
+def test_from_function_result_non_ascii_unicode():
+    """Test that Content.from_function_result preserves UTF-8 unicode in dict results."""
+    data = {"city": "München", "country": "España"}
+    content = Content.from_function_result(call_id="call-1", result=data)
+    assert "München" in content.result
+    assert "España" in content.result
+    assert "\\u00fc" not in content.result
+    assert "\\u00f1" not in content.result
+
+
 def test_from_function_result_with_content_list():
     """Test Content.from_function_result stores all items uniformly."""
     content_list = [
