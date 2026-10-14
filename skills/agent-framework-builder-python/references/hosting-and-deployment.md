@@ -137,11 +137,31 @@ the application did not intend to use.
 - The deployment package contains no local credentials, caches, or unrelated files.
 - Host-specific manifests are added only by the deployment workflow that consumes them.
 
-## Foundry deployment handoff
+## Deploy a hosted agent to Microsoft Foundry
 
-After local readiness is proven, use dedicated Foundry tooling for provisioning, deployment, invocation, traces, RBAC,
-quota, capacity, and troubleshooting. Do not invent `azure.yaml`, manifests, or `.foundry/` layouts without the
-deployment workflow that consumes them.
+After local readiness is proven, follow the Foundry Hosted Agent deployment flow rather than inventing manifests or
+infrastructure files:
+
+1. Start from a compatible `agent.manifest.yaml` for the selected Responses or Invocations host.
+2. Initialize the deployment project with `azd ai agent init -m <manifest-url>`.
+3. Run `azd provision` only when the required Foundry project, model deployment, registry, and monitoring resources do
+   not already exist.
+4. Test the host locally with `azd ai agent run` and `azd ai agent invoke --local`.
+5. Deploy with `azd deploy`.
+
+Use these instructions according to the scenario:
+
+- [Agent Framework: Foundry hosted agents and deployment](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent#deploying-to-foundry)
+- [Foundry quickstart: deploy your first hosted agent with azd](https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent)
+- [Foundry: deploy a hosted agent](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent)
+- [Foundry: deploy a hosted agent from source code](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)
+- [Host Agent Framework agents as Foundry hosted agents](https://learn.microsoft.com/azure/foundry/how-to/develop/framework-hosted-agents#deploy)
+- [Manage deployed hosted agents](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent)
+- [Agent Framework hosted-agent sample deployment instructions](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents#deploying-the-agent-to-foundry)
+
+Use dedicated Foundry tooling for provisioning, deployment, invocation, traces, RBAC, quota, capacity, and
+troubleshooting. Host manifests and runtime environment variables are deployment contracts; copy them from the current
+guide or sample for the selected protocol instead of constructing them from memory.
 
 Current examples:
 

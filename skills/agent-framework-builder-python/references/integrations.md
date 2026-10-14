@@ -34,6 +34,10 @@ Common released distributions include:
 Other providers and agent services have independent lifecycle states and Python requirements. Install only the selected
 distribution and allow prerelease packages only when required.
 
+If no existing provider matches the backend, use the
+[custom provider guidance](agent-builder.md#build-a-custom-provider) to implement a `BaseChatClient` or
+`SupportsAgentRun` adapter instead of forking an unrelated provider.
+
 Start with the current
 [model provider catalog](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers/) and
 [agent service catalog](https://learn.microsoft.com/agent-framework/integrations/by-component/agent-services/).

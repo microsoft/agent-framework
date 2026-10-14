@@ -90,6 +90,44 @@ tools for those operations.
 
 Use current provider documentation before assuming hosted-tool, storage, streaming, or structured-output parity.
 
+## Build a custom provider
+
+Build a provider when the application must integrate a model endpoint or remote agent service that no existing Agent
+Framework package supports, or when a private gateway requires custom authentication, transport, option mapping, or
+protocol translation.
+
+Choose the extension point that matches the backend:
+
+- Implement a chat client when the backend accepts messages and returns model-style chat responses. Subclass
+  `BaseChatClient` and implement `_inner_get_response(...)` for both regular and streaming execution.
+- Implement an agent when the backend already owns agent behavior or does not fit chat-client semantics. Implement
+  `SupportsAgentRun`, usually by subclassing `BaseAgent`, and support both `stream=False` and `stream=True`.
+- Use middleware instead of a provider when the underlying model protocol is already supported and the requirement is
+  cross-cutting policy, retries, routing, logging, or request transformation.
+
+A custom chat client is responsible for:
+
+- converting Agent Framework `Message` and `Content` values to the backend request;
+- mapping backend responses, streaming updates, usage, identifiers, and finish information back to framework types;
+- defining typed provider-specific options without discarding unknown application options unintentionally;
+- mapping provider failures to actionable exceptions and preserving cancellation;
+- declaring service-managed history behavior and persisting continuation identifiers through `AgentSession` when
+  supported;
+- owning and cleaning up network clients or other context-managed resources it creates.
+
+If a custom client needs the standard tool loop, chat middleware, and telemetry, compose the public layers in this
+order: function invocation, chat middleware, chat telemetry, then the raw or base client. Prefer an existing
+fully-featured client when only configuration or middleware differs.
+
+Validate regular and streaming parity, tools, structured output, usage, cancellation, session continuation, resource
+cleanup, and middleware ordering.
+
+Current references:
+
+- [BaseChatClient API](https://learn.microsoft.com/python/api/agent-framework-core/agent_framework.basechatclient?view=agent-framework-python-latest)
+- [Custom chat client sample](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/chat_client/custom_chat_client.py)
+- [Custom agent sample](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/providers/custom/custom_agent.py)
+
 ## Tools and approval
 
 - Prefer focused, typed, non-interactive tool functions.
@@ -150,13 +188,34 @@ dynamically for a run or session.
 
 ## Middleware
 
-Choose the narrowest middleware layer:
+Use middleware for reusable behavior that belongs around an execution boundary rather than in agent instructions,
+business tools, or a provider implementation. Common cases include policy enforcement, retries, caching, routing,
+dynamic tool exposure, validation, observability, result transformation, and shared runtime context.
 
-- agent middleware for run-level policy, termination, result overrides, and shared state;
-- chat middleware for model request and response behavior;
-- function middleware for tool invocation behavior.
+Choose the narrowest boundary:
 
-In Python middleware, call `await call_next()` without passing the context again.
+- **Agent middleware** runs around `Agent.run(...)`. Use it for run-level policy, caching, termination, result
+  overrides, or shared state.
+- **Chat middleware** runs around each model call, including calls inside a tool loop. Use it for retries, request and
+  response transformation, model routing, or per-call usage behavior.
+- **Function middleware** runs around each local tool invocation. Use it for validated-argument checks, authorization
+  context, logging, exception handling, or tool-result transformation.
+
+Create middleware either by subclassing `AgentMiddleware`, `ChatMiddleware`, or `FunctionMiddleware`, or by using the
+matching decorator. The implementation receives a context and `call_next`:
+
+1. Inspect or update the context before execution.
+2. Call `await call_next()` without passing the context again.
+3. Inspect or transform the result after execution.
+
+Skip `call_next()` only when deliberately terminating the pipeline or returning a complete valid result. Keep state
+scoped to the run or session unless cross-run sharing is intentional, and test both streaming and non-streaming paths.
+
+Current references:
+
+- [Middleware concepts](https://learn.microsoft.com/agent-framework/concepts/agents/middleware/)
+- [Middleware samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/middleware)
+- [Class-based middleware sample](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/middleware/class_based_middleware.py)
 
 ## Validation
 
