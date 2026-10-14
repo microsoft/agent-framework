@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using Microsoft.Agents.AI.Hosting.A2A.UnitTests.Internal;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -93,10 +95,10 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2AHttpJson with IHostedAgentBuilder correctly maps the agent with default configuration.
+    /// Verifies that MapA2AHttpJson maps protocol endpoints without exposing a stub agent card.
     /// </summary>
     [Fact]
-    public void MapA2AHttpJson_WithAgentBuilder_DefaultConfiguration_Succeeds()
+    public void MapA2AHttpJson_WithAgentBuilder_MapsProtocolEndpoints()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -107,9 +109,19 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
-        // Act & Assert - Should not throw
+        // Act
         var result = app.MapA2AHttpJson(agentBuilder, "/a2a");
+        RouteEndpoint[] endpoints = ((IEndpointRouteBuilder)app).DataSources
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .ToArray();
+
+        // Assert
         Assert.NotNull(result);
+        Assert.Contains(endpoints, endpoint => endpoint.RoutePattern.RawText == "/a2a/message:send");
+        Assert.Contains(endpoints, endpoint => endpoint.RoutePattern.RawText == "/a2a/message:stream");
+        Assert.Contains(endpoints, endpoint => endpoint.RoutePattern.RawText == "/a2a/tasks/{id}");
+        Assert.DoesNotContain(endpoints, endpoint => endpoint.RoutePattern.RawText == "/a2a/card");
     }
 
     /// <summary>
