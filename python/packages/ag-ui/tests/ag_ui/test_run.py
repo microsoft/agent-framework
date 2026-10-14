@@ -3817,3 +3817,47 @@ async def test_request_state_cannot_assign_service_session_id():
         ]
 
         assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"
+
+
+def test_emit_text_keeps_repeated_annotated_single_chunk_delta() -> None:
+    """A genuine repeated token with NEW annotations is kept (#9336 review round).
+
+    An equal delta after one chunk is only a replay when its annotations re-send the
+    recorded ones. A second identical token carrying a fresh citation streams normally.
+    """
+    flow = FlowState()
+    first = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/a")]), flow
+    )
+    second = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/b")]), flow
+    )
+
+    assert flow.accumulated_text == "haha"
+    text_events = [event for event in [*first, *second] if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha", "ha"]
+    citation_events = [event for event in [*first, *second] if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 2
+
+
+def test_emit_text_suppresses_cumulative_annotated_replay_after_one_chunk() -> None:
+    """An equal delta whose annotations re-send the recorded set is still a replay."""
+    flow = FlowState()
+    first_citation = Annotation(type="citation", url="https://example.com/first")
+    _emit_text(Content.from_text("Answer", annotations=[first_citation]), flow)
+
+    replay = _emit_text(
+        Content.from_text(
+            "Answer",
+            annotations=[
+                first_citation,
+                Annotation(type="citation", url="https://example.com/second"),
+            ],
+        ),
+        flow,
+    )
+
+    assert flow.accumulated_text == "Answer"
+    citation_events = [event for event in replay if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 1
+    assert citation_events[0].value["annotations"][0]["url"] == "https://example.com/second"
