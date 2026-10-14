@@ -14,6 +14,135 @@ public class ApprovalResponseBindingChatClientTests
 {
     private const string RequestId = "ficc_call1";
 
+    [Fact]
+    public void PrepareApprovalMessages_TwoCompletedCycles_PreservesOriginalOrder()
+    {
+        // Arrange
+        var requestA = new ToolApprovalRequestContent("request-A", new FunctionCallContent("call-A", "toolA"));
+        var requestB = new ToolApprovalRequestContent("request-B", new FunctionCallContent("call-B", "toolB"));
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [requestA]),
+            new(ChatRole.User, [requestA.CreateResponse(approved: true)]),
+            new(ChatRole.Assistant, [new FunctionCallContent("call-A", "toolA")]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-A", "Result A")]),
+            new(ChatRole.Assistant, [requestB]),
+            new(ChatRole.User, [requestB.CreateResponse(approved: false)]),
+            new(ChatRole.Assistant, [new FunctionCallContent("call-B", "toolB")]),
+            new(ChatRole.Tool, [new FunctionResultContent("call-B", "Rejected")]),
+        ];
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(messages, null);
+
+        // Assert
+        Assert.Same(messages, result);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_TwoCompletedCycles_PreservesServiceCallResultOrderAsync()
+    {
+        // Arrange
+        var requestA = new ToolApprovalRequestContent("request-A", new FunctionCallContent("call-A", "toolA"));
+        var requestB = new ToolApprovalRequestContent("request-B", new FunctionCallContent("call-B", "toolB"));
+        var callA = new FunctionCallContent("call-A", "toolA") { InformationalOnly = true };
+        var resultA = new FunctionResultContent("call-A", "Result A");
+        var callB = new FunctionCallContent("call-B", "toolB") { InformationalOnly = true };
+        var resultB = new FunctionResultContent("call-B", "Result B");
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(new FunctionInvokingChatClient(CreateCapturingChatClient(capture)));
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [requestA]),
+            new(ChatRole.User, [requestA.CreateResponse(approved: true)]),
+            new(ChatRole.Assistant, [callA]),
+            new(ChatRole.Tool, [resultA]),
+            new(ChatRole.Assistant, [requestB]),
+            new(ChatRole.User, [requestB.CreateResponse(approved: true)]),
+            new(ChatRole.Assistant, [callB]),
+            new(ChatRole.Tool, [resultB]),
+            new(ChatRole.User, "New question"),
+        ];
+
+        // Act
+        await RunAsync(decorator, new ChatClientAgentSession(), messages);
+
+        // Assert
+        var sent = capture.Messages!;
+        Assert.Equal(5, sent.Count);
+        Assert.Same(callA, Assert.Single(sent[0].Contents));
+        Assert.Same(resultA, Assert.Single(sent[1].Contents));
+        Assert.Same(callB, Assert.Single(sent[2].Contents));
+        Assert.Same(resultB, Assert.Single(sent[3].Contents));
+        Assert.Equal("New question", sent[4].Text);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PrepareApprovalMessages_CompletedCycleWithPendingDecision_PreservesCompletedMessages(bool additionalAnswer)
+    {
+        // Arrange
+        var completed = new ToolApprovalRequestContent("completed", new FunctionCallContent("old-call", "toolA"));
+        var pending = new ToolApprovalRequestContent("pending", new FunctionCallContent("new-call", "toolB"));
+        var answer = pending.CreateResponse(approved: false);
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [completed]),
+            new(ChatRole.User, [completed.CreateResponse(approved: true), new TextContent("Old text")]),
+            new(ChatRole.Assistant, [new FunctionCallContent("old-call", "toolA")]),
+            new(ChatRole.Tool, [new FunctionResultContent("old-call", "Old result")]),
+            new(ChatRole.Assistant, [pending]),
+            new(ChatRole.User, "New question"),
+        ];
+        if (!additionalAnswer)
+        {
+            messages.Add(new(ChatRole.User, [answer]));
+        }
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(messages, additionalAnswer ? [answer] : null);
+
+        // Assert
+        Assert.Equal(7, result.Count);
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Same(messages[i], result[i]);
+        }
+        Assert.Same(answer, Assert.Single(result[5].Contents));
+        Assert.Same(messages[5], result[6]);
+        Assert.Equal(2, messages[1].Contents.Count);
+    }
+
+    [Fact]
+    public void PrepareApprovalMessages_LaterCompletedRequest_DoesNotMovePendingInsertionPoint()
+    {
+        // Arrange
+        var pending = new ToolApprovalRequestContent("pending", new FunctionCallContent("pending-call", "toolA"));
+        var completed = new ToolApprovalRequestContent("completed", new FunctionCallContent("completed-call", "toolB"));
+        var answer = pending.CreateResponse(approved: false);
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant, [pending]),
+            new(ChatRole.User, "New question"),
+            new(ChatRole.Assistant, [completed]),
+            new(ChatRole.User, [completed.CreateResponse(approved: true)]),
+            new(ChatRole.Assistant, [new FunctionCallContent("completed-call", "toolB")]),
+            new(ChatRole.Tool, [new FunctionResultContent("completed-call", "Completed")]),
+        ];
+
+        // Act
+        var result = ToolApprovalHelpers.PrepareApprovalMessages(messages, [answer]);
+
+        // Assert
+        Assert.Same(messages[0], result[0]);
+        Assert.Same(answer, Assert.Single(result[1].Contents));
+        for (int i = 1; i < messages.Count; i++)
+        {
+            Assert.Same(messages[i], result[i + 1]);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

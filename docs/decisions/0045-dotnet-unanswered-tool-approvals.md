@@ -55,8 +55,11 @@ A failed attempt must not change the original request or prevent a later explici
 approval from executing the tool.
 
 Group supplied, automatic, and missing-answer decisions after any replayed
-requests and before new caller content. This keeps the resulting tool results
+unfinished requests and before new caller content. This keeps the resulting tool results
 before the new question, including when the inference service owns the history.
+Keep approval answers whose calls already have results in their original
+positions, and do not use completed requests as insertion points for pending
+answers. This preserves earlier completed approval cycles.
 
 Return the generated rejection responses before the tool-call/result messages,
 so callers can see the decisions and end-of-run history saving can store them.
@@ -80,11 +83,23 @@ No additional history read is required.
 
 Workflow hosts also forward externally supplied approval answers before the
 agent's tool results, even when ordinary incoming messages are not forwarded.
+They wait for the agent's completed function call and matching result and build
+the forwarded answer from that completed call, not from the caller's tool
+details. The saved request's call id identifies the corresponding completed
+call. The result prevents another agent from executing it again.
 Other agents may already have received the approval request as part of the
 shared conversation; forwarding only its result would leave that request
 unanswered in their histories. This forwarding applies only to answers handled
 by the workflow's approval-response handler, not decisions received from other
-agents.
+agents. When ordinary incoming forwarding is enabled, only that external answer
+is held back until completion; other incoming messages are forwarded as before.
+
+End-of-run history saving still appends the original new input before returned
+messages. A recovery question can therefore appear before the generated
+rejection and reconstructed call/result in stored history. On replay, FICC
+removes the approval content and keeps the reconstructed call/result pair
+adjacent; this does not by itself produce an orphan result or invalid tool-call
+sequence. The stored chronological order is not rewritten by this component.
 
 This is the default where approval-response binding is enabled. Disabling that
 component also disables automatic rejection; no separate setting is added.

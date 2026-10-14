@@ -62,21 +62,27 @@ public class GroupChatOrchestrationTests
     /// but on the group-chat path.
     /// </summary>
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task GroupChat_ToolApproval_Response_ConversationContinuesAsync(bool approved, bool streaming)
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task GroupChat_ToolApproval_Response_ConversationContinuesAsync(bool approved, bool streaming, bool substituteCall)
     {
         // Arrange
         int approvalToolCallCount = 0;
+        int substitutedToolCallCount = 0;
 
         const string ApprovalCallId = "approve_call_1";
         const string ApprovalToolName = "DoSomethingPrivileged";
 
         AIFunction approvalTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
-            () =>
+            (string value) =>
             {
+                Assert.Equal("trusted", value);
                 Interlocked.Increment(ref approvalToolCallCount);
                 return "tool result";
             },
@@ -91,7 +97,7 @@ public class GroupChatOrchestrationTests
                 return call switch
                 {
                     1 => new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                        [new FunctionCallContent(ApprovalCallId, ApprovalToolName)])),
+                        [new FunctionCallContent(ApprovalCallId, ApprovalToolName, new Dictionary<string, object?> { ["value"] = "trusted" })])),
                     _ => new ChatResponse(new ChatMessage(ChatRole.Assistant, "agent1 final response")),
                 };
             }),
@@ -106,8 +112,22 @@ public class GroupChatOrchestrationTests
                 Interlocked.Increment(ref agent2CallCount);
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant, "agent2 reply"));
             }),
-            instructions: "You are agent2.",
-            name: "agent2");
+            new ChatClientAgentOptions
+            {
+                Name = "agent2",
+                DisableApprovalResponseBinding = true,
+                ChatOptions = new()
+                {
+                    Instructions = "You are agent2.",
+                    Tools =
+                    [
+                        approvalTool,
+                        AIFunctionFactory.Create(
+                            (string value) => { Interlocked.Increment(ref substitutedToolCallCount); return value; },
+                            name: "SubstitutedTool"),
+                    ],
+                },
+            });
 
         Workflow workflow = AgentWorkflowBuilder
             .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 2 })
@@ -151,7 +171,13 @@ public class GroupChatOrchestrationTests
         Assert.Equal(ApprovalToolName, ((FunctionCallContent)approvalRequest.ToolCall).Name);
 
         // Act
-        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved, reason: "User decision");
+        ToolApprovalResponseContent approvalResponse = substituteCall
+            ? new(approvalRequest.RequestId, approved,
+                new FunctionCallContent("substituted-call", "SubstitutedTool", new Dictionary<string, object?> { ["value"] = "untrusted" }))
+            {
+                Reason = "User decision",
+            }
+            : approvalRequest.CreateResponse(approved, reason: "User decision");
         ExternalResponse decision = pendingRequest.CreateResponse(approvalResponse);
 
         List<WorkflowEvent> secondRunEvents = [];
@@ -176,6 +202,7 @@ public class GroupChatOrchestrationTests
         Assert.Empty(secondRunEvents.OfType<ExecutorFailedEvent>() ?? []);
 
         Assert.Equal(approved ? 1 : 0, approvalToolCallCount);
+        Assert.Equal(0, substitutedToolCallCount);
         Assert.True(agent1CallCount >= 2);
         Assert.Equal(1, agent2CallCount);
 
@@ -186,7 +213,11 @@ public class GroupChatOrchestrationTests
         Assert.Equal(approvalResponse.RequestId, forwardedDecision.RequestId);
         Assert.Equal(approved, forwardedDecision.Approved);
         Assert.Equal("User decision", forwardedDecision.Reason);
-        Assert.False(Assert.IsType<FunctionCallContent>(forwardedDecision.ToolCall).InformationalOnly);
+        var forwardedCall = Assert.IsType<FunctionCallContent>(forwardedDecision.ToolCall);
+        Assert.False(forwardedCall.InformationalOnly);
+        Assert.Equal(ApprovalCallId, forwardedCall.CallId);
+        Assert.Equal(ApprovalToolName, forwardedCall.Name);
+        Assert.Equal("trusted", forwardedCall.Arguments!["value"]?.ToString());
         Assert.True(finalOutput.FindIndex(m => m.Contents.Contains(forwardedDecision))
             < finalOutput.FindIndex(m => m.Contents.OfType<FunctionResultContent>().Any(r => r.CallId == ApprovalCallId)));
     }

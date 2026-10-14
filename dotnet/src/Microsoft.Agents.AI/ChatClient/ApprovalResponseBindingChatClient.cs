@@ -354,7 +354,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
             generatedRejections.Contents.Add(CopyResponse(rejection, ToolApprovalHelpers.SnapshotRequest(request).ToolCall));
         }
 
-        return (ToolApprovalHelpers.PrepareApprovalMessages(result ?? messageList, rejections), hasPendingRequests, generatedRejections);
+        return (ToolApprovalHelpers.PrepareApprovalMessages(result ?? messageList, rejections, settledCallIds), hasPendingRequests, generatedRejections);
     }
 
     /// <summary>

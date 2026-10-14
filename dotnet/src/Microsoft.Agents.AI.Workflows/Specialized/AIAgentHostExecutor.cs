@@ -84,7 +84,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         IWorkflowContext context,
         CancellationToken cancellationToken)
     {
-        if (!this._userInputHandler!.MarkRequestAsHandled(response.RequestId))
+        if (!this._userInputHandler!.MarkRequestAsHandled(response.RequestId, out var request))
         {
             throw new InvalidOperationException($"No pending ToolApprovalRequest found with id '{response.RequestId}'.");
         }
@@ -100,7 +100,9 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             };
             pendingMessages.Add(responseMessage);
 
-            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct, responseMessage).ConfigureAwait(false);
+            await this.ContinueTurnAsync(
+                pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct,
+                (responseMessage, response, request.ToolCall.CallId)).ConfigureAwait(false);
 
             // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
             return null;
@@ -182,12 +184,18 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         IWorkflowContext context,
         bool emitEvents,
         CancellationToken cancellationToken,
-        ChatMessage? approvalResponseMessage = null)
+        (ChatMessage Message, ToolApprovalResponseContent Response, string CallId)? answeredApproval = null)
     {
         this._currentTurnEmitEvents = emitEvents;
         if (this._options.ForwardIncomingMessages)
         {
-            await context.SendMessageAsync(messages, cancellationToken).ConfigureAwait(false);
+            List<ChatMessage> incomingMessages = answeredApproval is { } answer
+                ? messages.Where(m => !ReferenceEquals(m, answer.Message)).ToList()
+                : messages;
+            if (incomingMessages.Count > 0)
+            {
+                await context.SendMessageAsync(incomingMessages, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         IEnumerable<ChatMessage> filteredMessages = this._options.ReassignOtherAgentsAsUsers
@@ -201,10 +209,12 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         // causes invalid request errors when the receiving agent uses the Responses API,
         // because these item types are not valid as input items.
         List<ChatMessage> forwardableMessages = FilterForwardableMessages(response.Messages);
-        if (!this._options.ForwardIncomingMessages && approvalResponseMessage is not null)
+        if (answeredApproval is { } approval)
         {
             // Other agents received the approval request; they also need its answer before the tool result.
-            forwardableMessages.InsertRange(0, FilterForwardableMessages([approvalResponseMessage]));
+            ChatMessage completedAnswer = approval.Message.Clone();
+            completedAnswer.Contents = [CreateCompletedApprovalResponse(approval.Response, approval.CallId, response.Messages)];
+            forwardableMessages.InsertRange(0, FilterForwardableMessages([completedAnswer]));
         }
 
         if (forwardableMessages.Count > 0)
@@ -226,6 +236,62 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                                   context,
                                   TurnExtensions.ShouldEmitStreamingEvents(turnTokenSetting: emitEvents, this._options.EmitAgentUpdateEvents),
                                   cancellationToken);
+
+    /// <summary>
+    /// Preserves the external approval decision while using tool details from the agent's completed output
+    /// rather than the caller's answer. Approval binding may have replaced those details with the saved request.
+    /// </summary>
+    private static ToolApprovalResponseContent CreateCompletedApprovalResponse(
+        ToolApprovalResponseContent answer, string callId, IList<ChatMessage> responseMessages)
+    {
+        FunctionCallContent? completedCall = null;
+        bool hasResult = false;
+        // The call id comes from the saved approval request, so caller-supplied tool details cannot
+        // select a different completed call. A rejection also produces a call/result pair.
+        foreach (var message in responseMessages)
+        {
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionCallContent call && call.CallId == callId)
+                {
+                    completedCall = call;
+                }
+                else if (content is FunctionResultContent result && result.CallId == callId)
+                {
+                    hasResult = true;
+                }
+            }
+        }
+
+        if (completedCall is null || !hasResult)
+        {
+            // Do not fall back to the caller's tool details or forward an answer without its result:
+            // another agent could otherwise execute an untrusted or already handled call.
+            throw new InvalidOperationException(
+                $"The agent did not return a function call and result for approval request '{answer.RequestId}' with call id '{callId}'.");
+        }
+
+        // Use a separate call so forwarding does not change the agent's output. Leave InformationalOnly
+        // false even if the completed call is informational: the answer must still match other agents'
+        // outstanding requests. The accompanying result prevents them from executing the call again.
+        FunctionCallContent copiedCall = new(
+            completedCall.CallId, completedCall.Name,
+            completedCall.Arguments is null ? null : new Dictionary<string, object?>(completedCall.Arguments))
+        {
+            AdditionalProperties = completedCall.AdditionalProperties is null ? null : new(completedCall.AdditionalProperties),
+            RawRepresentation = completedCall.RawRepresentation,
+            Annotations = completedCall.Annotations is null ? null : new List<AIAnnotation>(completedCall.Annotations),
+        };
+
+        // Only the tool details are replaced; retain the user's decision, reason, and response metadata.
+        return new ToolApprovalResponseContent(answer.RequestId, answer.Approved, copiedCall)
+        {
+            Reason = answer.Reason,
+            AdditionalProperties = answer.AdditionalProperties is null ? null : new(answer.AdditionalProperties),
+            RawRepresentation = answer.RawRepresentation,
+            Annotations = answer.Annotations is null ? null : new List<AIAnnotation>(answer.Annotations),
+        };
+    }
 
     private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
     {

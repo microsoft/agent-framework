@@ -487,9 +487,14 @@ public class ChatClientAgent_ApprovalRetryTests
         // Arrange
         int serviceCalls = 0;
         int toolInvocations = 0;
-        var client = CreateChatClient((_, _, _) => Task.FromResult(++serviceCalls == 1
-            ? new ChatResponse([new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")])])
-            : new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done.")])));
+        List<List<ChatMessage>> serviceInputs = [];
+        var client = CreateChatClient((messages, _, _) =>
+        {
+            serviceInputs.Add(messages.ToList());
+            return Task.FromResult(++serviceCalls == 1
+                ? new ChatResponse([new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")])])
+                : new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done.")]));
+        });
         var history = new SerializedChatHistoryProvider();
         var agent = new ChatClientAgent(client, new ChatClientAgentOptions
         {
@@ -526,6 +531,21 @@ public class ChatClientAgent_ApprovalRetryTests
         Assert.False(Assert.IsType<FunctionCallContent>(
             Assert.Single(history.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>()).ToolCall).InformationalOnly);
         Assert.DoesNotContain(response.Messages.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
+        for (int i = 1; i < serviceInputs.Count; i++)
+        {
+            var input = serviceInputs[i];
+            int callIndex = input.FindIndex(m => m.Contents.OfType<FunctionCallContent>().Any(c => c.CallId == "call1"));
+            int resultIndex = input.FindIndex(m => m.Contents.OfType<FunctionResultContent>().Any(c => c.CallId == "call1"));
+            Assert.True(callIndex >= 0);
+            Assert.Equal(callIndex + 1, resultIndex);
+            Assert.DoesNotContain(input.SelectMany(m => m.Contents), c => c is ToolApprovalRequestContent or ToolApprovalResponseContent);
+            Assert.True(resultIndex < input.FindIndex(m => m.Text == (i == 1 ? "Never mind." : "Another question.")));
+            if (i == 2)
+            {
+                // End-of-run storage appends the recovery input before its returned call/result pair.
+                Assert.True(input.FindIndex(m => m.Text == "Never mind.") < callIndex);
+            }
+        }
     }
 
     [Theory]

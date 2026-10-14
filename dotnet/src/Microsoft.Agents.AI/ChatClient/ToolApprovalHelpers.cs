@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
@@ -44,7 +45,8 @@ internal static class ToolApprovalHelpers
     /// <summary>
     /// Groups <see cref="ToolApprovalResponseContent"/> items whose function calls have
     /// <see cref="FunctionCallContent.InformationalOnly"/> set to <see langword="false"/> after the input's
-    /// approval requests and before new caller messages. If no such request is present, responses follow
+    /// unfinished approval requests and before new caller messages. Approval responses whose calls already
+    /// have results remain in place. If no unfinished request is present, responses follow
     /// messages tagged as chat history, or precede all messages if none are tagged.
     /// Both approval decorators use this because <see cref="FunctionInvokingChatClient"/> inserts tool results
     /// at the last approval message; an automatic response appended after a new question would put the
@@ -55,9 +57,23 @@ internal static class ToolApprovalHelpers
     /// Other input sequences are materialized once.
     /// </remarks>
     internal static List<ChatMessage> PrepareApprovalMessages(
-        IEnumerable<ChatMessage> messages, List<AIContent>? additionalResponses)
+        IEnumerable<ChatMessage> messages, List<AIContent>? additionalResponses, HashSet<string>? settledCallIds = null)
     {
         List<ChatMessage> messageList = messages as List<ChatMessage> ?? new List<ChatMessage>(messages);
+        if (settledCallIds is null)
+        {
+            foreach (var message in messageList)
+            {
+                foreach (var content in message.Contents)
+                {
+                    if (content is FunctionResultContent resultContent)
+                    {
+                        (settledCallIds ??= new HashSet<string>(StringComparer.Ordinal)).Add(resultContent.CallId);
+                    }
+                }
+            }
+        }
+
         List<ChatMessage>? result = null;
         List<ChatMessage>? decisions = null;
         int insertIndex = 0;
@@ -72,7 +88,8 @@ internal static class ToolApprovalHelpers
             for (int j = 0; j < message.Contents.Count; j++)
             {
                 var content = message.Contents[j];
-                if (content is ToolApprovalResponseContent { ToolCall: FunctionCallContent { InformationalOnly: false } })
+                if (content is ToolApprovalResponseContent { ToolCall: FunctionCallContent { InformationalOnly: false } } response
+                    && settledCallIds?.Contains(response.ToolCall.CallId) != true)
                 {
                     if (responses is null)
                     {
@@ -89,7 +106,8 @@ internal static class ToolApprovalHelpers
                 else
                 {
                     remaining?.Add(content);
-                    hasRequest |= content is ToolApprovalRequestContent { ToolCall: FunctionCallContent { InformationalOnly: false } };
+                    hasRequest |= content is ToolApprovalRequestContent { ToolCall: FunctionCallContent { InformationalOnly: false } } request
+                        && settledCallIds?.Contains(request.ToolCall.CallId) != true;
                 }
             }
 
