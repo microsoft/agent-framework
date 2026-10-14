@@ -1202,7 +1202,7 @@ class Content:
             items_list = [Content.from_text(result)]
         elif result is not None:
             try:
-                text = json.dumps(result, default=str)
+                text = json.dumps(result, default=str, ensure_ascii=False)
             except (TypeError, ValueError):
                 text = str(result)
             items_list = [Content.from_text(text)]
