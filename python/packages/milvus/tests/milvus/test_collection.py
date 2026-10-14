@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from agent_framework import Filter, VectorStoreCollectionDefinition, VectorStoreField
 from pymilvus import DataType
+from pymilvus.exceptions import MilvusException
 
 from agent_framework_milvus import MilvusCollection, MilvusStore
 
@@ -127,15 +128,25 @@ async def test_search_rejects_invalid_score_threshold(collection, bad):
 
 
 async def test_ensure_collection_exists_swallows_concurrent_create(collection, mock_client):
-    # Absent at the check, then another worker wins the race: create fails but the
-    # collection now exists, so ensure semantics should treat it as success.
-    mock_client.has_collection.side_effect = [False, True]
-    mock_client.create_collection.side_effect = RuntimeError("collection already exists")
+    # Another worker wins the race: create raises a genuine already-exists error, so ensure
+    # semantics treat it as success (after validating the existing schema matches).
+    mock_client.has_collection.return_value = False
+    mock_client.create_collection.side_effect = MilvusException(message="collection already exist")
     await collection.ensure_collection_exists()  # must not raise
+    mock_client.describe_collection.assert_called_once()
 
 
-async def test_ensure_collection_exists_reraises_real_create_error(collection, mock_client):
-    mock_client.has_collection.side_effect = [False, False]
+async def test_ensure_collection_exists_reraises_index_or_load_failure(collection, mock_client):
+    # create_collection builds the collection then indexes/loads it; a later-step failure must
+    # NOT be masked as success even though the collection now exists.
+    mock_client.has_collection.return_value = False
+    mock_client.create_collection.side_effect = MilvusException(message="create index failed")
+    with pytest.raises(MilvusException, match="create index failed"):
+        await collection.ensure_collection_exists()
+
+
+async def test_ensure_collection_exists_reraises_non_milvus_error(collection, mock_client):
+    mock_client.has_collection.return_value = False
     mock_client.create_collection.side_effect = RuntimeError("boom")
     with pytest.raises(RuntimeError, match="boom"):
         await collection.ensure_collection_exists()

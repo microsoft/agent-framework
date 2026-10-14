@@ -27,6 +27,7 @@ from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, Vector
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 from pymilvus import DataType, MilvusClient
+from pymilvus.exceptions import MilvusException
 from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
@@ -140,6 +141,12 @@ def _create_client(
         return MilvusClient(**client_kwargs)
     except Exception as exc:  # pragma: no cover - surfaced as an integration error
         raise IntegrationException("Failed to create the Milvus client.") from exc
+
+
+def _is_already_exists_error(exc: MilvusException) -> bool:
+    """Whether a Milvus error indicates the collection already exists (a concurrent create)."""
+    message = getattr(exc, "message", None) or str(exc)
+    return "already exist" in message.lower()
 
 
 def _format_scalar(value: Any) -> str:
@@ -366,14 +373,16 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 index_params=index_params,
                 **options,
             )
-        except Exception:
-            # The check-then-create sequence is not atomic: a concurrent worker may have
-            # created the collection between the existence check and this call. Treat an
-            # already-created collection as success (ensure semantics) after validating that
-            # its schema matches; otherwise re-raise the original error.
-            if not await self.collection_exists():
+            return
+        except MilvusException as exc:
+            # create_collection creates the collection and then separately builds indexes and
+            # loads it. Only swallow a genuine already-exists/concurrent-create error; re-raise
+            # every other failure (including index/load failures that leave the collection
+            # existing but incomplete) so it is not masked as success.
+            if not _is_already_exists_error(exc):
                 raise
-            await self._validate_existing_collection()
+        # A concurrent creator won the race; validate the existing collection matches.
+        await self._validate_existing_collection()
 
     async def _validate_existing_collection(self) -> None:
         """Validate an existing collection's fields, vector dimensions and metrics."""
