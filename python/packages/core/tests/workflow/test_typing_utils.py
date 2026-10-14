@@ -547,6 +547,25 @@ def test_type_compatibility_complex() -> None:
     assert not is_type_compatible(source, incompatible_target)
 
 
+def test_type_compatibility_literals() -> None:
+    """Test type compatibility with Literal types."""
+    # Literal source to general type target
+    assert is_type_compatible(Literal["yes", "no"], str)
+    assert is_type_compatible(Literal[1, 2], int)
+    assert not is_type_compatible(Literal["yes", 1], str)
+    assert is_type_compatible(Literal["yes", 1], Union[str, int])
+    assert is_type_compatible(Literal["yes", 1], str | int)
+
+    # Literal to Literal (subset semantics)
+    assert is_type_compatible(Literal["yes"], Literal["yes", "no"])
+    assert not is_type_compatible(Literal["yes", "no"], Literal["yes"])
+    assert is_type_compatible(Literal["yes", "no"], Literal["yes", "no"])
+
+    # General type source to Literal target (rejected)
+    assert not is_type_compatible(str, Literal["yes", "no"])
+    assert not is_type_compatible(int, Literal[1, 2])
+
+
 # region: try_coerce_to_type tests
 
 

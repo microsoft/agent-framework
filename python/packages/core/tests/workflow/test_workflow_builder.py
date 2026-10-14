@@ -371,4 +371,24 @@ def test_with_output_from_with_invalid_executor_raises_validation_error():
         builder.build()
 
 
+def test_workflow_builder_literal_to_str_edge() -> None:
+    """Test building a workflow where an executor outputs a Literal and the next accepts str."""
+
+    class LiteralOutputExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[Literal["yes", "no"]]) -> None:
+            pass
+
+    class StringInputExecutor(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+    sender = LiteralOutputExecutor(id="sender")
+    receiver = StringInputExecutor(id="receiver")
+
+    workflow = WorkflowBuilder(start_executor=sender).add_edge(sender, receiver).build()
+    assert workflow is not None
+
+
 # endregion

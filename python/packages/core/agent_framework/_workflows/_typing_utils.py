@@ -492,6 +492,19 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     if target_origin is not None and not target_args and isinstance(target_origin, type):
         target_type, target_origin = target_origin, None
 
+    # Case 1b: Literal type compatibility
+    if source_origin in (Literal, typing_extensions.Literal):
+        if target_origin in (Literal, typing_extensions.Literal):
+            return set(source_args).issubset(set(target_args))
+        if target_origin is Union or target_origin is UnionType:
+            return all(
+                any(is_type_compatible(Literal[val], target_arg) for target_arg in target_args) for val in source_args
+            )
+        return all(is_type_compatible(type(val), target_type) for val in source_args)
+
+    if target_origin in (Literal, typing_extensions.Literal):
+        return False
+
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
         # Special case: if source is also a Union, check that each source member
