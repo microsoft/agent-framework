@@ -91,10 +91,10 @@ public sealed class WorkflowExecutorStateTests
                 if (cancel)
                 {
                     cancellation.Cancel();
-                    return ValueTask.FromCanceled(cancellation.Token);
+                    return new ValueTask(Task.FromCanceled(cancellation.Token));
                 }
 
-                return ValueTask.FromException(new InvalidOperationException("Output interrupted."));
+                return new ValueTask(Task.FromException(new InvalidOperationException("Output interrupted.")));
             });
         await executor.ExecuteCoreAsync(new ChatMessage(ChatRole.User, "first"), new TypeId(typeof(ChatMessage)), firstContext);
         if (cancel)
