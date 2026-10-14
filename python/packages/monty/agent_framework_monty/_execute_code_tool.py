@@ -552,6 +552,36 @@ def _safe_capture_file_stat(*, root: Path, entry: Path) -> os.stat_result | None
     return entry_stat if stat.S_ISREG(entry_stat.st_mode) else None
 
 
+def _read_validated_file(*, root: Path, entry: Path, expected: os.stat_result) -> bytes | None:
+    """Read ``entry`` through one descriptor that is checked against the validated file.
+
+    ``Path.read_bytes()`` reopens the path, so a component swapped for a link or junction after
+    validation would be followed. Opening first, comparing the descriptor with the validated ``lstat``
+    identity, and revalidating the path afterwards rejects such a swap. Windows has no no-follow open,
+    so the check is not atomic there, but an undetected swap would have to be applied, reverted, and
+    applied again around the checks. Returns ``None`` when the file changed or cannot be read safely.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(entry, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(fd)
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISREG(opened.st_mode) or identity != (expected.st_dev, expected.st_ino):
+            return None
+        rechecked = _safe_capture_file_stat(root=root, entry=entry)
+        if rechecked is None or (rechecked.st_dev, rechecked.st_ino) != identity:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            return handle.read()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str, tuple[int, int]]]:
     """Capture (size, mtime_ns) for every real host file under read-write mounts.
 
@@ -588,8 +618,9 @@ def _capture_written_files(
     regular file under a read-write mount is read back as binary and
     surfaced as ``Content.from_data`` with a ``path`` annotation in
     ``additional_properties``. Links and reparse points are skipped at every
-    directory level so a malicious workspace cannot trick us into capturing
-    host files outside the configured mount root.
+    directory level, and each file is read through a descriptor verified
+    against the validated path, so a malicious workspace cannot trick us into
+    capturing host files outside the configured mount root.
     """
     captured: list[Content] = []
     for mount in mounts:
@@ -614,11 +645,8 @@ def _capture_written_files(
                     )
                 )
                 continue
-            if _safe_capture_file_stat(root=host_root, entry=entry) is None:
-                continue
-            try:
-                data = entry.read_bytes()
-            except OSError:
+            data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat)
+            if data is None:
                 continue
             media_type = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
             captured.append(
