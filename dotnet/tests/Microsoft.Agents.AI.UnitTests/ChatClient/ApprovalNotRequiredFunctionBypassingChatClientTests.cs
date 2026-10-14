@@ -202,13 +202,13 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
         Assert.NotNull(capturedMessages);
         var messagesList = capturedMessages!.ToList();
 
-        // Original user message + user message with approved responses.
+        // Approved responses precede the original user message.
         Assert.Equal(2, messagesList.Count);
         Assert.Equal(ChatRole.User, messagesList[0].Role);
 
         // User message with the auto-approved ToolApprovalResponseContent
         Assert.Equal(ChatRole.User, messagesList[1].Role);
-        var userContent = messagesList[1].Contents.OfType<ToolApprovalResponseContent>().ToList();
+        var userContent = messagesList[0].Contents.OfType<ToolApprovalResponseContent>().ToList();
         Assert.Single(userContent);
         Assert.Equal("req1", userContent[0].RequestId);
         Assert.True(userContent[0].Approved);
@@ -385,7 +385,7 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         // Assert — the call is answered with a rejection, so the gated tool is not executed.
         Assert.NotNull(capturedMessages);
-        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        var injected = Assert.Single(capturedMessages!.First().Contents.OfType<ToolApprovalResponseContent>());
         Assert.Equal("req1", injected.RequestId);
         Assert.False(injected.Approved);
 
@@ -421,7 +421,7 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         // Assert
         Assert.NotNull(capturedMessages);
-        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        var injected = Assert.Single(capturedMessages!.First().Contents.OfType<ToolApprovalResponseContent>());
         Assert.Equal("req1", injected.RequestId);
         Assert.False(injected.Approved);
     }
@@ -461,7 +461,7 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         // Assert — the batch is answered in full, but only the unchanged call is approved.
         Assert.NotNull(capturedMessages);
-        var injected = capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>().ToList();
+        var injected = capturedMessages!.First().Contents.OfType<ToolApprovalResponseContent>().ToList();
         Assert.Equal(2, injected.Count);
         Assert.True(Assert.Single(injected, r => r.RequestId == "req1").Approved);
         Assert.False(Assert.Single(injected, r => r.RequestId == "req2").Approved);
@@ -496,7 +496,7 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
         Assert.NotNull(capturedMessages);
         var messagesList = capturedMessages!.ToList();
         Assert.Equal(2, messagesList.Count);
-        var userContent = messagesList[1].Contents.OfType<ToolApprovalResponseContent>().ToList();
+        var userContent = messagesList[0].Contents.OfType<ToolApprovalResponseContent>().ToList();
         Assert.Single(userContent);
         Assert.Equal("req1", userContent[0].RequestId);
         Assert.True(userContent[0].Approved);
@@ -563,7 +563,7 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         // Assert — the call is answered with a rejection, so the gated tool is not executed.
         Assert.NotNull(capturedMessages);
-        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        var injected = Assert.Single(capturedMessages!.First().Contents.OfType<ToolApprovalResponseContent>());
         Assert.Equal("req1", injected.RequestId);
         Assert.False(injected.Approved);
 
