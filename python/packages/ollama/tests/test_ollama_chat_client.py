@@ -479,6 +479,10 @@ async def test_cmc_streaming_maps_done_reason_and_usage(
     chat_history.append(Message(contents=["hello world"], role="user"))
 
     ollama_client = OllamaChatClient()
+    update = ollama_client._parse_streaming_response_from_ollama(response)
+    assert next(content for content in update.contents if content.type == "text").merge_mode == "append"
+    assert next(content for content in update.contents if content.type == "usage").merge_mode == "replace"
+
     result = ollama_client.get_response(messages=chat_history, stream=True)
     async for _ in result:
         pass

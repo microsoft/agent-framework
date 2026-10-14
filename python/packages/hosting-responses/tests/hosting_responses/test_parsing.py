@@ -111,7 +111,10 @@ class TestMessagesFromResponsesInput:
 
         assert msgs[0].contents[0].type == "text"
         assert msgs[0].contents[0].text == "I cannot help."
-        assert msgs[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
+        assert msgs[0].contents[0].additional_properties == {
+            "core": {"model_output_kind": "refusal"},
+            "model_output_kind": "refusal",
+        }
 
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
@@ -145,8 +148,12 @@ class TestMessagesFromResponsesInput:
         assert msgs[0].contents[0].uri == "https://example.com/report.pdf"
 
     def test_input_file_via_file_id(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123"}])
-        assert msgs[0].contents[0].file_id == "file_123"
+        msgs = messages_from_responses_input([{"type": "input_file", "file_id": "file_123", "filename": "report.pdf"}])
+        content = msgs[0].contents[0]
+        assert content.file_id == "file_123"
+        assert content.name == "report.pdf"
+        assert content.additional_properties["openai"]["content_type"] == "input_file"
+        assert content.additional_properties["openai_content_type"] == "input_file"
 
     def test_input_file_missing_anchor_raises(self) -> None:
         with pytest.raises(ValueError, match="input_file"):
@@ -162,10 +169,18 @@ class TestMessagesFromResponsesInput:
         assert msgs[1].text == "second"
 
     def test_image_url_via_string(self) -> None:
-        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        msgs = messages_from_responses_input([
+            {"type": "input_image", "image_url": "https://example.com/cat.png", "detail": "high"}
+        ])
         assert len(msgs) == 1
-        # Image content present.
-        assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
+        content = msgs[0].contents[0]
+        assert content.uri == "https://example.com/cat.png"
+        assert content.additional_properties["openai"] == {
+            "content_type": "input_image",
+            "image_detail": "high",
+        }
+        assert content.additional_properties["openai_content_type"] == "input_image"
+        assert content.additional_properties["detail"] == "high"
 
     def test_image_url_via_object(self) -> None:
         msgs = messages_from_responses_input([
@@ -375,8 +390,24 @@ class TestResponsesRunHelpers:
         assert len(payload["output"]) == 1
         assert payload["output"][0]["type"] == "function_call_output"
         assert payload["output"][0]["call_id"] == "call_1"
+        assert payload["output"][0]["id"].startswith("fcout_")
+        assert payload["output"][0]["id"] != "call_1"
         assert payload["output"][0]["output"] == [{"type": "input_text", "text": "sunny"}]
         assert payload["output"][0]["status"] == "completed"
+
+    def test_responses_from_run_generates_distinct_output_ids_for_reused_call_id(self) -> None:
+        result = AgentResponse(
+            messages=[
+                Message(role="tool", contents=[Content.from_function_result("reused", result="first")]),
+                Message(role="tool", contents=[Content.from_function_result("reused", result="second")]),
+            ]
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert [item["call_id"] for item in payload["output"]] == ["reused", "reused"]
+        assert all(item["id"].startswith("fcout_") for item in payload["output"])
+        assert payload["output"][0]["id"] != payload["output"][1]["id"]
 
     def test_responses_from_run_omits_internal_function_exception(self) -> None:
         diagnostic = "test-token-value at /srv/private/tool.py"
@@ -985,6 +1016,73 @@ class TestResponsesRunHelpers:
         output = cast("list[dict[str, object]]", response["output"])
         content = cast("list[dict[str, object]]", output[0]["content"])
         assert content == [{"type": "refusal", "refusal": "I cannot help."}]
+
+    async def test_responses_from_streaming_run_consumes_text_snapshot(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello ", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id="resp_new",
+            )
+        ]
+
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+
+        assert deltas == ["Hello ", "world"]
+        assert done["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_responses_from_streaming_run_rejects_divergent_or_shrinking_text_snapshot(
+        self, replacement: str
+    ) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(replacement, merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+        failed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", failed["response"])
+        error = cast("dict[str, object]", response["error"])
+
+        assert deltas == ["Hello world"]
+        assert done["text"] == "Hello world"
+        assert failed["type"] == "response.failed"
+        assert "divergent replacement text snapshot" in cast(str, error["message"])
 
     async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
         marker = {"model_output_kind": "refusal"}

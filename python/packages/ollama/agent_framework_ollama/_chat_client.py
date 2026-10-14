@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, Literal, TypedDict
 
 from agent_framework import (
     BaseChatClient,
@@ -587,14 +587,32 @@ class OllamaChatClient(
                 messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 
-    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
+    def _parse_contents_from_ollama(
+        self,
+        response: OllamaChatResponse,
+        *,
+        streaming: bool = False,
+    ) -> list[Content]:
         contents: list[Content] = []
         if response.message.thinking:
-            contents.append(Content.from_text_reasoning(text=response.message.thinking))
+            contents.append(
+                Content.from_text_reasoning(
+                    text=response.message.thinking,
+                    merge_mode="append" if streaming else None,
+                )
+            )
         if response.message.content:
-            contents.append(Content.from_text(text=response.message.content))
+            contents.append(
+                Content.from_text(
+                    text=response.message.content,
+                    merge_mode="append" if streaming else None,
+                )
+            )
         if response.message.tool_calls:
-            tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
+            tool_calls = self._parse_tool_calls_from_ollama(
+                response.message.tool_calls,
+                merge_mode="replace" if streaming else None,
+            )
             contents.extend(tool_calls)
         return contents
 
@@ -604,7 +622,7 @@ class OllamaChatClient(
         return FinishReason(response.done_reason) if response.done_reason else None
 
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
-        contents = self._parse_contents_from_ollama(response)
+        contents = self._parse_contents_from_ollama(response, streaming=True)
         finish_reason = None
         if response.done:
             usage_details = UsageDetails(
@@ -621,7 +639,7 @@ class OllamaChatClient(
                 }
             )
             if usage_details:
-                contents.append(Content.from_usage(usage_details, raw_representation=response))
+                contents.append(Content.from_usage(usage_details, merge_mode="replace", raw_representation=response))
             finish_reason = self._get_finish_reason_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
@@ -662,7 +680,12 @@ class OllamaChatClient(
             response_format=response_format,
         )
 
-    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
+    def _parse_tool_calls_from_ollama(
+        self,
+        tool_calls: Sequence[OllamaMessage.ToolCall],
+        *,
+        merge_mode: Literal["append", "replace"] | None = None,
+    ) -> list[Content]:
         resp: list[Content] = []
         for tool in tool_calls:
             name = tool.function.name
@@ -674,6 +697,7 @@ class OllamaChatClient(
                 call_id=unique_call_id,
                 name=name,
                 arguments=args,
+                merge_mode=merge_mode,
                 raw_representation=tool.function,
             )
             resp.append(fcc)
