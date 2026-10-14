@@ -17,6 +17,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
 )
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -759,6 +760,12 @@ async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chu
     updates = [update async for update in stream]
 
     assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert all(
+        content.merge_mode == "append" for update in updates for content in update.contents if content.type == "text"
+    )
+    assert all(
+        content.merge_mode == "replace" for update in updates for content in update.contents if content.type == "usage"
+    )
     assert any(c.type == "usage" for c in updates[-1].contents)
 
 
@@ -1285,6 +1292,7 @@ def test_server_side_tool_call_part_is_informational_only() -> None:
     assert contents[0].name == "FILE_SEARCH"
     assert contents[0].parse_arguments() == {"query": "docs"}
     assert contents[0].informational_only is True
+    assert contents[0].hosted is True
 
 
 def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
@@ -1309,6 +1317,38 @@ def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
     assert parts[0].tool_call.id == "search-1"
     assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
     assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_replays_from_first_class_fields_without_raw_part() -> None:
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = client._parse_parts([raw_part])[0]
+    content.raw_representation = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_rejects_unsupported_replay_tool_name() -> None:
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="UNKNOWN_SERVER_TOOL",
+        arguments={"query": "docs"},
+        informational_only=True,
+        hosted=True,
+    )
+
+    with pytest.raises(ContentError, match="supported tool name"):
+        client._convert_message_contents([content], {})
 
 
 def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:

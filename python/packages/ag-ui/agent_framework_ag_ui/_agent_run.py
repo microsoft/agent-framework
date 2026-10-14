@@ -124,6 +124,7 @@ from ._utils import (
     _AGUI_MCP_TOOL_RESULT_KEY,
     _approval_interrupt_id,
     _bound_host_payload_history,
+    _function_call_is_hosted,
     _function_call_server_label,
     _mcp_host_history_fields,
     _model_items_for_agui_replay,
@@ -806,7 +807,7 @@ def _function_call_execution_owner(
     has_deferred_owner: bool = False,
 ) -> ApprovalExecutionOwner:
     """Resolve execution ownership only after the call and available tools exist."""
-    if _function_call_server_label(function_call):
+    if _function_call_is_hosted(function_call):
         return ApprovalExecutionOwner.HOSTED
     tool = _get_tool_map(tools).get(function_call.name) if tools and function_call.name else None
     if tool is not None and not getattr(tool, "declaration_only", False):
@@ -1843,8 +1844,12 @@ async def _resolve_approval_responses(
         if primary_response.function_call is not None:
             if server_label:
                 primary_response.function_call.additional_properties["server_label"] = server_label
+                primary_response.function_call.hosted = True
+                primary_response.function_call.server_name = server_label
             else:
                 primary_response.function_call.additional_properties.pop("server_label", None)
+                primary_response.function_call.hosted = False
+                primary_response.function_call.server_name = None
                 primary_response.function_call.id = pending_entry.function_call_id
                 primary_response.additional_properties[_APPROVAL_REQUEST_ID_KEY] = (
                     pending_entry.response_id or pending_entry.identity.interrupt_id

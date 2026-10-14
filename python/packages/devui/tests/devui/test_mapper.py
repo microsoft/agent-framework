@@ -125,7 +125,7 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
 async def test_marked_refusal_text_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     content = Content.from_text(
         "I cannot help.",
-        additional_properties={"model_output_kind": "refusal"},
+        additional_properties={"core": {"model_output_kind": "refusal"}},
     )
     update = create_test_agent_update([content])
 

@@ -57,7 +57,7 @@ from ._run_common import (
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
-from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
+from ._utils import _function_call_is_hosted, canonical_function_arguments, generate_event_id, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -327,11 +327,7 @@ def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | N
     ):
         workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
         workflow_metadata.pop("type", None)
-        response_schema = (
-            _approval_response_schema()
-            if request_data.function_call.additional_properties.get("server_label")
-            else None
-        )
+        response_schema = _approval_response_schema() if _function_call_is_hosted(request_data.function_call) else None
         return _approval_interrupt_for_function_call(
             interrupt_id=str(request_payload["request_id"]),
             function_call=request_data.function_call,
@@ -599,9 +595,9 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
     standard_edited_arguments = candidate.get("editedArgs")
     if request_data.function_call is None:
         return None
-    if (
-        direct_edited_arguments or standard_edited_arguments is not None
-    ) and request_data.function_call.additional_properties.get("server_label"):
+    if (direct_edited_arguments or standard_edited_arguments is not None) and _function_call_is_hosted(
+        request_data.function_call
+    ):
         return None
 
     original_arguments = request_data.function_call.parse_arguments() or {}
@@ -630,6 +626,10 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
         call_id=request_data.function_call.call_id or "",
         name=request_data.function_call.name or "",
         arguments=final_arguments,
+        id=request_data.function_call.id,
+        hosted=request_data.function_call.hosted,
+        server_name=request_data.function_call.server_name,
+        status=request_data.function_call.status,
         informational_only=request_data.function_call.informational_only,
         annotations=request_data.function_call.annotations,
         additional_properties=request_data.function_call.additional_properties,
