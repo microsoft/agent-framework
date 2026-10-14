@@ -53,6 +53,19 @@ async def _opaque_echo(job: _ReplayJob) -> str:
     return job.label.upper()
 
 
+# Module-level (durable, fingerprintable-argument) nested steps used to reproduce the
+# nested legacy-replay corruption: a cached _nested_wrapper hit skips _nested_inner.
+@step
+async def _nested_inner(label: str) -> str:
+    _factory_step_calls.append(label)
+    return label.upper()
+
+
+@step
+async def _nested_wrapper(label: str) -> str:
+    return await _nested_inner(label)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -986,9 +999,129 @@ class TestStepReplayIdentity:
         )
         checkpoint_id = await storage.save(checkpoint)
 
-        with pytest.raises(ValueError, match="opaque arguments.*replay_key"):
+        with pytest.raises(ValueError, match="invocation identity cannot be verified"):
             await wf.run(checkpoint_id=checkpoint_id)
 
+        assert _factory_step_calls == []
+
+    async def test_checkpoint_restore_rejects_nested_legacy_cache_hit_auto_identity(self) -> None:
+        """A cached enclosing step skips its inner call, so an order-based legacy inner
+        entry must not silently satisfy a later inner invocation (would return ['A', 'A'])."""
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        @built_workflow(name="nested_legacy_auto", checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            return [await _nested_wrapper("a"), await _nested_wrapper("b")]
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="nested_legacy_auto",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"_nested_wrapper::0": "A", "_nested_inner::0": "A"},
+                "_step_cache_auto_request_info_counts": {"_nested_wrapper::0": 0, "_nested_inner::0": 0},
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="legacy order-based cache entry.*invocation identity"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+        assert _factory_step_calls == []
+
+    async def test_checkpoint_restore_rejects_nested_legacy_cache_hit_explicit_key(self) -> None:
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+
+        @step(replay_key=lambda label: label)
+        async def inner(label: str) -> str:
+            calls.append(label)
+            return label.upper()
+
+        @step(replay_key=lambda label: label)
+        async def wrapper(label: str) -> str:
+            return await inner(label)
+
+        @built_workflow(name="nested_legacy_explicit", checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            return [await wrapper("a"), await wrapper("b")]
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="nested_legacy_explicit",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {"wrapper::0": "A", "inner::0": "A"},
+                "_step_cache_auto_request_info_counts": {"wrapper::0": 0, "inner::0": 0},
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="legacy order-based cache entry.*invocation identity"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+        assert calls == []
+
+    @pytest.mark.parametrize("explicit_keys", [False, True])
+    @pytest.mark.parametrize("direct_inner", [False, True])
+    async def test_versioned_outer_rejects_unverified_legacy_inner(
+        self, explicit_keys: bool, direct_inner: bool
+    ) -> None:
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+        _factory_step_calls.clear()
+
+        @step(replay_key=lambda label: label)
+        async def explicit_inner(label: str) -> str:
+            calls.append(label)
+            return label.upper()
+
+        @step(replay_key=lambda label: label)
+        async def explicit_wrapper(label: str) -> str:
+            return await explicit_inner(label)
+
+        inner = explicit_inner if explicit_keys else _nested_inner
+        wrapper = explicit_wrapper if explicit_keys else _nested_wrapper
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: str) -> list[str]:
+            first = await wrapper("a")
+            second = await inner("b") if direct_inner else await wrapper("b")
+            return [first, second]
+
+        replay_identity = wrapper._get_replay_identity(("a",), {})  # pyright: ignore[reportPrivateUsage]
+        assert replay_identity is not None
+        identity_kind, identity = replay_identity
+        key_ctx = _RunContext("wf")
+        if identity_kind == "explicit":
+            outer_key = key_ctx._get_explicit_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+                wrapper.name, wrapper._wrapper_source_identity, identity
+            )
+        else:
+            outer_key = key_ctx._get_automatic_step_cache_key(  # pyright: ignore[reportPrivateUsage]
+                wrapper.name, wrapper._wrapper_identity, identity
+            )
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="wf",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={
+                "_step_cache": {outer_key: "A", f"{inner.name}::0": "A"},
+                "_original_message": "input",
+            },
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="legacy order-based cache entry"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+        assert calls == []
         assert _factory_step_calls == []
 
     async def test_nested_opaque_arguments_without_replay_succeed(self) -> None:
@@ -1837,7 +1970,7 @@ class TestStepReplayIdentity:
         with pytest.raises(ValueError, match="Cannot checkpoint"):
             await wf.run("input")
 
-    async def test_legacy_checkpoint_replays_sequential_step(self):
+    async def test_legacy_checkpoint_rejects_unverifiable_sequential_step(self):
         from agent_framework import WorkflowCheckpoint
 
         storage = InMemoryCheckpointStorage()
@@ -1864,9 +1997,9 @@ class TestStepReplayIdentity:
         )
         checkpoint_id = await storage.save(checkpoint)
 
-        replayed = await wf.run(checkpoint_id=checkpoint_id)
+        with pytest.raises(ValueError, match="invocation identity cannot be verified"):
+            await wf.run(checkpoint_id=checkpoint_id)
 
-        assert replayed.get_outputs() == [6]
         assert call_count == 0
 
     async def test_legacy_checkpoint_rejects_concurrent_cache_hit(self):
@@ -1935,9 +2068,7 @@ class TestStepReplayIdentity:
         with pytest.raises(ValueError, match="legacy order-based cache entry"):
             await wf.run(checkpoint_id=checkpoint_id)
 
-    async def test_legacy_sequential_replay_ignores_unrelated_caller_task(self):
-        from agent_framework import WorkflowCheckpoint
-
+    async def test_versioned_sequential_replay_ignores_unrelated_caller_task(self):
         storage = InMemoryCheckpointStorage()
         workflow_waiting = asyncio.Event()
         release_workflow = asyncio.Event()
@@ -1947,22 +2078,19 @@ class TestStepReplayIdentity:
         async def compute(value: int) -> int:
             return value + 1
 
-        @built_workflow(name="legacy_sequential", checkpoint_storage=storage)
+        @built_workflow(name="versioned_sequential", checkpoint_storage=storage)
         async def wf(value: int) -> int:
             workflow_waiting.set()
             await release_workflow.wait()
             return await compute(value)
 
-        checkpoint = WorkflowCheckpoint(
-            workflow_name="legacy_sequential",
-            graph_signature_hash=wf.graph_signature_hash,
-            state={
-                "_step_cache": {"compute::0": 6},
-                "_step_cache_auto_request_info_counts": {"compute::0": 0},
-                "_original_message": 5,
-            },
-        )
-        checkpoint_id = await storage.save(checkpoint)
+        release_workflow.set()
+        await wf.run(5)
+        checkpoint = await storage.get_latest(workflow_name="versioned_sequential")
+        assert checkpoint is not None
+        checkpoint_id = checkpoint.checkpoint_id
+        workflow_waiting.clear()
+        release_workflow.clear()
         loop = asyncio.get_running_loop()
         original_factory = loop.get_task_factory()
 

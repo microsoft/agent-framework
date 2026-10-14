@@ -517,7 +517,8 @@ class RunContext:
         self._step_cache_auto_request_info_counts: dict[str, int] = {}
         # Wrapper identities reachable from the current workflow definition.
         self._expected_step_wrapper_identities: dict[str, set[str]] = {}
-        # Legacy per-step call counters retained for old checkpoint compatibility.
+        # Per-step counters detect old order-only cache entries and support
+        # sequential execution without a durable replay identity.
         self._step_call_counters: dict[str, int] = {}
         # Per-identity counters keep repeated automatic invocations distinct.
         self._step_identity_counters: dict[tuple[str, str, str], int] = {}
@@ -856,8 +857,10 @@ class StepWrapper(Generic[R]):
     Functions with captured closure state require ``replay_key`` for
     concurrent or durable replay; the key is the caller's versioning contract
     for that captured state.
-    Legacy order-based checkpoints remain replayable sequentially, but a
-    concurrent legacy cache hit raises instead of risking a mismatched result.
+    Legacy order-based cache entries lack invocation identity and cannot be
+    verified, even for top-level sequential calls. Attempting to replay one
+    raises instead of risking a mismatched result. Start a new run to regenerate
+    checkpoints with stable replay identities.
 
     Args:
         func: The async function to wrap.
@@ -868,9 +871,8 @@ class StepWrapper(Generic[R]):
 
     Raises:
         TypeError: If *func* is not an async (coroutine) function.
-        ValueError: If replay identity is unavailable or invalid for a
-            concurrent invocation, or a legacy checkpoint cannot be replayed
-            safely under concurrency.
+        ValueError: If replay identity is unavailable or invalid for
+            checkpointing or concurrency, or a legacy cache hit cannot be verified.
     """
 
     def __init__(
@@ -944,19 +946,16 @@ class StepWrapper(Generic[R]):
         if not self._wrapper_identity_is_durable:
             return None
 
-        identity = self._get_argument_replay_identity(args, kwargs)
-        if identity is None:
-            return None
-        return ("auto", identity)
-
-    def _get_argument_replay_identity(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
         identity_kwargs = kwargs
         if self._ctx_param_name is not None and self._ctx_param_name in kwargs:
             identity_kwargs = dict(kwargs)
             identity_kwargs.pop(self._ctx_param_name)
         bound = self._identity_signature.bind(*args, **identity_kwargs)
         bound.apply_defaults()
-        return _hash_step_identity(bound.arguments)
+        identity = _hash_step_identity(bound.arguments)
+        if identity is None:
+            return None
+        return ("auto", identity)
 
     async def _return_cached_result(self, ctx: RunContext, cache_key: str, cached: Any) -> R:
         ctx._advance_auto_request_info_index_for_cached_step(cache_key)
@@ -1025,21 +1024,14 @@ class StepWrapper(Generic[R]):
                     "Start a new run or restore a checkpoint created by the current workflow version."
                 )
 
-        found, cached = ctx._get_cached_result(legacy_cache_key)
-        if found:
-            if ctx._is_concurrent_execution():
-                raise ValueError(
-                    f"Cannot safely replay legacy order-based cache entry for concurrent @step '{self.name}'. "
-                    "Regenerate the checkpoint with the current version and provide replay_key for opaque or "
-                    "non-interchangeable concurrent calls."
-                )
-            if replay_identity is None and self._get_argument_replay_identity(args, kwargs) is None:
-                raise ValueError(
-                    f"Cannot safely replay legacy order-based cache entry for @step '{self.name}' "
-                    "with opaque arguments. Start a new run with @step(replay_key=...) "
-                    "to identify each logical invocation."
-                )
-            return await self._return_cached_result(ctx, legacy_cache_key, cached)
+        # A skipped enclosing step can shift these counters even when the current
+        # call is top-level. Order alone cannot verify the cached invocation.
+        if legacy_cache_key in ctx._step_cache:
+            raise ValueError(
+                f"Cannot safely replay legacy order-based cache entry for @step '{self.name}': "
+                "its invocation identity cannot be verified. Start a new run to regenerate the checkpoint "
+                "and use @step(replay_key=...) for opaque arguments or captured state."
+            )
 
         if replay_identity is None and ctx._is_concurrent_execution():
             raise ValueError(
@@ -1141,10 +1133,9 @@ def step(
     interchangeable results. Use distinct ``replay_key`` values when opaque
     arguments, captured state, generated wrappers, or other state distinguish
     the logical invocations. Calls with opaque arguments or closure state
-    require ``replay_key`` for checkpoint/HITL replay. Legacy order-based checkpoints
-    replay sequential steps with supported arguments, but opaque or concurrent
-    legacy cache hits fail explicitly rather than returning a potentially
-    mismatched result.
+    require ``replay_key`` for checkpoint/HITL replay. Legacy order-based cache
+    entries cannot be verified and are rejected, including top-level sequential
+    calls. Start a new run to regenerate checkpoints with stable replay identities.
 
     Args:
         func: The async function to decorate (when using the bare
@@ -1162,9 +1153,8 @@ def step(
 
     Raises:
         TypeError: If the decorated function is not async.
-        ValueError: If replay identity is unavailable or invalid for a
-            concurrent invocation, or a legacy checkpoint cannot be replayed
-            safely under concurrency.
+        ValueError: If replay identity is unavailable or invalid for
+            checkpointing or concurrency, or a legacy cache hit cannot be verified.
 
     Examples:
 
