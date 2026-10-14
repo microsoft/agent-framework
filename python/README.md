@@ -42,6 +42,12 @@ Supported Platforms:
 - Python: 3.10–3.15
 - OS: Windows, macOS, Linux
 
+Python 3.10 remains supported and tested for this release, but it is deprecated
+because upstream Python 3.10 has reached end of life. New environments should
+use Python 3.11 or later. A future Agent Framework release will raise the
+minimum version separately; this release does not remove Python 3.10 from
+package metadata or CI.
+
 ### Python 3.15 limitations
 
 `pip install agent-framework` resolves and imports on Python 3.15, but it does
