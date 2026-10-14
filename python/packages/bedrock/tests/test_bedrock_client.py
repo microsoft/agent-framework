@@ -103,6 +103,37 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     assert response.usage_details and response.usage_details["input_token_count"] == 10
 
 
+class _StubConverseWithoutModelId(_StubBedrockRuntime):
+    """Returns the real Converse response shape, which does not echo the model id."""
+
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4},
+        }
+
+
+@pytest.mark.parametrize("client_model", ["amazon.titan-text", None])
+async def test_get_response_reports_the_requested_model(client_model: str | None) -> None:
+    """A per-call model override must be the model reported on the response, like the streaming path."""
+    stub = _StubConverseWithoutModelId()
+    client = BedrockChatClient(
+        model=client_model,
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hello")])],
+        options={"model": "us.openai.gpt-6-sol"},
+    )
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.model == "us.openai.gpt-6-sol"
+
+
 async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
     """stream=True should use ConverseStream and yield text, tool call, finish and usage updates per event."""
     stub = _StubBedrockStreamRuntime([
