@@ -73,7 +73,11 @@ def _make_output_item_event(
     item_id: str = "oauth-item-1",
     server_label: str = "Foundry Toolbox",
 ) -> MagicMock:
-    """Create a mock ``response.output_item.added`` event."""
+    """Create a mock ``response.output_item.added`` event.
+
+    OAuth consent items use the Responses wire field ``server_label``. First-class
+    ``server_name`` is the Agent Framework field for function-call content.
+    """
     event = MagicMock()
     event.type = "response.output_item.added"
     item = MagicMock()

@@ -2454,6 +2454,10 @@ def _get_tool_map(
 
 
 def _is_actionable_function_call(content: Content) -> bool:
+    """Return whether core may execute the call locally.
+
+    ``server_name`` is descriptive and intentionally does not imply hosted ownership.
+    """
     return content.type == "function_call" and not content.informational_only and not content.hosted
 
 

@@ -58,7 +58,11 @@ def _serialize_arguments(function_call: Content) -> dict[str, str]:
 
 
 def _server_label(function_call: Content) -> str | None:
-    """Return the hosted-tool server boundary for a function call, if present."""
+    """Return the hosted-tool server boundary for a function call, if present.
+
+    Legacy ``additional_properties["server_label"]`` is normalized into first-class
+    ``hosted`` and ``server_name`` by Content construction and restoration.
+    """
     return function_call.server_name if function_call.hosted else None
 
 

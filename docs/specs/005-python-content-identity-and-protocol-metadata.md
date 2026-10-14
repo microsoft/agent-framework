@@ -76,13 +76,17 @@ other non-mergeable content must be discarded.
 - `hosted=True` means the provider or service executes the call. Agent Framework must not execute it locally.
 - `hosted=False` means the call is locally actionable.
 - `server_name` is the descriptive hosted-server boundary. It does not decide routing.
-- `hosted` is valid only on `function_call` content and must be a boolean.
-- Streamed call fragments merge `hosted` with logical OR. Conflicting non-empty `server_name` values are rejected.
+- `hosted` is valid only on `function_call` content and must be a boolean when supplied. Construction normalizes an
+  omitted value to `False` unless the legacy migration below infers `True`; serialization always writes a boolean.
+- A streamed call consists of complete `Content` fragments; the wire does not split or incrementally deserialize the
+  boolean itself. Fragments can still differ because argument-only deltas may omit hosted ownership and therefore
+  normalize to `False`. Aggregation uses logical OR so a fragment that established `hosted=True` cannot later become
+  locally actionable. Conflicting non-empty `server_name` values are rejected.
 
-Legacy `additional_properties["server_label"]` remains readable. When `hosted` is absent, a truthy string
-`server_label` infers `hosted=True`, fills a missing `server_name`, and emits `FutureWarning`. When both server names
-are present they must match. The same migration runs through construction, `from_dict()`, nested approval content,
-and pickle restoration.
+Legacy `additional_properties["server_label"]` remains readable. When first-class `hosted` is absent, a truthy
+string `server_label` infers `hosted=True`, fills a missing `server_name`, and emits `FutureWarning`; without either
+signal, `hosted` becomes `False`. When both server names are present they must match. The same migration runs through
+construction, `from_dict()`, nested approval content, and pickle restoration.
 
 `ToolApprovalRule.server_label` remains public API and persisted state. New rules source its value from
 `function_call.server_name`.
@@ -98,6 +102,11 @@ The following content types accept
 - `usage`
 - `code_interpreter_tool_call`
 - `code_interpreter_tool_result`
+
+URI, data, image, audio, and other non-mergeable content types are atomic values: adapters emit a complete item
+rather than fragments of a URL or base64 payload. They therefore do not accept content-level `merge_mode`. When an
+authoritative protocol snapshot replaces a heterogeneous message containing those items, the adapter uses the
+update-level replacement described above.
 
 The mode belongs to the incoming fragment:
 

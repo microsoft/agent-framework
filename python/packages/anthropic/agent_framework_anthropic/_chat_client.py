@@ -1389,7 +1389,12 @@ class RawAnthropicClient(
         *,
         streaming: bool = False,
     ) -> list[Content]:
-        """Parse contents from the Anthropic message."""
+        """Parse contents from the Anthropic message.
+
+        Anthropic does not supply Agent Framework merge modes. Streaming context selects the
+        type-specific mapping: text and function-call deltas append, while complete streamed
+        code-execution result snapshots replace.
+        """
         request_state = request_state or _AnthropicRequestState()
         contents: list[Content] = []
         for content_block in content:

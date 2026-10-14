@@ -872,6 +872,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     content.id is not None
                     and function_call is not None
                     and function_call.call_id is not None
+                    # server_name is descriptive; only hosted controls execution ownership.
                     and not function_call.hosted
                     and content.id not in unresolved_local_responses_by_id
                 ):
