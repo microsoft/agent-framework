@@ -517,7 +517,8 @@ class RunContext:
         self._step_cache_auto_request_info_counts: dict[str, int] = {}
         # Wrapper identities reachable from the current workflow definition.
         self._expected_step_wrapper_identities: dict[str, set[str]] = {}
-        # Legacy per-step call counters retained for old checkpoint compatibility.
+        # Per-step counters detect old order-only cache entries and support
+        # sequential execution without a durable replay identity.
         self._step_call_counters: dict[str, int] = {}
         # Per-identity counters keep repeated automatic invocations distinct.
         self._step_identity_counters: dict[tuple[str, str, str], int] = {}
@@ -777,7 +778,8 @@ class RunContext:
         if self._non_replayable_step_cache_keys:
             raise ValueError(
                 "Cannot checkpoint @step calls without a durable replay identity and safely copyable result. "
-                "Use replay_key for captured state, return replayable values, or run without checkpointing/HITL."
+                "Use replay_key for opaque arguments or captured state, return replayable values, "
+                "or run without checkpointing/HITL."
             )
         return dict(self._step_cache)
 
@@ -828,10 +830,10 @@ class StepWrapper(Generic[R]):
     * **Caching** — results use a stable identity derived from bound,
       canonical arguments so HITL replay and checkpoint restore skip the
       matching logical invocation even if concurrent scheduling changes.
-      Use ``replay_key`` for opaque arguments or concurrent calls whose
-      identical arguments do not imply interchangeable results. On cache
-      hit a single ``executor_bypassed`` event is emitted instead of the
-      normal ``executor_invoked`` / ``executor_completed`` pair.
+      Use ``replay_key`` for opaque arguments in checkpoint/HITL replay or
+      concurrent calls whose identical arguments do not imply interchangeable
+      results. On cache hit a single ``executor_bypassed`` event is emitted
+      instead of the normal ``executor_invoked`` / ``executor_completed`` pair.
     * **Event emission** — ``executor_invoked`` / ``executor_completed`` /
       ``executor_failed`` events are emitted for observability.
     * **RunContext injection** — if the step function declares a parameter
@@ -850,11 +852,15 @@ class StepWrapper(Generic[R]):
     string-key mappings containing those values. Concurrent calls with the
     same automatic identity must produce interchangeable results; use
     distinct ``replay_key`` values otherwise.
+    Opaque arguments require ``replay_key`` for checkpoint/HITL replay;
+    sequential execution without replay still supports them.
     Functions with captured closure state require ``replay_key`` for
     concurrent or durable replay; the key is the caller's versioning contract
     for that captured state.
-    Legacy order-based checkpoints remain replayable sequentially, but a
-    concurrent legacy cache hit raises instead of risking a mismatched result.
+    Legacy order-based cache entries lack invocation identity and cannot be
+    verified, even for top-level sequential calls. Attempting to replay one
+    raises instead of risking a mismatched result. Start a new run to regenerate
+    checkpoints with stable replay identities.
 
     Args:
         func: The async function to wrap.
@@ -865,9 +871,8 @@ class StepWrapper(Generic[R]):
 
     Raises:
         TypeError: If *func* is not an async (coroutine) function.
-        ValueError: If replay identity is unavailable or invalid for a
-            concurrent invocation, or a legacy checkpoint cannot be replayed
-            safely under concurrency.
+        ValueError: If replay identity is unavailable or invalid for
+            checkpointing or concurrency, or a legacy cache hit cannot be verified.
     """
 
     def __init__(
@@ -1019,19 +1024,24 @@ class StepWrapper(Generic[R]):
                     "Start a new run or restore a checkpoint created by the current workflow version."
                 )
 
-        found, cached = ctx._get_cached_result(legacy_cache_key)
-        if found:
-            if ctx._is_concurrent_execution():
-                raise ValueError(
-                    f"Cannot safely replay legacy order-based cache entry for concurrent @step '{self.name}'. "
-                    "Regenerate the checkpoint with the current version and provide replay_key for opaque or "
-                    "non-interchangeable concurrent calls."
-                )
-            return await self._return_cached_result(ctx, legacy_cache_key, cached)
+        # A skipped enclosing step can shift these counters even when the current
+        # call is top-level. Order alone cannot verify the cached invocation.
+        if legacy_cache_key in ctx._step_cache:
+            raise ValueError(
+                f"Cannot safely replay legacy order-based cache entry for @step '{self.name}': "
+                "its invocation identity cannot be verified. Start a new run to regenerate the checkpoint "
+                "and use @step(replay_key=...) for opaque arguments or captured state."
+            )
 
         if replay_identity is None and ctx._is_concurrent_execution():
             raise ValueError(
                 f"Cannot derive a stable replay identity for concurrent @step '{self.name}'. "
+                "Use @step(replay_key=...) to identify each logical invocation."
+            )
+
+        if replay_identity is None and ctx._on_step_completed is not None:
+            raise ValueError(
+                f"Cannot checkpoint @step '{self.name}' without a stable replay identity. "
                 "Use @step(replay_key=...) to identify each logical invocation."
             )
 
@@ -1069,7 +1079,7 @@ class StepWrapper(Generic[R]):
             ctx._auto_request_info_index - auto_request_info_index_before,
         )
         copied, cached_result = _try_snapshot_step_cache_value(result)
-        identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
+        identity_is_replayable = replay_identity is not None
         ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
         _, event_data = _try_snapshot_step_cache_value(result)
         await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
@@ -1122,10 +1132,10 @@ def step(
     Concurrent calls with identical automatic identities must produce
     interchangeable results. Use distinct ``replay_key`` values when opaque
     arguments, captured state, generated wrappers, or other state distinguish
-    the logical invocations. A function with closure state also needs
-    ``replay_key`` for checkpoint/HITL replay. Legacy order-based checkpoints replay sequential
-    steps, but concurrent legacy cache hits fail explicitly rather than
-    returning a potentially mismatched result.
+    the logical invocations. Calls with opaque arguments or closure state
+    require ``replay_key`` for checkpoint/HITL replay. Legacy order-based cache
+    entries cannot be verified and are rejected, including top-level sequential
+    calls. Start a new run to regenerate checkpoints with stable replay identities.
 
     Args:
         func: The async function to decorate (when using the bare
@@ -1143,9 +1153,8 @@ def step(
 
     Raises:
         TypeError: If the decorated function is not async.
-        ValueError: If replay identity is unavailable or invalid for a
-            concurrent invocation, or a legacy checkpoint cannot be replayed
-            safely under concurrency.
+        ValueError: If replay identity is unavailable or invalid for
+            checkpointing or concurrency, or a legacy cache hit cannot be verified.
 
     Examples:
 
