@@ -45,6 +45,7 @@ from agent_framework._compaction import (
     append_compaction_message,
     extend_compaction_messages,
 )
+from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY
 
 
 def _assistant_function_call(call_id: str) -> Message:
@@ -1003,6 +1004,37 @@ async def test_agent_triggered_compaction_ignores_trigger_outside_latest_group()
     assert inner.call_count == 0
 
 
+async def test_agent_triggered_compaction_uses_terminal_result_for_nonadjacent_group_recency() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    messages = [
+        Message(role="user", contents=["work"]),
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        Message(role="assistant", contents=["intervening context"]),
+        _tool_result("compact-1", "Compaction requested."),
+    ]
+
+    assert await strategy(messages) is True
+    assert inner.call_count == 1
+
+
+async def test_agent_triggered_compaction_ignores_rejected_approval_result() -> None:
+    inner = _RecordingCompactionStrategy()
+    strategy = AgentTriggeredCompactionStrategy(inner)
+    rejection_result = Content.from_function_result(
+        call_id="compact-1",
+        result="Error: Tool call invocation was rejected by user.",
+        additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+    )
+    messages = [
+        _assistant_named_function_call("compact-1", strategy.tool.name),
+        Message(role="tool", contents=[rejection_result]),
+    ]
+
+    assert await strategy(messages) is False
+    assert inner.call_count == 0
+
+
 def test_agent_triggered_compaction_tool_describes_reason_parameter() -> None:
     strategy = AgentTriggeredCompactionStrategy(_RecordingCompactionStrategy())
 
@@ -1074,6 +1106,17 @@ def test_unload_skills_tool_describes_skill_name_parameter() -> None:
     assert "do not call it in parallel" in strategy.tool.description
 
 
+@pytest.mark.parametrize(
+    "skill_name",
+    [123, [123], ["pdf", 123], b"pdf"],
+)
+async def test_unload_skills_tool_rejects_malformed_skill_names(skill_name: Any) -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+
+    with pytest.raises(TypeError, match="skill_name"):
+        await strategy.tool.invoke(arguments={"skill_name": skill_name})
+
+
 async def test_unload_skills_compaction_empty_name_removes_all_skill_context() -> None:
     skill_strategy = UnloadSkillsCompactionStrategy()
     strategy = AgentTriggeredCompactionStrategy(skill_strategy)
@@ -1132,6 +1175,31 @@ async def test_unload_skills_compaction_preserves_script_results_and_mixed_group
         _tool_result("run-pdf", "converted.pdf"),
         _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
         _tool_result("unload-pdf", "Unload requested for skill 'pdf'."),
+    ]
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_unload_skills_compaction_preserves_group_with_hosted_tool_call() -> None:
+    strategy = AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="load-pdf",
+                    name="load_skill",
+                    arguments={"skill_name": "pdf"},
+                ),
+                Content.from_shell_tool_call(call_id="shell-1", commands=["echo hi"]),
+            ],
+        ),
+        _tool_result("load-pdf", "pdf instructions"),
+        _assistant_named_function_call("unload-pdf", strategy.tool.name, {"skill_name": "pdf"}),
+        _tool_result("unload-pdf", "Skill 'pdf' will be unloaded."),
     ]
 
     changed = await strategy(messages)
