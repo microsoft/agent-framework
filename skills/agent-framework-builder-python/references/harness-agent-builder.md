@@ -109,6 +109,10 @@ Without token budgets or custom before/after strategies, compaction is disabled.
   remain approval-gated.
 - Use `file_access_disable_write_tools=True` when the application must be read-only.
 - Keep stores rooted in an intentional application directory.
+- For hosted or untrusted workloads, do not use the shared default `{cwd}/agent-file-memory` store without operational
+  controls. Either disable file memory or supply tenant-scoped storage with enforced byte and file-count quotas,
+  retention limits, and server-owned cleanup. File-memory writes do not require tool approval, so storage isolation
+  and resource limits must be enforced by the host.
 
 Example source:
 [Harness data processing](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/harness/harness_data_processing.py).
