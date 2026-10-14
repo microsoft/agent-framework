@@ -240,10 +240,22 @@ dependencies = [
     { name = "anthropic" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "boto3" },
+    { name = "google-auth" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "anthropic", specifier = ">=1.11.0,<2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "boto3", specifier = ">=1.35.0,<2.0.0" },
+    { name = "google-auth", specifier = ">=2.0.0,<3.0.0" },
 ]
 
 [[package]]
@@ -553,7 +565,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "httpx", specifier = ">=0.27,<1" },
+    { name = "httpx", specifier = ">=0.27,<0.29" },
     { name = "powerfx", marker = "python_full_version < '3.14'", specifier = ">=0.0.32,<0.0.35" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
 ]
