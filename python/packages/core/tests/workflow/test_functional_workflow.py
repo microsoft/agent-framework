@@ -3459,6 +3459,7 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert resumed.get_outputs() == [[5]]
 
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_user_cancellation_after_swallowed_pause_is_not_reclassified(self):
         @step(replay_key=lambda: "ask")
         async def ask(ctx: RunContext) -> int:
@@ -3472,6 +3473,7 @@ class TestHITLInStepWithCaching:
         with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
 
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     @pytest.mark.parametrize("mode", ["raise", "cancel"])
     async def test_empty_root_cancellation_after_swallowed_pause_is_not_reclassified(self, mode: str):
         @built_workflow
@@ -3488,6 +3490,7 @@ class TestHITLInStepWithCaching:
         with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
 
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_helper_empty_cancellation_after_swallowed_pause_is_not_reclassified(self):
         @built_workflow
         async def wf(_: int, ctx: RunContext) -> None:
