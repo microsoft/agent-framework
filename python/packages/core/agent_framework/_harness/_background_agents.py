@@ -217,7 +217,20 @@ def _finalize_task(
     completed_task: asyncio.Task[AgentResponse[Any]],
     runtime: _RuntimeState,
 ) -> None:
-    """Extract results from a completed asyncio task and update task info."""
+    """Extract results from a completed asyncio task and update task info.
+
+    The finished :class:`asyncio.Task` is intentionally **not** removed from
+    ``runtime.in_flight_tasks`` here.  Session state is persisted by the host
+    only after the agent run completes; if the run fails, is stopped early, or
+    the host restores an older session snapshot, the persisted record will still
+    say ``RUNNING`` while this in-memory task no longer exists.  On the next
+    call to :func:`_refresh_task_state` a missing entry would be misidentified
+    as ``LOST``, discarding a result that is already available.
+
+    Tasks are removed from ``in_flight_tasks`` by two callers:
+    - :func:`background_agents_clear_completed_task` — explicit caller-driven cleanup.
+    - :meth:`BackgroundAgentsProvider.release_session` — bulk cleanup on session teardown.
+    """
     if completed_task.cancelled():
         task_info.status = BackgroundTaskStatus.FAILED
         task_info.error_text = "Task was canceled."
@@ -229,7 +242,8 @@ def _finalize_task(
         else:
             task_info.status = BackgroundTaskStatus.COMPLETED
             task_info.result_text = completed_task.result().text
-    runtime.in_flight_tasks.pop(task_info.id, None)
+    # NOTE: do NOT pop task_info.id from runtime.in_flight_tasks here.
+    # See docstring above for the reasoning.
 
 
 def _refresh_task_state(
