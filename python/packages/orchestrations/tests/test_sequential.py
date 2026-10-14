@@ -193,6 +193,25 @@ async def test_sequential_as_agent_returns_only_last_agent_response() -> None:
     assert "hello as_agent" not in combined
 
 
+async def test_sequential_as_agent_streaming_keeps_one_message_per_agent() -> None:
+    """Streaming `workflow.as_agent()` with `output_from="all"` keeps each agent's reply as its own message,
+    the same messages a non-streaming run returns."""
+
+    def build_agent() -> Any:
+        participants = [_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2")]
+        return SequentialBuilder(participants=participants, output_from="all").build().as_agent()
+
+    response = await build_agent().run("hello")
+    stream = build_agent().run("hello", stream=True)
+    async for _ in stream:
+        pass
+    streamed = await stream.get_final_response()
+
+    assert [m.text for m in response.messages] == ["A1 reply", "A2 reply"]
+    assert [m.text for m in streamed.messages] == ["A1 reply", "A2 reply"]
+    assert [m.author_name for m in streamed.messages] == ["A1", "A2"]
+
+
 async def test_sequential_with_custom_executor_summary() -> None:
     """A custom-executor terminator yields its own AgentResponse — that becomes the workflow output.
 
