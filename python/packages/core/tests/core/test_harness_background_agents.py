@@ -1094,4 +1094,84 @@ async def test_release_session_clears_in_flight_tasks() -> None:
 
     await provider.release_session(session)
 
-    assert session.session_id not in provider._runtime, "Runtime should be cleaned up after release"
+    assert session.session_id not in provider._runtime
+
+
+async def test_reused_task_id_does_not_associate_stale_snapshot_with_continuation() -> None:
+    """A stale snapshot must reconcile with its own execution, not a later continuation.
+
+    Regression test for reused task IDs:
+    If task 1 is snapshotted while RUNNING, finishes, is continued (starting a
+    new execution under task ID 1), and the second execution finishes, restoring
+    the original snapshot must reconcile with the first execution's result, NOT
+    the continuation's result.
+    """
+
+    class _ContinuationAgent:
+        def __init__(self, name: str = "Worker") -> None:
+            self.name = name
+            self.description = "Worker that tracks runs"
+            self.call_count = 0
+
+        def create_session(self, *, session_id: str | None = None) -> AgentSession:
+            return AgentSession(session_id=session_id)
+
+        def get_session(self, service_session_id: Any, *, session_id: str | None = None) -> AgentSession:
+            return AgentSession(service_session_id=service_session_id, session_id=session_id)
+
+        async def run(self, messages: Any = None, **kwargs: Any) -> AgentResponse[Any]:
+            del messages, kwargs
+            self.call_count += 1
+            return AgentResponse(
+                messages=[Message(role="assistant", contents=[f"result generation {self.call_count}"])]
+            )
+
+    agent = _ContinuationAgent("Worker")
+    provider = _make_provider(agent)  # type: ignore[arg-type]
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    # 1. Start task 1 on Worker (generation 1).
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="first run",
+        description="task 1",
+    )
+    # Immediately capture snapshot while task 1 is RUNNING (generation 1).
+    snapshot_gen1 = session.to_dict()
+
+    runtime = provider._get_runtime(session)
+    task_1 = runtime.in_flight_tasks[(1, 1)]
+    await task_1
+
+    # 2. Finalize first run via refresh.
+    tools2 = await _get_tools(provider, session)
+    res1 = await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+    assert res1 == "result generation 1"
+
+    # 3. Continue task 1 with new input (generation 2).
+    continue_msg = await _invoke_tool(tools2["background_agents_continue_task"], task_id=1, text="second run")
+    assert "continued" in continue_msg.lower()
+
+    task_2 = runtime.in_flight_tasks[(1, 2)]
+    await task_2
+
+    # Finalize continuation via refresh.
+    tools3 = await _get_tools(provider, session)
+    res2 = await _invoke_tool(tools3["background_agents_get_task_results"], task_id=1)
+    assert res2 == "result generation 2"
+
+    # 4. Now restore the generation 1 snapshot into the same provider.
+    session_restored = AgentSession.from_dict(snapshot_gen1)
+    tools_restored = await _get_tools(provider, session_restored)
+
+    # Refreshing on the restored snapshot must reconcile with generation 1 task,
+    # NOT with generation 2 task.
+    res_restored = await _invoke_tool(tools_restored["background_agents_get_task_results"], task_id=1)
+    assert res_restored == "result generation 1", (
+        f"Expected generation 1 result but got continuation result: {res_restored!r}"
+    )
+
+    await provider.release_session(session)
+    await provider.release_session(session_restored)

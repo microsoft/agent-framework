@@ -65,7 +65,8 @@ class BackgroundTaskInfo(SerializationMixin):
     status: BackgroundTaskStatus
     result_text: str | None
     error_text: str | None
-    __slots__ = ("agent_name", "description", "error_text", "id", "result_text", "status")
+    generation: int
+    __slots__ = ("agent_name", "description", "error_text", "generation", "id", "result_text", "status")
 
     def __init__(
         self,
@@ -75,6 +76,7 @@ class BackgroundTaskInfo(SerializationMixin):
         status: BackgroundTaskStatus = BackgroundTaskStatus.RUNNING,
         result_text: str | None = None,
         error_text: str | None = None,
+        generation: int = 1,
     ) -> None:
         """Initialize a background task info entry."""
         self.id = id
@@ -83,6 +85,7 @@ class BackgroundTaskInfo(SerializationMixin):
         self.status = status
         self.result_text = result_text
         self.error_text = error_text
+        self.generation = generation
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize for session state persistence."""
@@ -92,6 +95,7 @@ class BackgroundTaskInfo(SerializationMixin):
             "agent_name": self.agent_name,
             "description": self.description,
             "status": self.status.value,
+            "generation": self.generation,
         }
         if not exclude_none or self.result_text is not None:
             data["result_text"] = self.result_text
@@ -109,24 +113,125 @@ class BackgroundTaskInfo(SerializationMixin):
             status=BackgroundTaskStatus(data["status"]),
             result_text=data.get("result_text"),
             error_text=data.get("error_text"),
+            generation=data.get("generation", 1),
         )
+
+
+_TaskKey = tuple[int, int] | int
+
+
+class _InFlightTasks(dict[_TaskKey, asyncio.Task[AgentResponse[Any]]]):
+    """Non-serializable container for tracked in-flight tasks.
+
+    Supports dual keying:
+    - Composite key ``(task_id, generation)``: isolates discrete continuation
+      executions under the same reusable task ID so older session snapshots
+      reconcile with their own generation rather than a later continuation.
+    - Integer key ``task_id``: direct fallback lookup and backwards-compatible
+      access for callers and existing unit tests.
+    """
+
+    def __getitem__(self, key: _TaskKey) -> asyncio.Task[AgentResponse[Any]]:
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        if isinstance(key, int):
+            matches: list[tuple[int, asyncio.Task[AgentResponse[Any]]]] = []
+            for k, v in self.items():
+                if isinstance(k, tuple) and k[0] == key:
+                    matches.append((k[1], v))
+            if matches:
+                matches.sort(key=lambda item: item[0], reverse=True)
+                return matches[0][1]
+        raise KeyError(key)
+
+    def get(self, key: _TaskKey, default: Any = None, /) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def get_exact(self, key: _TaskKey) -> asyncio.Task[AgentResponse[Any]] | None:
+        """Retrieve task for an exact key without composite fallback."""
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        return None
+
+    def __contains__(self, key: object) -> bool:
+        if super().__contains__(key):
+            return True
+        if isinstance(key, int):
+            for k in self:
+                if isinstance(k, tuple) and k[0] == key:
+                    return True
+        return False
+
+    def pop(self, key: _TaskKey, *args: Any) -> Any:
+        if super().__contains__(key):
+            val = super().pop(key)
+            if isinstance(key, int):
+                composites: list[tuple[int, int]] = [
+                    k for k in list(self.keys()) if isinstance(k, tuple) and k[0] == key
+                ]
+                for ck in composites:
+                    super().pop(ck, None)
+            return val
+        if isinstance(key, int):
+            composites_to_pop: list[tuple[int, int]] = [
+                k for k in list(self.keys()) if isinstance(k, tuple) and k[0] == key
+            ]
+            if composites_to_pop:
+                composites_to_pop.sort(key=lambda k: k[1])
+                popped_val: asyncio.Task[AgentResponse[Any]] | None = None
+                for ck in composites_to_pop:
+                    popped_val = super().pop(ck)
+                return popped_val
+        if args:
+            return args[0]
+        raise KeyError(key)
 
 
 @dataclass
 class _RuntimeState:
     """Non-serializable per-session runtime state for background tasks."""
 
-    in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
+    in_flight_tasks: _InFlightTasks = field(default_factory=_InFlightTasks)
     background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
     closed: bool = False
 
-    def track_task(self, task_id: int, task: asyncio.Task[AgentResponse[Any]]) -> None:
+    def track_task(
+        self,
+        task_id: int,
+        task: asyncio.Task[AgentResponse[Any]],
+        *,
+        generation: int = 1,
+    ) -> None:
         """Track a background task if this runtime is still open."""
         if self.closed:
             task.cancel()
             raise RuntimeError("Session runtime is closed; cannot start background task.")
 
-        self.in_flight_tasks[task_id] = task
+        self.in_flight_tasks[task_id, generation] = task
+
+    def get_task(
+        self,
+        task_id: int,
+        generation: int | None = None,
+    ) -> asyncio.Task[AgentResponse[Any]] | None:
+        """Retrieve a task for a given task ID and optional generation."""
+        if generation is not None:
+            task = self.in_flight_tasks.get_exact((task_id, generation))
+            if task is not None:
+                return task
+            for k in self.in_flight_tasks:
+                if isinstance(k, tuple) and k[0] == task_id:
+                    return None
+            return self.in_flight_tasks.get_exact(task_id)
+        return self.in_flight_tasks.get(task_id)
+
+    def clear_task(self, task_id: int) -> None:
+        """Remove all executions and background sessions associated with a task ID."""
+        self.in_flight_tasks.pop(task_id, None)
+        self.background_sessions.pop(task_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +332,11 @@ def _finalize_task(
     call to :func:`_refresh_task_state` a missing entry would be misidentified
     as ``LOST``, discarding a result that is already available.
 
+    Furthermore, each execution records a monotonic ``generation`` in both
+    ``task_info`` and ``runtime.in_flight_tasks[(task_id, generation)]`` so
+    that restoring an earlier snapshot of a continued task will reconcile
+    with that snapshot's execution rather than a later continuation.
+
     Tasks are removed from ``in_flight_tasks`` by two callers:
     - :func:`background_agents_clear_completed_task` — explicit caller-driven cleanup.
     - :meth:`BackgroundAgentsProvider.release_session` — bulk cleanup on session teardown.
@@ -242,7 +352,7 @@ def _finalize_task(
         else:
             task_info.status = BackgroundTaskStatus.COMPLETED
             task_info.result_text = completed_task.result().text
-    # NOTE: do NOT pop task_info.id from runtime.in_flight_tasks here.
+    # NOTE: do NOT pop task from runtime.in_flight_tasks here.
     # See docstring above for the reasoning.
 
 
@@ -257,7 +367,7 @@ def _refresh_task_state(
         if task_info.status != BackgroundTaskStatus.RUNNING:
             continue
 
-        in_flight = runtime.in_flight_tasks.get(task_info.id)
+        in_flight = runtime.get_task(task_info.id, task_info.generation)
         if in_flight is None:
             task_info.status = BackgroundTaskStatus.LOST
             changed = True
@@ -503,9 +613,16 @@ class BackgroundAgentsProvider(ContextProvider):
 
             sub_session = bg_agent.create_session()
 
+            task_info = BackgroundTaskInfo(
+                id=task_id,
+                agent_name=agent_name,
+                description=description,
+                generation=1,
+            )
+
             async_task = asyncio.create_task(_run_agent(bg_agent.run(input, session=sub_session)))
             try:
-                runtime.track_task(task_id, async_task)
+                runtime.track_task(task_id, async_task, generation=task_info.generation)
             except RuntimeError as exc:
                 return f"Error: {exc}"
 
@@ -513,11 +630,6 @@ class BackgroundAgentsProvider(ContextProvider):
 
             provider_state["next_task_id"] = task_id + 1
 
-            task_info = BackgroundTaskInfo(
-                id=task_id,
-                agent_name=agent_name,
-                description=description,
-            )
             tasks = _get_tasks(provider_state)
             tasks.append(task_info)
             _save_tasks(provider_state, tasks)
@@ -542,8 +654,11 @@ class BackgroundAgentsProvider(ContextProvider):
 
             # Collect in-flight tasks matching the requested IDs.
             waitable: list[tuple[int, asyncio.Task[AgentResponse[Any]]]] = []
+            tasks = _get_tasks(provider_state)
             for tid in task_ids:
-                in_flight = runtime.in_flight_tasks.get(tid)
+                t_info = next((t for t in tasks if t.id == tid and t.status == BackgroundTaskStatus.RUNNING), None)
+                gen = t_info.generation if t_info is not None else None
+                in_flight = runtime.get_task(tid, gen)
                 if in_flight is not None:
                     waitable.append((tid, in_flight))
 
@@ -582,7 +697,7 @@ class BackgroundAgentsProvider(ContextProvider):
             tasks = _get_tasks(provider_state)
             task_info = next((t for t in tasks if t.id == completed_id), None)
             if task_info is not None and completed_id is not None:
-                completed_task = runtime.in_flight_tasks.get(completed_id)
+                completed_task = runtime.get_task(completed_id, task_info.generation)
                 if completed_task is not None:
                     _finalize_task(task_info, completed_task, runtime)
                     _save_tasks(provider_state, tasks)
@@ -653,9 +768,10 @@ class BackgroundAgentsProvider(ContextProvider):
 
             bg_agent = self._agents[key]
 
+            task_info.generation += 1
             async_task = asyncio.create_task(_run_agent(bg_agent.run(text, session=sub_session)))
             try:
-                runtime.track_task(task_id, async_task)
+                runtime.track_task(task_id, async_task, generation=task_info.generation)
             except RuntimeError as exc:
                 return f"Error: {exc}"
             task_info.status = BackgroundTaskStatus.RUNNING
@@ -688,8 +804,7 @@ class BackgroundAgentsProvider(ContextProvider):
             _save_tasks(provider_state, tasks)
 
             # Clean up runtime references.
-            runtime.in_flight_tasks.pop(task_id, None)
-            runtime.background_sessions.pop(task_id, None)
+            runtime.clear_task(task_id)
 
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Task {task_id} cleared."
