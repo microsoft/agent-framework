@@ -469,6 +469,71 @@ public class InvocableFunctionBypassingChatClientTests
     }
 
     [Fact]
+    public async Task GetResponseAsync_StoredCallToolBecameApprovalRequired_RejectsInsteadOfApprovingAsync()
+    {
+        // Arrange - a call bypassed on a previous turn is pending, but the tool now holding that name has since
+        // been gated, so the stored decision no longer describes what would execute.
+        var storedBackendCall = new FunctionCallContent("call1", BackendToolName);
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            InvocableFunctionBypassingChatClient.StateBagKey,
+            new List<FunctionCallContent> { storedBackendCall },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done")]));
+        });
+
+        var decorator = new InvocableFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions
+        {
+            Tools = [new ApprovalRequiredAIFunction(CreateBackendTool()), CreateFrontendTool()]
+        };
+
+        // Act
+        await RunWithAgentContextAsync(decorator, session, options);
+
+        // Assert - the call is rejected rather than executed on the stale decision.
+        Assert.NotNull(capturedMessages);
+        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        Assert.False(injected.Approved);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_StoredCallToolUnchanged_StillInjectsAsApprovedAsync()
+    {
+        // Arrange - the tool set is unchanged, so the bypassed call is injected for execution as designed.
+        var storedBackendCall = new FunctionCallContent("call1", BackendToolName);
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            InvocableFunctionBypassingChatClient.StateBagKey,
+            new List<FunctionCallContent> { storedBackendCall },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done")]));
+        });
+
+        var decorator = new InvocableFunctionBypassingChatClient(innerClient);
+
+        // Act
+        await RunWithAgentContextAsync(decorator, session, CreateMixedToolOptions());
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        var injected = capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>().ToList();
+        Assert.True(Assert.Single(injected).Approved);
+    }
+
+    [Fact]
     public async Task GetResponseAsync_InnerClientThrows_DoesNotRestorePendingCallsAsync()
     {
         // Arrange - a call bypassed on a previous turn is pending, and the next request fails.
@@ -493,6 +558,71 @@ public class InvocableFunctionBypassingChatClientTests
         // injected as a unit and FunctionInvokingChatClient invokes approved responses before the service
         // call, so part of it has usually already run by the time a failure surfaces; re-injecting would
         // invoke those functions again while still leaving the batch missing the unrecoverable results.
+        Assert.False(session.StateBag.TryGetValue<List<FunctionCallContent>>(
+            InvocableFunctionBypassingChatClient.StateBagKey, out _, AgentJsonUtilities.DefaultOptions));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResponseAsync_DuplicateToolNames_PreservesPendingCallsForRetryAsync(bool streaming)
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            InvocableFunctionBypassingChatClient.StateBagKey,
+            new List<FunctionCallContent> { new("call1", BackendToolName) },
+            AgentJsonUtilities.DefaultOptions);
+
+        List<ToolApprovalResponseContent> receivedResponses = [];
+        int innerCalls = 0;
+        void CaptureMessages(IEnumerable<ChatMessage> messages)
+        {
+            innerCalls++;
+            receivedResponses.AddRange(messages.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>());
+        }
+
+        var innerClient = streaming
+            ? CreateMockStreamingChatClient((messages, _, _) =>
+            {
+                CaptureMessages(messages);
+                return ToAsyncEnumerableAsync(new ChatResponseUpdate(ChatRole.Assistant, "Done"));
+            })
+            : CreateMockChatClient((messages, _, _) =>
+            {
+                CaptureMessages(messages);
+                return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Done")));
+            });
+        var decorator = new InvocableFunctionBypassingChatClient(innerClient);
+        var duplicateOptions = new ChatOptions { Tools = [CreateBackendTool(), CreateBackendTool()] };
+
+        async Task RunAsync(ChatOptions options)
+        {
+            if (streaming)
+            {
+                await RunStreamingWithAgentContextAsync(decorator, session, [], options);
+            }
+            else
+            {
+                await RunWithAgentContextAsync(decorator, session, options);
+            }
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(duplicateOptions));
+        Assert.Equal(0, innerCalls);
+        Assert.True(session.StateBag.TryGetValue<List<FunctionCallContent>>(
+            InvocableFunctionBypassingChatClient.StateBagKey, out var pending, AgentJsonUtilities.DefaultOptions));
+        Assert.Equal("call1", Assert.Single(pending!).CallId);
+
+        // Act
+        await RunAsync(CreateMixedToolOptions());
+        await RunAsync(CreateMixedToolOptions());
+
+        // Assert
+        var response = Assert.Single(receivedResponses);
+        Assert.True(response.Approved);
+        Assert.Equal("call1", Assert.IsType<FunctionCallContent>(response.ToolCall).CallId);
         Assert.False(session.StateBag.TryGetValue<List<FunctionCallContent>>(
             InvocableFunctionBypassingChatClient.StateBagKey, out _, AgentJsonUtilities.DefaultOptions));
     }

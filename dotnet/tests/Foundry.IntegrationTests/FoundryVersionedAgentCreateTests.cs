@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
@@ -247,7 +248,7 @@ public class FoundryVersionedAgentCreateTests
         var openApiFunction = new OpenApiFunctionDefinition(
             "get_countries",
             BinaryData.FromString(CountriesOpenApiSpec),
-            new OpenAPIAnonymousAuthenticationDetails())
+            new OpenApiAnonymousAuthenticationDetails())
         {
             Description = "Retrieve information about countries by currency code"
         };
@@ -255,7 +256,7 @@ public class FoundryVersionedAgentCreateTests
         var definition = new DeclarativeAgentDefinition(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = AgentInstructions,
-            Tools = { (ResponseTool)ProjectsAgentTool.CreateOpenApiTool(openApiFunction) }
+            Tools = { new OpenApiTool(openApiFunction) }
         };
 
         ProjectsAgentVersionCreationOptions creationOptions = new(definition);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import inspect
 import json
@@ -75,6 +76,25 @@ def _contents_from_state(values: Any) -> list[Content]:
         return []
     state_items = list(cast(Iterable[Any], values))
     return [_content_from_state(value) for value in state_items]
+
+
+def _structured_response_format(context: AgentContext) -> Any | None:
+    """Return the structured-output schema for this invocation, if any.
+
+    Run ``options`` take precedence over the agent's ``default_options``. The
+    streaming re-wrap in :meth:`ToolApprovalMiddleware._process_stream` must
+    forward this to ``AgentResponse.from_updates`` or ``response.value`` is
+    dropped even when the inner stream already parsed it.
+    """
+    if context.options is not None:
+        response_format = context.options.get("response_format")
+        if response_format is not None:
+            return response_format
+    default_options = getattr(context.agent, "default_options", None)
+    if isinstance(default_options, Mapping):
+        typed_default_options = cast("Mapping[str, Any]", default_options)
+        return typed_default_options.get("response_format")
+    return None
 
 
 def _content_to_state(content: Content) -> dict[str, Any]:
@@ -442,6 +462,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Last inner AgentResponse. The outer finalizer resolves its structured
+        # value (completing its lazy parse) and forwards it through the public
+        # ``from_updates(value=...)`` contract, so an auto-approved preamble that
+        # the outer aggregation coalesces into the JSON message cannot mask it
+        # (#7418).
+        holder: dict[str, AgentResponse | None] = {"final": None}
+        response_format = _structured_response_format(context)
+
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
@@ -477,7 +505,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     buffered_update = copy.copy(update)
                     buffered_update.contents = list(update.contents)
                     buffered_approval_updates.append(buffered_update)
-                await context.result.get_final_response()
+                holder["final"] = await context.result.get_final_response()
                 if not approval_requests:
                     return
 
@@ -509,7 +537,26 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            # Build the response from the streamed updates so the middleware's
+            # approval / user-input handling is preserved. The coalesced update text
+            # can include preamble from auto-approved turns, which would otherwise be
+            # parsed as one invalid string, so resolve the terminal inner response's
+            # structured value — reading ``value`` also completes its lazy parse — and
+            # forward it via ``from_updates``' public ``value`` argument (#7418). A
+            # parse failure is left unset so the outer response still surfaces the
+            # error lazily on ``value`` access, matching the error timing of a
+            # middleware-free streaming run.
+            final = holder["final"]
+            value: Any = None
+            if final is not None:
+                # ``ValidationError`` subclasses ``ValueError``; ``TypeError`` covers a
+                # malformed ``response_format`` in the terminal inner response.
+                with contextlib.suppress(ValueError, TypeError):
+                    value = final.value
+            return AgentResponse.from_updates(updates, output_format_type=response_format, value=value)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _prepare_inbound_messages(
         self,

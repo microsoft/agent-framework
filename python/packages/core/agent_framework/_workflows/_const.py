@@ -22,6 +22,10 @@ WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 # older first-party packages and checkpoints.
 RESOLVED_WORKFLOW_RUN_KWARGS_KEY = "_resolved_workflow_run_kwargs"
 
+# Key used to record caller keys that targeted executors in the current workflow.
+# Nested workflows use this to avoid reinterpreting parent-scoped entries.
+ROUTED_WORKFLOW_RUN_KWARGS_KEY = "_routed_workflow_run_kwargs"
+
 # State keys used to preserve caller-provided kwargs for nested workflow routing.
 RAW_FUNCTION_INVOCATION_KWARGS_KEY = "_raw_function_invocation_kwargs"
 RAW_CLIENT_KWARGS_KEY = "_raw_client_kwargs"

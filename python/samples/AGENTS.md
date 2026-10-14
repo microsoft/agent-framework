@@ -77,6 +77,10 @@ Durable Task and Azure Functions samples are maintained in the [Durable Agent Fr
 All canonical samples (01-get-started) use **Microsoft Foundry project-backed chat** via `FoundryChatClient`
 with a Microsoft Foundry project endpoint:
 
+Whenever a sample, README, or comment shows a literal Foundry project endpoint, use the full project-scoped form
+`https://your-account.services.ai.azure.com/api/projects/your-project`. Do not shorten the example to the
+account-level endpoint.
+
 ```python
 import os
 from agent_framework import Agent

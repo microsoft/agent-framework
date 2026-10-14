@@ -193,6 +193,25 @@ async def test_sequential_as_agent_returns_only_last_agent_response() -> None:
     assert "hello as_agent" not in combined
 
 
+async def test_sequential_as_agent_streaming_keeps_one_message_per_agent() -> None:
+    """Streaming `workflow.as_agent()` with `output_from="all"` keeps each agent's reply as its own message,
+    the same messages a non-streaming run returns."""
+
+    def build_agent() -> Any:
+        participants = [_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2")]
+        return SequentialBuilder(participants=participants, output_from="all").build().as_agent()
+
+    response = await build_agent().run("hello")
+    stream = build_agent().run("hello", stream=True)
+    async for _ in stream:
+        pass
+    streamed = await stream.get_final_response()
+
+    assert [m.text for m in response.messages] == ["A1 reply", "A2 reply"]
+    assert [m.text for m in streamed.messages] == ["A1 reply", "A2 reply"]
+    assert [m.author_name for m in streamed.messages] == ["A1", "A2"]
+
+
 async def test_sequential_with_custom_executor_summary() -> None:
     """A custom-executor terminator yields its own AgentResponse — that becomes the workflow output.
 
@@ -252,6 +271,80 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     baseline_text = "".join(u.text for u in baseline_updates if hasattr(u, "text"))
     resumed_text = "".join(u.text for u in resumed_updates if hasattr(u, "text"))
     assert baseline_text == resumed_text
+
+
+async def test_sequential_handoff_forwards_user_multimodal_content() -> None:
+    """Multimodal user input must reach downstream agents after history cleanup (#7822)."""
+
+    class _MultimodalInspectorAgent(BaseAgent):
+        """Captures the content types of the messages it receives."""
+
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+        def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: bool = False,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            # AgentRunInputs also permits a single str/Content/Message, so narrow to the
+            # sequence of Message objects that SequentialBuilder supplies before iterating.
+            assert isinstance(messages, Sequence) and not isinstance(messages, str)
+            received = [m for m in messages if isinstance(m, Message)]
+            seen_types = sorted({c.type for m in received for c in m.contents})
+            seen_uris = [c.uri for m in received for c in m.contents if c.type == "uri"]
+            summary = f"types={seen_types} uris={seen_uris}"
+
+            if stream:
+
+                async def _stream() -> AsyncIterable[AgentResponseUpdate]:
+                    yield AgentResponseUpdate(contents=[Content.from_text(text=summary)])
+
+                return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+            async def _run() -> AgentResponse:
+                return AgentResponse(messages=[Message("assistant", [summary])])
+
+            return _run()
+
+    echo = _EchoAgent(id="agent1", name="A1")
+    inspector = _MultimodalInspectorAgent(id="inspector", name="Inspector")
+    wf = SequentialBuilder(participants=[echo, inspector]).build()
+
+    request = Message(
+        "user",
+        [
+            Content.from_text(text="Please review this screenshot."),
+            Content.from_uri(uri="https://example.com/screenshot.png", media_type="image/png"),
+        ],
+    )
+    output_events = [ev async for ev in wf.run(request, stream=True) if ev.type == "output"]
+
+    assert len(output_events) == 1
+    output_data = output_events[0].data
+    final_text = (
+        " ".join(m.text for m in output_data.messages)
+        if isinstance(output_data, AgentResponse)
+        else (output_data.text or "")
+    )
+    assert "'uri'" in final_text
+    assert "https://example.com/screenshot.png" in final_text
 
 
 async def test_sequential_checkpoint_runtime_only() -> None:
@@ -465,11 +558,7 @@ async def test_chain_only_agent_responses_three_agents() -> None:
 
 async def test_sequential_request_info_last_participant_emits_output() -> None:
     """When the last participant is wrapped via with_request_info(), the workflow
-    still emits a terminal output event after approval.
-
-    This exercises the _EndWithConversation.end_with_agent_executor_response path
-    that converts the AgentApprovalExecutor's forwarded AgentExecutorResponse into
-    the workflow's final AgentResponse output.
+    emits a terminal output event only after approval.
     """
     from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
 
@@ -478,14 +567,20 @@ async def test_sequential_request_info_last_participant_emits_output() -> None:
 
     wf = SequentialBuilder(participants=[a1, a2]).with_request_info().build()
 
-    # First run: collect request_info events for both agents
+    # First run: collect the first request_info event.
     request_events: list[Any] = []
+    output_events: list[Any] = []
     async for ev in wf.run("hello with approval", stream=True):
         if ev.type == "request_info" and isinstance(ev.data, AgentExecutorResponse):
             request_events.append(ev)
+        elif ev.type == "output":
+            output_events.append(ev)
 
-    # Approve each agent in sequence until the workflow completes
-    output_events: list[Any] = []
+    assert request_events
+    assert output_events == []
+
+    # Approve each agent in sequence until the workflow completes. A run that
+    # pauses for another approval must not expose that unapproved response.
     while request_events:
         responses = {req.request_id: AgentRequestInfoResponse.approve() for req in request_events}
         request_events = []
@@ -495,6 +590,8 @@ async def test_sequential_request_info_last_participant_emits_output() -> None:
                 request_events.append(ev)
             elif ev.type == "output":
                 output_events.append(ev)
+        if request_events:
+            assert output_events == []
 
     # The workflow must produce a terminal output with the last agent's response.
     assert len(output_events) == 1

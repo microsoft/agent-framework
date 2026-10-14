@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import WorkflowInvocationKwargs
+from agent_framework._workflows._state import State
 
 try:
     import powerfx  # noqa: F401
@@ -17,11 +18,13 @@ except (ImportError, RuntimeError):
 
 _requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
 
+from agent_framework_declarative import WorkflowFactory, WorkflowState  # noqa: E402
 from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
     DECLARATIVE_STATE_KEY,
     ActionComplete,
     ActionTrigger,
+    DeclarativeActionExecutor,
     DeclarativeWorkflowBuilder,
     DeclarativeWorkflowState,
     ForeachInitExecutor,
@@ -29,6 +32,118 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     SendActivityExecutor,
     SetValueExecutor,
 )
+
+
+class TestFactoryStateMemberRoutes:
+    """Factory-created workflows use modern state for expressions and templates."""
+
+    @_requires_powerfx
+    async def test_factory_uses_modern_member_resolution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class Record:
+            _private = "private-marker"
+
+            def __init__(self) -> None:
+                self.public_value = "public-marker"
+
+        forbidden = MagicMock(side_effect=AssertionError("Standalone state used by factory"))
+        monkeypatch.setattr(WorkflowState, "get", forbidden)
+        monkeypatch.setattr(WorkflowState, "eval", forbidden)
+        seen: list[type[DeclarativeWorkflowState]] = []
+        original = DeclarativeActionExecutor._get_state
+
+        def track(executor: DeclarativeActionExecutor, store: State) -> DeclarativeWorkflowState:
+            state = original(executor, store)
+            seen.append(type(state))
+            return state
+
+        monkeypatch.setattr(DeclarativeActionExecutor, "_get_state", track)
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+kind: Workflow
+trigger:
+  kind: OnConversationStart
+  id: member_routes
+  actions:
+    - kind: SendActivity
+      id: public_expression
+      activity: =Workflow.Inputs.record.public_value
+    - kind: SendActivity
+      id: private_expression
+      activity: =Workflow.Inputs.record._private
+    - kind: SendActivity
+      id: private_template
+      activity: "template:{Workflow.Inputs.record._private}"
+""")
+
+        result = await workflow.run({"record": Record()})
+
+        assert result.get_outputs() == ["public-marker", "template:"]
+        assert seen and all(kind is DeclarativeWorkflowState for kind in seen)
+        forbidden.assert_not_called()
+
+
+class TestFactoryTemplateInterpolation:
+    """Authored template tokens resolve once without rewriting substituted data."""
+
+    @pytest.mark.parametrize("mapping_activity", [False, True])
+    @pytest.mark.parametrize(
+        "local, template, expected",
+        [
+            ({"a": "{Local.b}", "b": "B"}, "{Local.a}|{Local.b}", "{Local.b}|B"),
+            ({"a": "prefix {Local.a}"}, "{Local.a}|{Local.a}", "prefix {Local.a}|prefix {Local.a}"),
+            (
+                {"a": "{Local.b}/{Local.b}", "b": "B"},
+                "{Local.a}|{Local.b}|{Local.b}",
+                "{Local.b}/{Local.b}|B|B",
+            ),
+            ({"a": "{Local.missing}"}, "{Local.a}|{Local.missing}", "{Local.missing}|"),
+            ({"a": ["{Local.b}"], "b": "B"}, "{Local.a}|{Local.b}", "['{Local.b}']|B"),
+            ({"a": {"text": "{Local.b}"}, "b": "B"}, "{Local.a}|{Local.b}", "{'text': '{Local.b}'}|B"),
+            ({"a": "safe"}, "{Local.a}|{Local.a}", "safe|safe"),
+            ({"a": "{Local.b}", "b": "B"}, "{Local.b}|{Local.a}", "B|{Local.b}"),
+            ({"a": "{Local.b}", "b": "B"}, "{Local.a}", "{Local.b}"),
+            ({}, "{Local.missing}|done", "|done"),
+            ({"a": None, "b": "B"}, "{Local.a}|{Local.b}", "|B"),
+            ({"a": False}, "{Local.a}|{Local.a}", "False|False"),
+            ({"a": 0}, "{Local.a}|{Local.a}", "0|0"),
+            ({"a": "文本"}, "{Local.a}|{Ctrl+C}|{foo-bar}", "文本|{Ctrl+C}|{foo-bar}"),
+            ({"a": r"\1\g<1>"}, "{Local.a}|{Local.a}", r"\1\g<1>|\1\g<1>"),
+            ({"a": "文本"}, "{{Local.a}}|{}|{Local. a}", "{文本}|{}|{Local. a}"),
+        ],
+        ids=[
+            "later-token",
+            "self-token",
+            "multiple-tokens",
+            "missing-later-token",
+            "list-value",
+            "dict-value",
+            "ordinary-repeat",
+            "reverse-order",
+            "single-token",
+            "missing-token",
+            "none-value",
+            "false-value",
+            "zero-value",
+            "unicode-and-literals",
+            "backslashes",
+            "brace-boundaries",
+        ],
+    )
+    async def test_factory_interpolates_only_authored_tokens(
+        self, mapping_activity: bool, local: dict[str, Any], template: str, expected: str
+    ) -> None:
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "kind": "Workflow",
+            "actions": [
+                *[{"kind": "SetVariable", "variable": f"Local.{key}", "value": value} for key, value in local.items()],
+                {"kind": "SendActivity", "activity": {"text": template} if mapping_activity else template},
+            ],
+        })
+
+        result = await workflow.run({})
+        assert result.get_outputs() == [expected]
+
+        streamed_result = await workflow.run({}, stream=True).get_final_response()
+        assert streamed_result.get_outputs() == [expected]
 
 
 class TestDeclarativeWorkflowState:
@@ -491,7 +606,7 @@ class TestAgentExecutors:
 
         agent = _StrictAgent()
         run_kwargs_bag = {
-            "function_invocation_kwargs": {"forwarded_props": {"a": 1}},
+            "function_invocation_kwargs": {"__global__": {"forwarded_props": {"a": 1}}},
             "_raw_function_invocation_kwargs": {"forwarded_props": {"a": 1}},
         }
         mock_context.get_state = MagicMock(
@@ -517,11 +632,8 @@ class TestAgentExecutors:
             auto_send=False,
         )
 
-        assert agent.received_options is not None
-        # The full bag still reaches tool forwarding, internal copies included.
-        forwarded = agent.received_options["additional_function_arguments"]
-        assert forwarded["_raw_function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
-        assert forwarded["function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
+        assert agent.received_options is None
+        assert agent.received_public_kwargs["function_invocation_kwargs"] == {"forwarded_props": {"a": 1}}
 
 
 class TestHumanInputExecutors:
@@ -676,6 +788,83 @@ class TestParseValueExecutor:
 
         result = state.get("Local.parsedValue")
         assert result == 3.14
+
+    @pytest.mark.parametrize("target_type", ["number", "float", "decimal"])
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1e3", 1000.0),
+            ("1E+3", 1000.0),
+            ("-2e-2", -0.02),
+            (" 6e1 ", 60.0),
+            ("3.5e2", 350.0),
+            ("1208925819614629174706177", 1208925819614629174706177),
+            ("123", 123),
+            ("-123", -123),
+            ("3.14", 3.14),
+            ("0", 0),
+            ("", 0),
+            ("not-a-number", 0),
+            ("1e", 0),
+            ("1e309", 0),
+            ("-1e309", 0),
+            ("inf", 0),
+            ("nan", 0),
+        ],
+    )
+    async def test_parse_value_numeric_strings(self, mock_context, mock_state, target_type, raw_value, expected):
+        """Parse scientific notation while retaining integer precision and invalid-input behavior."""
+        from agent_framework_declarative._workflows._executors_basic import ParseValueExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        executor = ParseValueExecutor({
+            "kind": "ParseValue",
+            "variable": "Local.parsedValue",
+            "value": raw_value,
+            "valueType": target_type,
+        })
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.parsedValue")
+        assert result == expected
+        assert type(result) is type(expected)
+
+    @_requires_powerfx
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1e3", "1000.0"),
+            ("1E+3", "1000.0"),
+            ("-2e-2", "-0.02"),
+            (" 6e1 ", "60.0"),
+            ("3.5e2", "350.0"),
+            ("1208925819614629174706177", "1208925819614629174706177"),
+            ("", "0"),
+            ("not-a-number", "0"),
+            ("1e309", "0"),
+            ("-1e309", "0"),
+        ],
+    )
+    async def test_factory_parse_value_numeric_input(self, raw_value, expected):
+        """Caller-supplied numeric strings reach workflow output without becoming zero."""
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "name": "parse_numeric_input",
+            "actions": [
+                {
+                    "kind": "ParseValue",
+                    "id": "parse",
+                    "variable": "Local.parsedValue",
+                    "value": "=Workflow.Inputs.raw",
+                    "valueType": "number",
+                },
+                {"kind": "SendActivity", "id": "send", "activity": "parsed={Local.parsedValue}"},
+            ],
+        })
+
+        result = await workflow.run({"raw": raw_value})
+
+        assert result.get_outputs() == [f"parsed={expected}"]
 
     @pytest.mark.asyncio
     async def test_parse_value_boolean_true(self, mock_context, mock_state):
@@ -1763,6 +1952,29 @@ not valid JSON
 class TestPowerFxConditionalImport:
     """The _declarative_base module should be importable without dotnet/powerfx."""
 
+    @pytest.mark.parametrize("function", ["Concat", "Concatenate"])
+    @pytest.mark.parametrize(
+        ("arguments", "expected"),
+        [
+            ('"hello", " world"', "hello world"),
+            ('"", ""', ""),
+            ('"a""b", "c"', 'a"bc'),
+            ('"a,b(c)", "d"', "a,b(c)d"),
+            ("'legacy', ' strings'", "legacy strings"),
+        ],
+    )
+    def test_concatenation_literals_without_engine(
+        self, monkeypatch: pytest.MonkeyPatch, function: str, arguments: str, expected: str
+    ) -> None:
+        """String-only concatenation retains its engine-independent fast path."""
+        import agent_framework_declarative._workflows._declarative_base as base_mod
+
+        state = DeclarativeWorkflowState(State())
+        state.initialize()
+        monkeypatch.setattr(base_mod, "Engine", None)
+
+        assert state.eval(f"={function}({arguments})") == expected
+
     def test_import_guard_exists(self):
         """The powerfx import must be wrapped in try/except."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
@@ -1774,7 +1986,7 @@ class TestPowerFxConditionalImport:
         engine = base_mod.Engine
         assert engine is None or callable(engine)
 
-    def test_eval_raises_when_engine_unavailable(self):
+    def test_eval_raises_when_engine_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """eval() should raise RuntimeError when Engine is None."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1787,15 +1999,11 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize({"name": "test"})
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            with pytest.raises(RuntimeError, match="PowerFx is not available"):
-                state.eval("=Local.counter + 1")
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        with pytest.raises(RuntimeError, match="PowerFx is not available"):
+            state.eval("=Local.counter + 1")
 
-    def test_eval_passes_through_plain_strings_without_engine(self):
+    def test_eval_passes_through_plain_strings_without_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-PowerFx strings (no leading '=') should work without Engine."""
         import agent_framework_declarative._workflows._declarative_base as base_mod
 
@@ -1808,18 +2016,121 @@ class TestPowerFxConditionalImport:
         state = DeclarativeWorkflowState(mock_state)
         state.initialize()
 
-        original_engine = base_mod.Engine
-        try:
-            base_mod.Engine = cast(Any, None)
-            assert state.eval("hello world") == "hello world"
-            assert state.eval("") == ""
-            assert state.eval(cast("str", 42)) == 42
-        finally:
-            base_mod.Engine = original_engine
+        monkeypatch.setattr(base_mod, "Engine", None)
+        assert state.eval("hello world") == "hello world"
+        assert state.eval("") == ""
+        assert state.eval(cast("str", 42)) == 42
 
 
 class TestExecutorKwargsForwarding:
     """Workflow run kwargs should be forwarded through executor agent invocations."""
+
+    @pytest.mark.parametrize("legacy_state", [False, True])
+    async def test_client_runtime_buckets_never_reach_functions_or_mcp(self, legacy_state: bool) -> None:
+        from agent_framework import (
+            Agent,
+            BaseChatClient,
+            ChatResponse,
+            Content,
+            FunctionInvocationContext,
+            FunctionInvocationLayer,
+            MCPStreamableHTTPTool,
+            Message,
+            tool,
+        )
+        from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
+        from mcp import types
+        from mcp.client.session import ClientSession
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+
+        class RecordingClient(FunctionInvocationLayer, BaseChatClient):
+            def __init__(self):
+                super().__init__()
+                self.calls: list[dict[str, Any]] = []
+
+            async def _inner_get_response(self, *, messages, stream, options, **kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls) == 1:
+                    return ChatResponse(
+                        messages=Message(
+                            "assistant",
+                            contents=[
+                                Content.from_function_call(call_id="local", name="capture", arguments={}),
+                                Content.from_function_call(call_id="remote", name="record", arguments={}),
+                            ],
+                        )
+                    )
+                return ChatResponse(messages=Message("assistant", "done"))
+
+        contexts: list[dict[str, Any]] = []
+
+        @tool
+        def capture(ctx: FunctionInvocationContext) -> str:
+            """Record runtime context."""
+            contexts.append(dict(ctx.kwargs))
+            return "ok"
+
+        session = MagicMock(spec=ClientSession)
+        session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(
+                        name="record",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {"client_kwargs": {"type": "object"}, "tool_marker": {"type": "string"}},
+                        },
+                    )
+                ]
+            )
+        )
+        session.call_tool = AsyncMock(
+            return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+        )
+        mcp = MCPStreamableHTTPTool(name="records", url="https://mcp.example/api", session=session, load_prompts=False)
+        mcp.is_connected = True
+        await mcp.load_tools()
+        clients = [RecordingClient(), RecordingClient()]
+        agents = {
+            name: Agent(client=client, tools=[capture, mcp])
+            for name, client in zip(("first", "second"), clients, strict=True)
+        }
+        workflow = DeclarativeWorkflowBuilder(
+            {
+                "name": "runtime_buckets",
+                "actions": [
+                    {
+                        "kind": "RequestExternalInput",
+                        "id": "pause",
+                        "prompt": "Continue?",
+                        "variable": "Local.answer",
+                    },
+                    *[{"kind": "InvokeAzureAgent", "id": name, "agent": name, "input": "hello"} for name in agents],
+                ],
+            },
+            agents=agents,
+        ).build()
+        paused = await workflow.run(
+            ActionTrigger(),
+            client_kwargs={name: {"extra_headers": {"X-Client-Context": name}} for name in agents},
+            function_invocation_kwargs={name: {"tool_marker": name} for name in agents},
+        )
+        if legacy_state:
+            workflow._runner.state.delete(RESOLVED_WORKFLOW_RUN_KWARGS_KEY)
+            workflow._runner.state.commit()
+        [request] = paused.get_request_info_events()
+        await workflow.run(responses={request.request_id: ExternalInputResponse(user_input="yes")})
+
+        for name, client in zip(agents, clients, strict=True):
+            assert client.calls
+            assert all(call["extra_headers"] == {"X-Client-Context": name} for call in client.calls)
+        assert [ctx["tool_marker"] for ctx in contexts] == ["first", "second"]
+        assert all("client_kwargs" not in ctx and "_raw_client_kwargs" not in ctx for ctx in contexts)
+        assert [call.kwargs["arguments"] for call in session.call_tool.call_args_list] == [
+            {"tool_marker": "first"},
+            {"tool_marker": "second"},
+        ]
 
     @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
     @pytest.mark.parametrize(
@@ -1880,7 +2191,7 @@ class TestExecutorKwargsForwarding:
         for agent, expected_kwargs in zip(agents.values(), expected, strict=True):
             call_kwargs = agent.run.call_args.kwargs
             assert call_kwargs[kwargs_channel] == expected_kwargs
-            assert call_kwargs["options"]["additional_function_arguments"] == {kwargs_channel: expected_kwargs}
+            assert call_kwargs["options"] is None
             assert "_raw_function_invocation_kwargs" not in call_kwargs
             assert "_raw_client_kwargs" not in call_kwargs
 
@@ -1892,7 +2203,7 @@ class TestExecutorKwargsForwarding:
         kwargs_channel: str,
         legacy_checkpoint: bool,
     ) -> None:
-        """New checkpoints resolve kwargs while legacy checkpoints keep historical forwarding."""
+        """Both current and legacy checkpoints resolve kwargs for the receiving executor."""
         from agent_framework import FileCheckpointStorage
         from agent_framework._workflows._const import (
             RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
@@ -1977,23 +2288,10 @@ class TestExecutorKwargsForwarding:
         )
 
         call_kwargs = resumed_agent.run.call_args.kwargs
-        if legacy_checkpoint:
-            raw_key = (
-                "_raw_function_invocation_kwargs"
-                if kwargs_channel == "function_invocation_kwargs"
-                else "_raw_client_kwargs"
-            )
-            expected_run_kwargs = {kwargs_channel: invocation_kwargs, raw_key: invocation_kwargs}
-            assert call_kwargs[kwargs_channel] == invocation_kwargs
-            # The internal raw copy stays routing state for nested executors;
-            # it is not a public Agent.run parameter (#8413).
-            assert raw_key not in call_kwargs
-        else:
-            expected_run_kwargs = {kwargs_channel: {"shared": "G", "specific": "S"}}
-            assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
-            assert "_raw_function_invocation_kwargs" not in call_kwargs
-            assert "_raw_client_kwargs" not in call_kwargs
-        assert call_kwargs["options"]["additional_function_arguments"] == expected_run_kwargs
+        assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
+        assert "_raw_function_invocation_kwargs" not in call_kwargs
+        assert "_raw_client_kwargs" not in call_kwargs
+        assert call_kwargs["options"] is None
 
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):
@@ -2020,7 +2318,7 @@ class TestExecutorKwargsForwarding:
 
         # Store kwargs in state like Workflow.run() does
         test_kwargs = {"user_token": "abc123", "service_config": {"endpoint": "http://test"}}
-        state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
+        state_data[WORKFLOW_RUN_KWARGS_KEY] = {"function_invocation_kwargs": {"__global__": test_kwargs}}
 
         # Initialize declarative state
         dws = DeclarativeWorkflowState(mock_state)
@@ -2059,13 +2357,8 @@ class TestExecutorKwargsForwarding:
         mock_agent.run.assert_called_once()
         call_kwargs = mock_agent.run.call_args
 
-        # Check options contains additional_function_arguments
-        assert "options" in call_kwargs.kwargs
-        assert call_kwargs.kwargs["options"]["additional_function_arguments"] == test_kwargs
-
-        # Check direct kwargs were passed
-        assert call_kwargs.kwargs.get("user_token") == "abc123"
-        assert call_kwargs.kwargs.get("service_config") == {"endpoint": "http://test"}
+        assert call_kwargs.kwargs["options"] is None
+        assert call_kwargs.kwargs["function_invocation_kwargs"] == test_kwargs
 
     @pytest.mark.asyncio
     async def test_invoke_agent_merges_caller_options(self):
@@ -2091,8 +2384,8 @@ class TestExecutorKwargsForwarding:
 
         # Include 'options' in run_kwargs to test merge behavior
         test_kwargs = {
-            "user_token": "abc123",
-            "options": {"temperature": 0.5},
+            "function_invocation_kwargs": {"__global__": {"user_token": "abc123"}},
+            "options": {"temperature": 0.5, "additional_function_arguments": {"caller_value": "preserved"}},
         }
         state_data[WORKFLOW_RUN_KWARGS_KEY] = test_kwargs
 
@@ -2129,10 +2422,8 @@ class TestExecutorKwargsForwarding:
         mock_agent.run.assert_called_once()
         call_kwargs = mock_agent.run.call_args
 
-        # Caller options should be merged with additional_function_arguments
-        merged_options = call_kwargs.kwargs["options"]
-        assert merged_options["temperature"] == 0.5
-        assert "additional_function_arguments" in merged_options
-
-        # Direct kwargs should be passed without 'options' (no duplicate keyword)
-        assert call_kwargs.kwargs.get("user_token") == "abc123"
+        assert call_kwargs.kwargs["options"] == {
+            "temperature": 0.5,
+            "additional_function_arguments": {"caller_value": "preserved"},
+        }
+        assert call_kwargs.kwargs["function_invocation_kwargs"] == {"user_token": "abc123"}

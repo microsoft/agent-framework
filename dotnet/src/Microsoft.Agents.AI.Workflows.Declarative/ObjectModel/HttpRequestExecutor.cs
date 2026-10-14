@@ -9,6 +9,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -195,15 +196,19 @@ internal sealed class HttpRequestExecutor(
             return "GET";
         }
 
-        HttpMethodTypeWrapper wrapper = this.Evaluator.GetValue(methodExpression).Value;
+        HttpMethodTypeWrapper wrapper = this.GetRequestValue(this.Evaluator.GetValue(methodExpression), "method");
         return !string.IsNullOrEmpty(wrapper.UnknownValue) ? wrapper.UnknownValue! : wrapper.Value.ToString().ToUpperInvariant();
     }
 
-    private string GetUrl() =>
-        this.Evaluator.GetValue(
+    private string GetUrl()
+    {
+        EvaluationResult<string> result = this.Evaluator.GetValue(
             Throw.IfNull(
                 this.Model.Url,
-                $"{nameof(this.Model)}.{nameof(this.Model.Url)}")).Value;
+                $"{nameof(this.Model)}.{nameof(this.Model.Url)}"));
+
+        return this.GetRequestValue(result, "URL");
+    }
 
     private Dictionary<string, string>? GetHeaders()
     {
@@ -215,7 +220,7 @@ internal sealed class HttpRequestExecutor(
         Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
         foreach (KeyValuePair<string, StringExpression> header in this.Model.Headers)
         {
-            string value = this.Evaluator.GetValue(header.Value).Value;
+            string value = this.GetRequestValue(this.Evaluator.GetValue(header.Value), $"header '{header.Key}'");
             if (!string.IsNullOrEmpty(value))
             {
                 result[header.Key] = value;
@@ -235,7 +240,7 @@ internal sealed class HttpRequestExecutor(
 
             case JsonRequestContent jsonContent when jsonContent.Content is not null:
             {
-                FormulaValue formula = this.Evaluator.GetValue(jsonContent.Content).Value.ToFormula();
+                FormulaValue formula = this.GetRequestValue(this.Evaluator.GetValue(jsonContent.Content), "JSON body").ToFormula();
                 string json = formula.ToJson().ToJsonString();
                 return (json, "application/json");
             }
@@ -244,11 +249,11 @@ internal sealed class HttpRequestExecutor(
             {
                 string? content = rawContent.Content is null
                         ? null
-                        : this.Evaluator.GetValue(rawContent.Content).Value;
+                        : this.GetRequestValue(this.Evaluator.GetValue(rawContent.Content), "raw body");
 
                 string? contentType = rawContent.ContentType is null
                         ? null
-                        : this.Evaluator.GetValue(rawContent.ContentType).Value;
+                        : this.GetRequestValue(this.Evaluator.GetValue(rawContent.ContentType), "content type");
 
                 return (content, string.IsNullOrEmpty(contentType) ? null : contentType);
             }
@@ -284,7 +289,9 @@ internal sealed class HttpRequestExecutor(
                 continue;
             }
 
-            object? rawValue = this.Evaluator.GetValue(parameter.Value).Value.ToObject();
+            object? rawValue = this.GetRequestValue(
+                this.Evaluator.GetValue(parameter.Value),
+                $"query parameter '{parameter.Key}'").ToObject();
             string? formatted = FormatQueryValue(rawValue);
             if (formatted is not null)
             {
@@ -305,6 +312,16 @@ internal sealed class HttpRequestExecutor(
             _ => value.ToString(),
         };
 
+    private T GetRequestValue<T>(EvaluationResult<T> result, string location)
+    {
+        if (result.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw this.Exception($"Cannot use a protected value in HTTP request {location}.");
+        }
+
+        return result.Value;
+    }
+
     private string? GetConversationId()
     {
         if (this.Model.ConversationId is null)
@@ -312,7 +329,9 @@ internal sealed class HttpRequestExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -326,7 +345,9 @@ internal sealed class HttpRequestExecutor(
 
         string? name = connection.Name is null
             ? null
-            : this.Evaluator.GetValue(connection.Name).Value;
+            : this.GetNonSensitiveValue(
+                this.Evaluator.GetValue(connection.Name),
+                ConnectionNameLocation);
 
         return string.IsNullOrEmpty(name) ? null : name;
     }

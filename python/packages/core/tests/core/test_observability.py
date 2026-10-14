@@ -958,13 +958,17 @@ async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
     )
 
 
-async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_function_call_with_error_handling(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that function call errors are properly captured in telemetry."""
+    private_error_detail = "founder-secret-token"
 
     # Create a function that raises an error using the decorator
     @tool(name="failing_function", description="A function that fails")
     async def failing_function(param: str) -> str:
-        raise ValueError("Function execution failed")
+        raise ValueError(f"Function execution failed: {private_error_detail}")
 
     span_exporter.clear()
 
@@ -986,21 +990,20 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
 
     # Verify error status was set
     assert span.status.status_code == StatusCode.ERROR
-    assert span.status.description is not None
-    assert "Function execution failed" in span.status.description
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
 
     # Verify error type attribute was set
     assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
 
-    # Verify exception event was recorded
-    assert len(span.events) > 0
-    exception_event = next((e for e in span.events if e.name == "exception"), None)
-    assert exception_event is not None
-    assert exception_event.attributes is not None
-    assert exception_event.attributes["exception.type"] == "ValueError"
-    exception_message = exception_event.attributes["exception.message"]
-    assert isinstance(exception_message, str)
-    assert "Function execution failed" in exception_message
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_event = exception_events[0]
+        assert exception_event.attributes is not None
+        assert exception_event.attributes["exception.type"] == "ValueError"
+        exception_message = exception_event.attributes["exception.message"]
+        assert isinstance(exception_message, str)
+        assert private_error_detail in exception_message
 
 
 # region Test OTEL environment variable parsing
@@ -2808,6 +2811,72 @@ def test_make_json_safe_callable_method_type_error_falls_through():
     assert result == {"value": "fallback"}
 
 
+def test_make_json_safe_plain_enum_uses_its_value():
+    """Test make_json_safe serializes plain Enum members as their values instead of walking the enum class."""
+    import json
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Color(Enum):
+        RED = 1
+        LABEL = "label"
+
+    result = make_json_safe({"color": Color.RED, "label": Color.LABEL, "nested": [Color.RED]})
+
+    assert result == {"color": 1, "label": "label", "nested": [1]}
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_make_json_safe_enum_with_serializer_hook_keeps_it():
+    """Test make_json_safe uses an enum's own to_dict/model_dump/dict hook instead of its raw value."""
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Shape(Enum):
+        SQUARE = 4
+
+        def to_dict(self):
+            return {"name": self.name, "sides": self.value}
+
+    class Mode(Enum):
+        FAST = "fast"
+
+        def model_dump(self):
+            return {"mode": self.value, "label": "Fast"}
+
+    class Unit(Enum):
+        METRE = "m"
+
+        def dict(self):
+            return {"symbol": self.value}
+
+    assert make_json_safe({"shape": Shape.SQUARE}) == {"shape": {"name": "SQUARE", "sides": 4}}
+    assert make_json_safe(Mode.FAST) == {"mode": "fast", "label": "Fast"}
+    assert make_json_safe([Unit.METRE]) == [{"symbol": "m"}]
+
+
+def test_make_json_safe_mixin_enums_are_unchanged():
+    """Test make_json_safe keeps str and int mixin enums as the scalars they already are."""
+    import json
+    from enum import Enum, IntEnum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Level(str, Enum):
+        HIGH = "high"
+
+    class Priority(IntEnum):
+        LOW = 1
+
+    result = make_json_safe({"level": Level.HIGH, "priority": Priority.LOW})
+
+    assert result["level"] is Level.HIGH
+    assert result["priority"] is Priority.LOW
+    assert json.dumps(result) == '{"level": "high", "priority": 1}'
+
+
 def test_make_json_safe_dict_with_non_string_keys():
     """Test make_json_safe converts non-primitive dict keys to strings."""
     import json
@@ -3091,13 +3160,16 @@ def test_create_otlp_exporters_no_endpoints():
 # region Test exception handling in chat client traces
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_chat_client_observability_exception(mock_chat_client, span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_chat_client_observability_exception(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that exceptions are captured in spans."""
+    private_error_detail = "founder-secret-token"
 
     class FailingChatClient(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
-            raise ValueError("Test error")
+            raise ValueError(f"Test error: {private_error_detail}")
 
     client = FailingChatClient()
     messages = [Message(role="user", contents=["Test"])]
@@ -3110,6 +3182,15 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
     assert len(spans) == 1
     span = spans[0]
     assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3716,9 +3797,12 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
     assert mock_emit.call_count == 0
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_agent_observability_with_exception(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test agent instrumentation captures exceptions."""
+    private_error_detail = "founder-secret-token"
 
     class _FailingAgent:
         AGENT_PROVIDER_NAME = "test_provider"
@@ -3746,7 +3830,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
             return self._default_options
 
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
-            raise RuntimeError("Agent failed")
+            raise RuntimeError(f"Agent failed: {private_error_detail}")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
@@ -3759,7 +3843,17 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test agent streaming observability
@@ -4374,7 +4468,8 @@ def test_get_token_usage_histogram():
 # region Test capture_exception
 
 
-def test_capture_exception(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_capture_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data: bool) -> None:
     """Test capture_exception adds exception info to span."""
     from time import time_ns
 
@@ -4382,18 +4477,27 @@ def test_capture_exception(span_exporter: InMemorySpanExporter):
 
     from agent_framework.observability import capture_exception, get_tracer
 
+    private_error_detail = "founder-secret-token"
     span_exporter.clear()
     tracer = get_tracer()
 
     with tracer.start_as_current_span("test_span") as span:
-        exception = ValueError("Test error")
+        exception = ValueError(f"Test error: {private_error_detail}")
         capture_exception(span=span, exception=exception, timestamp=time_ns())
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
-    # Verify exception was recorded
-    assert len(spans[0].events) > 0
+    exported_span = spans[0]
+    assert exported_span.status.status_code == StatusCode.ERROR
+    assert exported_span.attributes is not None
+    assert exported_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (exported_span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in exported_span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test _get_span

@@ -60,7 +60,13 @@ from .._feature_usage import FeatureIndex
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
 from ._truncate import truncate_head_tail as _truncate_bytes
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +98,98 @@ _BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
     "--ipc",
     "--userns",
     "--user",
+    "-u",
     "--cgroupns",
     "--add-host",
     "--gpus",
     "--read-only",
     "--tmpfs",
+    "--memory",
+    "-m",
+    "--memory-swap",
+    "--pids-limit",
 )
+
+# ``docker run`` long options that take no value. Everything else is assumed to
+# consume the following token when its value is not attached with "=", so a
+# detached value that happens to start with a dash ("--env-file -vars.env") is
+# not mistaken for an option. Booleans are the smaller and more stable half of
+# the flag table, and assuming an unknown flag takes a value keeps the
+# validator from rejecting configurations that docker accepts.
+_VALUELESS_LONG_FLAGS: frozenset[str] = frozenset({
+    "--detach",
+    "--disable-content-trust",
+    "--help",
+    "--init",
+    "--interactive",
+    "--no-healthcheck",
+    "--oom-kill-disable",
+    "--privileged",
+    "--publish-all",
+    "--quiet",
+    "--read-only",
+    "--rm",
+    "--sig-proxy",
+    "--tty",
+    "--use-api-socket",
+})
+
+# ``docker run`` short options, split by whether they consume a value. Docker's
+# flag parser lets boolean shorthands be clustered ("-it") and lets a
+# value-taking shorthand carry its value attached to it, so "-v/:/host:rw" is
+# "-v /:/host:rw" and "-u0:0" is "--user 0:0". Resolving which shorthands a
+# single-dash token actually sets therefore needs both sets: scanning stops at
+# the first value-taking shorthand because the rest of the token is its value.
+_BOOLEAN_SHORT_FLAGS = frozenset("diPqt")
+_VALUE_SHORT_FLAGS = frozenset("acehlmpuvw")
+
+
+def _short_flags_in_token(token: str) -> list[str]:
+    """Expand a single-dash token into the short flags it sets."""
+    flags: list[str] = []
+    for char in token[1:]:
+        if char in _BOOLEAN_SHORT_FLAGS:
+            flags.append(f"-{char}")
+            continue
+        if char in _VALUE_SHORT_FLAGS:
+            flags.append(f"-{char}")
+            # Everything after a value-taking shorthand is its value.
+            break
+        # Unknown shorthand: stop rather than misread a value as more flags.
+        break
+    return flags
+
+
+def _blocked_flags_in_token(raw: str) -> list[str]:
+    """Return the blocked flags a single ``docker run`` token resolves to."""
+    # Split off any "=value" tail so "--network=host" matches "--network".
+    flag = raw.split("=", 1)[0]
+    if flag.startswith("--"):
+        return [flag] if flag in _BLOCKED_EXTRA_RUN_FLAGS else []
+    return [short for short in _short_flags_in_token(flag) if short in _BLOCKED_EXTRA_RUN_FLAGS]
+
+
+def _consumes_next_token(raw: str) -> bool:
+    """Return whether this token takes the following token as its value.
+
+    Needed so a detached value is not decoded as an option: docker accepts
+    ``--env-file -vars.env``, where ``-vars.env`` is a filename rather than
+    ``-v``.
+    """
+    name, sep, _ = raw.partition("=")
+    if sep:
+        # Value is attached, e.g. "--network=host".
+        return False
+    if name.startswith("--"):
+        # pflag booleans only accept "--flag=false", never "--flag false".
+        return name not in _VALUELESS_LONG_FLAGS
+    shorts = _short_flags_in_token(name)
+    if not shorts:
+        return False
+    if len(name) - 1 > len(shorts):
+        # Trailing text is the value, e.g. "-v/:/host:rw" or "-m0".
+        return False
+    return shorts[-1][1] in _VALUE_SHORT_FLAGS
 
 
 def _validate_extra_run_args(args: Sequence[str]) -> None:
@@ -110,13 +202,19 @@ def _validate_extra_run_args(args: Sequence[str]) -> None:
     build their own argv rather than slip past the check.
     """
     bad: list[str] = []
-    for raw in args:
-        if not raw.startswith("-"):
+    index = 0
+    while index < len(args):
+        raw = args[index]
+        index += 1
+        # "-" is a conventional positional, and "--" only ends option parsing;
+        # neither takes a value, and args after "--" are still worth checking
+        # so a blocked flag cannot hide behind the marker.
+        if raw in ("-", "--") or not raw.startswith("-"):
             continue
-        # Split off any "=value" tail so "--network=host" matches "--network".
-        flag = raw.split("=", 1)[0]
-        if flag in _BLOCKED_EXTRA_RUN_FLAGS:
+        if _blocked_flags_in_token(raw):
             bad.append(raw)
+        if _consumes_next_token(raw):
+            index += 1
     if bad:
         raise ValueError(
             "extra_run_args contains flags that would dismantle DockerShellTool's "
@@ -297,10 +395,14 @@ class DockerShellTool:
                (``--privileged``, ``--cap-add``, ``--security-opt``,
                ``--network``/``--net``, ``-v``/``--volume``,
                ``--mount``, ``--device``, ``--pid``, ``--ipc``,
-               ``--userns``, ``--user``, ``--read-only``,
+               ``--userns``, ``-u``/``--user``, ``--read-only``,
                ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
-               ``--device-cgroup-rule``) are rejected at construction
-               time. Override the corresponding dedicated argument
+               ``--device-cgroup-rule``, ``-m``/``--memory``,
+               ``--memory-swap``, ``--pids-limit``) are rejected at
+               construction time, including when a short flag carries
+               its value attached to it (``-v/:/host:rw``) or is
+               clustered with other short flags (``-itv/:/host:rw``).
+               Override the corresponding dedicated argument
                (``network``, ``host_workdir``, ``mount_readonly``,
                ``read_only_root``, ``user``, etc.) instead. If you
                genuinely need to relax the sandbox further, subclass
@@ -706,7 +808,7 @@ class DockerShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -716,4 +818,5 @@ class DockerShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )

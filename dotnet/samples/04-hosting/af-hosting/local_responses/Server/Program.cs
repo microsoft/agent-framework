@@ -16,6 +16,10 @@ using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// This local sample does not authenticate callers. Multi-user hosts must authenticate and authorize
+// requests and bind session lookups to trusted caller identity. Registering an isolation provider alone
+// does not wrap the manually created store below. See the shared hosting guide and this sample's README.
+
 // Configuration via environment variables (never hardcode secrets).
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");

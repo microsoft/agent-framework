@@ -8,9 +8,12 @@ import base64
 import hashlib
 import io
 import json
+import warnings
 import zipfile
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
+from urllib.parse import unquote
 
 import pytest
 from mcp.shared.exceptions import McpError
@@ -23,7 +26,7 @@ from mcp.types import (
 from pydantic import AnyUrl
 
 from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _parse_mcp_skill_index
+from agent_framework._skills import _fully_unquote, _parse_mcp_skill_index
 
 from .conftest import MockAgent
 
@@ -33,7 +36,7 @@ from .conftest import MockAgent
 
 
 # Shared context for exercising skill sources where the agent/session are irrelevant.
-_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 SAMPLE_SKILL_MD = """\
 ---
@@ -97,6 +100,43 @@ def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_name_decode_cache() -> Iterator[None]:
+    _fully_unquote.cache_clear()
+    yield
+    _fully_unquote.cache_clear()
+
+
+def _encode(depth: int) -> str:
+    """Return ``"A"`` percent-encoded *depth* times, e.g. ``%2541`` for depth 2."""
+    return "%" + "25" * (depth - 1) + "41"
+
+
+# ---------------------------------------------------------------------------
+# _fully_unquote tests
+# ---------------------------------------------------------------------------
+
+
+class TestFullyUnquote:
+    """Tests for recursive, cached resource-name decoding."""
+
+    def test_reuses_cached_layers(self) -> None:
+        assert _fully_unquote("guide%2520one.md") == "guide one.md"
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            # A repeated name is served entirely from the cache.
+            assert _fully_unquote("guide%2520one.md") == "guide one.md"
+            decode.assert_not_called()
+            # A different name reaching a cached layer ("guide%20one.md") decodes only its first layer.
+            assert _fully_unquote("guide%25%32%30one.md") == "guide one.md"
+            decode.assert_called_once_with("guide%25%32%30one.md")
+
+    @pytest.mark.parametrize("depths", [(32, 33), (33, 32)])
+    def test_cached_layers_preserve_depth_limit(self, depths: tuple[int, int]) -> None:
+        for depth in depths:
+            assert _fully_unquote(_encode(depth)) == ("A" if depth <= 32 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +335,60 @@ class TestMCPSkill:
             "..\\escape.md",
             "/etc/passwd",
             "http://attacker.example.com/payload",
+            "%2e%2e/escape.md",
+            "%2E./escape.md",
+            ".%2e/escape.md",
+            "references/%2e%2e/escape.md",
+            "references%2f..%2f..%2fescape.md",
+            "%2e%2e%5cescape.md",
+            "%252e%252e%252fescape.md",
+            "%25252e%25252e/escape.md",
+            "%2fescape.md",
+            "%5cescape.md",
+            "%68ttp%3a%2f%2fexample.com/other",
+            "..?download=1",
+            "..#fragment",
+            "%2e%2e%3fdownload=1",
+            "references%3f/../../escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md",
+            "references%23/%2e%2e/%2e%2e/escape.md",
+            "references%3f%2f%2e%2e%2f%2e%2e%2fescape.md",
+            "references%23%5c%2e%2e%5c%2e%2e%5cescape.md",
+            "references%253f%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%2523%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%3f/%252e%252e/%252e%252e/escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md?version=1",
+            "references%23/%2e%2e/%2e%2e/escape.md#section",
+            "references%3f%2f%2e%2e%20",
+            ".\t./escape.md",
+            ".%09./escape.md",
+            "references/\x00/guide.md",
+            ".. ",
+            ".%2e ",
+            "%2e%2e ",
+            "..%20",
+            "%252e%252e%2520",
+            "references/.. ",
+            "references/.. ?version=1",
+            "references/guide.md?value=%00",
+            "references/guide.md#value=%2509",
+            "references/guide.md?value=%C2%85",
+            "references/%2500guide.md?version=1",
+            "references/guide.md?version=1#value=%2509",
+            "references/guide.md#section?value=%2509",
         ],
     )
-    async def test_get_resource_path_traversal_returns_none(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "skill_md_uri",
+        [
+            "skill://unit-converter/SKILL.md",
+            "skill://unit-converter/private/SKILL.md",
+            "https://example.com/skills/private/SKILL.md",
+            "file:///skills/private/SKILL.md",
+            "custom:skills/private/SKILL.md",
+        ],
+    )
+    async def test_get_resource_path_traversal_returns_none(self, name: str, skill_md_uri: str) -> None:
         # Register a permissive mock that would happily return content for any URI,
         # so the test fails unless the client-side validation rejects the name
         # before issuing the read.
@@ -307,11 +398,88 @@ class TestMCPSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=skill_md_uri, client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
         client.read_resource.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/100%.md",
+            "references/guide.md?version=1#section",
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
+            "references/guide.md ",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "root",
+        [
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/",
+        ],
+    )
+    async def test_get_resource_preserves_safe_names_and_schemes(self, name: str, root: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+
+        resource = await skill.get_resource(name)
+
+        assert resource is not None
+        assert resource.name == name
+        assert await resource.read() == "safe content"
+        client.read_resource.assert_awaited_once_with(AnyUrl(root + name.replace("\\", "/")))
+
+    @pytest.mark.parametrize("depth", [1, 31, 32, 33, 4096])
+    @pytest.mark.parametrize(
+        "template",
+        ["references/{}.md", "references/guide.md?value={}", "references/guide.md#value={}", "../{}.md"],
+    )
+    async def test_get_resource_decoding_depth_is_bounded(self, depth: int, template: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        root = "skill://unit-converter/private/"
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+        name = template.format(_encode(depth))
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            resource = await skill.get_resource(name)
+
+        # One pass decodes the unencoded part; the encoded part takes depth + 1 passes, capped at 33.
+        assert decode.call_count == min(depth + 1, 33) + 1
+        if depth <= 32 and not name.startswith("../"):
+            assert resource is not None
+            assert resource.name == name
+            client.read_resource.assert_awaited_once_with(AnyUrl(root + name))
+        else:
+            assert resource is None
+            client.read_resource.assert_not_called()
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
@@ -389,6 +557,29 @@ class TestMCPSkill:
 
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/skills/SKILL.md",
+            "file:///skills/SKILL.md",
+            "custom:skills/SKILL.md",
+        ],
+    )
+    async def test_index_preserves_mcp_resource_schemes(self, uri: str) -> None:
+        index = json.loads(SAMPLE_SKILL_INDEX)
+        index["skills"][0]["url"] = uri
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index)),
+            uri: _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert await skills[0].get_content() == SAMPLE_SKILL_MD
+        assert str(client.read_resource.call_args.args[0]) == uri
 
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{
@@ -705,12 +896,15 @@ class TestMCPSkillsSourceErrorCodeBranching:
 # ---------------------------------------------------------------------------
 
 
-def _make_zip(files: dict[str, bytes]) -> bytes:
-    """Build an in-memory ZIP archive from a ``{path: content}`` mapping."""
+def _make_zip(files: Mapping[str, bytes] | Sequence[tuple[str, bytes]]) -> bytes:
+    """Build an in-memory ZIP from a mapping or ordered entries, including duplicate names."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
+    entries = files.items() if isinstance(files, Mapping) else files
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Duplicate name:", category=UserWarning, module="zipfile")
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in entries:
+                archive.writestr(name, data)
     return buffer.getvalue()
 
 
@@ -1164,6 +1358,100 @@ class TestMCPSkillsSourceArchive:
         assert skills == []
 
 
+class TestMCPSkillsSourceArchiveCollisions:
+    """Colliding archive members warn and preserve the first file through discovery."""
+
+    @pytest.mark.parametrize(
+        "alias",
+        [
+            "refs/policy.md",
+            ".//refs//policy.md",
+            "refs\\policy.md",
+            "refs/./policy.md",
+            "/refs/policy.md",
+            "refs/POLICY.md",
+            "REFS\\POLICY.MD",
+        ],
+    )
+    @pytest.mark.parametrize("alias_first", [False, True])
+    @pytest.mark.parametrize("identical", [False, True])
+    @pytest.mark.parametrize("with_digest", [False, True])
+    async def test_colliding_resources_keep_first_file_and_warn(
+        self, alias: str, alias_first: bool, identical: bool, with_digest: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "refs/policy.md") if alias_first else ("refs/policy.md", alias)
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("refs/", b""),
+            (first_name, b"First resource."),
+            (second_name, b"First resource." if identical else b"Substituted resource."),
+            (".//refs//other.md", b"Unaffected resource."),
+        ])
+        digest = f"sha256:{hashlib.sha256(archive).hexdigest()}" if with_digest else None
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        source = MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip"))
+
+        for _ in range(2):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+            assert len(skills) == 1
+            for resource_name in ("refs/policy.md", "REFS/POLICY.MD"):
+                resource = await skills[0].get_resource(resource_name)
+                assert resource is not None
+                assert await resource.read() == "First resource."
+            other = await skills[0].get_resource("refs/other.md")
+            assert other is not None
+            assert await other.read() == "Unaffected resource."
+
+        collisions = [record for record in caplog.records if "duplicate archive member" in record.getMessage()]
+        assert len(collisions) == 2
+        assert all(record.levelname == "WARNING" for record in collisions)
+        assert all("keeping the first file" in record.getMessage() for record in collisions)
+        assert all("Substituted resource." not in record.getMessage() for record in collisions)
+
+    @pytest.mark.parametrize("alias", ["SKILL.md", ".//SKILL.md", "/SKILL.md", "skill.md", "Skill.MD"])
+    @pytest.mark.parametrize("alias_first", [False, True])
+    async def test_colliding_skill_md_keeps_first_file_and_warns(
+        self, alias: str, alias_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "SKILL.md") if alias_first else ("SKILL.md", alias)
+        archive = _make_zip([
+            (first_name, ARCHIVE_SKILL_MD.encode()),
+            (second_name, ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: other-skill").encode()),
+            ("reference.md", b"Unaffected resource."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.name == "packaged-skill"
+        assert "Instructions from an archive." in await skills[0].get_content()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    async def test_collision_does_not_skip_other_skills(self, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"First."),
+            ("./reference.md", b"Second."),
+        ])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert sorted(skill.frontmatter.name for skill in skills) == ["packaged-skill", "unit-converter"]
+        assert "duplicate archive member" in caplog.text
+
+
 class TestMCPSkillsSourceArchiveDigest:
     """Tests for archive digest verification through the MCP discovery pipeline."""
 
@@ -1467,6 +1755,60 @@ class TestArchiveExtractor:
         archive = _make_zip({"a.md": b"a", "b.md": b"b", "c.md": b"c"})
         with pytest.raises(ValueError, match="file count"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 2, 1024 * 1024)
+
+    def test_duplicate_members_count_toward_file_limit(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip([("reference.md", b"First."), ("reference.md", b"Second.")])
+
+        with pytest.raises(ValueError, match="file count"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 1, 1024 * 1024)
+
+    def test_skipped_duplicate_is_not_decompressed(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory, _read_member_with_limit
+
+        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"x" * 100)])
+        with patch("agent_framework._skills._read_member_with_limit", wraps=_read_member_with_limit) as read:
+            files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, len(b"First."))
+
+        assert files == {"reference.md": b"First."}
+        read.assert_called_once()
+        assert "duplicate archive member" in caplog.text
+
+    @pytest.mark.parametrize("first_name", ["reference.md", "REFERENCE.md"])
+    def test_case_collision_keeps_first_name_and_warns(self, first_name: str, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        second_name = "REFERENCE.md" if first_name == "reference.md" else "reference.md"
+        archive = _make_zip([(first_name, b"First."), (second_name, b"Second.")])
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {first_name: b"First."}
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "duplicate archive member" in caplog.text
+
+    def test_distinct_lowercase_resource_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        # Resource lookup uses lower(), not Unicode casefold().
+        archive = _make_zip({"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."}
+        assert not caplog.records
+
+    def test_distinct_trailing_dot_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"reference.md": b"First.", "reference.md.": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"reference.md": b"First.", "reference.md.": b"Second."}
+        assert not caplog.records
 
     def test_uncompressed_size_limit_is_enforced(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory

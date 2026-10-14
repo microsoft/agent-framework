@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+from collections import Counter, OrderedDict, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -173,6 +174,71 @@ def test_encode_set() -> None:
     assert isinstance(result, dict)
     assert _PICKLE_MARKER in result
     assert _TYPE_MARKER in result
+
+
+def test_encode_dict_subclasses_are_pickled() -> None:
+    """Test that dict subclasses are pickled instead of flattened to plain dicts.
+
+    defaultdict, Counter, and OrderedDict carry behavior that a plain JSON
+    object cannot represent, so they must take the pickle path like tuples
+    and sets do.
+    """
+    cases: list[Any] = [
+        defaultdict(list, {"todos": ["a"]}),
+        Counter({"x": 2, "y": 1}),
+        OrderedDict([("b", 2), ("a", 1)]),
+    ]
+    for value in cases:
+        result = encode_checkpoint_value(value)
+        assert isinstance(result, dict), type(value)
+        assert _PICKLE_MARKER in result
+        assert _TYPE_MARKER in result
+        assert result[_TYPE_MARKER] == f"collections:{type(value).__name__}"
+
+
+def test_encode_nested_dict_subclass_is_pickled() -> None:
+    """Test that dict subclasses nested in containers are also pickled."""
+    inner: defaultdict[str, list[int]] = defaultdict(list)
+    inner["k"].append(1)
+    result = encode_checkpoint_value({"state": [inner]})
+
+    assert isinstance(result, dict)
+    nested = result["state"][0]
+    assert isinstance(nested, dict)
+    assert _PICKLE_MARKER in nested
+    assert nested[_TYPE_MARKER] == "collections:defaultdict"
+
+
+def test_round_trip_dict_subclasses_preserve_type_and_behavior() -> None:
+    """Test that dict subclasses survive a JSON round trip with type and behavior intact."""
+    original: defaultdict[str, list[str]] = defaultdict(list)
+    original["todos"].append("a")
+
+    encoded = json.loads(json.dumps(encode_checkpoint_value(original)))
+    restored = decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    assert type(restored) is defaultdict
+    assert restored == original
+    # The default factory must survive so state access patterns keep working on resume.
+    restored["new_key"].append("x")
+    assert restored["new_key"] == ["x"]
+
+
+def test_round_trip_counter_and_ordered_dict_preserve_type() -> None:
+    """Test Counter and OrderedDict round trips under the restricted unpickler."""
+    counter = Counter({"a": 2})
+    restored_counter = decode_checkpoint_value(
+        json.loads(json.dumps(encode_checkpoint_value(counter))), allowed_types=frozenset()
+    )
+    assert type(restored_counter) is Counter
+    assert restored_counter == counter
+
+    ordered = OrderedDict([("b", 2), ("a", 1)])
+    restored_ordered = decode_checkpoint_value(
+        json.loads(json.dumps(encode_checkpoint_value(ordered))), allowed_types=frozenset()
+    )
+    assert type(restored_ordered) is OrderedDict
+    assert restored_ordered == ordered
 
 
 def test_encode_nested_dict() -> None:

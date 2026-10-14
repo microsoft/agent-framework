@@ -72,8 +72,8 @@ internal sealed class WorkflowInfo
                     !workflow.Edges.TryGetValue(sourceId, out var edgeList) ||
                     // If the edge list count does not match, or
                     edgeList.Count != this.Edges[sourceId].Count ||
-                    // If any edge in the workflow edge list does not match the corresponding edge in this.Edges[sourceId]
-                    !edgeList.All(edge => this.Edges[sourceId].Any(e => e.IsMatch(edge)))
+                    // If the edge lists do not match one-to-one.
+                    !EdgesMatch(this.Edges[sourceId], edgeList)
             ))
         {
             return false;
@@ -100,5 +100,27 @@ internal sealed class WorkflowInfo
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Compares saved and current edges in both directions, consuming each match so duplicate edge multiplicity is preserved;
+    /// a LINQ membership comparison would not enforce this one-to-one matching.
+    /// </summary>
+    private static bool EdgesMatch(IReadOnlyList<EdgeInfo> savedEdges, IReadOnlyCollection<Edge> currentEdges)
+    {
+        List<EdgeInfo> unmatchedEdges = [.. savedEdges];
+
+        foreach (Edge edge in currentEdges)
+        {
+            int matchIndex = unmatchedEdges.FindIndex(savedEdge => savedEdge.IsMatch(edge));
+            if (matchIndex < 0)
+            {
+                return false;
+            }
+
+            unmatchedEdges.RemoveAt(matchIndex);
+        }
+
+        return unmatchedEdges.Count == 0;
     }
 }

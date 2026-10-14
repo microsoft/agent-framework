@@ -84,6 +84,133 @@ internal sealed record StateRef<TState>(string Key, string? ScopeName)
 internal sealed class HandoffAgentExecutor :
     StatefulExecutor<HandoffAgentHostState, HandoffState>
 {
+    private readonly record struct HandoffRequestKey(string CallId, string ProducerId, string? ResponseId);
+
+    private readonly record struct HandoffCandidate(FunctionCallContent Request, HandoffRequestKey Key);
+
+    private readonly record struct HandoffUpdateContext(ChatRole? Role, string ProducerId, string? ResponseId);
+
+    /// <summary>
+    /// Reconstructs optional streaming metadata without allowing role or producer identity to leak
+    /// across a known message or response boundary.
+    /// </summary>
+    private sealed class HandoffStreamProvenance(string invokedAgentId)
+    {
+        private bool _hasMessageScope;
+        private string? _messageId;
+        private string? _responseId;
+        private ChatRole? _role;
+        private string? _agentId;
+
+        public HandoffUpdateContext Observe(AgentResponseUpdate update)
+        {
+            bool isSameMessageScope =
+                this._hasMessageScope
+                && AreCompatibleMessageIds(this._messageId, update.MessageId)
+                && !(this._responseId is not null
+                     && update.ResponseId is not null
+                     && !string.Equals(this._responseId, update.ResponseId, StringComparison.Ordinal));
+
+            if (!isSameMessageScope)
+            {
+                // Role and producer belong to one logical message, so explicit message/response
+                // transitions must clear them. Response identity spans messages when omitted by
+                // later deltas because providers often emit tool results as a separate message.
+                this._role = null;
+                this._agentId = null;
+                this._messageId = update.MessageId;
+                this._responseId = update.ResponseId ?? this._responseId;
+                this._hasMessageScope = true;
+            }
+            else
+            {
+                // Identifier-free contiguous deltas form one invocation-local anonymous scope.
+                // Null remains an exact scope value rather than matching every response.
+                this._messageId ??= update.MessageId;
+                this._responseId ??= update.ResponseId;
+            }
+
+            this._role = update.Role ?? this._role;
+            this._agentId = update.AgentId ?? this._agentId ?? invokedAgentId;
+
+            return new(this._role, this._agentId, update.ResponseId ?? this._responseId);
+        }
+
+        private static bool AreCompatibleMessageIds(string? establishedId, string? updateId)
+            => establishedId is null
+               ? updateId is null
+               : updateId is null || string.Equals(establishedId, updateId, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Pairs each call with one result occurrence. Counts are required because some providers reuse
+    /// a call ID after its previous occurrence has completed.
+    /// </summary>
+    private sealed class HandoffRequestTracker
+    {
+        private readonly Dictionary<HandoffRequestKey, int> _pendingOccurrences = [];
+        private readonly Dictionary<HandoffRequestKey, int> _unmatchedCompletionOccurrences = [];
+
+        public List<HandoffCandidate> Candidates { get; } = [];
+
+        public bool RegisterRequest(FunctionCallContent request, HandoffUpdateContext context)
+        {
+            HandoffRequestKey key = new(request.CallId, context.ProducerId, context.ResponseId);
+            bool wasAlreadyCompleted = DecrementOrRemove(this._unmatchedCompletionOccurrences, key);
+
+            if (!wasAlreadyCompleted)
+            {
+                Increment(this._pendingOccurrences, key);
+            }
+
+            return wasAlreadyCompleted;
+        }
+
+        public void AddCandidate(FunctionCallContent request, HandoffUpdateContext context)
+            => this.Candidates.Add(new(request, new(request.CallId, context.ProducerId, context.ResponseId)));
+
+        public void RegisterCompletion(FunctionResultContent result, HandoffUpdateContext context)
+        {
+            HandoffRequestKey key = new(result.CallId, context.ProducerId, context.ResponseId);
+
+            if (!DecrementOrRemove(this._pendingOccurrences, key))
+            {
+                // Results may precede calls in provider streams. Retain only the unmatched
+                // occurrence so a later reused CallId is not blocked permanently.
+                Increment(this._unmatchedCompletionOccurrences, key);
+                return;
+            }
+
+            int candidateIndex = this.Candidates.FindIndex(candidate => candidate.Key == key);
+            if (candidateIndex >= 0)
+            {
+                this.Candidates.RemoveAt(candidateIndex);
+            }
+        }
+
+        private static void Increment(Dictionary<HandoffRequestKey, int> occurrences, HandoffRequestKey key)
+            => occurrences[key] = occurrences.TryGetValue(key, out int count) ? count + 1 : 1;
+
+        private static bool DecrementOrRemove(Dictionary<HandoffRequestKey, int> occurrences, HandoffRequestKey key)
+        {
+            if (!occurrences.TryGetValue(key, out int count))
+            {
+                return false;
+            }
+
+            if (count == 1)
+            {
+                _ = occurrences.Remove(key);
+            }
+            else
+            {
+                occurrences[key] = count - 1;
+            }
+
+            return true;
+        }
+    }
+
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
 
@@ -429,7 +556,8 @@ internal sealed class HandoffAgentExecutor :
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
         string? requestedHandoff = null;
         List<AgentResponseUpdate> updates = [];
-        List<(FunctionCallContent Request, string? ResponseId)> candidateRequests = [];
+        HandoffStreamProvenance provenance = new(this._agent.Id);
+        HandoffRequestTracker requestTracker = new();
 
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -440,29 +568,27 @@ internal sealed class HandoffAgentExecutor :
         {
             await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
-            collector.ProcessAgentResponseUpdate(update, CollectHandoffRequestsFilter);
-
-            bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
+            HandoffUpdateContext updateContext = provenance.Observe(update);
+            foreach (AIContent content in update.Contents)
             {
-                bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
-                if (isHandoffRequest)
+                bool handledAsHandoff = this.ProcessHandoffContent(content, updateContext, requestTracker);
+                if (!handledAsHandoff)
                 {
-                    candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
+                    collector.ProcessAIContents([content]);
                 }
-
-                return !isHandoffRequest;
             }
         }
 
-        if (candidateRequests.Count > 1)
+        if (requestTracker.Candidates.Count > 1)
         {
-            string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", candidateRequests.Select(candidate => candidate.Request.Name))}]). Using last ({candidateRequests.Last().Request.Name})";
+            string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", requestTracker.Candidates.Select(candidate => candidate.Request.Name))}]). Using last ({requestTracker.Candidates[requestTracker.Candidates.Count - 1].Request.Name})";
             await context.AddEventAsync(new WorkflowWarningEvent(message), cancellationToken).ConfigureAwait(false);
         }
 
-        if (candidateRequests.Count > 0)
+        if (requestTracker.Candidates.Count > 0)
         {
-            (FunctionCallContent handoffRequest, string? handoffResponseId) = candidateRequests[candidateRequests.Count - 1];
+            HandoffCandidate candidate = requestTracker.Candidates[requestTracker.Candidates.Count - 1];
+            FunctionCallContent handoffRequest = candidate.Request;
             requestedHandoff = handoffRequest.Name;
 
             await AddUpdateAsync(
@@ -473,7 +599,7 @@ internal sealed class HandoffAgentExecutor :
                         Contents = [CreateHandoffResult(handoffRequest.CallId)],
                         CreatedAt = DateTimeOffset.UtcNow,
                         MessageId = Guid.NewGuid().ToString("N"),
-                        ResponseId = handoffResponseId,
+                        ResponseId = candidate.Key.ResponseId,
                         Role = ChatRole.Tool,
                     },
                     cancellationToken
@@ -503,6 +629,41 @@ internal sealed class HandoffAgentExecutor :
             => requestedHandoff != null
              ? this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetId) ? targetId : null
              : null;
+    }
+
+    private bool ProcessHandoffContent(
+        AIContent content,
+        HandoffUpdateContext updateContext,
+        HandoffRequestTracker requestTracker)
+    {
+        if (content is FunctionResultContent functionResult)
+        {
+            requestTracker.RegisterCompletion(functionResult, updateContext);
+            return false;
+        }
+
+        if (content is not FunctionCallContent functionCall)
+        {
+            return false;
+        }
+
+        bool wasAlreadyCompleted = requestTracker.RegisterRequest(functionCall, updateContext);
+
+        // Only unresolved calls emitted by the invoked assistant and matching one of this
+        // executor's declared handoff tools may change workflow routing.
+        bool isHandoffRequest =
+            updateContext.Role == ChatRole.Assistant
+            && string.Equals(updateContext.ProducerId, this._agent.Id, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(functionCall.CallId)
+            && !wasAlreadyCompleted
+            && this._handoffFunctionNames.Contains(functionCall.Name);
+
+        if (isHandoffRequest)
+        {
+            requestTracker.AddCandidate(functionCall, updateContext);
+        }
+
+        return isHandoffRequest;
     }
 
     internal static FunctionResultContent CreateHandoffResult(string requestCallId) => new(requestCallId, "Transferred.");

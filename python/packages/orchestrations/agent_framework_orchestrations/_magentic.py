@@ -4,12 +4,12 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import partial
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from agent_framework import (
@@ -38,6 +38,7 @@ from ._base_group_chat_orchestrator import (
     ParticipantRegistry,
 )
 from ._feature_usage import FeatureIndex
+from ._orchestrator_helpers import extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
     _coalesce_output_from,  # pyright: ignore[reportPrivateUsage]
@@ -413,9 +414,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 
     The `text` method is concatenating multiple text contents from diff msgs into a single string.
     """
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
-    if fence:
-        candidate = fence.group(1)
+    fenced_object = next(
+        (body for body in extract_markdown_fence_bodies(text) if body.startswith("{") and body.endswith("}")),
+        None,
+    )
+    if fenced_object is not None:
+        candidate = fenced_object
     else:
         # Find first balanced JSON object
         start = text.find("{")
@@ -423,8 +427,20 @@ def _extract_json(text: str) -> dict[str, Any]:
             raise ValueError("No JSON object found.")
         depth = 0
         end = None
+        in_string = False
+        escaped = False
         for i, ch in enumerate(text[start:], start=start):
-            if ch == "{":
+            # Braces inside string values, such as code in an instruction, do not count.
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch == "{":
                 depth += 1
             elif ch == "}":
                 depth -= 1
@@ -513,7 +529,7 @@ class MagenticManagerBase(ABC):
 
 
 class StandardMagenticManager(MagenticManagerBase):
-    """Standard Magentic manager that performs real LLM calls via a Agent.
+    """Standard Magentic manager that performs real LLM calls via an Agent.
 
     The manager constructs prompts that mirror the original Magentic One orchestration:
     - Facts gathering
@@ -720,21 +736,37 @@ class StandardMagenticManager(MagenticManagerBase):
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
         last_error: Exception | None = None
+        unknown_speaker_ledger: MagenticProgressLedger | None = None
         while attempts < self.progress_ledger_retry_count:
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _coerce_model(MagenticProgressLedger, ledger_dict)
+                ledger = _coerce_model(MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
-                attempts += 1
-                logger.warning(
-                    f"Progress ledger JSON parse failed (attempt {attempts}/{self.progress_ledger_retry_count}): {ex}"
-                )
-                if attempts < self.progress_ledger_retry_count:
-                    # brief backoff before next try
-                    await asyncio.sleep(0.25 * attempts)
+                unknown_speaker_ledger = None
+            else:
+                next_speaker = ledger.next_speaker.answer
+                if (
+                    ledger.is_request_satisfied.answer
+                    or not isinstance(next_speaker, str)
+                    or next_speaker in agent_names
+                ):
+                    return ledger
+                # Retry an unknown name, but keep the ledger so running out of attempts ends the run
+                # through the orchestrator's invalid speaker handling instead of another reset.
+                unknown_speaker_ledger = ledger
+                last_error = ValueError(f"Unknown next speaker '{next_speaker}'. Valid names: {names_csv}.")
+            attempts += 1
+            logger.warning(
+                f"Progress ledger attempt failed ({attempts}/{self.progress_ledger_retry_count}): {last_error}"
+            )
+            if attempts < self.progress_ledger_retry_count:
+                # brief backoff before next try
+                await asyncio.sleep(0.25 * attempts)
 
+        if unknown_speaker_ledger is not None:
+            return unknown_speaker_ledger
         raise RuntimeError(
             f"Progress ledger parse failed after {self.progress_ledger_retry_count} attempt(s): {last_error}"
         )
@@ -1370,8 +1402,9 @@ class MagenticAgentExecutor(AgentExecutor):
         # Request into related
         self._pending_agent_requests.clear()
         self._pending_responses_to_agent.clear()
+        self._pending_request_order.clear()
         # Reset sessions
-        self._agent_thread = self._agent.create_session()
+        self._session = self._agent.create_session()
 
 
 #  endregion Magentic Agent Executor
@@ -1435,9 +1468,14 @@ class MagenticBuilder:
             name: Optional workflow identifier. Defaults to ``"Magentic"``.
             participants: Sequence of agent or executor instances for the workflow.
             manager: Pre-configured manager instance (subclass of MagenticManagerBase).
-            manager_factory: Callable that returns a new MagenticManagerBase instance.
-            manager_agent: Agent instance for creating a StandardMagenticManager.
-            manager_agent_factory: Callable that returns a new agent instance for creating a StandardMagenticManager.
+                The same instance, including its mutable state, is reused by every workflow
+                built with this builder. Do not share a stateful manager across concurrent or
+                interleaved workflows; use manager_factory to create a fresh manager per build.
+            manager_factory: Callable invoked on each build to return a new MagenticManagerBase instance.
+            manager_agent: Agent instance used to create a new StandardMagenticManager on each build.
+                Each workflow has its own manager, but the supplied agent is shared.
+            manager_agent_factory: Callable invoked on each build to return a new agent instance
+                for a new StandardMagenticManager.
             task_ledger: Optional custom task ledger (used with manager_agent/manager_agent_factory).
             task_ledger_facts_prompt: Custom prompt for extracting facts.
             task_ledger_plan_prompt: Custom prompt for generating initial plan.
@@ -1691,7 +1729,8 @@ class MagenticBuilder:
             self._manager = manager
             _log_warning_if_constructor_args_provided()
         elif manager_agent is not None:
-            self._manager = StandardMagenticManager(
+            self._manager_factory = partial(
+                StandardMagenticManager,
                 agent=manager_agent,
                 task_ledger=task_ledger,
                 task_ledger_facts_prompt=task_ledger_facts_prompt,
@@ -1781,7 +1820,12 @@ class MagenticBuilder:
         return executors
 
     def build(self) -> Workflow:
-        """Build a Magentic workflow with the orchestrator and all agent executors."""
+        """Build a Magentic workflow with the orchestrator and all agent executors.
+
+        A new standard manager is created for each build when configured with manager_agent
+        or manager_agent_factory. An explicitly supplied manager instance is reused unchanged;
+        manager_factory is called on each build to obtain a manager.
+        """
         mark_feature_used(FeatureIndex.ORCHESTRATION_MAGENTIC)
         logger.info(f"Building Magentic workflow with {len(self._participants)} participants")
 

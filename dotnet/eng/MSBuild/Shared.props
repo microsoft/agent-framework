@@ -35,4 +35,10 @@
   <ItemGroup Condition="'$(InjectSharedFeatureUsageUserAgent)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\FeatureUsage\*.cs" LinkBase="Shared\FeatureUsage" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedOriginPinning)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\OriginPinning\*.cs" LinkBase="Shared\OriginPinning" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedHttpHeaderValidation)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Http\*.cs" LinkBase="Shared\Http" />
+  </ItemGroup>
 </Project>

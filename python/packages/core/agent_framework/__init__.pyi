@@ -220,6 +220,7 @@ from ._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     ContinuationToken,
     Embedding,
@@ -278,7 +279,12 @@ from ._vectors import (
     vectorstoremodel,
 )
 from ._workflows._agent import WorkflowAgent
-from ._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._workflows._agent_executor import (
+    AgentExecutor,
+    AgentExecutorCheckpointState,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+)
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
     CheckpointID,
@@ -384,6 +390,7 @@ __all__ = [
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
+    "AgentExecutorCheckpointState",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentFileStore",
@@ -425,6 +432,7 @@ __all__ = [
     "ClassSkill",
     "CompactionProvider",
     "CompactionStrategy",
+    "ComputerSafetyCheck",
     "Content",
     "ContextProvider",
     "ContextWindowCompactionStrategy",

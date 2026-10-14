@@ -255,6 +255,29 @@ class FanOutEdgeRunner(EdgeRunner):
             source_span_ids=message.source_span_ids,
         ) as span:
             try:
+                # Drop messages this group cannot deliver before running the selection function, so
+                # a selection function is only ever asked about a message this group could route.
+                # `SingleEdgeRunner` applies the same ordering, checking the target and
+                # `_can_handle` before `Edge.should_route`.
+                #
+                # The target check matters beyond saving work: the runner fans every message out to
+                # all of the source's edge runners and cancels sibling deliveries when one raises,
+                # so evaluating a selection function for a message addressed to an executor outside
+                # this group could cancel that message's real delivery.
+                if message.target_id and message.target_id not in self._target_map:
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value,
+                    })
+                    return False
+
+                if not any(self._can_handle(target_id, message) for target_id in self._target_ids):
+                    span.set_attributes({
+                        OtelAttr.EDGE_GROUP_DELIVERED: False,
+                        OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,
+                    })
+                    return False
+
                 selection_results = (
                     self._selection_func(message.data, self._target_ids) if self._selection_func else self._target_ids
                 )
@@ -267,6 +290,9 @@ class FanOutEdgeRunner(EdgeRunner):
                         f"Invalid selection result: {selection_results}. "
                         f"Expected selections to be a subset of valid target executor IDs: {self._target_ids}."
                     )
+                # A selection function can name a target more than once, for example when two tags on a
+                # message route to the same executor. Deliver to each selected target once.
+                selection_results = list(dict.fromkeys(selection_results))
 
                 if message.target_id:
                     # If the target ID is specified and the selection result contains it, send the message to that edge

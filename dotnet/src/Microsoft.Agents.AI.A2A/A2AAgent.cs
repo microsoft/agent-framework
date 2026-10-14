@@ -201,6 +201,7 @@ public sealed class A2AAgent : AIAgent
                 case StreamResponseCase.Message:
                     var message = streamResponse.Message!;
                     contextId = message.ContextId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
@@ -209,6 +210,7 @@ public sealed class A2AAgent : AIAgent
                     contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
@@ -217,6 +219,7 @@ public sealed class A2AAgent : AIAgent
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
@@ -224,6 +227,7 @@ public sealed class A2AAgent : AIAgent
                     var artifactUpdate = streamResponse.ArtifactUpdate!;
                     contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
@@ -347,6 +351,16 @@ public sealed class A2AAgent : AIAgent
             return;
         }
 
+        ValidateContext(session, contextId);
+
+        // Assign a server-generated context Id to the session if it's not already set.
+        session.ContextId ??= contextId;
+        session.TaskId = taskId;
+        session.TaskState = taskState;
+    }
+
+    private static void ValidateContext(A2AAgentSession session, string? contextId)
+    {
         // Surface cases where the A2A agent responds with a response that
         // has a different context Id than the session's conversation Id.
         if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
@@ -354,11 +368,6 @@ public sealed class A2AAgent : AIAgent
             throw new InvalidOperationException(
                 $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
         }
-
-        // Assign a server-generated context Id to the session if it's not already set.
-        session.ContextId ??= contextId;
-        session.TaskId = taskId;
-        session.TaskState = taskState;
     }
 
     private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)

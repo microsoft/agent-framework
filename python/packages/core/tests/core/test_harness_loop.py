@@ -835,6 +835,64 @@ async def test_judge_requests_structured_output() -> None:
     assert judge_client.received_response_formats == [JudgeVerdict]
 
 
+async def test_judge_supports_provider_response_format_and_async_verdict_parser() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=["incomplete", "complete"])
+    provider_format = {"answered": {"type": "provider_boolean"}}
+    parsed_responses: list[ChatResponse[Any]] = []
+
+    async def parse_verdict(response: ChatResponse[Any]) -> JudgeVerdict:
+        parsed_responses.append(response)
+        answered = response.text == "complete"
+        return JudgeVerdict(
+            answered=answered,
+            reasoning="Provider-specific verdict was complete." if answered else "Add the missing detail.",
+        )
+
+    agent = Agent(
+        client=agent_client,
+        middleware=[
+            AgentLoopMiddleware.with_judge(
+                judge_client,
+                response_format=provider_format,
+                verdict_parser=parse_verdict,
+            )
+        ],
+    )
+
+    await agent.run("solve it")
+
+    assert agent_client.call_count == 2
+    assert judge_client.received_response_formats == [provider_format, provider_format]
+    assert [response.text for response in parsed_responses] == ["incomplete", "complete"]
+    assert any("Add the missing detail." in text for text in agent_client.received_messages[1])
+
+
+async def test_judge_rejects_invalid_custom_verdict_parser_result_without_text_fallback() -> None:
+    agent_client = RecordingChatClient()
+    judge_client = RecordingChatClient(texts=["VERDICT: DONE"])
+
+    def invalid_parser(response: ChatResponse[Any]) -> Any:
+        return response.text == "VERDICT: DONE"
+
+    agent = Agent(
+        client=agent_client,
+        middleware=[
+            AgentLoopMiddleware.with_judge(
+                judge_client,
+                response_format={"answered": {"type": "provider_boolean"}},
+                verdict_parser=invalid_parser,
+            )
+        ],
+    )
+
+    with pytest.raises(TypeError, match="verdict_parser must return JudgeVerdict"):
+        await agent.run("solve it")
+
+    assert agent_client.call_count == 1
+    assert judge_client.call_count == 1
+
+
 async def test_judge_uses_structured_value_to_stop() -> None:
     agent_client = RecordingChatClient()
     judge_client = RecordingChatClient(texts=['{"answered": true, "reasoning": "done"}'], honor_response_format=True)

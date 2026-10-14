@@ -68,10 +68,18 @@ take effect on the **next iteration** of the function-calling loop.
 
 | Path | Demonstrates |
 |------|--------------|
-| [`local_shell_with_allowlist.py`](local_shell_with_allowlist.py) | `LocalShellTool` restricted by a strict command allow-list. |
+| [`local_shell_with_allowlist.py`](local_shell_with_allowlist.py) | Command-text filtering without human approval; not safe for production as shown. |
 | [`local_shell_with_environment_provider.py`](local_shell_with_environment_provider.py) | `LocalShellTool` wired with a `ShellEnvironmentProvider`. |
 | [`local_code_interpreter/`](local_code_interpreter/) | Hyperlight-backed sandboxed code interpreter (standalone tool — *extra* pattern). |
 | [`monty_code_interpreter/`](monty_code_interpreter/) | Monty-backed sandboxed code interpreter (standalone tool — *extra* pattern). |
+
+> [!WARNING]
+> The allow-list shell sample is educational, not a safe production configuration.
+> Its filters can allow embedded shell commands and do not enforce read-only
+> access. Commands run with the application's permissions, without human approval.
+> Use only an isolated, disposable environment without secrets or valuable data.
+> Production use needs separately enforced isolation and restricted permissions;
+> human review can add a check, but does not isolate the shell.
 
 > [!TIP]
 > The `local_code_interpreter/` and `monty_code_interpreter/` samples show the

@@ -2,8 +2,8 @@
 
 using System.ComponentModel;
 using Azure;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
@@ -239,7 +239,7 @@ static AIAgent CreateAzureSearchToolAnnotationsAgent(AIProjectClient client, str
         {
             ProjectConnectionId = connectionId,
             IndexName = indexName,
-            QueryType = AzureAISearchQueryType.Simple,
+            QueryType = AzureAISearchQueryKind.Simple,
             TopK = 3,
         }
     ]));

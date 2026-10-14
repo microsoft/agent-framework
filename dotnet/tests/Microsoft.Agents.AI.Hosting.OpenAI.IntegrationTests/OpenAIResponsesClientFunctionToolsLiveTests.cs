@@ -42,7 +42,7 @@ public sealed class OpenAIResponsesClientFunctionToolsLiveTests
     private static string ModelName =>
         Environment.GetEnvironmentVariable(TestSettings.OpenAIChatModelName) ?? "gpt-4o-mini";
 
-    [Fact]
+    [Fact(Skip = TestSkipReasons.OpenAIIntegrationTests)]
     public async Task AllowedClientFunction_ReturnsFunctionCallAsync()
     {
         // Arrange

@@ -48,6 +48,11 @@ namespace Microsoft.Agents.AI;
 /// does not apply to lazily fetched <c>skill-md</c> entries or their supporting resources.
 /// </para>
 /// <para>
+/// Archive members resolving to the same file keep the first file's content. Later colliding members
+/// are skipped with a warning, and discovery continues with the remaining archive content.
+/// This applies whether or not an archive supplies a matching digest.
+/// </para>
+/// <para>
 /// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
 /// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
 /// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that
@@ -69,6 +74,12 @@ namespace Microsoft.Agents.AI;
 ///   <see cref="CachingAgentSkillsSourceOptions.RefreshInterval"/> so the cache periodically re-fetches
 ///   and reconciles instead of doing so on every call.</description></item>
 /// </list>
+/// </para>
+/// <para>
+/// Supporting resource names are checked for absolute paths, parent traversal (including
+/// percent-encoded forms), and control characters before an MCP request is sent. Index URLs
+/// retain their MCP resource schemes: they are sent to the connected server, not opened locally.
+/// This client-side guard does not replace server-side authorization.
 /// </para>
 /// <para>
 /// <strong>Security considerations:</strong> This source discovers and loads skills — including full

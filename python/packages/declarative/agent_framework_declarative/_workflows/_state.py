@@ -16,6 +16,9 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, cast
 
+from ._powerfx_limits import _PowerFxStateLimitError, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
+from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
+
 try:
     from powerfx import Engine
 
@@ -29,7 +32,10 @@ logger = logging.getLogger("agent_framework.declarative")
 
 
 class WorkflowState:
-    """Manages variables and state during declarative workflow execution.
+    """Manages standalone workflow state and expression evaluation.
+
+    Workflows created by ``WorkflowFactory`` use a separate, checkpoint-backed
+    ``DeclarativeWorkflowState`` implementation.
 
     WorkflowState provides a unified interface for:
 
@@ -105,6 +111,7 @@ class WorkflowState:
             inputs: Initial inputs to the workflow. These become available
                    as Workflow.Inputs.* and are immutable after initialization.
         """
+        _validate_powerfx_state(inputs)
         self._inputs: dict[str, Any] = dict(inputs) if inputs else {}
         self._local: dict[str, Any] = {}
         self._outputs: dict[str, Any] = {}
@@ -158,12 +165,16 @@ class WorkflowState:
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
+        Dict-keyed segments may use arbitrary string keys. Segments resolved
+        through object-attribute access must match ``[A-Za-z][A-Za-z0-9_]*``;
+        other shapes return ``default`` without accessing the attribute.
+
         Args:
             path: Dot-notated path like 'Local.results' or 'Workflow.Inputs.query'
             default: Default value if path doesn't exist
 
         Returns:
-            The value at the path, or default if not found
+            The value at the path, or default if not found or unreachable
         """
         parts = path.split(".")
         if not parts:
@@ -203,10 +214,18 @@ class WorkflowState:
                 obj = obj_dict.get(part, default)
                 if obj is default:
                     return default
-            elif hasattr(obj, part):
-                obj = getattr(obj, part)
             else:
-                return default
+                if not _is_safe_path_segment(part):
+                    logger.warning(
+                        "WorkflowState.get: rejecting attribute segment %r in path %r",
+                        part,
+                        path,
+                    )
+                    return default
+                if hasattr(obj, part):
+                    obj = getattr(obj, part)
+                else:
+                    return default
 
         return obj
 
@@ -329,7 +348,19 @@ class WorkflowState:
 
         Returns:
             A dictionary suitable for passing to PowerFx Engine.eval()
+
+        Raises:
+            ValueError: If the state or projected symbols exceed the PowerFx state budget.
         """
+        _validate_powerfx_state({
+            "Inputs": self._inputs,
+            "Outputs": self._outputs,
+            "Local": self._local,
+            "System": self._system,
+            "Agent": self._agent,
+            "Conversation": self._conversation,
+            "Custom": self._custom,
+        })
         symbols = {
             "Workflow": {
                 "Inputs": dict(self._inputs),
@@ -345,24 +376,31 @@ class WorkflowState:
         }
         # Debug log the Local symbols to help diagnose type issues
         if self._local:
-            for key, value in self._local.items():
+            for value in self._local.values():
                 logger.debug(
-                    f"PowerFx symbol Local.{key}: type={type(value).__name__}, "
-                    f"value_preview={str(value)[:100] if value else None}"
+                    "PowerFx Local symbol type=%s",
+                    type(value).__name__,
                 )
+        _validate_powerfx_state(symbols)
         return symbols
 
     def eval(self, expression: str) -> Any:
         """Evaluate a PowerFx expression with the current state.
 
         Expressions starting with '=' are evaluated as PowerFx.
-        Other strings are returned as-is (after variable interpolation if applicable).
+        Other strings are returned as-is. If PowerFx is unavailable or raises
+        an ordinary evaluation error, the simple evaluator is used instead.
+        Its state references follow :meth:`get`'s object-member rules.
+        State-budget errors propagate without falling back.
 
         Args:
             expression: The expression to evaluate
 
         Returns:
             The evaluated result, or the original expression if not a PowerFx expression
+
+        Raises:
+            ValueError: If symbol construction exceeds the PowerFx state budget.
         """
         if not expression:
             return expression
@@ -378,6 +416,8 @@ class WorkflowState:
             try:
                 symbols = self.to_powerfx_symbols()
                 return _powerfx_engine.eval(formula, symbols=symbols)
+            except _PowerFxStateLimitError:
+                raise
             except Exception as exc:
                 logger.warning(f"PowerFx evaluation failed for '{expression[:50]}': {exc}")
                 # Fall through to simple evaluation

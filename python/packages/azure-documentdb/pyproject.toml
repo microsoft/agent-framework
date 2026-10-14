@@ -4,7 +4,7 @@ description = "Azure DocumentDB vector stores for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260918"
+version = "1.0.0a261002"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -62,5 +62,5 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_azure_documentdb --cov-
 cmd = "pytest -m integration tests"
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

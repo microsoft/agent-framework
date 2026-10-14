@@ -41,6 +41,24 @@ def resolve_request_info_filter(agents: list[str | SupportsAgentRun] | None) -> 
     return result
 
 
+def validate_request_info_filter(request_info_filter: set[str] | None, agent_ids: list[str]) -> None:
+    """Raise if the request info filter names an agent that is not a participant.
+
+    Args:
+        request_info_filter: Agent IDs passed to ``with_request_info(agents=...)``. Empty or None means all agents.
+        agent_ids: IDs of the agent participants in the orchestration.
+
+    Raises:
+        ValueError: If a name in the filter does not match any agent participant.
+    """
+    unknown = sorted((request_info_filter or set()) - set(agent_ids))
+    if unknown:
+        raise ValueError(
+            f"with_request_info() names agents that are not agent participants: "
+            f"{', '.join(repr(name) for name in unknown)}. Agent participants: {', '.join(agent_ids)}."
+        )
+
+
 @dataclass
 class AgentRequestInfoResponse:
     """Response containing additional information requested from users for agents.
@@ -221,13 +239,12 @@ class AgentApprovalExecutor(WorkflowExecutor):
         request_info_cls = _TerminalAgentRequestInfoExecutor if terminal else AgentRequestInfoExecutor
         request_info_executor = request_info_cls(id="agent_request_info_executor")
 
-        # Both inner executors yield the inner workflow's terminal output (the agent
-        # during its turn; the _TerminalAgentRequestInfoExecutor after approval), so
-        # both must be designated for WorkflowExecutor.get_outputs() to surface them.
+        # Only the request info executor surfaces approved responses. The agent's
+        # unapproved response remains available through the request_info event.
         return (
             WorkflowBuilder(
                 start_executor=agent_executor,
-                output_from=[agent_executor, request_info_executor],
+                output_from=[request_info_executor],
             )
             # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)

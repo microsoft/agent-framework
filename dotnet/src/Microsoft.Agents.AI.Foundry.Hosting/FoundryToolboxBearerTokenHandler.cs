@@ -8,14 +8,15 @@ using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// An <see cref="DelegatingHandler"/> that:
 /// <list type="bullet">
-///   <item>Acquires a fresh Azure bearer token (scope: <c>https://ai.azure.com/.default</c>) per request, per <c>tools-integration-spec.md</c> §4.</item>
-///   <item>Always injects the mandatory <c>Foundry-Features: Toolboxes=V1Preview</c> header per spec §2, merging any additional flags from <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>.</item>
+///   <item>Acquires a fresh Azure bearer token (scope: <c>https://ai.azure.com/.default</c>) for requests to the configured toolbox origin, per <c>tools-integration-spec.md</c> §4.</item>
+///   <item>Injects the mandatory <c>Foundry-Features: Toolboxes=V1Preview</c> header on that origin per spec §2, merging any additional flags from <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>.</item>
 ///   <item>Propagates W3C trace context (<c>traceparent</c>, <c>tracestate</c>, <c>baggage</c>) from <see cref="Activity.Current"/> per spec §6.3.</item>
 ///   <item>Retries on HTTP 429, 500, 502, and 503 with exponential back-off (max 3 attempts, per spec §7).</item>
 /// </list>
@@ -35,17 +36,37 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
     private readonly TokenCredential _credential;
     private readonly string? _additionalFeaturesHeaderValue;
+    private readonly Uri _pinnedEndpoint;
 
-    internal FoundryToolboxBearerTokenHandler(TokenCredential credential, string? additionalFeaturesHeaderValue)
+    internal FoundryToolboxBearerTokenHandler(
+        TokenCredential credential,
+        string? additionalFeaturesHeaderValue,
+        Uri pinnedEndpoint)
     {
+        _ = Throw.IfNull(credential);
+        _ = Throw.IfNull(pinnedEndpoint);
+        if (!pinnedEndpoint.IsAbsoluteUri)
+        {
+            throw new ArgumentException("The pinned endpoint must be an absolute URI.", nameof(pinnedEndpoint));
+        }
+
         this._credential = credential;
         this._additionalFeaturesHeaderValue = additionalFeaturesHeaderValue;
+        this._pinnedEndpoint = pinnedEndpoint;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        // A transport-created request can target a server-selected URI. Do not acquire or
+        // attach Foundry credentials or platform context unless it remains on the configured
+        // toolbox origin; the inner pinning handler still strips any pre-existing credentials.
+        if (!OriginPinningHandler.IsSameOrigin(request.RequestUri, this._pinnedEndpoint))
+        {
+            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
         var token = await this._credential
             .GetTokenAsync(s_tokenContext, cancellationToken)
             .ConfigureAwait(false);

@@ -2,6 +2,9 @@
 
 Provides extension methods and resource definitions for an Aspire AppHost to configure a DevUI resource for testing and debugging AI agents built with [Microsoft Agent Framework](https://github.com/microsoft/agent-framework).
 
+> [!WARNING]
+> DevUI and its aggregator are for trusted development environments, not production authentication gateways. Protect backend agent endpoints independently; protecting the Aspire dashboard or UI does not automatically protect those routes. Follow the [shared hosting guide](../../samples/04-hosting/README.md#development-tools) for backend authorization, caller isolation, and client/proxy credential requirements.
+
 ## Getting started
 
 ### Prerequisites

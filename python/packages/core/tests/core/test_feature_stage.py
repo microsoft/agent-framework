@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 import pytest
 
+from agent_framework import ComputerSafetyCheck, Content
 from agent_framework import ExperimentalFeature as PublicExperimentalFeature
 from agent_framework import ReleaseCandidateFeature as PublicReleaseCandidateFeature
 from agent_framework._feature_stage import (
@@ -55,6 +56,30 @@ def clear_feature_warning_state() -> Generator[None]:  # type: ignore[misc]  # p
 def test_feature_enums_are_exposed_from_root() -> None:
     assert PublicExperimentalFeature is InternalExperimentalFeature
     assert PublicReleaseCandidateFeature is InternalReleaseCandidateFeature
+
+
+def test_computer_use_content_is_experimental_without_staging_all_content() -> None:
+    assert getattr(ComputerSafetyCheck, "__feature_stage__", None) == "experimental"
+    assert getattr(ComputerSafetyCheck, "__feature_id__", None) == PublicExperimentalFeature.COMPUTER_USE.value
+    for constructor in (Content.from_computer_tool_call, Content.from_computer_tool_result):
+        assert getattr(constructor, "__feature_stage__", None) == "experimental"
+        assert getattr(constructor, "__feature_id__", None) == PublicExperimentalFeature.COMPUTER_USE.value
+    assert getattr(Content, "__feature_stage__", None) is None
+    assert getattr(Content.from_text, "__feature_stage__", None) is None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ExperimentalWarning)
+        check = ComputerSafetyCheck(id="check-1")
+        call = Content.from_computer_tool_call(
+            id="computer-1", call_id="call-1", actions=[{"type": "click"}], pending_safety_checks=[check]
+        )
+        result = Content.from_computer_tool_result(call_id="call-1", screenshot=Content.from_data(b"png", "image/png"))
+
+    assert call.type == "computer_tool_call"
+    assert result.type == "computer_tool_result"
+    assert len(caught) == 1
+    assert isinstance(caught[0].message, ExperimentalWarning)
+    assert "[COMPUTER_USE]" in str(caught[0].message)
 
 
 def test_experimental_decorator_accepts_feature_enum() -> None:

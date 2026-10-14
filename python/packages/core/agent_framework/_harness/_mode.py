@@ -106,6 +106,15 @@ def _normalize_available_modes(available_modes: Sequence[str]) -> dict[str, str]
     return normalized_modes
 
 
+def _resolve_available_modes(available_modes: Sequence[str] | None) -> dict[str, str]:
+    """Normalize configured modes, using built-in modes only when none are provided."""
+    configured_modes = tuple(DEFAULT_MODE_MAP) if available_modes is None else tuple(available_modes)
+    normalized_modes = _normalize_available_modes(configured_modes)
+    if not normalized_modes:
+        raise ValueError("available_modes must contain at least one mode.")
+    return normalized_modes
+
+
 def _normalize_mode(mode: str, *, available_modes: Mapping[str, str]) -> str:
     """Validate and normalize a mode string."""
     normalized = mode.strip().lower()
@@ -142,8 +151,11 @@ def get_agent_mode(
 
     Returns:
         The current mode string.
+
+    Raises:
+        ValueError: The available modes are empty or duplicated, or the default mode is not configured.
     """
-    normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_MAP))
+    normalized_modes = _resolve_available_modes(available_modes)
     normalized_default_mode = _resolve_default_mode(default_mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
     current_mode = provider_state.get("current_mode")
@@ -189,9 +201,9 @@ def set_agent_mode(
         The normalized mode string that was stored.
 
     Raises:
-        ValueError: The requested mode is not configured.
+        ValueError: The available modes are empty or duplicated, or the requested mode is not configured.
     """
-    normalized_modes = _normalize_available_modes(tuple(available_modes or DEFAULT_MODE_MAP))
+    normalized_modes = _resolve_available_modes(available_modes)
     normalized_mode = _normalize_mode(mode, available_modes=normalized_modes)
     provider_state = _get_mode_state(session, source_id=source_id)
     previous_mode = provider_state.get("current_mode")

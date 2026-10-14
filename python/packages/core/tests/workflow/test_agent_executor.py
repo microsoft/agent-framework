@@ -611,6 +611,140 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
     assert executor._context_mode == "last_agent"  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
+    """Saved AgentExecutor checkpoint state exposes the public TypedDict keys."""
+    from agent_framework import AgentExecutorCheckpointState
+    from agent_framework._sessions import AgentSessionDict
+
+    agent = _CountingAgent(id="schema_agent", name="SchemaAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["hello"])]  # pyright: ignore[reportPrivateUsage]
+
+    state = await executor.on_checkpoint_save()
+
+    assert set(state) == {
+        "cache",
+        "full_conversation",
+        "agent_session",
+        "pending_agent_requests",
+        "pending_responses_to_agent",
+        "pending_request_order",
+    }
+    assert isinstance(state, dict)
+    assert len(state["cache"]) == 1
+    assert "session_id" in state["agent_session"]
+    # Checkpoint schema stays public; session payload TypedDict is sessions-internal.
+    _: type[AgentExecutorCheckpointState] = AgentExecutorCheckpointState
+    __: type[AgentSessionDict] = AgentSessionDict
+    assert isinstance(state["agent_session"], dict)
+    # Postponed annotations must not mark optional AgentSessionDict fields as required.
+    assert AgentSessionDict.__required_keys__ == frozenset({"session_id"})
+    assert AgentSessionDict.__optional_keys__ == frozenset({"type", "service_session_id", "state"})
+
+
+async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> None:
+    """Restore accepts older partial payloads (missing optional TypedDict fields)."""
+    agent = _CountingAgent(id="partial_agent", name="PartialAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["stale"])]  # pyright: ignore[reportPrivateUsage]
+
+    await executor.on_checkpoint_restore({})
+
+    assert executor._cache == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._full_conversation == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_agent_requests == {}  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_responses_to_agent == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_request_order == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_executor_restores_legacy_pending_request_order() -> None:
+    """A checkpoint without ordering metadata can still order replies when none were queued."""
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+
+    await executor.on_checkpoint_restore({"pending_agent_requests": {"request-1": request}})
+
+    assert executor._pending_request_order == ["request-1"]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(("pending", "responses"), [(1, 1), (0, 2)])
+async def test_agent_executor_rejects_ambiguous_legacy_partial_checkpoint(pending: int, responses: int) -> None:
+    """Old checkpoints cannot reconstruct call order once multiple outcomes are in flight."""
+    from agent_framework import WorkflowCheckpointException
+
+    request = Content.from_function_call(id="request-1", call_id="call-1", name="tool", arguments={})
+    result = Content.from_function_result(call_id="call-2", result="done")
+    executor = AgentExecutor(_CountingAgent(id="legacy_agent", name="LegacyAgent"))
+    state = {
+        "pending_agent_requests": {"request-1": request} if pending else {},
+        "pending_responses_to_agent": [result] * responses,
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore(state)
+
+
+async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
+    """Restore raises WorkflowCheckpointException for wrong field types."""
+    from agent_framework import Content, WorkflowCheckpointException
+
+    agent = _CountingAgent(id="bad_agent", name="BadAgent")
+    executor = AgentExecutor(agent)
+
+    with pytest.raises(WorkflowCheckpointException, match="cache"):
+        await executor.on_checkpoint_restore({"cache": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match=r"'cache'\[0\]"):
+        await executor.on_checkpoint_restore({"cache": ["not-a-message"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_responses_to_agent"):
+        await executor.on_checkpoint_restore({"pending_responses_to_agent": ["bad"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": [1]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_request_order"):
+        await executor.on_checkpoint_restore({"pending_request_order": ["req", "req"]})
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session"):
+        await executor.on_checkpoint_restore({"agent_session": "not-a-dict"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": 1}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.state"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": "s", "state": []}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": []})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {1: Content(type="text", text="x")}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {"req": "not-content"}})  # type: ignore[typeddict-item]
+
+
+async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
+    """Forward-compatible restore ignores unknown checkpoint keys."""
+    agent = _CountingAgent(id="fwd_agent", name="FwdAgent")
+    executor = AgentExecutor(agent)
+
+    await executor.on_checkpoint_restore({
+        "cache": [Message(role="user", contents=["ok"])],
+        "future_field": {"ignored": True},
+    })
+
+    assert len(executor._cache) == 1  # pyright: ignore[reportPrivateUsage]
+    assert executor._cache[0].text == "ok"  # pyright: ignore[reportPrivateUsage]
+
+
 # ---------------------------------------------------------------------------
 # Per-executor kwargs resolution tests
 # ---------------------------------------------------------------------------

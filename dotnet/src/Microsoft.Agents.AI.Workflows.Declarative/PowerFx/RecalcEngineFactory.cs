@@ -37,7 +37,6 @@ internal static class RecalcEngineFactory
                 config.MaxCallDepth = maximumCallDepth.Value;
             }
 
-            config.EnableSetFunction();
             config.AddFunction(new AgentMessage());
             config.AddFunction(new UserMessage());
             config.AddFunction(new MessageText.StringInput());

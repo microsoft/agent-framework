@@ -91,7 +91,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
     def __init__(self) -> None:
         super().__init__()
         self.values: list[Any] = []
-        self.options: EmbeddingGenerationOptions | None = None
+        self.options: dict[str, Any] | None = None
 
     async def get_embeddings(
         self,
@@ -100,7 +100,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         options: EmbeddingGenerationOptions | None = None,
     ) -> GeneratedEmbeddings[list[float]]:
         self.values = list(values)
-        self.options = options
+        self.options = dict(options) if options is not None else None
         return GeneratedEmbeddings([Embedding(vector=[float(len(str(value))), 0.5]) for value in values])
 
 
@@ -737,6 +737,83 @@ async def test_collection_serializes_records_and_generates_vectors() -> None:
     assert embedding_client.options == {"dimensions": 2}
 
 
+async def test_upsert_embedding_options_are_merged_with_field_dimensions() -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    caller_options: dict[str, Any] = {
+        "task_type": "RETRIEVAL_DOCUMENT",
+        "extra_parameters": {"provider_flag": True},
+        "dimensions": 2,
+    }
+
+    await collection.upsert([Record("one", "first", "document")], embeddings_options=caller_options)
+
+    assert embedding_client.options == caller_options
+    assert embedding_client.values == ["document"]
+    assert embedding_client.options is not None
+    embedding_client.options["extra_parameters"]["provider_flag"] = False
+    assert caller_options["extra_parameters"] == {"provider_flag": True}
+    assert collection.records["one"]["vector"] == [8.0, 0.5]
+
+    embedding_client.values.clear()
+    with pytest.raises(ValueError, match="must match its declared dimensions"):
+        await collection.upsert([Record("two", "second", "document")], embeddings_options={"dimensions": 3})
+    assert embedding_client.values == []
+    assert "two" not in collection.records
+
+
+@pytest.mark.parametrize("invalid_dimensions", [True, 2.0, None])
+async def test_upsert_rejects_invalid_dimensions_even_if_equal(invalid_dimensions: Any) -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    with pytest.raises(ValueError, match="must match its declared dimensions"):
+        await collection.upsert(
+            [Record("one", "body", "document")], embeddings_options={"dimensions": invalid_dimensions}
+        )
+    assert embedding_client.values == []
+
+
+async def test_upsert_field_options_are_isolated_and_prevalidated() -> None:
+    first_client = MockEmbeddingClient()
+    second_client = MockEmbeddingClient()
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id"),
+        VectorStoreField("vector", name="first", dimensions=2, embedding_generator=first_client),
+        VectorStoreField("vector", name="second", dimensions=2, embedding_generator=second_client),
+    ])
+    handler = VectorStoreRecordHandler(dict, definition=definition)
+    record = {"id": "one", "first": "first text", "second": "second text"}
+
+    await handler.serialize(record, embeddings_options={"task_type": "RETRIEVAL_DOCUMENT"})
+    assert first_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+    assert second_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+
+    by_field = {"first": {"task_type": "RETRIEVAL_DOCUMENT"}, "second": {"task_type": "RETRIEVAL_QUERY"}}
+    await handler.serialize(record, embeddings_options_by_field=by_field)
+    assert first_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+    assert second_client.options == {"task_type": "RETRIEVAL_QUERY", "dimensions": 2}
+    assert by_field == {"first": {"task_type": "RETRIEVAL_DOCUMENT"}, "second": {"task_type": "RETRIEVAL_QUERY"}}
+
+    first_client.values.clear()
+    second_client.values.clear()
+    with pytest.raises(ValueError, match="second.*declared dimensions"):
+        await handler.serialize(record, embeddings_options_by_field={"second": {"dimensions": 3}})
+    assert first_client.values == second_client.values == []
+
+    with pytest.raises(ValueError, match="either embeddings_options or embeddings_options_by_field"):
+        await handler.serialize(record, embeddings_options={}, embeddings_options_by_field={})
+    with pytest.raises(ValueError, match="non-generated vector field"):
+        await handler.serialize(record, embeddings_options_by_field={"missing": {}})
+    with pytest.raises(ValueError, match="non-generated vector field"):
+        await handler.serialize(
+            record,
+            generate_vectors=["first"],
+            embeddings_options_by_field={"second": {}},
+        )
+    with pytest.raises(ValueError, match="require records and generated vector fields"):
+        await handler.serialize(record, generate_vectors=False, embeddings_options={})
+
+
 async def test_collection_empty_upsert_skips_embedding_generation() -> None:
     embedding_client = MockEmbeddingClient()
     collection = MockCollection(embedding_generator=embedding_client)
@@ -1053,6 +1130,36 @@ async def test_vector_search_generates_query_vector_and_forwards_threshold() -> 
     assert responses[1]["score"] == 0.4
 
 
+async def test_vector_search_uses_provider_options_and_declared_dimensions() -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    options = {"task_type": "RETRIEVAL_QUERY"}
+
+    await collection.search("find this", embeddings_options=options)
+
+    assert embedding_client.options == {"task_type": "RETRIEVAL_QUERY", "dimensions": 2}
+    assert options == {"task_type": "RETRIEVAL_QUERY"}
+    assert collection.last_search_vector == [9.0, 0.5]
+
+    embedding_client.values.clear()
+    with pytest.raises(ValueError, match="must match its declared dimensions"):
+        await collection.search("find this", embeddings_options={"dimensions": 3})
+    assert embedding_client.values == []
+
+    await collection.search(vector=[1.0, 0.0], embeddings_options={"dimensions": 3, **options})
+    assert collection.last_search_vector == [1.0, 0.0]
+    assert embedding_client.values == []
+
+    await collection.search("keyword terms", vector=[0.0, 1.0], embeddings_options={"dimensions": 3})
+    assert collection.last_search_values == "keyword terms"
+    assert collection.last_search_vector == [0.0, 1.0]
+    assert embedding_client.values == []
+
+    await MockCollection().search(vector=[1.0, 0.0], embeddings_options=options)
+    with pytest.raises(ValueError, match="requires an embedding generator"):
+        await MockCollection().search("find this", embeddings_options=options)
+
+
 async def test_keyword_hybrid_search_uses_single_search_method() -> None:
     collection = MockCollection()
 
@@ -1331,6 +1438,44 @@ async def test_create_search_tool_returns_mapped_results() -> None:
     assert tool.approval_mode == "always_require"
     assert len(result) == 1
     assert result[0].text == "one:0.9"
+
+
+@pytest.mark.parametrize("search_type", ["vector", "keyword_hybrid"])
+async def test_create_search_tool_forwards_embedding_options(search_type: SearchType) -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    options = {"task_type": "RETRIEVAL_QUERY"}
+
+    tool = create_vector_search_tool(
+        collection,
+        search_type=search_type,
+        embeddings_options=options,
+        top=1,
+    )
+    options["task_type"] = "RETRIEVAL_DOCUMENT"
+
+    await tool(query="find this")
+
+    assert embedding_client.values == ["find this"]
+    assert embedding_client.options == {"task_type": "RETRIEVAL_QUERY", "dimensions": 2}
+    assert collection.last_search_values == "find this"
+    assert collection.last_search_vector == [9.0, 0.5]
+    assert collection.last_search_type == search_type
+    assert set(tool.parameters()["properties"]) == {"query"}
+
+
+async def test_create_search_tool_rejects_unusable_embedding_options() -> None:
+    tool = create_vector_search_tool(MockCollection(), embeddings_options={"task_type": "RETRIEVAL_QUERY"})
+    with pytest.raises(ValueError, match="requires an embedding generator"):
+        await tool(query="find this")
+
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    tool = create_vector_search_tool(collection, embeddings_options={"dimensions": 3})
+    with pytest.raises(ValueError, match="must match its declared dimensions"):
+        await tool(query="find this")
+    assert embedding_client.values == []
+    assert collection.last_search_type is None
 
 
 async def test_create_search_tool_supports_declared_filter_parameters() -> None:
@@ -1815,6 +1960,20 @@ async def test_scoreless_results_remain_when_threshold_cannot_be_applied() -> No
         ({"one": True, "two": False}, {"two": False, "one": True}, True),
         ({"one": True}, {"two": True}, False),
         ({"value": True}, {}, False),
+        # Sets: `{1} == {True}` is true in Python, so they need the same
+        # bool/number distinction the sequence and mapping cases get.
+        ({1}, {True}, False),
+        ({0}, {False}, False),
+        (frozenset({1}), frozenset({True}), False),
+        ({(1,)}, {(True,)}, False),
+        ({1}, {1.0}, True),
+        ({1, 2}, {2, 1}, True),
+        ({1}, {1, 2}, False),
+        (set(), set(), True),
+        # set and frozenset compare equal by contents in Python; keep that.
+        ({1}, frozenset({1}), True),
+        ({True}, frozenset({1}), False),
+        ({1}, [1], False),
         ("1", 1, False),
         ("text", "text", True),
         (b"\x01", b"\x01", True),
@@ -2581,6 +2740,33 @@ async def test_vector_crud_tools_round_trip_records() -> None:
     assert await get_tool.invoke(arguments={"keys": ["one"]}, skip_parsing=True) == {"records": []}
 
 
+async def test_upsert_tool_forwards_provider_embedding_options() -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    options = {"task_type": "RETRIEVAL_DOCUMENT"}
+    upsert_tool = create_upsert_tool(collection, embeddings_options=options)
+    options["task_type"] = "RETRIEVAL_QUERY"
+
+    await upsert_tool.invoke(
+        arguments={"records": [{"id": "one", "text": "body", "vector": "document"}]},
+        skip_parsing=True,
+    )
+
+    assert embedding_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+    assert collection.records["one"]["vector"] == [8.0, 0.5]
+    with pytest.raises(ValueError, match="either embeddings_options or embeddings_options_by_field"):
+        create_upsert_tool(collection, embeddings_options={}, embeddings_options_by_field={})
+
+    by_field = {"vector": {"task_type": "RETRIEVAL_DOCUMENT"}}
+    by_field_tool = create_upsert_tool(collection, embeddings_options_by_field=by_field)
+    by_field["vector"]["task_type"] = "RETRIEVAL_QUERY"
+    await by_field_tool.invoke(
+        arguments={"records": [{"id": "two", "text": "body", "vector": "more text"}]},
+        skip_parsing=True,
+    )
+    assert embedding_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+
+
 async def test_vector_crud_tools_support_auto_generated_keys_when_model_can_omit_them() -> None:
     definition = VectorStoreCollectionDefinition(
         [
@@ -2724,6 +2910,36 @@ def test_vector_collection_context_provider_configures_tools_and_approvals() -> 
 
     require_all = VectorCollectionContextProvider(collection, scope_filter=None, approval_mode="always_require")
     assert all(tool.approval_mode == "always_require" for tool in require_all.tools)
+
+
+async def test_vector_collection_context_provider_forwards_embedding_options() -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+    provider = VectorCollectionContextProvider(
+        collection,
+        scope_filter=None,
+        upsert_embeddings_options={"task_type": "RETRIEVAL_DOCUMENT"},
+        search_embeddings_options={"task_type": "RETRIEVAL_QUERY"},
+    )
+    tools = {tool.name: tool for tool in provider.tools}
+
+    await tools["upsert"].invoke(
+        arguments={"records": [{"id": "one", "text": "body", "vector": "document"}]},
+        skip_parsing=True,
+    )
+    assert embedding_client.options == {"task_type": "RETRIEVAL_DOCUMENT", "dimensions": 2}
+
+    await tools["search"].invoke(arguments={"query": "find this"}, skip_parsing=True)
+    assert embedding_client.options == {"task_type": "RETRIEVAL_QUERY", "dimensions": 2}
+
+    with pytest.raises(ValueError, match="Upsert embedding options require include_upsert_tool=True"):
+        VectorCollectionContextProvider(
+            collection, scope_filter=None, include_upsert_tool=False, upsert_embeddings_options={}
+        )
+    with pytest.raises(ValueError, match="Search embedding options require include_search_tool=True"):
+        VectorCollectionContextProvider(
+            collection, scope_filter=None, include_search_tool=False, search_embeddings_options={}
+        )
 
 
 async def test_vector_collection_context_provider_adds_attributed_context() -> None:

@@ -100,6 +100,7 @@ internal sealed class Program
             WorkflowFactory workflowFactory = new("InvokeFoundryToolboxMcp.yaml", foundryEndpoint)
             {
                 Configuration = workflowConfiguration,
+                AllowedEnvironmentVariables = [ToolboxMcpServerUrlSetting, DocsServerLabelSetting, WebSearchToolNameSetting],
                 McpToolHandler = mcpToolHandler
             };
 
@@ -163,7 +164,7 @@ internal sealed class Program
         MCPToolboxTool mcpTool = new(serverLabel)
         {
             ServerUri = new Uri("https://learn.microsoft.com/api/mcp"),
-            ToolCallApprovalPolicy = new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval),
+            ToolCallApprovalPolicy = new McpToolCallApprovalPolicy(DefaultMcpToolCallApprovalPolicy.NeverRequireApproval),
         };
 
         ToolboxVersion created = (await toolboxClient.CreateVersionAsync(

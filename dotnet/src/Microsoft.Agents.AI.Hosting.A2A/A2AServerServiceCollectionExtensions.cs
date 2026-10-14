@@ -43,6 +43,13 @@ public static class A2AServerServiceCollectionExtensions
     /// is unchanged — the bare identifiers are used directly, which is appropriate for
     /// first-run / single-user / prototyping scenarios but unsafe for multi-user hosts.
     /// </para>
+    /// <para>
+    /// Isolation does not configure authentication or endpoint authorization. HTTP hosts must configure
+    /// an authentication scheme and enforce authorization on each mapped A2A binding, for example with
+    /// <c>RequireAuthorization()</c>. Claims-based isolation also requires <c>AddHttpContextAccessor()</c>
+    /// and a claim that uniquely identifies the caller. Task isolation is required for multi-user hosts
+    /// even when agent sessions are not persisted, because the task store retains its own state.
+    /// </para>
     /// </remarks>
     public static IHostedAgentBuilder AddA2AServer(this IHostedAgentBuilder agentBuilder, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {

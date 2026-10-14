@@ -60,15 +60,35 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
+from functools import lru_cache, partial
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
+from types import UnionType
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    runtime_checkable,
+)
+from urllib.parse import unquote
 
 import yaml
+from typing_extensions import Sentinel
 from yaml.nodes import MappingNode, Node, ScalarNode
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from ._middleware import FunctionInvocationContext
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
@@ -79,11 +99,13 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
-    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
 logger = logging.getLogger(__name__)
+
+# Distinguish an omitted keyword from an explicit application ``context=None``.
+_UNSET_CONTEXT: Any = Sentinel("_UNSET_CONTEXT")
 
 # region Models
 
@@ -380,6 +402,13 @@ class SkillScript(ABC):
     async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
         """Run this script.
 
+        Implementations can receive the enclosing ``run_skill_script`` invocation
+        by declaring a keyword-bindable ``FunctionInvocationContext`` parameter
+        after ``skill`` and ``args``. Without that annotation, host runtime
+        values are passed as individual keyword arguments. The invocation's
+        ``kwargs`` contain host values; its ``arguments`` contain the outer
+        tool-call arguments, not just the script arguments.
+
         Args:
             skill: The skill that owns this script.
             args: Optional arguments for the script, provided by the
@@ -394,11 +423,84 @@ class SkillScript(ABC):
         """
 
 
+def _find_context_parameter(
+    function: Callable[..., Any], signature: inspect.Signature, *, script_name: str
+) -> str | None:
+    """Return the name of the callable's ``FunctionInvocationContext`` parameter, if any.
+
+    Raises:
+        ValueError: If multiple context parameters are declared, or the context
+            parameter cannot be passed by keyword.
+    """
+    try:
+        type_hints = get_type_hints(function, include_extras=True)
+    except (AttributeError, NameError, TypeError):
+        logger.debug("Could not resolve annotations for script '%s'; using signature annotations.", script_name)
+        type_hints = {}
+
+    context_params: list[inspect.Parameter] = []
+    for param in signature.parameters.values():
+        annotation = type_hints.get(param.name, param.annotation)
+
+        # Only unwrap unions such as ``FunctionInvocationContext | None``, not containers like ``list[...]``.
+        candidates = get_args(annotation) if get_origin(annotation) in (Union, UnionType) else (annotation,)
+
+        # Recognize context types and simple forward references.
+        if any(
+            candidate is FunctionInvocationContext or candidate == "FunctionInvocationContext"
+            for candidate in candidates
+        ):
+            context_params.append(param)
+
+    # Callbacks without a context parameter keep their existing behavior.
+    if not context_params:
+        return None
+
+    # Only one parameter can receive the invocation context.
+    if len(context_params) > 1:
+        raise ValueError(f"Script '{script_name}' defines multiple FunctionInvocationContext parameters.")
+
+    param = context_params[0]
+
+    # Context injection binds by keyword, not by position.
+    if param.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+        raise ValueError(f"Context parameter '{param.name}' on script '{script_name}' must accept a keyword.")
+
+    return param.name
+
+
+def _find_run_context_parameter(script_type: type[SkillScript]) -> str | None:
+    """Find an opted-in context parameter on a script's ``run`` method."""
+    try:
+        signature = inspect.signature(script_type.run)
+    except (TypeError, ValueError):
+        logger.debug("Could not inspect run for script '%s'; calling without context.", script_type.__name__)
+        return None
+
+    context_name = _find_context_parameter(script_type.run, signature, script_name=script_type.__name__)
+    if context_name is not None:
+        # Reject context parameters that replace skill or args.
+        try:
+            signature.bind(None, None, None, **{context_name: None})
+        except TypeError as exc:
+            raise ValueError(
+                f"Context parameter '{context_name}' on script '{script_type.__name__}' "
+                f"must support run(skill, args, {context_name}=...) without replacing skill or args."
+            ) from exc
+    return context_name
+
+
 class InlineSkillScript(SkillScript):
     """A code-defined skill script backed by a callable.
 
     The callable is invoked directly in-process when the script is run.
     Parameters schema is lazily generated from the callable's signature.
+
+    Declare a ``FunctionInvocationContext`` parameter on the callable to receive
+    the enclosing tool invocation from :class:`SkillsProvider`. That parameter is
+    hidden from the schema, and runtime values are available only through
+    ``ctx.kwargs``; ordinary parameters and ``**kwargs`` receive only model
+    arguments.
 
     Attributes:
         name: Script identifier.
@@ -406,9 +508,19 @@ class InlineSkillScript(SkillScript):
         function: Callable that implements the script.
 
     Examples:
+        Receiving runtime context separately from model arguments:
+
         .. code-block:: python
 
-            InlineSkillScript(name="analyze", function=analyze_data, description="Run analysis")
+            from agent_framework import FunctionInvocationContext
+
+
+            def analyze(query: str, *, ctx: FunctionInvocationContext) -> str:
+                tenant_id = ctx.kwargs["tenant_id"]
+                return f"Analyzing {query} for {tenant_id}"
+
+
+            InlineSkillScript(name="analyze", function=analyze)
     """
 
     def __init__(
@@ -425,6 +537,8 @@ class InlineSkillScript(SkillScript):
             name: Identifier for this script (e.g. ``"analyze"``).
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
+                Declare one keyword-bindable ``FunctionInvocationContext``
+                parameter to receive runtime context.
             argument_parser: Optional callable that converts the raw
                 ``args`` value into the named arguments passed to
                 ``function`` before the script runs.  When ``None`` (the
@@ -432,6 +546,10 @@ class InlineSkillScript(SkillScript):
                 ``dict`` (or ``None``).  Supply a parser to support
                 backends that send arguments in a non-conforming shape (for
                 example, vLLM-style JSON strings).
+
+        Raises:
+            ValueError: If multiple context parameters are declared, or a
+                context parameter cannot be passed by keyword.
         """
         super().__init__(name=name, description=description)
 
@@ -440,10 +558,10 @@ class InlineSkillScript(SkillScript):
         self._parameters_schema: dict[str, Any] | None = None
         self._parameters_schema_resolved: bool = False
 
-        # Precompute whether the function accepts **kwargs to avoid
-        # repeated inspect.signature() calls on every invocation.
+        # Precompute signature facts to avoid inspecting the function on every invocation.
         sig = inspect.signature(function)
         self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        self._context_parameter_name = _find_context_parameter(function, sig, script_name=name)
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -459,7 +577,14 @@ class InlineSkillScript(SkillScript):
             self._parameters_schema_resolved = True
         return self._parameters_schema
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | str | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | str | None = None,
+        *,
+        context: FunctionInvocationContext | None = _UNSET_CONTEXT,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by invoking the callable in-process.
 
         When an ``argument_parser`` is configured, it is applied to
@@ -475,6 +600,8 @@ class InlineSkillScript(SkillScript):
                 be a ``dict`` or ``None``; a ``list`` raises
                 :class:`TypeError` because inline scripts bind arguments by
                 keyword name.
+            context: The enclosing invocation when supplied by the provider.
+                Other values are forwarded to the callback unchanged.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``.
 
@@ -486,7 +613,48 @@ class InlineSkillScript(SkillScript):
                 ``list``.  A leftover ``str`` means no ``argument_parser``
                 converted it; a ``list`` is array-style and only supported
                 for file-based scripts.
+            ValueError: If model arguments supply the injected context parameter.
         """
+        call_args = self._parse_arguments(args) or {}
+
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        invocation = (
+            context
+            if isinstance(context, FunctionInvocationContext) and _find_run_context_parameter(type(self)) is not None
+            else None
+        )
+
+        runtime_kwargs: Mapping[str, Any] = {}
+        if invocation is None:
+            # Preserve explicit application "context" values as data.
+            if context is not _UNSET_CONTEXT:
+                kwargs = {"context": context, **kwargs}
+        elif self._context_parameter_name is None:
+            # Callback without context: pass host values as separate keywords.
+            runtime_kwargs = invocation.kwargs
+        elif self._context_parameter_name in call_args:
+            # Reject model arguments that impersonate runtime context.
+            raise ValueError(
+                f"Argument '{self._context_parameter_name}' for inline script '{self.name}' "
+                "is reserved for runtime context injection."
+            )
+        else:
+            # Opted-in callback: inject without changing model arguments.
+            call_args = {**call_args, self._context_parameter_name: invocation}
+
+        # Keep separate keyword expansions so duplicate model and host names still fail.
+        if self._accepts_kwargs:
+            result = self.function(**call_args, **runtime_kwargs, **kwargs)
+        else:
+            result = self.function(**call_args)
+
+        # Support both synchronous and asynchronous callbacks.
+        if inspect.isawaitable(result):
+            return await result
+
+        return result
+
+    def _parse_arguments(self, args: dict[str, Any] | list[str] | str | None) -> dict[str, Any] | None:
         if self.argument_parser is not None:
             args = self.argument_parser(args)
         if isinstance(args, str):
@@ -501,13 +669,7 @@ class InlineSkillScript(SkillScript):
                 f"but received a list. Array-style arguments are only supported "
                 f"for file-based scripts."
             )
-        if self._accepts_kwargs:  # ruff:ignore[if-else-block-instead-of-if-exp]
-            result = self.function(**(args or {}), **kwargs)
-        else:
-            result = self.function(**(args or {}))
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        return args
 
 
 class FileSkillScript(SkillScript):
@@ -515,6 +677,11 @@ class FileSkillScript(SkillScript):
 
     Represents a script file on disk that is delegated to a configured
     :class:`SkillScriptRunner` for execution.
+
+    Runners can declare a defaulted ``FunctionInvocationContext`` parameter
+    in addition to ``skill``, ``script``, and ``args``. :class:`SkillsProvider`
+    injects the enclosing invocation into that parameter without changing
+    script arguments or forwarding host values to subprocesses.
 
     Attributes:
         name: Script identifier.
@@ -545,6 +712,7 @@ class FileSkillScript(SkillScript):
             full_path: Absolute path to the script file.
             runner: Strategy for running file-based scripts.  Required for
                 execution; an error is raised from :meth:`run` if not provided.
+                See :class:`SkillScriptRunner` for optional context injection.
             skill_dir: Trusted skill directory used to revalidate the script before execution.
             trusted_root: Configured discovery root used to include the skill directory and
                 intermediate directories in revalidation. Requires ``skill_dir``. When omitted,
@@ -553,7 +721,9 @@ class FileSkillScript(SkillScript):
         Raises:
             ValueError: If ``full_path`` is empty or not an absolute path, if
                 ``trusted_root`` is provided without ``skill_dir``, or if ``skill_dir``
-                does not reside at or beneath ``trusted_root``.
+                does not reside at or beneath ``trusted_root``, or if the runner's
+                context parameter is not optional and keyword-bindable or replaces
+                one of its three existing arguments.
         """
         super().__init__(name=name, description=description)
 
@@ -574,6 +744,9 @@ class FileSkillScript(SkillScript):
             if skill_dir is not None
             else None
         )
+        self._context_parameter_name = (
+            self._find_runner_context_parameter(runner, script_name=name) if runner is not None else None
+        )
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -585,13 +758,21 @@ class FileSkillScript(SkillScript):
         """
         return {"type": "array", "items": {"type": "string"}}
 
-    async def run(self, skill: Skill, args: dict[str, Any] | list[str] | None = None, **kwargs: Any) -> Any:
+    async def run(
+        self,
+        skill: Skill,
+        args: dict[str, Any] | list[str] | None = None,
+        *,
+        context: FunctionInvocationContext | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Run the script by delegating to the configured runner.
 
         Args:
             skill: The skill that owns this script.  Must be a
                 :class:`FileSkill`.
             args: Optional arguments for the script.
+            context: Optional enclosing tool invocation, passed to context-aware runners.
             **kwargs: Additional runtime keyword arguments (unused).
 
         Returns:
@@ -599,14 +780,19 @@ class FileSkillScript(SkillScript):
 
         Raises:
             TypeError: If ``skill`` is not a :class:`FileSkill`.
-            ValueError: If no runner was provided.
+            ValueError: If no runner was provided or the discovered file is no longer valid.
         """
+        # Require a file-backed skill for runner execution.
         if not isinstance(skill, FileSkill):
             raise TypeError(
                 f"File-based script '{self.name}' requires a FileSkill but received '{type(skill).__name__}'."
             )
+
+        # File scripts need a runner to execute them, e.g. a subprocess runner.
         if self._runner is None:
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
+
+        # Recheck discovered paths: e.g. scripts/run.py may have been replaced by a symlink.
         if self._scope is not None:
             await asyncio.to_thread(
                 FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
@@ -615,10 +801,72 @@ class FileSkillScript(SkillScript):
                 self.name,
                 "Script",
             )
-        result = self._runner(skill, self, args)
+
+        # The protocol declares only three arguments; the runner's context slot was validated at construction.
+        runner = cast(Callable[..., Any], self._runner)
+
+        # Unannotated overrides may forward application "context" values, even invocation objects.
+        runner_kwargs: dict[str, FunctionInvocationContext] = {}
+        if (
+            self._context_parameter_name is not None
+            and isinstance(context, FunctionInvocationContext)
+            and _find_run_context_parameter(type(self)) is not None
+        ):
+            runner_kwargs[self._context_parameter_name] = context
+
+        # E.g. runner(skill, self, ["input.txt"], ctx=context); host values stay in context.kwargs.
+        result = runner(skill, self, args, **runner_kwargs)
+
+        # Support both synchronous and asynchronous runners.
         if inspect.isawaitable(result):
             return await result
+
         return result
+
+    @staticmethod
+    def _find_runner_context_parameter(runner: SkillScriptRunner, *, script_name: str) -> str | None:
+        """Find a context parameter without changing the runner's three-argument contract."""
+        try:
+            signature = inspect.signature(runner)
+        except (TypeError, ValueError):
+            logger.debug("Could not inspect runner for script '%s'; calling without context.", script_name)
+            return None
+
+        function: Callable[..., Any] = runner
+        while isinstance(function, partial):
+            function = function.func
+
+        # Callable objects declare parameter annotations on __call__.
+        if not inspect.isroutine(function):
+            function = function.__call__
+
+        context_name = _find_context_parameter(function, signature, script_name=script_name)
+
+        # Keep context injection opt-in for existing runners.
+        if context_name is None:
+            return None
+
+        parameter = signature.parameters[context_name]
+        positional_names = [
+            name
+            for name, param in signature.parameters.items()
+            if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+
+        # Preserve the runner's positional skill, script, and args parameters.
+        if context_name in positional_names[:3]:
+            raise ValueError(
+                f"Runner context parameter '{context_name}' for script '{script_name}' "
+                "must not replace the skill, script, or args parameters."
+            )
+
+        # Runners must remain callable without an injected context.
+        if parameter.default is inspect.Parameter.empty:
+            raise ValueError(
+                f"Runner context parameter '{context_name}' for script '{script_name}' must have a default value."
+            )
+
+        return context_name
 
 
 class Skill(ABC):
@@ -1391,8 +1639,11 @@ class ClassSkill(Skill, ABC):
 
         When applied to a method on a :class:`ClassSkill` subclass, the method is
         automatically discovered and registered as an :class:`InlineSkillScript`.
-        The method's parameters (excluding ``self``) are used to generate a JSON
+        The method's parameters (excluding ``self`` and any injected
+        ``FunctionInvocationContext`` parameter) are used to generate a JSON
         schema, and the method is invoked in-process when the script is run.
+        Declare a ``FunctionInvocationContext`` parameter as described by
+        :class:`InlineSkillScript` to receive host context separately.
 
         Supports bare usage (``@ClassSkill.script``) and parameterized usage
         (``@ClassSkill.script(name="custom", description="...")``).
@@ -1700,7 +1951,17 @@ class SkillScriptRunner(Protocol):
     are always executed **in-process** and do not use a script runner.
 
     Any callable (sync or async) matching the ``__call__`` signature
-    satisfies this protocol.
+    satisfies this protocol. To opt into context injection, add one keyword-bindable
+    parameter annotated with ``FunctionInvocationContext`` (or ``FunctionInvocationContext | None``).
+    It must have a default value and must not replace ``skill``, ``script``, or
+    ``args``. For example:
+
+    .. code-block:: python
+
+        from agent_framework import FunctionInvocationContext
+
+
+        def runner(skill, script, args=None, *, ctx: FunctionInvocationContext | None = None): ...
     """
 
     def __call__(
@@ -2480,7 +2741,8 @@ class SkillsProvider(ContextProvider):
         # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
         # not declared parameters. Resources take no model arguments, so a resource's
         # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
-        # ``**kwargs`` as proof the host supplied it.
+        # ``**kwargs`` as proof the host supplied it. Inline scripts that declare a
+        # FunctionInvocationContext parameter receive host values only through it.
         async def _read_resource(
             ctx: FunctionInvocationContext,
             skill_name: str,
@@ -2504,7 +2766,7 @@ class SkillsProvider(ContextProvider):
                 skill_name,
                 script_name,
                 args,
-                runtime_kwargs=ctx.kwargs,
+                context=ctx,
             )
 
         return [
@@ -2634,12 +2896,13 @@ class SkillsProvider(ContextProvider):
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
         *,
-        runtime_kwargs: Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext,
     ) -> Any:
         """Run a named script from a skill.
 
         Resolves the skill and script by name, then delegates execution
-        to :meth:`SkillScript.run`.
+        to :meth:`SkillScript.run`. Implementations can opt into receiving the
+        invocation with an annotated ``FunctionInvocationContext`` parameter.
 
         Args:
             skills: The skills to look up the skill from.
@@ -2647,19 +2910,8 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            runtime_kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs``. This parameter carries host
-                request context supplied via
-                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
-                and delivered through :class:`FunctionInvocationContext`; it is
-                never sourced from model-supplied tool arguments. Note that the
-                receiving script's own ``**kwargs`` is not runtime-only: these
-                values are expanded alongside any undeclared entries in *args*,
-                which the model supplies. Taking these as one mapping keeps this
-                helper's own parameter names (``skills``, ``skill_name``,
-                ``script_name``, ``args``) usable as runtime kwarg names; the
-                public :meth:`SkillScript.run` signature still expands them, so
-                ``skill`` and ``args`` remain reserved at that boundary.
+            context: The enclosing tool invocation, passed to an annotated
+                parameter or unpacked as host runtime keyword arguments.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2685,7 +2937,13 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **(runtime_kwargs or {}))
+            context_name = _find_run_context_parameter(type(script))
+            if context_name is not None:
+                # Opted-in run: pass the whole invocation.
+                return await script.run(skill, args, **{context_name: context})
+
+            # Unannotated run: pass host values individually.
+            return await script.run(skill, args, **context.kwargs)
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
@@ -4407,6 +4665,33 @@ class MCPSkillResource(SkillResource):
         return text if text else None
 
 
+_RESOURCE_CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_MAX_RESOURCE_NAME_DECODING_DEPTH: Final[int] = 32
+
+
+@lru_cache(maxsize=128)
+def _fully_unquote(value: str, *, remaining_depth: int = _MAX_RESOURCE_NAME_DECODING_DEPTH) -> str | None:
+    """Percent-decode *value* until stable, normalizing backslashes to forward slashes.
+
+    Decoding never removes a literal ``.``, ``/``, ``:``, or control character, so
+    checking the final form also covers every nested encoding layer (e.g. ``%252e``).
+    Each layer is cached, keyed by the remaining depth so reuse cannot bypass the limit.
+
+    Args:
+        value: The value to decode.
+
+    Keyword Args:
+        remaining_depth: The number of further decoding layers allowed.
+
+    Returns:
+        The decoded value, or ``None`` if the decoding depth exceeds the limit.
+    """
+    decoded = unquote(value).replace("\\", "/")
+    if decoded == value:
+        return value
+    return _fully_unquote(decoded, remaining_depth=remaining_depth - 1) if remaining_depth > 0 else None
+
+
 @experimental(feature_id=ExperimentalFeature.MCP_SKILLS)
 class MCPSkill(Skill):
     """A :class:`Skill` discovered from an MCP server exposing the Agent Skills convention.
@@ -4502,7 +4787,7 @@ class MCPSkill(Skill):
 
         Returns:
             An :class:`MCPSkillResource`, or ``None`` when the name is empty
-            or the resource does not exist on the server.
+            or unsafe, or the resource does not exist on the server.
         """
         if not name or not name.strip():
             return None
@@ -4527,7 +4812,9 @@ class MCPSkill(Skill):
         """Validate a resource name and return the normalized form.
 
         Defense in depth: refuses names that could escape the skill root
-        (absolute paths, embedded URI schemes, parent-traversal segments).
+        (absolute paths, embedded URI schemes, parent-traversal segments,
+        or control characters), including percent-encoded forms.
+        Names requiring more than 32 percent-decoding passes are also refused.
         The MCP server is the authority on URI resolution, but rejecting
         obviously unsafe shapes client-side avoids leaking escape attempts
         upstream.
@@ -4539,8 +4826,26 @@ class MCPSkill(Skill):
             The normalized name with backslashes replaced by forward slashes,
             or ``None`` if the name is unsafe.
         """
+        # Treat backslashes as separators, e.g. "..\x" is checked as "../x".
         normalized = name.replace("\\", "/")
-        if normalized.startswith("/") or "://" in normalized or any(seg == ".." for seg in normalized.split("/")):
+        # Split at the first literal "?"/"#" before decoding, so "a%3f/%2e%2e/x" stays one path while
+        # "a/b.md?q=/../x" leaves "/../x" in the query; then decode each part once.
+        raw_path, *raw_suffix = re.split(r"[?#]", normalized, maxsplit=1)
+        path, suffix = _fully_unquote(raw_path), _fully_unquote("".join(raw_suffix))
+        if (
+            # Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
+            path is None
+            or suffix is None
+            # Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
+            or path.startswith("/")
+            # Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
+            or "://" in path
+            # Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. "
+            # (URI parsers can trim trailing spaces).
+            or any(segment.rstrip(" ") == ".." for segment in re.split(r"[/?#]", path))
+            # Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            or _RESOURCE_CONTROL_CHARS.search(path + suffix)
+        ):
             logger.debug("Rejecting resource name with unsafe path components: %r", name)
             return None
         return normalized
@@ -4688,6 +4993,8 @@ def _extract_archive_to_memory(
     ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
     raising. Extraction is bounded by a maximum file count and total uncompressed size
     to mitigate decompression-bomb attacks. No filesystem is touched.
+    Later members whose normalized paths match case-insensitively are skipped
+    with a warning; the first member's spelling and content are retained.
 
     Args:
         data: The raw archive bytes.
@@ -4718,6 +5025,7 @@ def _extract_zip_to_memory(
     """Read regular files from a ZIP archive into memory. See :func:`_extract_archive_to_memory`."""
     remaining_bytes = max_uncompressed_size_bytes
     files: dict[str, bytes] = {}
+    seen_names: set[str] = set()
     file_count = 0
 
     for info in archive.infolist():
@@ -4732,9 +5040,21 @@ def _extract_zip_to_memory(
         if name is None:
             continue
 
+        # Match FileSkill's case-insensitive lookup; retain the first member's spelling.
+        lookup_name = name.lower()
+        if lookup_name in seen_names:
+            logger.warning(
+                "Skipping duplicate archive member %r: normalized path %r matches an earlier member; "
+                "keeping the first file",
+                info.filename,
+                name,
+            )
+            continue
+
         with archive.open(info) as source:
             content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
         files[name] = content
+        seen_names.add(lookup_name)
 
     return files
 
@@ -4754,6 +5074,8 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Member paths are compared case-insensitively; collisions are skipped with a
+    warning, keeping the first file's spelling and content.
     Supplied SHA-256 digests are verified before extraction; archives without
     a digest remain supported.
     """
@@ -5028,6 +5350,10 @@ class MCPSkillsSource(SkillsSource):
       archive are surfaced as read-only resources only; MCP-delivered scripts
       are never discovered as runnable.
 
+    Archive member paths are compared case-insensitively, matching resource lookup.
+    The first file's spelling and content are retained; later colliding members
+    are skipped with a warning.
+
     Entries whose type has no registered handler (e.g. ``mcp-resource-template``)
     are skipped.
 
@@ -5050,6 +5376,12 @@ class MCPSkillsSource(SkillsSource):
         entries or their supporting resources.
 
     Security considerations:
+        Supporting resource names are checked for absolute paths, parent
+        traversal (including percent-encoded forms), and control characters
+        before an MCP request is sent. Index URLs retain their MCP resource
+        schemes: they are sent to the connected server, not opened locally.
+        This client-side guard does not replace server-side authorization.
+
         Discovering skills over MCP means an *external* MCP server controls
         what skill content (including instructions and, for script-capable
         skills, the scripts the agent may run) reaches the agent. This source

@@ -10,6 +10,29 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 
 See [main.py](main.py) for the full implementation.
 
+`agent=create_agent` creates fresh client and hosted-MCP tool configuration for
+each request and closes the request's own SDK transports and credential.
+Local model authentication uses `AzureCliCredential`; deployed calls use managed
+identity. `history_source="agent_server"` supplies the outer transcript and
+disables inner model storage.
+
+**Configure `GITHUB_PAT` separately.** A missing/empty PAT fails explicitly;
+the sample does not silently run an agent with its GitHub integration disabled.
+The PAT is deployment-owned and selects a single external GitHub account,
+**not** the Foundry calling user's GitHub identity. Use a least-privilege,
+read-only token for this demonstration and restrict who can call the agent.
+The MCP configuration additionally permits only `get_me`,
+`search_repositories` and `get_file_contents`. All other tools, including
+write operations, are excluded even if the PAT has broader permissions.
+Auto-approval applies only to those listed read tools; changing the allowlist
+is an explicit operator code change, not a caller option.
+For per-user GitHub access, use an appropriately configured user-authenticated
+Toolbox connection instead. Do not pass a PAT in model options or log it;
+platform user/call headers are not forwarded to GitHub.
+
+GitHub MCP access is credential-gated and is not exercised by credential-free
+checks. Outer `store=false` does not undo actions taken in the external account.
+
 ### Agent Hosting
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.

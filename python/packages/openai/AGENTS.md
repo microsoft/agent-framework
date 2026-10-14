@@ -66,6 +66,11 @@ Native Responses and Chat Completions refusals remain ordinary text content with
 the provider's native refusal field without splitting mixed text/refusal turns; non-assistant
 marked text is sent as ordinary input text.
 
+Responses citations remain `Content.annotations`, including annotation-only updates parsed from completed
+text parts and output messages. Streaming deduplication is request-local and keyed by item ID, content index,
+and annotation index, so separate references to the same URL remain distinct. `_parse_chunk_from_openai` retains
+the signature overridden by released Foundry clients.
+
 ## Dependencies
 
 - `agent-framework-core` — core abstractions

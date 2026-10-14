@@ -2,6 +2,9 @@
 
 This directory contains samples that demonstrate how to build AG-UI (Agent UI Protocol) servers and clients using the Microsoft Agent Framework.
 
+> [!WARNING]
+> These samples do not authenticate AG-UI callers and are intended for local development. Before exposing an endpoint to other users, configure endpoint authorization and caller-scoped session isolation as described in [Security considerations](#security-considerations). Signing in with `az login` authenticates the server to Azure OpenAI, not users to the AG-UI endpoint.
+
 ## Prerequisites
 
 - .NET 9.0 or later
@@ -223,9 +226,62 @@ dotnet run
 
 ## Security considerations
 
-`ConversationId` keeps request/response continuity. It is not proof that the caller owns that conversation. In multi-user deployments, authenticate each AG-UI request and authorize conversation access using your application's real boundary, such as the authenticated user, tenant, or workspace.
+See the [shared hosting guide](../../04-hosting/README.md) for the common authentication, authorization, and isolation model, including differences between AG-UI, A2A, and OpenAI hosting.
 
-If your ASP.NET Core host shares session storage across users, pair `MapAGUIServer` with an isolation strategy such as `UseClaimsBasedAgentIsolation(...)` so the storage key includes a principal-specific dimension instead of relying on the conversation identifier alone.
+### Endpoint access and session isolation are separate controls
+
+The AG-UI `threadId` identifies a conversation to resume; it does not prove that the caller owns it. `AGUIChatClient` does not expose an `IChatClient` `ConversationId`, so do not rely on that property to authorize AG-UI requests.
+
+Multi-user hosts need both controls:
+
+- **Authentication and authorization:** Validate the caller's credentials and require authorization on the AG-UI endpoint. `AddAGUIServer()` and `MapAGUIServer()` do not configure these controls. Protect endpoints even without session persistence, because callers can consume model resources and invoke the agent's exposed tools.
+- **Session isolation:** Register an `AgentIsolationKeyProvider` so persisted sessions are partitioned by a trusted caller identity. Authentication alone does not prevent one authenticated caller from supplying another caller's `threadId`.
+
+`MapAGUIServer` automatically wraps a keyed `AgentSessionStore` in `IsolationKeyScopedAgentSessionStore` unless the decorator is already present. Both session lookups and saves use the isolation partition. Two users presenting the same `threadId` therefore access different sessions when their isolation keys differ. This applies to directly registered stores, including the Step04 sample; using `WithSessionStore(...)` or `WithInMemorySessionStore(...)` is not required for the endpoint to add the wrapper.
+
+Without a provider, the endpoint-added wrapper leaves storage keys unchanged. Any caller who knows a persisted thread's ID can then resume that session. With a provider, that wrapper rejects missing or blank isolation keys instead of falling back to shared storage. A preconfigured isolation decorator retains its own options; the `WithSessionStore(...)` and `WithInMemorySessionStore(...)` helpers use strict isolation by default, requiring a key even if no provider was registered.
+
+If no session store is registered, sessions are not persisted across requests. Step04 explicitly enables persistence because approval continuations require server-recorded state. Approval matching does not replace caller isolation or endpoint authorization.
+
+### Configure a multi-user host
+
+Reference `Microsoft.Agents.AI.Hosting.AspNetCore` for the claims-based provider and import `Microsoft.Agents.AI.Hosting`. Configure a real [ASP.NET Core authentication scheme](https://learn.microsoft.com/aspnet/core/security/authentication/) for your application first, using `AddAuthentication(...).Add...(...)` to validate the credentials your clients send. The following additions are **not** a replacement for that scheme.
+
+Before `builder.Build()`:
+
+```csharp
+using Microsoft.Agents.AI.Hosting;
+
+// Keep the application's authentication scheme registration here.
+builder.Services.AddAuthorization();
+builder.Services.AddHttpContextAccessor();
+builder.Services.UseClaimsBasedAgentIsolation();
+```
+
+After `builder.Build()`, use the sample's existing agent when mapping the endpoint:
+
+```csharp
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapAGUIServer("/", agent).RequireAuthorization();
+```
+
+Use the sample's actual route and agent variable (`baseAgent` in Step04), or apply `RequireAuthorization()` to the named-agent overload. For a host with multiple AG-UI endpoints, protect each one or their route group. Use an application-specific authorization policy when only some authenticated callers may access an agent; tools must also enforce any resource-specific permissions they require.
+
+`UseClaimsBasedAgentIsolation()` defaults to `ClaimTypes.NameIdentifier`. Your authentication scheme must populate that claim with a stable identifier unique across all callers served by the host. If it exposes the subject as an unmapped `sub` claim, configure the provider explicitly:
+
+```csharp
+builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = "sub" });
+```
+
+Use this instead of the default registration, not in addition to it. A subject or object ID may only be unique within one issuer or tenant. Hosts accepting multiple issuers or tenants may need a custom `AgentIsolationKeyProvider` that combines validated issuer/tenant and subject values. Do not use display names, client-submitted user IDs, or `threadId` as caller identity. A tenant-only key intentionally shares sessions within that tenant; use a per-user key when users within a tenant must be isolated.
+
+### Authenticate every client request
+
+Clients must send the authenticated caller's credentials on every AG-UI request, including tool continuations and approval responses. Configure the `HttpClient` used by `AGUIChatClient` for your authentication scheme, and handle challenges or authorization failures. The sample clients do not acquire or send these credentials as shipped.
+
+For a web application that forwards requests to a separate AG-UI server, signing a user into the web application does not automatically authenticate the outbound AG-UI call. Propagate an appropriate validated per-user credential; a single shared service identity would place all users in the same isolation partition.
 
 ## Troubleshooting
 

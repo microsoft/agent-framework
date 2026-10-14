@@ -964,6 +964,7 @@ async def test_streaming_output_deny_releases_nothing(chat_client_base: MockBase
 
     assert updates == []  # nothing egressed before the deny
     assert points(records)[-1] == "agent_shutdown"  # the record trail is closed
+    assert points(records).count("agent_shutdown") == 1
 
 
 @requires_sdk
@@ -2193,7 +2194,10 @@ async def test_custom_run_loop_agent_nested_sub_agent_persists_inline() -> None:
                 # The custom loop invokes the sub-agent tool directly, bypassing
                 # _execute_single_function_call (like GitHubCopilotAgent's loop).
                 tool_context = FunctionInvocationContext(
-                    function=sub_tool, arguments={"task": "delegated task"}, session=session
+                    function=sub_tool,
+                    arguments={"task": "delegated task"},
+                    session=session,
+                    parent_service_session_state_keys=(),
                 )
                 await sub_tool.invoke(arguments={"task": "delegated task"}, context=tool_context)
                 response: AgentResponse[Any] = AgentResponse(
@@ -2522,7 +2526,7 @@ async def test_tool_nested_run_inside_drained_attempt_persists_inline() -> None:
 
 
 @requires_sdk
-async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_base: MockBaseChatClient) -> None:
+async def test_stream_hooks_are_covered_by_the_output_verdict(chat_client_base: MockBaseChatClient) -> None:
     seen_at_output: list[Any] = []
 
     class RecordingOutputGuard:
@@ -2532,7 +2536,7 @@ async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_
             return ALLOW
 
     class HookInjector(AgentMiddleware):
-        """Previously: rewrote egressed updates AFTER the output verdict (fail-open)."""
+        """Rewrites the stream inside the agent-hooks enforcement boundary."""
 
         async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
             def sneak(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -2555,11 +2559,65 @@ async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_
         updates.append(update.text)
     final = await stream.get_final_response()
 
-    # Streamed egress and the final response match the verdicted content exactly;
-    # the hook's rewrite could not escape the gate.
-    assert seen_at_output == ["update - hi"]
-    assert "".join(updates) == "update - hi"
-    assert final.text == "update - hi"
+    # The transform runs before the output verdict, and streamed egress and the
+    # final response both match the content the verdict inspected.
+    expected = "update - hi INJECTED-AFTER-VERDICT"
+    assert seen_at_output == [expected]
+    assert "".join(updates) == expected
+    assert final.text == expected
+
+
+@requires_sdk
+async def test_outer_result_transform_runs_before_output_verdict(chat_client_base: MockBaseChatClient) -> None:
+    """Terminal enforcement covers transforms registered after the bundle unwinds."""
+    seen_at_output: list[Any] = []
+
+    class RecordingOutputGuard:
+        def intercept(self, context: dict[str, Any]) -> Any:
+            if context["interception_point"] == "output":
+                seen_at_output.append(context["target"]["content"])
+            return ALLOW
+
+    class OuterTransform(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            context.stream_result_transforms.append(
+                lambda _: AgentResponse(messages=[Message(role="assistant", contents=["outer replacement"])])
+            )
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[OuterTransform(), create_agent_hooks_middleware([RecordingOutputGuard()])],
+    )
+
+    stream = agent.run("hi", stream=True)
+    assert "".join([update.text async for update in stream]) == "outer replacement"
+    assert (await stream.get_final_response()).text == "outer replacement"
+    assert seen_at_output == ["outer replacement"]
+
+
+@requires_sdk
+async def test_outer_middleware_cannot_replace_agent_hooks_release_converter(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """The trusted terminal converter owns post-verdict update derivation."""
+
+    class OuterConverter(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            context.stream_result_to_updates = lambda _: [
+                AgentResponseUpdate(contents=[Content.from_text("BYPASS")], role="assistant")
+            ]
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[OuterConverter(), create_agent_hooks_middleware([AllowGuard()])],
+    )
+
+    stream = agent.run("hi", stream=True)
+    released = "".join([update.text async for update in stream])
+    assert released == "update - hi"
+    assert "BYPASS" not in released
 
 
 @requires_sdk
@@ -2648,7 +2706,9 @@ async def test_gated_response_stream_applies_pending_hooks_before_the_gate_and_s
         order.append(f"rederive({final})")
         return list(final)
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    assert type(stream) is ResponseStream
 
     def transform(update: str) -> str:
         order.append(f"transform({update})")
@@ -2693,7 +2753,12 @@ async def test_gated_response_stream_combinator_owns_the_rederive_rule() -> None
     async def transforming_gate(updates: list[str], final: str) -> tuple[str, bool]:
         return "XY", True
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=transforming_gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(
+            consume=consume,
+            gate=transforming_gate,
+            rederive=rederive,
+        )
     assert [update async for update in stream] == ["X", "Y"]
     assert await stream.get_final_response() == "XY"
     assert rederived == ["XY"]
@@ -2702,7 +2767,12 @@ async def test_gated_response_stream_combinator_owns_the_rederive_rule() -> None
         return final, False
 
     rederived.clear()
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=passthrough_gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(
+            consume=consume,
+            gate=passthrough_gate,
+            rederive=rederive,
+        )
     assert [update async for update in stream] == ["a", "b"]
     assert rederived == []
 
@@ -2720,7 +2790,8 @@ async def test_gated_response_stream_raising_rederive_releases_nothing() -> None
     def rederive(final: str) -> list[str]:
         raise RuntimeError("rederive failed")
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    with pytest.warns(DeprecationWarning, match="buffered_and_gated"):
+        stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
     released: list[str] = []
     with pytest.raises(RuntimeError, match="rederive failed"):
         async for update in stream:

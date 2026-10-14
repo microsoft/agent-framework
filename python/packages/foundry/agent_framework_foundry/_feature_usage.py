@@ -32,6 +32,7 @@ class FeatureIndex(IntEnum):
 
 _FOUNDRY_ORIGIN_SUFFIXES = (
     "inference.ai.azure.com",
+    "openai.azure.com",
     "services.ai.azure.com",
 )
 

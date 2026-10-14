@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Content, SecretString
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import USER_AGENT_KEY, get_user_agent
 from azure.core.credentials import AzureKeyCredential
+from azure.identity.aio import AzureCliCredential
 
 from agent_framework_foundry import (
     FoundryEmbeddingClient,
@@ -23,23 +24,39 @@ def _make_embed_response(
     embeddings: Sequence[list[float]],
     model: str = "test-model",
     prompt_tokens: int = 10,
+    indices: Sequence[int] | None = None,
 ) -> MagicMock:
     """Create a mock EmbeddingsResult."""
     data = []
-    for emb in embeddings:
+    for position, emb in enumerate(embeddings):
         item = MagicMock()
         item.embedding = emb
+        item.index = indices[position] if indices is not None else position
         data.append(item)
 
     usage = MagicMock()
     usage.prompt_tokens = prompt_tokens
     usage.completion_tokens = 0
+    usage.total_tokens = prompt_tokens
 
     result = MagicMock()
     result.data = data
     result.model = model
     result.usage = usage
     return result
+
+
+def _make_openai_client(
+    embeddings: Sequence[list[float]] = ([0.1, 0.2, 0.3],),
+    *,
+    indices: Sequence[int] | None = None,
+) -> MagicMock:
+    """Create a mock OpenAI client exposed by AIProjectClient."""
+    client = MagicMock()
+    client.base_url = "https://test.services.ai.azure.com/api/projects/test/openai/v1/"
+    client.embeddings.create = AsyncMock(return_value=_make_embed_response(embeddings, indices=indices))
+    client.close = AsyncMock()
+    return client
 
 
 @pytest.fixture
@@ -190,6 +207,210 @@ class TestRawFoundryEmbeddingClient:
         """service_url returns the configured endpoint."""
         assert raw_client.service_url() == "https://test.inference.ai.azure.com"
 
+    async def test_project_client_text_embeddings(self) -> None:
+        """OpenAI deployments are called through an existing project client."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        project_client.close = AsyncMock()
+        client = RawFoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+        )
+
+        result = await client.get_embeddings(["hello"])
+
+        project_client.get_openai_client.assert_called_once_with()
+        openai_client.embeddings.create.assert_awaited_once_with(
+            input=["hello"],
+            model="text-embedding-3-small",
+        )
+        assert result[0].vector == [0.1, 0.2, 0.3]
+        assert result[0].dimensions == 3
+        assert result[0].model == "test-model"
+        assert result.usage == {"input_token_count": 10, "total_token_count": 10}
+        assert client.service_url() == "https://test.openai.azure.com/openai/v1/"
+        assert str(openai_client.base_url) == "https://test.openai.azure.com/openai/v1/"
+
+        await client.close()
+        openai_client.close.assert_awaited_once()
+        project_client.close.assert_not_called()
+
+    async def test_project_client_options_and_response_order(self) -> None:
+        """Project requests pass options through and restore response ordering."""
+        openai_client = _make_openai_client([[0.3], [0.1]], indices=[1, 0])
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        client = RawFoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+        )
+
+        result = await client.get_embeddings(
+            ["first", "second"],
+            options={
+                "model": "text-embedding-3-large",
+                "dimensions": 256,
+                "encoding_format": "float",
+                "input_type": "document",
+                "extra_parameters": {"custom": "value"},
+            },
+        )
+
+        openai_client.embeddings.create.assert_awaited_once_with(
+            input=["first", "second"],
+            model="text-embedding-3-large",
+            dimensions=256,
+            encoding_format="float",
+            extra_body={"custom": "value", "input_type": "document"},
+        )
+        assert [embedding.vector for embedding in result] == [[0.1], [0.3]]
+
+    async def test_project_mode_rejects_images_before_sending_text(self) -> None:
+        """Project OpenAI embedding deployments reject image inputs without partial requests."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        client = RawFoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+        )
+        image = Content.from_data(data=b"\x89PNG", media_type="image/png")
+
+        with pytest.raises(ValueError, match="Image embeddings require a Foundry Models inference endpoint"):
+            await client.get_embeddings(["hello", image])
+
+        openai_client.embeddings.create.assert_not_awaited()
+
+    async def test_owned_project_client_is_closed(self) -> None:
+        """A project client created by the embedding client is closed with it."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        project_client.close = AsyncMock()
+
+        with patch("azure.ai.projects.aio.AIProjectClient", return_value=project_client):
+            client = RawFoundryEmbeddingClient(
+                model="text-embedding-3-small",
+                project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+                credential=MagicMock(),
+            )
+
+        await client.close()
+
+        openai_client.close.assert_awaited_once()
+        project_client.close.assert_awaited_once()
+
+    def test_project_endpoint_from_env_ignores_empty_models_endpoint(self) -> None:
+        """Empty Models settings do not override a configured project endpoint."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        credential = MagicMock()
+        default_headers = {"X-Test": "value"}
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FOUNDRY_PROJECT_ENDPOINT": "https://test.services.ai.azure.com/api/projects/test",
+                    "FOUNDRY_MODELS_ENDPOINT": "",
+                    "FOUNDRY_MODELS_API_KEY": "",
+                    "FOUNDRY_EMBEDDING_MODEL": "text-embedding-3-small",
+                },
+                clear=True,
+            ),
+            patch(
+                "azure.ai.projects.aio.AIProjectClient",
+                return_value=project_client,
+            ) as project_client_type,
+        ):
+            client = RawFoundryEmbeddingClient(
+                credential=credential,
+                allow_preview=True,
+                default_headers=default_headers,
+            )
+
+        assert client.project_client is project_client
+        assert project_client_type.call_args.kwargs["endpoint"] == (
+            "https://test.services.ai.azure.com/api/projects/test"
+        )
+        assert project_client_type.call_args.kwargs["credential"] is credential
+        assert project_client_type.call_args.kwargs["allow_preview"] is True
+        assert project_client_type.call_args.kwargs["user_agent"] == get_user_agent()
+        project_client.get_openai_client.assert_called_once_with(
+            default_headers=default_headers,
+            http_client=ANY,
+        )
+
+    def test_project_endpoint_requires_credential(self) -> None:
+        """Creating a project client requires a token credential."""
+        with patch.dict(
+            os.environ,
+            {
+                "FOUNDRY_PROJECT_ENDPOINT": "https://test.services.ai.azure.com/api/projects/test",
+                "FOUNDRY_EMBEDDING_MODEL": "text-embedding-3-small",
+            },
+            clear=True,
+        ):
+            with pytest.raises(ValueError, match="Azure credential is required"):
+                RawFoundryEmbeddingClient()
+
+            with pytest.raises(ValueError, match="A token credential is required"):
+                RawFoundryEmbeddingClient(credential=AzureKeyCredential("test-key"))
+
+    def test_explicit_project_and_inference_sources_raise(self) -> None:
+        """Explicit project and Models endpoint configuration cannot be combined."""
+        with pytest.raises(ValueError, match="cannot be combined with Foundry Models"):
+            RawFoundryEmbeddingClient(
+                model="text-embedding-3-small",
+                project_client=MagicMock(),
+                endpoint="https://test.inference.ai.azure.com",
+            )
+
+    @pytest.mark.parametrize(("endpoint", "api_key"), [("", ""), ("   ", "   ")])
+    def test_blank_explicit_models_values_do_not_conflict_with_project_client(
+        self,
+        endpoint: str,
+        api_key: str,
+    ) -> None:
+        """Blank explicit Models settings are absent when selecting project mode."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+
+        client = RawFoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+            endpoint=endpoint,
+            api_key=api_key,
+        )
+
+        assert client.project_client is project_client
+        project_client.get_openai_client.assert_called_once_with()
+
+    def test_legacy_models_endpoint_wins_when_both_env_endpoints_are_set(self) -> None:
+        """Existing inference configuration remains preferred when both endpoints come from env."""
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FOUNDRY_PROJECT_ENDPOINT": "https://test.services.ai.azure.com/api/projects/test",
+                    "FOUNDRY_MODELS_ENDPOINT": "https://test.inference.ai.azure.com",
+                    "FOUNDRY_MODELS_API_KEY": "test-key",
+                    "FOUNDRY_EMBEDDING_MODEL": "text-embedding-3-small",
+                },
+                clear=True,
+            ),
+            patch("azure.ai.projects.aio.AIProjectClient") as project_client_type,
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_client_type,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient"),
+        ):
+            RawFoundryEmbeddingClient()
+
+        project_client_type.assert_not_called()
+        text_client_type.assert_called_once()
+
     def test_settings_from_env(self) -> None:
         """Settings are loaded from environment variables."""
         with (
@@ -314,6 +535,57 @@ class TestFoundryEmbeddingClient:
         )
         assert client.otel_provider_name == "custom-provider"
 
+    def test_project_otel_provider_name(self) -> None:
+        """Project-backed embeddings use the Foundry telemetry provider name."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+
+        client = FoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+        )
+
+        assert client.otel_provider_name == "azure.ai.foundry"
+
+    def test_project_client_serialization_round_trip(self) -> None:
+        """Project-backed clients serialize without leaking an unsupported telemetry field."""
+        openai_client = _make_openai_client()
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = openai_client
+        default_headers = {
+            "X-Test": "value",
+            USER_AGENT_KEY: "custom-user-agent",
+        }
+        client = FoundryEmbeddingClient(
+            model="text-embedding-3-small",
+            project_client=project_client,
+            default_headers=default_headers,
+        )
+
+        serialized = client.to_dict()
+
+        assert "OTEL_PROVIDER_NAME" not in serialized
+        assert "project_client" not in serialized
+        assert serialized["default_headers"] == {"X-Test": "value"}
+        assert serialized["otel_provider_name"] == "azure.ai.foundry"
+
+        restored_openai_client = _make_openai_client()
+        restored_project_client = MagicMock()
+        restored_project_client.get_openai_client.return_value = restored_openai_client
+        restored = FoundryEmbeddingClient.from_dict(
+            serialized,
+            dependencies={
+                "foundry_embedding_client": {
+                    "project_client": restored_project_client,
+                }
+            },
+        )
+
+        assert restored.project_client is restored_project_client
+        assert restored.otel_provider_name == "azure.ai.foundry"
+        restored_project_client.get_openai_client.assert_called_once_with(default_headers={"X-Test": "value"})
+
 
 _SKIP_REASON = "Foundry inference integration tests disabled"
 
@@ -343,6 +615,34 @@ class TestFoundryEmbeddingIntegration:
         """Generate text embeddings against a live endpoint."""
         client = FoundryEmbeddingClient()
         result = await client.get_embeddings(["Hello, world!"])
+        assert len(result) == 1
+        assert len(result[0].vector) > 0
+        assert result[0].model is not None
+
+
+skip_if_foundry_project_embedding_integration_tests_disabled = pytest.mark.skipif(
+    not os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or not os.environ.get("FOUNDRY_EMBEDDING_MODEL"),
+    reason="No FOUNDRY_PROJECT_ENDPOINT or FOUNDRY_EMBEDDING_MODEL provided; skipping integration test.",
+)
+
+
+class TestFoundryProjectEmbeddingIntegration:
+    """Integration tests for OpenAI embedding deployments in a Foundry project."""
+
+    @pytest.mark.flaky
+    @pytest.mark.integration
+    @skip_if_foundry_project_embedding_integration_tests_disabled
+    async def test_text_embedding_live(self) -> None:
+        """Generate text embeddings through a Foundry project endpoint."""
+        async with (
+            AzureCliCredential() as credential,
+            FoundryEmbeddingClient(
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                credential=cast(Any, credential),
+            ) as client,
+        ):
+            result = await client.get_embeddings(["Hello, world!"])
+
         assert len(result) == 1
         assert len(result[0].vector) > 0
         assert result[0].model is not None

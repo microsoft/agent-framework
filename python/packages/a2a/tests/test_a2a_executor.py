@@ -13,7 +13,7 @@ from agent_framework import (
 )
 from agent_framework._types import AgentResponse
 from agent_framework.a2a import A2AExecutor
-from pytest import fixture, raises
+from pytest import fixture, mark, raises
 
 
 @fixture
@@ -648,10 +648,10 @@ class TestA2AExecutorHandleEvents:
         mock_updater.update_status.assert_called_once()
         assert mock_updater.new_agent_message.called
 
-    async def test_handle_data_content(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
-        """Test handling messages with data content."""
+    @mark.parametrize("data", [b"test file data", b""])
+    async def test_handle_data_content(self, executor: A2AExecutor, mock_updater: MagicMock, data: bytes) -> None:
+        """Test handling messages with data content, including empty attachments."""
         # Arrange
-        data = b"test file data"
         message = Message(
             contents=[Content.from_data(data=data, media_type="application/octet-stream")],
             role="assistant",
@@ -664,6 +664,11 @@ class TestA2AExecutorHandleEvents:
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
+        parts = mock_updater.new_agent_message.call_args.kwargs["parts"]
+        assert len(parts) == 1
+        assert parts[0].WhichOneof("content") == "raw"
+        assert parts[0].raw == data
+        assert parts[0].media_type == "application/octet-stream"
 
     async def test_handle_uri_content(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with URI content."""

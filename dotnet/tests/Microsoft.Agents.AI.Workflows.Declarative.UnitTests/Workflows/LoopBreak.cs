@@ -17,6 +17,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 
 namespace Test.WorkflowProviders;
@@ -55,8 +57,14 @@ public static class WorkflowProvider
     /// </summary>
     internal sealed class ForeachLoopExecutor(FormulaSession session) : ActionExecutor(id: "foreach_loop", session)
     {
+        private const string IndexStateKey = nameof(_index);
+        private const string ValuesStateKey = nameof(_values);
+        private const string HasValueStateKey = nameof(HasValue);
+        private const string SensitivityStateKey = nameof(_sensitivity);
+
         private int _index;
-        private object[] _values = [];
+        private PortableValue[] _values = [];
+        private SensitivityLevel _sensitivity;
     
         public bool HasValue { get; private set; }
     
@@ -64,22 +72,23 @@ public static class WorkflowProvider
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
             this._index = 0;
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
+            EvaluationResult<object?> evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("""["a", "b", "c", "d", "e", "f"]""").ConfigureAwait(false);
     
-            if (evaluatedValue == null)
+            if (evaluatedValue.Value == null)
             {
                 this._values = [];
                 this.HasValue = false;
             }
             else
-            if (evaluatedValue is IEnumerable evaluatedList)
+            if (evaluatedValue.Value is IEnumerable evaluatedList)
             {
-                this._values = [.. evaluatedList];
+                this._values = [.. evaluatedList.Cast<object?>().Select(ToPortableValue)];
             }
             else
             {
-                this._values = [evaluatedValue];
+                this._values = [ToPortableValue(evaluatedValue.Value)];
             }
+            this._sensitivity = evaluatedValue.Sensitivity;
     
             await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
     
@@ -90,10 +99,10 @@ public static class WorkflowProvider
         {
             if (this.HasValue = this._index < this._values.Length)
             {
-                object value = this._values[this._index];
+                object? value = this._values[this._index].NormalizePortableValue();
     
-            await context.QueueStateUpdateAsync(key: "LoopValue", value: value, scopeName: "Local").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "LoopIndex", value: this._index, scopeName: "Local").ConfigureAwait(false);
+                await context.QueueStateUpdateWithSensitivityAsync(key: "LoopValue", value: new EvaluationResult<object?>(value, this._sensitivity), scopeName: "Local").ConfigureAwait(false);
+                await context.QueueStateUpdateAsync(key: "LoopIndex", value: this._index, scopeName: "Local").ConfigureAwait(false);
     
                 this._index++;
             }
@@ -109,6 +118,36 @@ public static class WorkflowProvider
             await context.QueueStateUpdateAsync(key: "LoopValue", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
             await context.QueueStateUpdateAsync(key: "LoopIndex", value: UnassignedValue.Instance, scopeName: "Local").ConfigureAwait(false);
         }
+
+        protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            await context.QueueStateUpdateAsync(IndexStateKey, this._index, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(ValuesStateKey, this._values, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(HasValueStateKey, this.HasValue, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(SensitivityStateKey, this._sensitivity, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+
+        protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        {
+            PortableValue[]? savedValues =
+                await context.ReadStateAsync<PortableValue[]>(ValuesStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (savedValues is null)
+            {
+                return;
+            }
+
+            this._values = savedValues;
+            this._index = await context.ReadStateAsync<int>(IndexStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            this.HasValue = await context.ReadStateAsync<bool>(HasValueStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            this._sensitivity = await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static PortableValue ToPortableValue(object? value) =>
+            new(value ?? UnassignedValue.Instance);
     }
     
     /// <summary>
@@ -119,8 +158,8 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.Count + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            var evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("Local.Count + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

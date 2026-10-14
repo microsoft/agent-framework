@@ -199,6 +199,12 @@ public static class ChatClientBuilderExtensions
     /// approve.
     /// </para>
     /// <para>
+    /// Binding applies to responses for every tool category, including tools that do not require human approval. A
+    /// response takes effect only when its matching request was recorded in the current <see cref="AgentSession"/> by
+    /// the framework. Request content supplied or replayed by the caller does not establish that binding, so hosts must
+    /// persist the agent session across requests that participate in the same continuation.
+    /// </para>
+    /// <para>
     /// This extension method is intended for use with custom chat client stacks when
     /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
     /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),

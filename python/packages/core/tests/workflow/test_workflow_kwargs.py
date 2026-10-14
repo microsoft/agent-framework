@@ -1114,6 +1114,202 @@ async def test_subworkflow_resume_tools_preserve_child_invocation_kwargs() -> No
     ]
 
 
+@pytest.mark.parametrize(
+    "kwargs_shape", ["child-values", "wrapper-only", "legacy-wrapper-only", "empty-mapping", "empty-typed"]
+)
+@pytest.mark.parametrize(
+    ("replace_function_kwargs", "replace_client_kwargs", "nested", "restore_checkpoint"),
+    [
+        (True, True, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (True, True, True, False),
+        (True, False, True, False),
+        (False, True, True, False),
+        (True, True, False, True),
+        (True, False, False, True),
+        (False, True, False, True),
+        (False, False, False, False),
+        (False, False, True, False),
+        (False, False, False, True),
+    ],
+    ids=[
+        "both",
+        "function-only",
+        "client-only",
+        "two-level-both",
+        "two-level-function-only",
+        "two-level-client-only",
+        "checkpoint-both",
+        "checkpoint-function-only",
+        "checkpoint-client-only",
+        "omitted",
+        "two-level-omitted",
+        "checkpoint-omitted",
+    ],
+)
+async def test_subworkflow_cancellation_replaces_child_invocation_kwargs(
+    replace_function_kwargs: bool,
+    replace_client_kwargs: bool,
+    nested: bool,
+    restore_checkpoint: bool,
+    kwargs_shape: str,
+) -> None:
+    """Nested cancellation replaces supplied kwargs and clears a stale omitted peer channel."""
+    from agent_framework import (
+        Executor,
+        InMemoryCheckpointStorage,
+        Workflow,
+        WorkflowBuilder,
+        WorkflowContext,
+        handler,
+        response_handler,
+    )
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    captured_child_kwargs: list[dict[str, Any]] = []
+
+    class RequestingExecutor(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            await ctx.request_info("Continue?", str, request_id="child-request")
+
+        @response_handler
+        async def resume(self, request: str, response: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del request, response, ctx
+
+        async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del request_id
+            captured_child_kwargs.append(ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {}))
+
+    storage = InMemoryCheckpointStorage()
+
+    def build_parent() -> Workflow:
+        child = WorkflowBuilder(start_executor=RequestingExecutor(id="child-requester")).build()
+        child_executor = WorkflowExecutor(child, id="child", propagate_request=True)
+        start_executor = (
+            WorkflowExecutor(
+                WorkflowBuilder(start_executor=child_executor).build(), id="middle", propagate_request=True
+            )
+            if nested
+            else child_executor
+        )
+        return WorkflowBuilder(
+            name="nested-cancellation", start_executor=start_executor, checkpoint_storage=storage
+        ).build()
+
+    parent = build_parent()
+    old_function_kwargs = {"phase": "old"}
+    old_client_kwargs = {"model": "old"}
+    new_function_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] = WorkflowInvocationKwargs(
+        global_kwargs={"phase": "new"},
+        executor_kwargs={"child": {"parent": "new"}, "child-requester": {"request": "new"}},
+    )
+    new_client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] = WorkflowInvocationKwargs(
+        global_kwargs={"model": "new"},
+        executor_kwargs={"child": {"parent": "new"}, "child-requester": {"timeout": 30}},
+    )
+    if kwargs_shape == "wrapper-only":
+        wrapper_id = "middle" if nested else "child"
+        new_function_kwargs = WorkflowInvocationKwargs(executor_kwargs={wrapper_id: {"parent": "new"}})
+        new_client_kwargs = WorkflowInvocationKwargs(executor_kwargs={wrapper_id: {"parent": "new"}})
+    elif kwargs_shape == "legacy-wrapper-only":
+        wrapper_id = "middle" if nested else "child"
+        new_function_kwargs = {wrapper_id: {"parent": "new"}}
+        new_client_kwargs = {wrapper_id: {"parent": "new"}}
+    elif kwargs_shape == "empty-mapping":
+        new_function_kwargs = {}
+        new_client_kwargs = {}
+    elif kwargs_shape == "empty-typed":
+        new_function_kwargs = WorkflowInvocationKwargs()
+        new_client_kwargs = WorkflowInvocationKwargs()
+
+    paused = await parent.run(
+        "start",
+        function_invocation_kwargs=old_function_kwargs,
+        client_kwargs=old_client_kwargs,
+    )
+    [request] = paused.get_request_info_events()
+    if restore_checkpoint:
+        checkpoints = await storage.list_checkpoints(workflow_name=parent.name)
+        pending_checkpoint = max(
+            (checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events),
+            key=lambda checkpoint: checkpoint.timestamp,
+        )
+        parent = build_parent()
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            checkpoint_id=pending_checkpoint.checkpoint_id,
+            checkpoint_storage=storage,
+            function_invocation_kwargs=new_function_kwargs if replace_function_kwargs else None,
+            client_kwargs=new_client_kwargs if replace_client_kwargs else None,
+        )
+    else:
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            function_invocation_kwargs=new_function_kwargs if replace_function_kwargs else None,
+            client_kwargs=new_client_kwargs if replace_client_kwargs else None,
+        )
+
+    expected_child_kwargs: dict[str, Any] = {}
+    if replace_function_kwargs:
+        expected_child_kwargs["function_invocation_kwargs"] = {
+            "global_kwargs": {"phase": "new"} if kwargs_shape == "child-values" else {},
+            "executor_kwargs": {"child-requester": {"request": "new"}} if kwargs_shape == "child-values" else {},
+        }
+    if replace_client_kwargs:
+        expected_child_kwargs["client_kwargs"] = {
+            "global_kwargs": {"model": "new"} if kwargs_shape == "child-values" else {},
+            "executor_kwargs": {"child-requester": {"timeout": 30}} if kwargs_shape == "child-values" else {},
+        }
+    if not replace_function_kwargs and not replace_client_kwargs:
+        expected_child_kwargs = {
+            "function_invocation_kwargs": {"global_kwargs": old_function_kwargs, "executor_kwargs": {}},
+            "client_kwargs": {"global_kwargs": old_client_kwargs, "executor_kwargs": {}},
+        }
+
+    assert captured_child_kwargs == [expected_child_kwargs]
+
+
+@pytest.mark.parametrize("kwargs_shape", ["typed", "legacy", "omitted"])
+async def test_subworkflow_cancellation_kwargs_reach_downstream_agent(kwargs_shape: str) -> None:
+    """Cancellation clears scoped-out kwargs before a real downstream AgentExecutor runs."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler, response_handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class RequestingExecutor(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del message
+            await ctx.request_info("Continue?", str, request_id="child-request")
+
+        @response_handler
+        async def resume(self, request: str, response: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del request, response, ctx
+
+        async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del request_id
+            await ctx.send_message([Message("user", ["Continue after cancellation"])])
+
+    agent = _KwargsCapturingAgent(name="downstream")
+    requester = RequestingExecutor(id="child-requester")
+    child = WorkflowBuilder(start_executor=requester).add_edge(requester, AgentExecutor(agent)).build()
+    parent = WorkflowBuilder(start_executor=WorkflowExecutor(child, id="child", propagate_request=True)).build()
+    paused = await parent.run("start", function_invocation_kwargs={"phase": "old"}, client_kwargs={"model": "old"})
+    [request] = paused.get_request_info_events()
+    replacement_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    if kwargs_shape == "typed":
+        replacement_kwargs = WorkflowInvocationKwargs(executor_kwargs={"child": {"parent": "new"}})
+    elif kwargs_shape == "legacy":
+        replacement_kwargs = {"child": {"parent": "new"}}
+    await parent.cancel_pending_requests([request.request_id], function_invocation_kwargs=replacement_kwargs)
+    assert agent.captured_kwargs[0].get("function_invocation_kwargs") == (
+        {"phase": "old"} if kwargs_shape == "omitted" else {}
+    )
+    assert agent.captured_kwargs[0].get("client_kwargs") == ({"model": "old"} if kwargs_shape == "omitted" else None)
+
+
 async def test_subworkflow_kwargs_accessible_via_state() -> None:
     """Test that kwargs are accessible via State within subworkflow.
 
@@ -1235,6 +1431,216 @@ async def test_mixed_kwargs_route_through_subworkflow() -> None:
         "shared": "value",
         "overridden": "inner_agent2",
     }
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+@pytest.mark.parametrize("typed", [True, False], ids=["typed", "plain"])
+async def test_parent_executor_kwargs_do_not_route_to_same_id_in_subworkflow(
+    kwargs_channel: str,
+    typed: bool,
+) -> None:
+    """Parent-targeted kwargs do not cross into a child executor with the same ID."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class _FanOut(Executor):
+        @handler
+        async def fan_out(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    parent_agent = _KwargsCapturingAgent(name="parent_agent")
+    child_collision = _KwargsCapturingAgent(name="child_collision")
+    child_target = _KwargsCapturingAgent(name="child_target")
+    child = SequentialBuilder(
+        participants=[
+            AgentExecutor(child_collision, id="shared"),
+            AgentExecutor(child_target, id="child"),
+        ]
+    ).build()
+    dispatcher = _FanOut(id="dispatcher")
+    parent_executor = AgentExecutor(parent_agent, id="shared")
+    nested_executor = WorkflowExecutor(child, id="nested")
+    parent = (
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [parent_executor, nested_executor])
+        .build()
+    )
+    executor_kwargs = {
+        "shared": {"api_key": "parent-only"},
+        "child": {"api_key": "child-only"},
+    }
+    invocation_kwargs: Mapping[str, Any] | WorkflowInvocationKwargs
+    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs=executor_kwargs) if typed else executor_kwargs
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert parent_agent.captured_kwargs[0].get(kwargs_channel) == {"api_key": "parent-only"}
+    assert child_collision.captured_kwargs[0].get(kwargs_channel) == ({} if typed else None)
+    assert child_target.captured_kwargs[0].get(kwargs_channel) == {"api_key": "child-only"}
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_non_mapping_parent_executor_kwargs_do_not_become_child_globals(
+    kwargs_channel: str,
+    caplog: "LogCaptureFixture",
+) -> None:
+    """Malformed parent-targeted values remain scoped to the parent graph."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class _FanOut(Executor):
+        @handler
+        async def fan_out(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    parent_agent = _KwargsCapturingAgent(name="parent")
+    child_agent = _KwargsCapturingAgent(name="child")
+    child = SequentialBuilder(participants=[child_agent]).build()
+    dispatcher = _FanOut(id="dispatcher")
+    parent_executor = AgentExecutor(parent_agent, id="parent")
+    nested_executor = WorkflowExecutor(child, id="nested")
+    parent = (
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [parent_executor, nested_executor])
+        .build()
+    )
+    invocation_kwargs = {"parent": "invalid"}
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert parent_agent.captured_kwargs[0].get(kwargs_channel) is None
+    assert child_agent.captured_kwargs[0].get(kwargs_channel) is None
+    assert any("expected a dict for its kwargs" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+@pytest.mark.parametrize("child_kwargs", [{"child_only": True}, None, "invalid"])
+async def test_legacy_mixed_global_survives_parent_key_filtering(
+    kwargs_channel: str,
+    child_kwargs: Mapping[str, Any] | str | None,
+    caplog: "LogCaptureFixture",
+) -> None:
+    """A legacy global slot retains its meaning after parent-targeted entries are removed."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class _FanOut(Executor):
+        @handler
+        async def fan_out(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    parent_agent = _KwargsCapturingAgent(name="parent")
+    child_agent = _KwargsCapturingAgent(name="child")
+    child = SequentialBuilder(participants=[child_agent]).build()
+    dispatcher = _FanOut(id="dispatcher")
+    parent_executor = AgentExecutor(parent_agent, id="parent")
+    nested_executor = WorkflowExecutor(child, id="nested")
+    parent = (
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [parent_executor, nested_executor])
+        .build()
+    )
+    invocation_kwargs = {
+        "__global__": {"shared": "global"},
+        "parent": {"parent_only": True},
+        "child": child_kwargs,
+    }
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert parent_agent.captured_kwargs[0].get(kwargs_channel) == {
+        "shared": "global",
+        "parent_only": True,
+    }
+    if isinstance(child_kwargs, Mapping):
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) == {
+            "shared": "global",
+            "child_only": True,
+        }
+    elif child_kwargs is None:
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) == {"shared": "global"}
+    else:
+        assert child_agent.captured_kwargs[0].get(kwargs_channel) is None
+        assert any("expected a dict for its kwargs" in record.message for record in caplog.records)
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_transparent_subworkflow_preserves_only_its_own_parent_key(kwargs_channel: str) -> None:
+    """A transparent wrapper preserves its own key without leaking unrelated parent keys."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class _FanOut(Executor):
+        @handler
+        async def fan_out(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    wrapped_agent = _KwargsCapturingAgent(name="wrapped")
+    internal_collision = _KwargsCapturingAgent(name="internal_collision")
+    outer_internal = _KwargsCapturingAgent(name="outer_internal")
+    child = SequentialBuilder(
+        participants=[
+            AgentExecutor(wrapped_agent, id="wrapped"),
+            AgentExecutor(internal_collision, id="internal"),
+        ]
+    ).build()
+    dispatcher = _FanOut(id="dispatcher")
+    nested_executor = WorkflowExecutor(child, id="wrapped")
+    outer_internal_executor = AgentExecutor(outer_internal, id="internal")
+    parent = (
+        WorkflowBuilder(start_executor=dispatcher)
+        .add_fan_out_edges(dispatcher, [nested_executor, outer_internal_executor])
+        .build()
+    )
+    invocation_kwargs = {
+        "wrapped": {"wrapper_only": True},
+        "internal": {"outer_only": True},
+    }
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert wrapped_agent.captured_kwargs[0].get(kwargs_channel) == {"wrapper_only": True}
+    assert internal_collision.captured_kwargs[0].get(kwargs_channel) is None
+    assert outer_internal.captured_kwargs[0].get(kwargs_channel) == {"outer_only": True}
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_transparent_subworkflow_preserves_agent_name_alias(kwargs_channel: str) -> None:
+    """A wrapper key routes through a unique child agent-name alias."""
+    from agent_framework import AgentExecutor
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    wrapped_agent = _KwargsCapturingAgent(name="wrapped")
+    child = SequentialBuilder(
+        participants=[
+            AgentExecutor(wrapped_agent, id="wrapped_executor"),
+        ]
+    ).build()
+    parent = SequentialBuilder(
+        participants=[
+            WorkflowExecutor(child, id="wrapped"),
+        ]
+    ).build()
+    invocation_kwargs = {"wrapped": {"wrapper_only": True}}
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    assert wrapped_agent.captured_kwargs[0].get(kwargs_channel) == {"wrapper_only": True}
 
 
 @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
@@ -1484,6 +1890,82 @@ async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent()
     assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent1"}
     assert len(agent2.captured_kwargs) >= 1
     assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent2"}
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_explicit_agent_name_routes_to_executor_id(kwargs_channel: str) -> None:
+    """An explicitly executor-scoped agent name aliases its executor ID."""
+    from agent_framework import AgentExecutor
+
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(
+        participants=[
+            AgentExecutor(agent1, id="executor1"),
+            AgentExecutor(agent2, id="executor2"),
+        ]
+    ).build()
+    executor_kwargs = {
+        "agent1": {"api_key": "agent1-only"},
+        "agent2": {"api_key": "agent2-only"},
+    }
+    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs=executor_kwargs)
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    assert agent1.captured_kwargs[0].get(kwargs_channel) == {"api_key": "agent1-only"}
+    assert agent2.captured_kwargs[0].get(kwargs_channel) == {"api_key": "agent2-only"}
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_plain_agent_name_key_remains_global_with_explicit_executor_id(kwargs_channel: str) -> None:
+    """A plain application kwarg matching an agent name does not trigger executor routing."""
+    from agent_framework import AgentExecutor
+
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(
+        participants=[
+            AgentExecutor(agent1, id="executor1"),
+            AgentExecutor(agent2, id="executor2"),
+        ]
+    ).build()
+    invocation_kwargs = {"agent1": {"api_key": "shared"}}
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    assert agent1.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
+    assert agent2.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_explicit_global_agent_name_alias_targets_executor(kwargs_channel: str) -> None:
+    """An agent named __global__ can be explicitly targeted through a different executor ID."""
+    from agent_framework import AgentExecutor
+
+    global_agent = _KwargsCapturingAgent(name="__global__")
+    sibling = _KwargsCapturingAgent(name="sibling")
+    workflow = SequentialBuilder(
+        participants=[
+            AgentExecutor(global_agent, id="global_agent"),
+            sibling,
+        ]
+    ).build()
+    invocation_kwargs = WorkflowInvocationKwargs(executor_kwargs={"__global__": {"targeted": True}})
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    assert global_agent.captured_kwargs[0].get(kwargs_channel) == {"targeted": True}
+    assert sibling.captured_kwargs[0].get(kwargs_channel) == {}
 
 
 async def test_global_and_per_executor_function_invocation_kwargs_are_merged() -> None:

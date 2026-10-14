@@ -5,6 +5,7 @@ on:
     branches: ["main", "feature*"]
     paths:
       - "python/**"
+      - ".github/workflows/python-tests.yml"
       - "!python/AGENTS.md"
       - "!python/**/AGENTS.md"
       - "!python/.github/skills/*"
@@ -20,9 +21,14 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
+        # Full workspace setup still builds excluded native packages slowly on 3.15.
+        # The dedicated meta-package job below covers the reported Windows 3.14 install path.
+        exclude:
+          - python-version: "3.15"
+            os: windows-latest
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     permissions:
@@ -38,7 +44,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
-          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || '' }}
+          # DuckDB has no Python 3.15 wheels yet; source builds dominate setup time.
+          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot agent-framework-azure-cosmos-memory' || matrix.python-version == '3.15' && 'agent-framework-sql-server agent-framework-duckdb agent-framework-redis' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
@@ -57,3 +64,79 @@ jobs:
           display-options: fEX
           fail-on-empty: false
           title: Test results
+
+  python-meta-package-install:
+    name: Python Meta Install (${{ matrix.python-version }}, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version-file: "python/pyproject.toml"
+          enable-cache: true
+          cache-suffix: windows-meta-${{ matrix.python-version }}
+      - name: Create the Python environment
+        shell: pwsh
+        run: |
+          uv venv --python "${{ matrix.python-version }}" --seed .meta-venv
+          & ".meta-venv\Scripts\python.exe" --version
+      - name: Build release wheelhouse
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p wheelhouse
+          uv build \
+            --directory python \
+            --all-packages \
+            --wheel \
+            --no-build-logs \
+            --no-create-gitignore \
+            --out-dir "${{ github.workspace }}/wheelhouse"
+          uv build \
+            --directory python \
+            --wheel \
+            --no-build-logs \
+            --no-create-gitignore \
+            --out-dir "${{ github.workspace }}/wheelhouse"
+      - name: Resolve the end-user install
+        timeout-minutes: 6
+        shell: pwsh
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          $python = ".meta-venv\Scripts\python.exe"
+          & $python -m pip install --upgrade pip
+          $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
+          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          & $python -m pip install `
+            --dry-run `
+            --ignore-installed `
+            --find-links wheelhouse `
+            --report "pip-resolution-${{ matrix.python-version }}.json" `
+            "agent-framework==$version" `
+            azure-identity
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $stopwatch.Stop()
+          $seconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+          "Pip resolution completed in $seconds seconds." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($stopwatch.Elapsed.TotalSeconds -gt 180) {
+            throw "Pip dependency resolution exceeded the 180-second budget."
+          }
+      - name: Install and import the meta package
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          $python = ".meta-venv\Scripts\python.exe"
+          $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
+          & $python -m pip install --find-links wheelhouse "agent-framework==$version" azure-identity
+          & $python -c "import agent_framework; import azure.identity"

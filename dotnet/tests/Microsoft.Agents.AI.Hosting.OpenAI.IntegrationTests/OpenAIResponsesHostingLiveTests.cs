@@ -26,7 +26,7 @@ public sealed class OpenAIResponsesHostingLiveTests
     private static string? ApiKey => Environment.GetEnvironmentVariable(TestSettings.OpenAIApiKey);
     private static string ModelName => Environment.GetEnvironmentVariable(TestSettings.OpenAIChatModelName) ?? "gpt-4o-mini";
 
-    [Fact]
+    [Fact(Skip = TestSkipReasons.OpenAIIntegrationTests)]
     public async Task NonStreamingRun_RendersResponsesShapedPayloadAsync()
     {
         // Arrange
@@ -49,7 +49,7 @@ public sealed class OpenAIResponsesHostingLiveTests
         Assert.Contains("output", payload.EnumerateObject().Select(p => p.Name));
     }
 
-    [Fact]
+    [Fact(Skip = TestSkipReasons.OpenAIIntegrationTests)]
     public async Task MultiTurn_ContinuesSessionAcrossTurnsAsync()
     {
         // Arrange
