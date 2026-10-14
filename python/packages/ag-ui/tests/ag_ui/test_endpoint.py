@@ -43,6 +43,8 @@ from agent_framework import (
     SessionContext,
     SupportsAgentRun,
     ToolApprovalMiddleware,
+    ToolApprovalRule,
+    ToolApprovalState,
     WorkflowBuilder,
     WorkflowCheckpoint,
     WorkflowContext,
@@ -4818,6 +4820,15 @@ class _ProtocolOnlyAgent:
         return cast(AgentSession, self._inner.get_session(service_session_id, session_id=session_id))
 
 
+class _ObjectStateAgent(_ProtocolOnlyAgent):
+    """Protocol-only wrapper whose server-created conversation holds trusted rules as a ``ToolApprovalState`` object."""
+
+    def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
+        session = AgentSession(session_id=session_id)
+        session.state["custom_approvals"] = ToolApprovalState(rules=[ToolApprovalRule(tool_name="gated_tool")])
+        return session
+
+
 class _BaseAgentWrapper(BaseAgent):
     """``BaseAgent`` subclass that delegates execution but keeps its own empty middleware metadata."""
 
@@ -4840,6 +4851,8 @@ def _wrap_endpoint_agent(agent: SupportsAgentRun, wrapper_kind: str) -> Supports
     """Return ``agent``, or a wrapper that hides its middleware from the agent object AG-UI is handed."""
     if wrapper_kind == "protocol_wrapper":
         return cast(SupportsAgentRun, _ProtocolOnlyAgent(agent))
+    if wrapper_kind == "object_state_wrapper":
+        return cast(SupportsAgentRun, _ObjectStateAgent(agent))
     if wrapper_kind == "base_agent_wrapper":
         return cast(SupportsAgentRun, _BaseAgentWrapper(agent))
     return agent
@@ -4879,6 +4892,7 @@ async def _build_hidden_approval_harness(
     wrapper_kind: str,
     *,
     trusted_rule: bool = False,
+    use_service_session: bool = False,
 ) -> _HiddenApprovalHarness:
     """Build an endpoint whose agent has a custom-namespace ToolApprovalMiddleware, optionally hidden by a wrapper."""
     executed: list[str] = []
@@ -4920,7 +4934,11 @@ async def _build_hidden_approval_harness(
     app = FastAPI()
     add_agent_framework_fastapi_endpoint(
         app,
-        AgentFrameworkAgent(agent=_wrap_endpoint_agent(agent, wrapper_kind), require_confirmation=False),
+        AgentFrameworkAgent(
+            agent=_wrap_endpoint_agent(agent, wrapper_kind),
+            require_confirmation=False,
+            use_service_session=use_service_session,
+        ),
         path="/approval",
         snapshot_store=store,
         snapshot_scope_resolver=lambda _request: "test",
@@ -5046,6 +5064,31 @@ async def test_endpoint_hidden_approval_namespace_keeps_trusted_rules_against_cl
 ) -> None:
     """Client Shared State cannot replace approval state the server already holds, whatever its shape."""
     harness = await _build_hidden_approval_harness(streaming_chat_client_stub, wrapper_kind, trusted_rule=True)
+
+    events = harness.post("Run the test tool", state={"custom_approvals": client_value, "client_value": "available"})
+
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert harness.executed == ["ran"]
+    assert "outcome" not in next(event for event in events if event["type"] == "RUN_FINISHED")
+    snapshot = await harness.store.get(scope="test", thread_id="hidden-approval")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    assert [rule["tool_name"] for rule in snapshot.session_state["custom_approvals"]["rules"]] == ["gated_tool"]
+
+
+@pytest.mark.parametrize(
+    "client_value",
+    [{}, None, {"unrelated": 1}, {"rules": []}, "not-a-mapping", []],
+    ids=["empty-mapping", "null", "unrelated-mapping", "empty-rules", "string", "empty-list"],
+)
+async def test_endpoint_hidden_approval_namespace_keeps_trusted_state_object_against_client_values(
+    streaming_chat_client_stub: Any,
+    client_value: Any,
+) -> None:
+    """A ``ToolApprovalState`` object in a server-created conversation is not replaced by client Shared State."""
+    harness = await _build_hidden_approval_harness(
+        streaming_chat_client_stub, "object_state_wrapper", use_service_session=True
+    )
 
     events = harness.post("Run the test tool", state={"custom_approvals": client_value, "client_value": "available"})
 

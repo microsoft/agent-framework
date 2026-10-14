@@ -29,6 +29,7 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    ToolApprovalRule,
     ToolApprovalState,
 )
 from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
@@ -3794,16 +3795,23 @@ def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
 
 
 def test_tool_approval_state_keys_find_server_state_whatever_the_source_id() -> None:
-    """Server-held approval state is recognized by its fields, so any ``source_id`` is protected once it exists."""
+    """Server-held approval state, as a mapping or a ``ToolApprovalState`` object, is found under any ``source_id``."""
     session_state = {
         "custom_approvals": {"rules": []},
         "queued_only": {"queued_approval_requests": []},
+        "state_object": ToolApprovalState(rules=[ToolApprovalRule(tool_name="gated_tool")]),
+        "empty_state_object": ToolApprovalState(),
         "document": {"title": "synthetic"},
         "text": "value",
         "empty": {},
     }
 
-    assert _tool_approval_state_keys(session_state) == {"custom_approvals", "queued_only"}
+    assert _tool_approval_state_keys(session_state) == {
+        "custom_approvals",
+        "queued_only",
+        "state_object",
+        "empty_state_object",
+    }
 
 
 def test_tool_approval_state_fields_match_tool_approval_state() -> None:

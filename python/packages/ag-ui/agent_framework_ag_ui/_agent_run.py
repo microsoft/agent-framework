@@ -37,6 +37,7 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
     ToolApprovalMiddleware,
+    ToolApprovalState,
     WorkflowAgent,
 )
 from agent_framework._middleware import (
@@ -2593,12 +2594,18 @@ _TOOL_APPROVAL_STATE_FIELDS: tuple[str, ...] = ("rules", "queued_approval_reques
 
 
 def _tool_approval_state_keys(session_state: Mapping[str, Any]) -> set[str]:
-    """Return trusted session-state keys holding ToolApprovalMiddleware state, whatever ``source_id`` named them."""
+    """Return trusted session-state keys holding ToolApprovalMiddleware state, whatever ``source_id`` named them.
+
+    The middleware reads either a mapping or a ``ToolApprovalState`` object, so both forms are recognized.
+    """
     return {
         key
         for key, value in session_state.items()
-        if isinstance(value, Mapping)
-        and any(field in cast(Mapping[str, Any], value) for field in _TOOL_APPROVAL_STATE_FIELDS)
+        if isinstance(value, ToolApprovalState)
+        or (
+            isinstance(value, Mapping)
+            and any(field in cast(Mapping[str, Any], value) for field in _TOOL_APPROVAL_STATE_FIELDS)
+        )
     }
 
 

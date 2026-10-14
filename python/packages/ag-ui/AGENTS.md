@@ -124,8 +124,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   from the agent AG-UI is handed. Tool approval authority is therefore also protected by shape, not only by name: a
   client Shared State value holding a non-empty `rules`, `queued_approval_requests` or `collected_approval_responses`
   list is never merged into `AgentSession.state`, whatever its item encoding (`ToolApprovalState` loads more than
-  JSON objects), and a key that already holds that state in restored server state cannot be replaced by client
-  values. An ignored key stays in Shared State and the model context; it is only not mirrored into the session.
+  JSON objects), and a key that already holds that state in restored server state, as a mapping or a
+  `ToolApprovalState` object, cannot be replaced by client values. An ignored key stays in Shared State and the
+  model context; it is only not mirrored into the session.
   Wrapper agents should still forward `middleware`, `context_providers` and `service_session_state_keys`, and
   `_TOOL_APPROVAL_STATE_FIELDS` must stay in sync with `ToolApprovalState`.
 - Provider-owned keys identify remote resources that the server's own credentialed call addresses — for example
