@@ -53,6 +53,7 @@ relying on remembered preview-era syntax.
 | Declarative definition | YAML or JSON should be the source of truth for a supported agent or workflow. | [Declarative definitions](references/declarative.md) |
 | Evaluation | Expected outputs, tool calls, failed runs, or quality regressions are the main concern. | [Evaluation](references/evaluation.md) |
 | Observability | The task is diagnosing or monitoring runtime behavior with traces, logs, and metrics. | [Observability](references/observability.md) |
+| Extensibility | The application needs a custom provider, ContextProvider, or middleware component. | [Extensibility](references/extensibility.md) |
 | Integration | The task is choosing or wiring a provider, protocol, memory store, tool service, UI, or platform extension. | [Integrations](references/integrations.md) |
 | Hosting and deployment | Working Agent Framework code needs a process host, protocol endpoint, identity contract, or deployment shape. | [Hosting and deployment](references/hosting-and-deployment.md) |
 
