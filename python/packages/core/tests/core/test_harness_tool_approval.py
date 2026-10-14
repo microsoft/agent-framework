@@ -2947,13 +2947,17 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
         calls += 1
         return "hosted"
 
-    def hosted_call(call_id: str, server_label: str) -> Content:
-        return Content.from_function_call(
+    def hosted_approval_request(call_id: str, server_label: str) -> Content:
+        function_call = Content.from_function_call(
             call_id=call_id,
             name="hosted_tool",
             arguments="{}",
+            id=call_id,
+            hosted=True,
+            server_name=server_label,
             additional_properties={"server_label": server_label},
         )
+        return Content.from_function_approval_request(id=call_id, function_call=function_call)
 
     agent = Agent(
         client=chat_client_base,
@@ -2962,7 +2966,7 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     )
     session = AgentSession(session_id="hosted-boundary-session")
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_initial", "server-a")]))
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_approval_request("call_initial", "server-a")]))
     ]
 
     first_response = await agent.run("call hosted a", session=session)
@@ -2974,7 +2978,12 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     assert calls == 0
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_same_server", "server-a")])),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[hosted_approval_request("call_same_server", "server-a")],
+            )
+        ),
         ChatResponse(messages=Message(role="assistant", contents=["same server done"])),
     ]
 
@@ -2985,7 +2994,12 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     assert calls == 0
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_other_server", "server-b")]))
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[hosted_approval_request("call_other_server", "server-b")],
+            )
+        )
     ]
 
     other_server_response = await agent.run("call hosted b", session=session)

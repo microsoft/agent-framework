@@ -1559,7 +1559,10 @@ def test_streaming_chunk_with_refusal(openai_unit_test_env: dict[str, str]) -> N
     assert len(update.contents) == 1
     assert update.contents[0].type == "text"
     assert update.contents[0].text == "I cannot help."
-    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert update.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
@@ -1596,7 +1599,10 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot provide that information."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, str]) -> None:
@@ -1626,7 +1632,10 @@ def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, s
 
     assert [(content.text, content.additional_properties) for content in parsed.messages[0].contents] == [
         ("Partial answer.", {}),
-        ("I cannot continue.", {"model_output_kind": "refusal"}),
+        (
+            "I cannot continue.",
+            {"core": {"model_output_kind": "refusal"}, "model_output_kind": "refusal"},
+        ),
     ]
 
 

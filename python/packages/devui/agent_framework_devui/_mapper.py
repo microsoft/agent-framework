@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Union, cast
 from uuid import uuid4
 
-from agent_framework import Content, Message, UsageDetails, add_usage_details
+from agent_framework import Content, Message, UsageDetails, add_usage_details, get_namespaced_value
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -89,7 +89,16 @@ def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, An
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
 
 
 def _message_content_part(content: Content) -> ResponseOutputText | ResponseOutputRefusal:
