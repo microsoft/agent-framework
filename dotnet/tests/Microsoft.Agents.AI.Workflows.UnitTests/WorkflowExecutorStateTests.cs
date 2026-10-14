@@ -1,0 +1,177 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+
+namespace Microsoft.Agents.AI.Workflows.UnitTests;
+
+public sealed class WorkflowExecutorStateTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StatefulExecutor_ResetReloadsValueStateAsync(bool useInvocation)
+    {
+        // Arrange
+        ValueStateExecutor executor = new();
+        TestWorkflowContext context = new(executor.Id);
+        await context.QueueStateUpdateAsync("value", 7);
+        Assert.Equal(7, await executor.ReadAsync(context, useInvocation));
+        await context.QueueStateUpdateAsync("value", 9);
+
+        // Act
+        await ((IResettableExecutor)executor).ResetAsync();
+        int restored = await executor.ReadAsync(context, useInvocation);
+
+        // Assert
+        Assert.Equal(9, restored);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HostedStatefulExecutor_RestoresEachSessionAsync(bool useInvocation, bool streaming)
+    {
+        // Arrange
+        SessionStateExecutor executor = new(useInvocation);
+        AIAgent agent = new WorkflowBuilder(executor).Build().AsAIAgent();
+        AgentSession firstSession = await agent.CreateSessionAsync();
+        AgentSession secondSession = await agent.CreateSessionAsync();
+
+        // Act
+        AgentResponse first = await RunAsync("first", firstSession);
+        AgentResponse second = await RunAsync("second", secondSession);
+        AgentResponse resumedFirst = await RunAsync("next", firstSession);
+        AgentResponse resumedSecond = await RunAsync("last", secondSession);
+
+        // Assert
+        Assert.Equal("first", first.Text);
+        Assert.Equal("second", second.Text);
+        Assert.Equal("first|next", resumedFirst.Text);
+        Assert.Equal("second|last", resumedSecond.Text);
+
+        async Task<AgentResponse> RunAsync(string message, AgentSession session)
+        {
+            return streaming
+                ? await agent.RunStreamingAsync(message, session).ToAgentResponseAsync()
+                : await agent.RunAsync(message, session);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HostedChatExecutor_StartsWithNewMessagesAfterInterruptedTurnAsync(bool cancel)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        InterruptedChatExecutor executor = new(cancel ? cancellation : null);
+        AIAgent agent = new WorkflowBuilder(executor).Build().AsAIAgent();
+        AgentSession firstSession = await agent.CreateSessionAsync();
+        AgentSession secondSession = await agent.CreateSessionAsync();
+
+        // Act
+        AgentResponse interrupted = await agent.RunAsync("first", firstSession, cancellationToken: cancellation.Token);
+        if (!cancel)
+        {
+            Assert.NotEmpty(interrupted.Messages.SelectMany(message => message.Contents).OfType<ErrorContent>());
+        }
+        Assert.Equal(cancel, cancellation.IsCancellationRequested);
+
+        AgentResponse second = await agent.RunAsync("second", secondSession);
+        AgentResponse resumedSecond = await agent.RunAsync("next", secondSession);
+
+        // Assert
+        Assert.Equal("second", second.Text);
+        Assert.Equal("next", resumedSecond.Text);
+    }
+
+    private sealed class ValueStateExecutor()
+        : StatefulExecutor<int>("value", () => 3, new StatefulExecutorOptions { StateKey = "value" })
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
+
+        public async ValueTask<int> ReadAsync(IWorkflowContext context, bool useInvocation)
+        {
+            if (!useInvocation)
+            {
+                return await this.ReadStateAsync(context);
+            }
+
+            int result = 0;
+            await this.InvokeWithStateAsync((state, _, _) =>
+            {
+                result = state;
+                return new ValueTask<int>(state);
+            }, context);
+            return result;
+        }
+    }
+
+    private sealed class SessionStateExecutor(bool useInvocation) : StatefulExecutor<List<string>>("state", () => [])
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+        {
+            return protocolBuilder.ConfigureRoutes(routes => routes
+                .AddHandler<IEnumerable<ChatMessage>>(this.AddMessagesAsync)
+                .AddHandler<TurnToken>(this.TakeTurnAsync));
+        }
+
+        private async ValueTask AddMessagesAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            if (useInvocation)
+            {
+                await this.InvokeWithStateAsync((state, _, _) =>
+                {
+                    state.AddRange(messages.Select(message => message.Text));
+                    return new ValueTask<List<string>?>(state);
+                }, context, cancellationToken: cancellationToken);
+            }
+            else
+            {
+                List<string> state = await this.ReadStateAsync(context, cancellationToken: cancellationToken);
+                state.AddRange(messages.Select(message => message.Text));
+                await this.QueueStateUpdateAsync(state, context, cancellationToken);
+            }
+        }
+
+        private async ValueTask TakeTurnAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            List<string> state = await this.ReadStateAsync(context, cancellationToken: cancellationToken);
+            await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id,
+                new AgentResponseUpdate(ChatRole.Assistant, string.Join("|", state))), cancellationToken);
+        }
+    }
+
+    private sealed class InterruptedChatExecutor(CancellationTokenSource? cancellation)
+        : ChatProtocolExecutor("chat", new ChatProtocolExecutorOptions { AutoSendTurnToken = false })
+    {
+        private bool _interruptNextTurn = true;
+
+        protected override async ValueTask TakeTurnAsync(
+            List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+        {
+            if (this._interruptNextTurn)
+            {
+                this._interruptNextTurn = false;
+                if (cancellation is not null)
+                {
+                    cancellation.Cancel();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                throw new InvalidOperationException("Turn interrupted.");
+            }
+
+            await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id,
+                new AgentResponseUpdate(ChatRole.Assistant, string.Join("|", messages.Select(message => message.Text)))),
+                cancellationToken);
+        }
+    }
+}

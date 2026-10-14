@@ -14,12 +14,17 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides a base class for executors that maintain and manage state across multiple message handling operations.
 /// </summary>
+/// <remarks>
+/// When a workflow releases a shared executor instance, its cached state is invalidated.
+/// Subsequent runs load state from their workflow context, including restored checkpoints.
+/// </remarks>
 /// <typeparam name="TState">The type of state associated with this Executor.</typeparam>
-public abstract class StatefulExecutor<TState> : Executor
+public abstract class StatefulExecutor<TState> : Executor, IResettableExecutor
 {
     private readonly Func<TState> _initialStateFactory;
 
     private TState? _stateCache;
+    private bool _hasStateCache;
 
     /// <summary>
     /// Initializes the executor with a unique id and an initial value for the state.
@@ -59,7 +64,7 @@ public abstract class StatefulExecutor<TState> : Executor
     /// <returns></returns>
     protected async ValueTask<TState> ReadStateAsync(IWorkflowContext context, bool skipCache = false, CancellationToken cancellationToken = default)
     {
-        if (!skipCache && this._stateCache is not null)
+        if (!skipCache && this._hasStateCache && this._stateCache is not null)
         {
             return this._stateCache;
         }
@@ -70,6 +75,7 @@ public abstract class StatefulExecutor<TState> : Executor
         if (!context.ConcurrentRunsEnabled)
         {
             this._stateCache = state;
+            this._hasStateCache = true;
         }
 
         return state;
@@ -88,6 +94,7 @@ public abstract class StatefulExecutor<TState> : Executor
         if (!context.ConcurrentRunsEnabled)
         {
             this._stateCache = state;
+            this._hasStateCache = true;
         }
 
         return context.QueueStateUpdateAsync(this.StateKey, state, this.Options.ScopeName, cancellationToken);
@@ -113,7 +120,7 @@ public abstract class StatefulExecutor<TState> : Executor
     {
         if (!skipCache && !context.ConcurrentRunsEnabled)
         {
-            if (this._stateCache is null)
+            if (!this._hasStateCache || this._stateCache is null)
             {
                 this._stateCache = await context.ReadOrInitStateAsync(this.StateKey, this._initialStateFactory, this.Options.ScopeName, cancellationToken)
                                                 .ConfigureAwait(false);
@@ -130,6 +137,7 @@ public abstract class StatefulExecutor<TState> : Executor
                                                 cancellationToken).ConfigureAwait(false);
 
             this._stateCache = newState;
+            this._hasStateCache = true;
         }
         else
         {
@@ -143,12 +151,18 @@ public abstract class StatefulExecutor<TState> : Executor
     }
 
     /// <inheritdoc cref="IResettableExecutor.ResetAsync"/>
+    /// <remarks>
+    /// Invalidates cached state without changing persisted workflow state. Overrides should call the base implementation.
+    /// </remarks>
     protected virtual ValueTask ResetAsync()
     {
-        this._stateCache = this._initialStateFactory();
+        this._stateCache = default;
+        this._hasStateCache = false;
 
         return default;
     }
+
+    ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
 }
 
 /// <summary>
