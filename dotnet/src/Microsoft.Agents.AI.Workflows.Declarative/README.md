@@ -58,6 +58,10 @@ on the server address.
 
 ### 🧩 State Management
 
+Variable names are case-sensitive, matching Power Fx record fields. Differently
+cased names retain independent values and metadata, including after checkpoint
+restoration.
+
 |Action|Description|
 |-|-|
 |**ClearAllVariables**|Resets all variables in the current context. Ensures a clean state before starting new logic or sessions.
