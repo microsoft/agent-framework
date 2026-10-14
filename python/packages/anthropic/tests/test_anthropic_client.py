@@ -4277,6 +4277,7 @@ def test_parse_bash_execution_result_with_files(
 
     assert len(result) == 1
     assert result[0].type == "shell_tool_result"
+    assert result[0].outputs is not None
     hosted_files = [output for output in result[0].outputs if output.type == "hosted_file"]
     assert len(hosted_files) == 1
     assert hosted_files[0].file_id == "file_456"
