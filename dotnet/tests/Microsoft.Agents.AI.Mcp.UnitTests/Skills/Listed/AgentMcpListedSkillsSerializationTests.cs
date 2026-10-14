@@ -117,7 +117,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
     public void Deserialize_Resource_ReturnsResource()
     {
         // Arrange
-        const string Json = """{"uri":"skill://unit-converter/file.txt"}""";
+        const string Json = """{"uri":"skill://unit-converter/file.txt","digest":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}""";
         var context = McpListedSkillsJsonContext.Default;
 
         // Act
@@ -126,11 +126,13 @@ public sealed class AgentMcpListedSkillsSerializationTests
         // Assert
         Assert.NotNull(resource);
         Assert.Equal("skill://unit-converter/file.txt", resource.Uri);
+        Assert.Equal("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", resource.Digest);
+        Assert.Equal(0, resource.Size);
     }
 
     [Theory]
     [InlineData("[]")]
-    [InlineData("""[{"uri":"skill://unit-converter/SKILL.md"}]""")]
+    [InlineData("""[{"uri":"skill://unit-converter/SKILL.md","digest":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0}]""")]
     public void Deserialize_Skill_UsesTypedFrontmatterAndResources(string resources)
     {
         // Arrange
@@ -167,6 +169,64 @@ public sealed class AgentMcpListedSkillsSerializationTests
         Assert.Equal("complete", result.ResultType);
         Assert.Empty(result.Skills);
     }
+
+    [Theory]
+    [InlineData("digest", "null")]
+    [InlineData("digest", "42")]
+    [InlineData("digest", "true")]
+    [InlineData("digest", "[]")]
+    [InlineData("size", "null")]
+    [InlineData("size", "\"12\"")]
+    [InlineData("size", "false")]
+    [InlineData("size", "[]")]
+    [InlineData("size", "1.5")]
+    [InlineData("size", "9223372036854775808")]
+    public void Deserialize_InvalidIntegrityField_Throws(string field, string value)
+    {
+        // Arrange
+        JsonObject resource = CreateResource();
+        resource[field] = JsonNode.Parse(value);
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry));
+    }
+
+    [Theory]
+    [InlineData("uri")]
+    [InlineData("digest")]
+    [InlineData("size")]
+    public void Deserialize_MissingResourceField_Throws(string field)
+    {
+        // Arrange
+        JsonObject resource = CreateResource();
+        resource.Remove(field);
+
+        // Act & Assert
+        JsonException exception = Assert.Throws<JsonException>(() => resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry));
+        Assert.Contains(field, exception.Message);
+    }
+
+    [Fact]
+    public void Deserialize_LargeSize_PreservesInt64()
+    {
+        // Arrange
+        JsonObject resource = CreateResource();
+        resource["size"] = long.MaxValue;
+
+        // Act
+        var deserialized = resource.Deserialize(McpListedSkillsJsonContext.Default.McpListedSkillResourceEntry);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal(long.MaxValue, deserialized.Size);
+    }
+
+    private static JsonObject CreateResource() => new()
+    {
+        ["uri"] = "skill://unit-converter/SKILL.md",
+        ["digest"] = "sha256:" + new string('a', 64),
+        ["size"] = 0,
+    };
 
     private static JsonObject CreateEntry() => new()
     {

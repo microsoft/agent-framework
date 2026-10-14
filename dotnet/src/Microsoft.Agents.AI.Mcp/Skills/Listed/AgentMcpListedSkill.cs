@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -19,6 +21,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Instructions and supporting resources are fetched from the MCP server when requested.
 /// Fetched instructions must have the same frontmatter name and description as the listing.
+/// Instructions and supporting resources must match their listed SHA-256 digest and byte size.
 /// Only supporting resources listed by the server are available.
 /// </remarks>
 internal sealed class AgentMcpListedSkill : AgentSkill
@@ -37,7 +40,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     /// </summary>
     /// <param name="frontmatter">The skill's name and description.</param>
     /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
-    /// <param name="resources">The skill's supporting resources, excluding <c>SKILL.md</c>.</param>
+    /// <param name="resources">All resources listed for the skill, including <c>SKILL.md</c>.</param>
     /// <param name="client">The MCP client used to fetch instructions and resources.</param>
     /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
     public AgentMcpListedSkill(AgentSkillFrontmatter frontmatter, string uri, IReadOnlyList<McpListedSkillResourceEntry> resources, McpClient client, ILogger? logger = null)
@@ -55,16 +58,24 @@ internal sealed class AgentMcpListedSkill : AgentSkill
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Fetches the skill's <c>SKILL.md</c> instructions on the first call, verifies its frontmatter
-    /// name and description against the listing, and reuses verified content on later calls.
+    /// Fetches the skill's <c>SKILL.md</c> resource, which contains the skill's instructions, on the first call.
+    /// Verifies its digest, byte size, and frontmatter name and description against the listing,
+    /// and reuses verified content on later calls.
     /// </remarks>
-    /// <exception cref="InvalidOperationException">The fetched content is empty, has invalid frontmatter,
-    /// or its name or description differs from the listing.</exception>
+    /// <exception cref="InvalidOperationException">The skill's <c>SKILL.md</c> resource is not listed,
+    /// the fetched content is empty or has invalid frontmatter, or its digest, byte size, name,
+    /// or description differs from the listing.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
         if (this._content is not null)
         {
             return this._content;
+        }
+
+        McpListedSkillResourceEntry? skillMdResource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, this._skillUri, StringComparison.Ordinal));
+        if (skillMdResource is null)
+        {
+            throw new InvalidOperationException($"The resource list must include the skill's SKILL.md resource '{this._skillUri}'.");
         }
 
 #pragma warning disable CA2234 // Pass system uri objects instead of strings
@@ -77,6 +88,8 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         {
             throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this._skillUri}'.");
         }
+
+        VerifyResourceIntegrity(skillMdResource, Encoding.UTF8.GetBytes(text));
 
         if (!AgentSkillFrontmatterParser.TryParse(text, this._skillUri, this._logger, out AgentSkillFrontmatter? frontmatter))
         {
@@ -102,7 +115,9 @@ internal sealed class AgentMcpListedSkill : AgentSkill
     /// <remarks>
     /// Fetches a supporting resource listed by the server. Returns <see langword="null"/> if the name
     /// is unsafe or the resource is not listed. Errors while fetching the resource are propagated.
+    /// Fetched content must match its listed digest and byte size.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">The fetched resource has no content or does not match its listed digest or byte size.</exception>
     public override async ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
         Throw.IfNullOrWhitespace(name);
@@ -117,8 +132,15 @@ internal sealed class AgentMcpListedSkill : AgentSkill
 
         string uri = this._skillRootUri + normalized;
 
+        // Exclude SKILL.md, which should be loaded via GetContentAsync.
+        if (string.Equals(uri, this._skillUri, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
         // Supporting reads must stay within the held manifest.
-        if (!this._resources.Any(resource => string.Equals(resource.Uri, uri, StringComparison.Ordinal)))
+        McpListedSkillResourceEntry? resource = this._resources.FirstOrDefault(resource => string.Equals(resource.Uri, uri, StringComparison.Ordinal));
+        if (resource is null)
         {
             return null;
         }
@@ -127,7 +149,43 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         ReadResourceResult result = await this._client.ReadResourceAsync(uri, cancellationToken: cancellationToken).ConfigureAwait(false);
 #pragma warning restore CA2234
 
+        BlobResourceContents? blob = result.Contents.OfType<BlobResourceContents>().FirstOrDefault();
+        if (blob is not null)
+        {
+            VerifyResourceIntegrity(resource, blob.DecodedData.Span);
+        }
+        else
+        {
+            if (!result.Contents.OfType<TextResourceContents>().Any())
+            {
+                throw new InvalidOperationException($"The MCP server returned no content for resource '{uri}'.");
+            }
+
+            string text = string.Join("\n", result.Contents.OfType<TextResourceContents>().Select(c => c.Text));
+            VerifyResourceIntegrity(resource, Encoding.UTF8.GetBytes(text));
+        }
+
         return new AgentMcpListedSkillResource(name, result);
+    }
+
+    /// <summary>
+    /// Verifies that fetched resource bytes match the byte size and SHA-256 digest advertised by <c>skills/list</c>.
+    /// </summary>
+    /// <param name="resource">The resource entry containing the expected byte size and digest.</param>
+    /// <param name="bytes">The fetched content as UTF-8 bytes for text or decoded bytes for binary content.</param>
+    /// <exception cref="InvalidOperationException">The byte size or digest differs from the resource entry.</exception>
+    private static void VerifyResourceIntegrity(McpListedSkillResourceEntry resource, ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length != resource.Size)
+        {
+            throw new InvalidOperationException($"Resource '{resource.Uri}' has a byte size that differs from the skills/list entry.");
+        }
+
+        string digest = Convert.ToHexString(SHA256.HashData(bytes));
+        if (!digest.AsSpan().Equals(resource.Digest.AsSpan("sha256:".Length), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Resource '{resource.Uri}' has a SHA-256 digest that differs from the skills/list entry.");
+        }
     }
 
     /// <summary>

@@ -9,8 +9,9 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 - Connecting an `McpClient` to the embedded server via stdio transport.
 - Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which discovers skills
   through `skills/list` and reads their instructions through `resources/read`.
-- Returning a complete skill list with frontmatter and the resource URIs of
+- Returning a complete skill list with frontmatter, resource URIs, SHA-256 digests, and byte sizes for
   `SKILL.md` and `references/conversion-table.md`.
+- Verifying fetched skill instructions and supporting resources against their listed digests and byte sizes.
 - Serving the conversion-table resource from the file-based skills sample, which the
   skill instructions tell the agent to read before performing a conversion.
 - The progressive disclosure pattern across MCP: advertise → load → read resources, exactly

@@ -10,6 +10,11 @@ and inject them as `AIContextProviders` so the agent can discover and use them a
 - Injecting a fresh Azure AI bearer token (`https://ai.azure.com/.default`) on every MCP request
 - Using `AgentSkillsProviderBuilder.UseMcpSkills(client)` to discover skills from the toolbox
 - Injecting the discovered skills into `AIProjectClient.AsAIAgent(...)` via `AIContextProviders`
+- Auto-approving skill tools with `UseToolApproval` and `AgentSkillsProvider.AllToolsAutoApprovalRule`
+
+Auto-approval is used for demonstration simplicity. In production, prompt the user before
+allowing script execution. See [Skills Auto Approval](../../../AgentSkills/Agent_Step07_SkillsAutoApproval)
+for a walkthrough of the full approval flow.
 
 ## Prerequisites
 
@@ -30,4 +35,3 @@ $env:FOUNDRY_TOOLBOX_MCP_SERVER_URL="https://your-foundry-service.services.ai.az
 ```powershell
 dotnet run
 ```
-
