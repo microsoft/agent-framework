@@ -28,6 +28,9 @@ from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
 from ._middleware import (
     AgentMiddlewareLayer,
+    ChatContext,
+    ChatMiddleware,
+    ChatMiddlewareLayer,
     FunctionInvocationContext,
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
@@ -183,7 +186,7 @@ def _normalize_tools(
     return normalize_tools(tools)
 
 
-def _get_tool_name(tool: Any) -> str | None:  # pyright: ignore[reportUnusedFunction]
+def _get_tool_name(tool: Any) -> str | None:
     from ._tools import _get_tool_name as get_tool_name  # pyright: ignore[reportPrivateUsage]
 
     return get_tool_name(tool)
@@ -275,10 +278,27 @@ class _RunContext(TypedDict):
     agent_name: str
     suppress_response_id: bool
     chat_options: MutableMapping[str, Any]
+    evaluation_tools: list[ToolTypes]
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
     function_invocation_kwargs: Mapping[str, Any]
+
+
+class _EvaluationToolCaptureMiddleware(ChatMiddleware):
+    """Retain tools exposed on later function-loop iterations for evaluation."""
+
+    def __init__(self, tools: list[ToolTypes]) -> None:
+        self.tools = tools
+        self._seen = {_get_tool_name(tool) for tool in tools}
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        for tool in _normalize_tools((context.options or {}).get("tools")):
+            name = _get_tool_name(tool)
+            if name not in self._seen:
+                self.tools.append(tool)
+                self._seen.add(name)
+        await call_next()
 
 
 # region Agent Protocol
@@ -1406,6 +1426,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
+        agent_response._evaluation_tools = context["evaluation_tools"]  # pyright: ignore[reportPrivateUsage]
         session_context = context["session_context"]
         session_context._response = agent_response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1442,6 +1463,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session_context = context["session_context"]
             if context["suppress_response_id"]:
                 response.response_id = None
+            response._evaluation_tools = context["evaluation_tools"]  # pyright: ignore[reportPrivateUsage]
             session_context._response = response  # type: ignore[assignment]
             # Result hooks run during finalization, outside the per-pull identity
             # scope registered below, so re-stamp this run's identity around its
@@ -1760,6 +1782,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 per_service_call_history_middleware,
             ]
 
+        evaluation_tools = _normalize_tools(co.get("tools"))
+        if isinstance(self.client, ChatMiddlewareLayer):
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                _EvaluationToolCaptureMiddleware(evaluation_tools),
+            ]
+
         return {
             "session": active_session,
             "session_context": session_context,
@@ -1768,6 +1800,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             "agent_name": agent_name,
             "suppress_response_id": bool(per_service_call_history_providers) and not service_stores_history,
             "chat_options": co,
+            "evaluation_tools": evaluation_tools,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
             "client_kwargs": effective_client_kwargs,

@@ -3263,6 +3263,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation", "_evaluation_tools"}
 
     def __init__(
         self,
@@ -3326,6 +3327,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self._operation_state: _OperationState | None = None
+        # Run-scoped definitions for post-hoc evaluation; never serialize executable tools.
+        self._evaluation_tools: list[ToolTypes] | None = None
         self.raw_representation = raw_representation
 
     @property
