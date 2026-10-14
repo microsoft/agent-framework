@@ -84,9 +84,11 @@ other non-mergeable content must be discarded.
   locally actionable. Conflicting non-empty `server_name` values are rejected.
 
 Legacy `additional_properties["server_label"]` remains readable. When first-class `hosted` is absent, a truthy
-string `server_label` infers `hosted=True`, fills a missing `server_name`, and emits `FutureWarning`; without either
-signal, `hosted` becomes `False`. When both server names are present they must match. The same migration runs through
-construction, `from_dict()`, nested approval content, and pickle restoration.
+string `server_label` infers `hosted=True`, fills a missing `server_name`, and emits `FutureWarning`. This compatibility
+inference uses only the legacy `server_label`; first-class `server_name` never implies hosted ownership. When
+`hosted` and legacy `server_label` are both absent, `hosted` becomes `False` even if `server_name` is present. When
+both server names are present they must match. The same migration runs through construction, `from_dict()`, nested
+approval content, and pickle restoration.
 
 `ToolApprovalRule.server_label` remains public API and persisted state. New rules source its value from
 `function_call.server_name`.

@@ -868,6 +868,11 @@ def test_function_call_hosted_serialization_and_legacy_inference() -> None:
     assert local.hosted is False
     assert local.to_dict()["hosted"] is False
 
+    described_local = Content.from_function_call(call_id="described-local", name="f", server_name="provider")
+    restored_described_local = Content.from_dict(described_local.to_dict())
+    assert restored_described_local.hosted is False
+    assert restored_described_local.server_name == "provider"
+
     hosted = Content.from_function_call(
         call_id="hosted",
         name="f",

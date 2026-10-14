@@ -1113,7 +1113,8 @@ class Content:
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
                 assigns one before a locally actionable call is processed.
             hosted: Whether the provider or service, rather than Agent Framework, executes this call.
-            server_name: Descriptive identity of the server that owns a hosted call.
+            server_name: Descriptive server boundary. Supplying it does not mark the call as hosted; set
+                ``hosted=True`` separately when the provider or service executes the call.
             status: Provider-reported function-call status.
             merge_mode: How this streaming update combines with an earlier update for the same occurrence.
             annotations: Optional annotations attached to this content item.
