@@ -121,12 +121,12 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     }
 
     /// <summary>
-    /// Maps OpenAI Responses API endpoints that select the <see cref="AIAgent"/> to invoke for each create request.
+    /// Maps OpenAI Responses API endpoints that select the <see cref="AIAgent"/> for each request.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="responsesPath">The route path for the responses endpoint.</param>
     /// <param name="agentSelector">
-    /// A delegate invoked once per create request that returns the agent to invoke, or <see langword="null"/> when
+    /// A delegate invoked once per request that returns the agent to serve, or <see langword="null"/> when
     /// no agent matches the request. The delegate can use route values, claims, headers, and
     /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
     /// </param>
@@ -134,16 +134,18 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
     /// <remarks>
     /// <para>
-    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the create operation responds with
-    /// <c>404 Not Found</c> before any session or conversation state is loaded. Retrieval, cancellation, deletion,
-    /// and input item operations address stored responses and do not invoke the selector.
+    /// The selector applies to every operation: creation, retrieval, cancellation, deletion, and input item listing.
+    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the operation responds with
+    /// <c>404 Not Found</c> before any response, session, or conversation state is loaded.
     /// </para>
     /// <para>
     /// The selected agent's <see cref="AIAgent.Name"/> is its stable logical identity: it is used to resolve the
-    /// keyed <see cref="AgentSessionStore"/> and to partition persisted sessions, so conversations continue across
-    /// requests even when the selector returns a new agent instance each time. The selected agent must therefore
-    /// have a non-empty name. Background responses keep running the selected agent after the HTTP request completes,
-    /// so agents used for background responses must not depend on request-scoped services.
+    /// keyed <see cref="AgentSessionStore"/>, to partition persisted sessions, and to bind stored responses to the
+    /// agent that created them, so a response can only be retrieved, canceled, or deleted through requests that select
+    /// the same agent name. Conversations continue across requests even when the selector returns a new agent instance
+    /// each time. The selected agent must therefore have a non-empty name. Background responses keep running the
+    /// selected agent after the HTTP request completes, so agents used for background responses must not depend on
+    /// request-scoped services.
     /// </para>
     /// <para>
     /// Selection is not an authorization boundary. See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/>
@@ -174,7 +176,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
                 }
 
                 string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
-                return new AIAgentResponseExecutor(agent, agentName, scopeFactory, mapOptions, sessionStorageIdentity: agentName);
+                return (agentName, new AIAgentResponseExecutor(agent, agentName, scopeFactory, mapOptions, sessionStorageIdentity: agentName));
             });
     }
 
@@ -183,7 +185,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         IResponseExecutor? executor,
         string responsesPath,
         string? endpointAgentName,
-        Func<HttpContext, IResponseExecutor?>? executorSelector = null)
+        Func<HttpContext, (string AgentName, IResponseExecutor Executor)?>? agentSelector = null)
     {
         // Resolve the response storage settings and optional conversation storage.
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
@@ -197,7 +199,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
 
         // Create the response service so response and conversation operations are scoped by the caller's isolation key.
         var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage, isolationKeyResolver);
-        var handlers = new ResponsesHttpHandler(responsesService, executorSelector);
+        var handlers = new ResponsesHttpHandler(responsesService, agentSelector is null ? null : SelectAgent);
         var group = endpoints.MapGroup(responsesPath);
 
         // Create response endpoint
@@ -227,6 +229,11 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
 
         MarkFeatureUsed();
         return group;
+
+        (IResponsesService, IResponseExecutor)? SelectAgent(HttpContext context) =>
+            agentSelector(context) is { } selection
+                ? (responsesService.ForAgent(selection.AgentName), selection.Executor)
+                : null;
     }
 
     private static RouteHandlerBuilder WithEndpointName(this RouteHandlerBuilder builder, string? endpointAgentName, string operationName)

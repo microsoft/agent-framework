@@ -21,9 +21,11 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 {
     private readonly MemoryCache _cache;
+    private readonly bool _ownsCache;
     private readonly InMemoryStorageOptions _options;
     private readonly Conversations.IConversationStorage? _conversationStorage;
     private readonly IsolationKeyResolver? _isolationKeyResolver;
+    private readonly string? _agentName;
 
     private sealed class ResponseState
     {
@@ -157,8 +159,29 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         this.DefaultExecutor = executor;
         this._options = options;
         this._cache = new MemoryCache(options.ToMemoryCacheOptions());
+        this._ownsCache = true;
         this._conversationStorage = conversationStorage;
         this._isolationKeyResolver = isolationKeyResolver;
+    }
+
+    private InMemoryResponsesService(InMemoryResponsesService owner, string agentName)
+    {
+        this._options = owner._options;
+        this._cache = owner._cache;
+        this._conversationStorage = owner._conversationStorage;
+        this._isolationKeyResolver = owner._isolationKeyResolver;
+        this._agentName = agentName;
+    }
+
+    /// <summary>
+    /// Creates a view that shares this service's storage but only exposes the responses created through it.
+    /// </summary>
+    /// <param name="agentName">The stable name of the agent that owns the responses.</param>
+    /// <returns>A responses service bound to <paramref name="agentName"/>.</returns>
+    public InMemoryResponsesService ForAgent(string agentName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        return new InMemoryResponsesService(this, agentName);
     }
 
     [AllowNull]
@@ -230,7 +253,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         // Resolve ambient caller identity before a background response detaches from the HTTP request.
         string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
-        string responseStorageId = IsolationKeyResolver.ScopeId(responseId, isolationKey);
+        string responseStorageId = this.ScopeToAgent(IsolationKeyResolver.ScopeId(responseId, isolationKey));
 
         var conversationStorageId = request.Conversation?.Id is { } conversationId
             ? IsolationKeyResolver.ScopeId(conversationId, isolationKey)
@@ -279,7 +302,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         // Streaming execution is also detached from the request cancellation token, so capture identity now.
         string? isolationKey = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
-        string responseStorageId = IsolationKeyResolver.ScopeId(responseId, isolationKey);
+        string responseStorageId = this.ScopeToAgent(IsolationKeyResolver.ScopeId(responseId, isolationKey));
 
         var conversationStorageId = request.Conversation?.Id is { } conversationId
             ? IsolationKeyResolver.ScopeId(conversationId, isolationKey)
@@ -299,7 +322,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public async Task<Response?> GetResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        var responseStorageId = await this.GetResponseStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
         this._cache.TryGetValue(responseStorageId, out ResponseState? state);
         return state?.Response;
     }
@@ -309,7 +332,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         int? startingAfter = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        var responseStorageId = await this.GetResponseStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
         if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state) || state is null)
         {
             yield break;
@@ -324,7 +347,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public async Task<Response> CancelResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        var responseStorageId = await this.GetResponseStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
         if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state) || state is null)
         {
             throw new InvalidOperationException($"Response '{responseId}' not found.");
@@ -353,7 +376,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public async Task<bool> DeleteResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        var responseStorageId = await this.GetResponseStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
         if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state))
         {
             return false;
@@ -378,7 +401,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         int effectiveLimit = Math.Clamp(limit ?? IResponsesService.DefaultListLimit, 1, 100);
         SortOrder effectiveOrder = order ?? SortOrder.Descending;
 
-        var responseStorageId = await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
+        var responseStorageId = await this.GetResponseStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false);
         if (!this._cache.TryGetValue(responseStorageId, out ResponseState? state))
         {
             throw new InvalidOperationException($"Response '{responseId}' not found.");
@@ -437,6 +460,12 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             HasMore = hasMore
         };
     }
+
+    private async ValueTask<string> GetResponseStorageIdAsync(string responseId, CancellationToken cancellationToken)
+        => this.ScopeToAgent(await this.GetStorageIdAsync(responseId, cancellationToken).ConfigureAwait(false));
+
+    // Reuses the isolation key escaping so agent names cannot collide with isolation-scoped identifiers.
+    private string ScopeToAgent(string storageId) => IsolationKeyResolver.ScopeId(storageId, this._agentName);
 
     private ValueTask<string> GetStorageIdAsync(string id, CancellationToken cancellationToken)
     {
@@ -671,6 +700,9 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
     public void Dispose()
     {
-        this._cache.Dispose();
+        if (this._ownsCache)
+        {
+            this._cache.Dispose();
+        }
     }
 }
