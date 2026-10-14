@@ -8,18 +8,21 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import VectorStoreCollectionDefinition, VectorStoreField
-from pymilvus import DataType, MilvusClient
+from pymilvus import AsyncMilvusClient, DataType
 
 from agent_framework_milvus import MilvusCollection, MilvusStore
 
 SERVER_MARKS = [
     pytest.mark.integration,
-    pytest.mark.skipif(not os.getenv("MILVUS_TEST_URI"), reason="Set MILVUS_TEST_URI to a disposable Milvus server."),
+    pytest.mark.skipif(not os.getenv("MILVUS_URI"), reason="Set MILVUS_URI to a disposable Milvus server."),
 ]
 
 
 @pytest.fixture(autouse=True)
-def clear_connection_environment(monkeypatch):
+def clear_connection_environment(request, monkeypatch):
+    # Integration tests connect to a real server via MILVUS_URI, so leave the environment intact.
+    if request.node.get_closest_marker("integration"):
+        return
     for name in ("MILVUS_URI", "MILVUS_TOKEN", "MILVUS_USER", "MILVUS_PASSWORD", "MILVUS_DB_NAME"):
         monkeypatch.delenv(name, raising=False)
 
@@ -57,7 +60,7 @@ def record():
 
 @pytest.fixture
 def mock_client():
-    client = MagicMock(spec=MilvusClient)
+    client = MagicMock(spec=AsyncMilvusClient)
     client.has_collection.return_value = True
     client.list_collections.return_value = ["docs"]
     client.get.return_value = [{"point_key": 1, "body": "hello", "price": 1.0, "flag": True}]
@@ -95,9 +98,9 @@ def store(mock_client):
 
 @pytest.fixture
 async def server_collection(definition):
-    if not os.getenv("MILVUS_TEST_URI"):
-        pytest.skip("Set MILVUS_TEST_URI to a disposable Milvus server.")
-    async with MilvusStore(uri=os.environ["MILVUS_TEST_URI"]) as store:
+    if not os.getenv("MILVUS_URI"):
+        pytest.skip("Set MILVUS_URI to a disposable Milvus server.")
+    async with MilvusStore(uri=os.environ["MILVUS_URI"]) as store:
         collection = store.get_collection(dict, definition=definition, collection_name=f"af_milvus_test_{uuid4().hex}")
         await collection.ensure_collection_exists()
         try:

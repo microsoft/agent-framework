@@ -23,7 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "pymilvus>=2.5,<3",
+    # 2.5.3+ provides AsyncMilvusClient.
+    "pymilvus>=2.5.3,<3",
 ]
 
 [tool.pytest.ini_options]

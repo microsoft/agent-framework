@@ -128,8 +128,8 @@ async def test_search_rejects_invalid_score_threshold(collection, bad):
 
 
 async def test_ensure_collection_exists_swallows_concurrent_create(collection, mock_client):
-    # Another worker wins the race: create raises a genuine already-exists error, so ensure
-    # semantics treat it as success (after validating the existing schema matches).
+    # A concurrent creator produced a complete, matching collection in the race window: create
+    # raises, but the existing collection validates, so ensure semantics treat it as success.
     mock_client.has_collection.return_value = False
     mock_client.create_collection.side_effect = MilvusException(message="collection already exist")
     await collection.ensure_collection_exists()  # must not raise
@@ -137,10 +137,11 @@ async def test_ensure_collection_exists_swallows_concurrent_create(collection, m
 
 
 async def test_ensure_collection_exists_reraises_index_or_load_failure(collection, mock_client):
-    # create_collection builds the collection then indexes/loads it; a later-step failure must
-    # NOT be masked as success even though the collection now exists.
+    # create_collection builds the collection then indexes/loads it; if the index step fails the
+    # collection exists but has no index (describe_index errors), so the original error re-raises.
     mock_client.has_collection.return_value = False
     mock_client.create_collection.side_effect = MilvusException(message="create index failed")
+    mock_client.describe_index.side_effect = MilvusException(message="index not found")
     with pytest.raises(MilvusException, match="create index failed"):
         await collection.ensure_collection_exists()
 

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -25,8 +24,8 @@ from agent_framework import (
 from agent_framework._telemetry import FeatureIndex, mark_feature_used
 from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, Vector
-from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
-from pymilvus import DataType, MilvusClient
+from agent_framework.exceptions import IntegrationInvalidResponseException
+from pymilvus import AsyncMilvusClient, DataType
 from pymilvus.exceptions import MilvusException
 from typing_extensions import TypedDict, TypeVar
 
@@ -114,7 +113,7 @@ def _create_client(
     db_name: str | None,
     env_file_path: str | None,
     env_file_encoding: str | None,
-) -> MilvusClient:
+) -> AsyncMilvusClient:
     settings = load_settings(
         MilvusSettings,
         env_prefix="MILVUS_",
@@ -128,6 +127,8 @@ def _create_client(
     )
     resolved_token = settings.get("token")
     resolved_password = settings.get("password")
+    # load_settings includes optional keys as ``None`` when unset, so ``or`` (not a dict default)
+    # is needed to fall back to the default URI.
     client_kwargs: dict[str, Any] = {"uri": settings.get("uri") or DEFAULT_URI}
     if resolved_token is not None:
         client_kwargs["token"] = resolved_token.get_secret_value()
@@ -137,16 +138,7 @@ def _create_client(
         client_kwargs["password"] = resolved_password.get_secret_value()
     if settings.get("db_name"):
         client_kwargs["db_name"] = settings.get("db_name")
-    try:
-        return MilvusClient(**client_kwargs)
-    except Exception as exc:  # pragma: no cover - surfaced as an integration error
-        raise IntegrationException("Failed to create the Milvus client.") from exc
-
-
-def _is_already_exists_error(exc: MilvusException) -> bool:
-    """Whether a Milvus error indicates the collection already exists (a concurrent create)."""
-    message = getattr(exc, "message", None) or str(exc)
-    return "already exist" in message.lower()
+    return AsyncMilvusClient(**client_kwargs)
 
 
 def _format_scalar(value: Any) -> str:
@@ -198,16 +190,15 @@ def _check_numeric_field(field: VectorStoreField) -> None:
 
 
 class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT, ModelT], Generic[KeyT, ModelT]):
-    """Store and search records with the official Milvus client.
+    """Store and search records with the official async Milvus client.
 
     The data model definition drives the collection schema: the key field becomes the
     primary key (``INT64``/``VARCHAR``), data fields become typed scalar fields, and
     vector fields become ``FLOAT_VECTOR`` fields, each with its own index. The default
     metric is cosine similarity (larger is better); scores retain native Milvus units.
 
-    The synchronous ``MilvusClient`` is used under ``asyncio.to_thread`` so the connector
-    presents the framework's async interface while remaining compatible across the
-    supported ``pymilvus`` range. Supplied clients remain caller-owned unless managed.
+    Operations use the official ``AsyncMilvusClient``. Supplied clients remain caller-owned
+    unless explicitly managed.
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"int", "str"}
@@ -221,7 +212,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         definition: VectorStoreCollectionDefinition | None = None,
         collection_name: str | None = None,
         embedding_generator: EmbeddingClient | None = None,
-        client: MilvusClient | None = None,
+        client: AsyncMilvusClient | None = None,
         uri: str | None = None,
         token: str | SecretString | None = None,
         user: str | None = None,
@@ -238,7 +229,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             definition: Explicit dictionary schema.
             collection_name: Collection name, overriding the model name.
             embedding_generator: Default local embedding client.
-            client: Existing client, borrowed by default. Use this for Milvus Lite or advanced configuration.
+            client: Existing async client, borrowed by default. Use this for advanced configuration.
             uri: Server URI override; otherwise loaded from MilvusSettings, then defaults to localhost.
             token: Access token override as a string or SecretString; otherwise loaded from MilvusSettings.
             user: Username override; otherwise loaded from MilvusSettings.
@@ -317,10 +308,10 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         """Check whether this collection exists."""
         options = _validate_operation_options(operation_options, _READ_OPTIONS)
         mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
-        return await asyncio.to_thread(self._client.has_collection, self.collection_name, **options)
+        return await self._client.has_collection(self.collection_name, **options)
 
     def _build_schema_and_index(self) -> tuple[Any, Any]:
-        schema = cast("Any", MilvusClient).create_schema(auto_id=False, enable_dynamic_field=False)
+        schema = cast("Any", AsyncMilvusClient).create_schema(auto_id=False, enable_dynamic_field=False)
         key_field = self.definition.key_field
         if key_field.type_ == "int":
             schema.add_field(field_name=self._key_storage_name, datatype=DataType.INT64, is_primary=True)
@@ -366,29 +357,26 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             return
         schema, index_params = self._build_schema_and_index()
         try:
-            await asyncio.to_thread(
-                self._client.create_collection,
+            await self._client.create_collection(
                 collection_name=self.collection_name,
                 schema=schema,
                 index_params=index_params,
                 **options,
             )
-            return
         except MilvusException as exc:
-            # create_collection creates the collection and then separately builds indexes and
-            # loads it. Only swallow a genuine already-exists/concurrent-create error; re-raise
-            # every other failure (including index/load failures that leave the collection
-            # existing but incomplete) so it is not masked as success.
-            if not _is_already_exists_error(exc):
-                raise
-        # A concurrent creator won the race; validate the existing collection matches.
-        await self._validate_existing_collection()
+            # create_collection creates the collection and then separately builds indexes and loads
+            # it, and the check-then-create sequence is not atomic. A concurrent creator may have
+            # produced a complete, matching collection in the race window; accept that only if the
+            # existing collection validates. Any other failure (including an index/load failure that
+            # leaves this collection incomplete) fails validation, so re-raise the original error.
+            try:
+                await self._validate_existing_collection()
+            except Exception:
+                raise exc from None
 
     async def _validate_existing_collection(self) -> None:
         """Validate an existing collection's fields, vector dimensions and metrics."""
-        info = cast(
-            "Mapping[str, Any]", await asyncio.to_thread(self._client.describe_collection, self.collection_name)
-        )
+        info = cast("Mapping[str, Any]", await self._client.describe_collection(self.collection_name))
         raw_fields = cast("Sequence[Mapping[str, Any]]", info.get("fields") or [])
         fields: dict[str, Mapping[str, Any]] = {str(field["name"]): field for field in raw_fields}
         key = fields.get(self._key_storage_name)
@@ -415,7 +403,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 raise ValueError(
                     f"Existing Milvus vector field '{name}' has dimension {dimensions}, expected {field.dimensions}."
                 )
-            index = await asyncio.to_thread(self._client.describe_index, self.collection_name, name)
+            index = await self._client.describe_index(self.collection_name, name)
             metric = cast("Mapping[str, Any]", index).get("metric_type") if isinstance(index, Mapping) else None
             expected = _METRICS[cast(str, field.distance_function)]
             if metric is not None and metric != expected:
@@ -425,12 +413,12 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         """Delete this collection if it exists."""
         options = _validate_operation_options(operation_options, _WRITE_OPTIONS)
         if await self.collection_exists():
-            await asyncio.to_thread(self._client.drop_collection, self.collection_name, **options)
+            await self._client.drop_collection(self.collection_name, **options)
 
     async def aclose(self) -> None:
         """Close an owned client once; borrowed clients are left open."""
         if self.managed_client and not self._closed:
-            await asyncio.to_thread(self._client.close)
+            await self._client.close()
             self._closed = True
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
@@ -490,9 +478,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         options = _validate_operation_options(operation_options, _WRITE_OPTIONS)
         if not records:
             return []
-        await asyncio.to_thread(
-            self._client.upsert, collection_name=self.collection_name, data=list(records), **options
-        )
+        await self._client.upsert(collection_name=self.collection_name, data=list(records), **options)
         return [cast(KeyT, record[self._key_storage_name]) for record in records]
 
     async def _inner_get(
@@ -515,15 +501,13 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 raise ValueError("Milvus key retrieval cannot be combined with skip.")
             if not keys:
                 return []
-            return await asyncio.to_thread(
-                self._client.get,
+            return await self._client.get(
                 collection_name=self.collection_name,
                 ids=list(keys),
                 output_fields=output_fields,
                 **options,
             )
-        return await asyncio.to_thread(
-            self._client.query,
+        return await self._client.query(
             collection_name=self.collection_name,
             filter=self._prepare_filter(filter),
             output_fields=output_fields,
@@ -541,7 +525,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         options = _validate_operation_options(operation_options, _WRITE_OPTIONS)
         if not keys:
             return
-        await asyncio.to_thread(self._client.delete, collection_name=self.collection_name, ids=list(keys), **options)
+        await self._client.delete(collection_name=self.collection_name, ids=list(keys), **options)
 
     async def _inner_search(
         self,
@@ -577,8 +561,7 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         search_params.update(options.pop("search_params", {}) or {})
         if skip:
             search_params["offset"] = skip
-        hits = await asyncio.to_thread(
-            self._client.search,
+        hits = await self._client.search(
             collection_name=self.collection_name,
             data=[[float(component) for component in vector]],
             anns_field=field.storage_name or field.name,
@@ -660,12 +643,12 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
 
 
 class MilvusStore(BaseVectorStore):
-    """Create Milvus collection clients sharing one connection."""
+    """Create Milvus collection clients sharing one async connection."""
 
     def __init__(
         self,
         *,
-        client: MilvusClient | None = None,
+        client: AsyncMilvusClient | None = None,
         uri: str | None = None,
         token: str | SecretString | None = None,
         user: str | None = None,
@@ -679,7 +662,7 @@ class MilvusStore(BaseVectorStore):
         """Initialize a store.
 
         Args:
-            client: Existing client; borrowed unless managed_client=True.
+            client: Existing async client; borrowed unless managed_client=True.
             uri: Server URI override; otherwise loaded from MilvusSettings, then defaults to localhost.
             token: Access token override as a string or SecretString; otherwise loaded from MilvusSettings.
             user: Username override; otherwise loaded from MilvusSettings.
@@ -738,7 +721,7 @@ class MilvusStore(BaseVectorStore):
         """List collection names on the server."""
         options = _validate_operation_options(operation_options, _READ_OPTIONS)
         mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
-        return await asyncio.to_thread(self._client.list_collections, **options)
+        return await self._client.list_collections(**options)
 
     async def collection_exists(
         self,
@@ -749,7 +732,7 @@ class MilvusStore(BaseVectorStore):
         """Check collection existence without downloading the collection list."""
         options = _validate_operation_options(operation_options, _READ_OPTIONS)
         mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
-        return await asyncio.to_thread(self._client.has_collection, collection_name, **options)
+        return await self._client.has_collection(collection_name, **options)
 
     async def _inner_ensure_collection_deleted(
         self,
@@ -758,12 +741,12 @@ class MilvusStore(BaseVectorStore):
         operation_options: Mapping[str, Any] | None = None,
     ) -> None:
         options = _validate_operation_options(operation_options, _WRITE_OPTIONS)
-        await asyncio.to_thread(self._client.drop_collection, collection_name, **options)
+        await self._client.drop_collection(collection_name, **options)
 
     async def aclose(self) -> None:
         """Close an owned client once, leaving borrowed clients open."""
         if self.managed_client and not self._closed:
-            await asyncio.to_thread(self._client.close)
+            await self._client.close()
             self._closed = True
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
