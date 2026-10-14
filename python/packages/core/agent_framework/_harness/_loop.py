@@ -55,6 +55,7 @@ from .._types import (
 
 if TYPE_CHECKING:
     from .._clients import SupportsChatGetResponse
+    from .._tools import ToolTypes
 
 __all__ = [
     "AgentLoopMiddleware",
@@ -544,6 +545,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         # injected "nudge" messages, used to build the combined response when return_final_only=False.
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
+        evaluation_tools: list[ToolTypes] | None = None
         final_result: AgentResponse | None = None
         stamped_options = dict(context.options) if context.options is not None else {}
         stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
@@ -562,6 +564,10 @@ class AgentLoopMiddleware(AgentMiddleware):
 
                 final_result = result
                 aggregated.extend(result.messages)
+                if result._evaluation_tools is not None:  # pyright: ignore[reportPrivateUsage]
+                    if evaluation_tools is None:
+                        evaluation_tools = []
+                    evaluation_tools.extend(result._evaluation_tools)  # pyright: ignore[reportPrivateUsage]
                 if result.usage_details is not None:
                     aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
 
@@ -619,6 +625,7 @@ class AgentLoopMiddleware(AgentMiddleware):
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
+            context.result._evaluation_tools = evaluation_tools  # pyright: ignore[reportPrivateUsage]
         await self._fire_turn_scoped_after_providers(
             context,
             context.result if isinstance(context.result, AgentResponse) else final_result,

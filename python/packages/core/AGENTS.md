@@ -359,6 +359,9 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   the shim.
 - Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
   the public `EvalItem` directly.
+- Agent responses retain private, non-serialized run-scoped tool definitions for evaluation, including tools
+  injected by context providers. `evaluate_agent(tools=...)` overrides discovery without changing agent execution;
+  use it for restored responses whose context-provider or run-level definitions are no longer available.
 
 ## Built-in Providers
 
