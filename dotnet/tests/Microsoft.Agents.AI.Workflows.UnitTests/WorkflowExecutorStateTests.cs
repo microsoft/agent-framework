@@ -13,6 +13,30 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class WorkflowExecutorStateTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StatefulExecutor_InitializesOnlyWhenStateIsMissingAsync(bool publish)
+    {
+        // Arrange
+        int initializationCount = 0;
+        ValueStateExecutor executor = new(() => ++initializationCount);
+        TestWorkflowContext context = new(executor.Id);
+        int first = await executor.ReadAsync(context, false);
+        if (publish)
+        {
+            await context.StateManager.PublishUpdatesAsync(null);
+        }
+
+        // Act
+        int second = await executor.ReadAsync(context, false);
+
+        // Assert
+        Assert.Equal(1, first);
+        Assert.Equal(first, second);
+        Assert.Equal(1, initializationCount);
+    }
+
     [Fact]
     public async Task StatefulExecutor_PreservesNestedReadUpdatesDuringInitializationAsync()
     {
@@ -176,8 +200,8 @@ public sealed class WorkflowExecutorStateTests
         Assert.Equal("next", resumedSecond.Text);
     }
 
-    private sealed class ValueStateExecutor()
-        : StatefulExecutor<int>("value", () => 3, new StatefulExecutorOptions { StateKey = "value" }), IResettableExecutor
+    private sealed class ValueStateExecutor(Func<int>? initialStateFactory = null)
+        : StatefulExecutor<int>("value", initialStateFactory ?? (() => 3), new StatefulExecutorOptions { StateKey = "value" }), IResettableExecutor
     {
         protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
 
