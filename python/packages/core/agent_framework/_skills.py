@@ -2200,15 +2200,14 @@ class SkillsProvider(ContextProvider):
     def _is_local_tool_call(function_call: Content) -> bool:
         """Return whether a function call targets this provider's local tools.
 
-        Hosted-tool calls carry a ``server_label`` in their
-        ``additional_properties`` and are a separate server-scoped approval
+        Hosted-tool calls set ``hosted=True`` and are a separate server-scoped approval
         boundary that must be passed through untouched (see
         :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
         only ever auto-approve the provider's own local tools, so any call that
-        carries a ``server_label`` is rejected even if its name collides with a
+        is hosted is rejected even if its name collides with a
         skill tool name.
         """
-        return not function_call.additional_properties.get("server_label")
+        return not function_call.hosted
 
     @staticmethod
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
@@ -2223,7 +2222,7 @@ class SkillsProvider(ContextProvider):
         skill content (``load_skill`` and ``read_skill_resource``), while still
         prompting for script execution (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
@@ -2260,7 +2259,7 @@ class SkillsProvider(ContextProvider):
         ``auto_approval_rules``) to automatically approve every skill tool,
         including the script execution tool (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 

@@ -74,6 +74,8 @@ from agent_framework._types import (
     UsageDetails,
     _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
+    get_namespaced_value,
+    merge_additional_properties,
     validate_tool_mode,
 )
 from agent_framework.exceptions import (
@@ -119,7 +121,9 @@ from ._feature_usage import FeatureIndex
 from ._shared import (
     AzureTokenProvider,
     _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
+    _get_openai_metadata,  # pyright: ignore[reportPrivateUsage]
     _is_mp3_media_type,  # pyright: ignore[reportPrivateUsage]
+    _openai_additional_properties,  # pyright: ignore[reportPrivateUsage]
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -160,7 +164,24 @@ _TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "fa
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    """Return the generic refusal marker plus its legacy compatibility form."""
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
 
 
 DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
@@ -171,9 +192,25 @@ OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY = "openai.responses.local_shell.call_item_id
 OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY = "openai.local_shell_command_parts"
 OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL = "shell_call_output"
 OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL = "local_shell_call_output"
+_OPENAI_COMPUTER_ACTION_FORMAT_KEY = "computer_action_format"
+_OPENAI_CONTENT_TYPE_KEY = "content_type"
+_OPENAI_IMAGE_DETAIL_KEY = "image_detail"
+_OPENAI_ITEM_ID_KEY = "item_id"
+_OPENAI_LOGPROBS_KEY = "logprobs"
+_OPENAI_REASONING_TEXT_KEY = "reasoning_text"
+_OPENAI_SHELL_ENVIRONMENT_NAMESPACE_KEY = "shell_environment"
+_OPENAI_SHELL_OUTPUT_TYPE_NAMESPACE_KEY = "shell_output_type"
+_OPENAI_LOCAL_SHELL_CALL_ITEM_ID_NAMESPACE_KEY = "local_shell_call_item_id"
+_OPENAI_LOCAL_SHELL_COMMAND_PARTS_NAMESPACE_KEY = "local_shell_command_parts"
 _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE = "azure_ai_search_call_output"
 _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES = {"response.output_item.added", "response.output_item.done"}
 _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
+
+
+def _provider_status(value: Any) -> str | None:
+    """Return a provider status only when the SDK supplied a concrete string."""
+    return value if isinstance(value, str) else None
+
 
 # Internal marker emitted by `_prepare_content_for_openai` for an
 # `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
@@ -842,7 +879,6 @@ class RawOpenAIChatClient(
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
-            seen_reasoning_delta_item_ids: set[str] = set()
             seen_function_call_output_ids: set[str] = set()
             seen_text_annotation_keys: set[tuple[str, int, int]] = set()
             validated_options: dict[str, Any] | None = None
@@ -900,7 +936,6 @@ class RawOpenAIChatClient(
                                     chunk,
                                     options=validated_options,
                                     function_call_ids=function_call_ids,
-                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                 )
                                 if served_model is not None:
                                     update.model = served_model
@@ -932,7 +967,6 @@ class RawOpenAIChatClient(
                                         chunk,
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
-                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                     )
                         else:
                             raw_create_response = await client.responses.with_raw_response.create(
@@ -946,7 +980,6 @@ class RawOpenAIChatClient(
                                         chunk,
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
-                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
                                     )
                                     if served_model is not None:
                                         update.model = served_model
@@ -1018,13 +1051,19 @@ class RawOpenAIChatClient(
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
         self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
-        logprobs = [
-            logprob
-            for update in updates
-            for content in update.contents
-            if content.type == "text"
-            for logprob in content.additional_properties.get("logprobs", [])
-        ]
+        logprobs: list[Any] = []
+        for update in updates:
+            for content in update.contents:
+                if content.type != "text":
+                    continue
+                content_logprobs = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_LOGPROBS_KEY,
+                    "logprobs",
+                    default=[],
+                )
+                if isinstance(content_logprobs, list):
+                    logprobs.extend(cast("list[Any]", content_logprobs))
         if logprobs:
             assistant_text = next(
                 (
@@ -1037,7 +1076,13 @@ class RawOpenAIChatClient(
                 None,
             )
             if assistant_text is not None:
-                assistant_text.additional_properties["logprobs"] = logprobs
+                assistant_text.additional_properties = merge_additional_properties(
+                    assistant_text.additional_properties,
+                    _openai_additional_properties(
+                        {_OPENAI_LOGPROBS_KEY: logprobs},
+                        legacy={"logprobs": logprobs},
+                    ),
+                )
         return response
 
     @classmethod
@@ -1184,7 +1229,11 @@ class RawOpenAIChatClient(
         response_tools: list[Any] = []
         for tool_item in tools_list:
             if isinstance(tool_item, FunctionTool) and tool_item.kind == SHELL_TOOL_KIND_VALUE:
-                shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
+                shell_env = _get_openai_metadata(
+                    tool_item.additional_properties,
+                    _OPENAI_SHELL_ENVIRONMENT_NAMESPACE_KEY,
+                    OPENAI_SHELL_ENVIRONMENT_KEY,
+                )
                 response_tools.append(
                     FunctionShellToolParam(
                         type="shell",
@@ -1219,7 +1268,11 @@ class RawOpenAIChatClient(
                 continue
             if tool_item.kind != SHELL_TOOL_KIND_VALUE:
                 continue
-            shell_env = (tool_item.additional_properties or {}).get(OPENAI_SHELL_ENVIRONMENT_KEY)
+            shell_env = _get_openai_metadata(
+                tool_item.additional_properties,
+                _OPENAI_SHELL_ENVIRONMENT_NAMESPACE_KEY,
+                OPENAI_SHELL_ENVIRONMENT_KEY,
+            )
             if isinstance(shell_env, Mapping) and shell_env.get("type") == "local":  # type: ignore[typeddict-item]
                 return tool_item.name
         return None
@@ -1472,8 +1525,11 @@ class RawOpenAIChatClient(
         if base_tool.func is None:
             raise ValueError("Shell tool requires an executable function.")
 
-        additional_properties = dict(base_tool.additional_properties or {})
-        additional_properties[OPENAI_SHELL_ENVIRONMENT_KEY] = local_env
+        additional_properties = _openai_additional_properties(
+            {_OPENAI_SHELL_ENVIRONMENT_NAMESPACE_KEY: local_env},
+            legacy={OPENAI_SHELL_ENVIRONMENT_KEY: local_env},
+        )
+        additional_properties = merge_additional_properties(base_tool.additional_properties, additional_properties)
         base_tool.additional_properties = additional_properties
         base_tool.kind = SHELL_TOOL_KIND_VALUE
         return base_tool
@@ -2068,9 +2124,13 @@ class RawOpenAIChatClient(
             reasoning_texts: list[dict[str, str]] = []
             for content in contents:
                 props = content.additional_properties
-                if status := props.get("status"):
+                if status := content.status or props.get("status"):
                     item["status"] = status
-                if reasoning_text_marker := props.get("reasoning_text"):
+                if reasoning_text_marker := _get_openai_metadata(
+                    props,
+                    _OPENAI_REASONING_TEXT_KEY,
+                    "reasoning_text",
+                ):
                     reasoning_text = content.text if reasoning_text_marker is True else reasoning_text_marker
                     if isinstance(reasoning_text, str) and reasoning_text:
                         reasoning_texts.append({"type": "reasoning_text", "text": reasoning_text})
@@ -2113,10 +2173,13 @@ class RawOpenAIChatClient(
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
                     }
-                    if "logprobs" in content.additional_properties:
-                        output_text["logprobs"] = self._serialize_provider_payload(
-                            content.additional_properties["logprobs"]
-                        )
+                    logprobs = _get_openai_metadata(
+                        content.additional_properties,
+                        _OPENAI_LOGPROBS_KEY,
+                        "logprobs",
+                    )
+                    if logprobs is not None:
+                        output_text["logprobs"] = self._serialize_provider_payload(logprobs)
                     return output_text
                 return _attach_prompt_cache_breakpoint(
                     {
@@ -2132,9 +2195,13 @@ class RawOpenAIChatClient(
                 props: dict[str, Any] | None = getattr(content, "additional_properties", None)
                 reasoning_text_marker: Any = None
                 if props:
-                    if status := props.get("status"):
+                    if status := content.status or props.get("status"):
                         ret["status"] = status
-                    if reasoning_text_marker := props.get("reasoning_text"):
+                    if reasoning_text_marker := _get_openai_metadata(
+                        props,
+                        _OPENAI_REASONING_TEXT_KEY,
+                        "reasoning_text",
+                    ):
                         reasoning_text = content.text if reasoning_text_marker is True else reasoning_text_marker
                         if isinstance(reasoning_text, str) and reasoning_text:
                             ret["content"] = [{"type": "reasoning_text", "text": reasoning_text}]
@@ -2144,9 +2211,13 @@ class RawOpenAIChatClient(
                     ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
-                openai_content_type = content.additional_properties.get("openai_content_type")
+                openai_content_type = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_CONTENT_TYPE_KEY,
+                    "openai_content_type",
+                )
                 if openai_content_type == "input_file":
-                    filename = content.additional_properties.get("filename")
+                    filename = content.name or content.additional_properties.get("filename")
                     file_field = "file_url" if content.uri and not content.uri.startswith("data:") else "file_data"
                     file_obj = {
                         "type": "input_file",
@@ -2161,11 +2232,14 @@ class RawOpenAIChatClient(
                     result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
-                        "detail": content.additional_properties.get("detail", "auto")
-                        if content.additional_properties
-                        else "auto",
+                        "detail": _get_openai_metadata(
+                            content.additional_properties,
+                            _OPENAI_IMAGE_DETAIL_KEY,
+                            "detail",
+                            default="auto",
+                        ),
                     }
-                    file_id = content.additional_properties.get("file_id") if content.additional_properties else None
+                    file_id = content.file_id or content.additional_properties.get("file_id")
                     if file_id is not None:
                         result["file_id"] = file_id
                     return _attach_prompt_cache_breakpoint(result, content)
@@ -2185,7 +2259,7 @@ class RawOpenAIChatClient(
                         },
                     }
                 if content.has_top_level_media_type("application"):
-                    filename = getattr(content, "filename", None) or (
+                    filename = content.name or (
                         content.additional_properties.get("filename")
                         if hasattr(content, "additional_properties") and content.additional_properties
                         else None
@@ -2199,7 +2273,11 @@ class RawOpenAIChatClient(
                     return _attach_prompt_cache_breakpoint(file_obj, content)
                 return {}
             case "function_call":
-                shell_output_type = content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
+                shell_output_type = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_SHELL_OUTPUT_TYPE_NAMESPACE_KEY,
+                    OPENAI_SHELL_OUTPUT_TYPE_KEY,
+                )
                 if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL:
                     return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
                 if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL:
@@ -2209,7 +2287,11 @@ class RawOpenAIChatClient(
                     return {}
                 fc_id = content.call_id
                 if not replays_local_storage and content.additional_properties:
-                    live_fc_id = content.additional_properties.get("fc_id")
+                    live_fc_id = _get_openai_metadata(
+                        content.additional_properties,
+                        _OPENAI_ITEM_ID_KEY,
+                        "fc_id",
+                    )
                     if isinstance(live_fc_id, str) and live_fc_id:
                         fc_id = live_fc_id
                 # OpenAI Responses API requires IDs to start with `fc_`
@@ -2223,7 +2305,7 @@ class RawOpenAIChatClient(
                     "name": content.name,
                     "arguments": content.arguments,
                 }
-                if status := content.additional_properties.get("status"):
+                if status := content.status or content.additional_properties.get("status"):
                     function_call_obj["status"] = status
                 return function_call_obj
             case "shell_tool_call":
@@ -2238,7 +2320,14 @@ class RawOpenAIChatClient(
                     "id": content.id,
                     "call_id": content.call_id,
                 }
-                if content.additional_properties.get("computer_action_format") == "single":
+                if (
+                    _get_openai_metadata(
+                        content.additional_properties,
+                        _OPENAI_COMPUTER_ACTION_FORMAT_KEY,
+                        "computer_action_format",
+                    )
+                    == "single"
+                ):
                     if len(content.actions) != 1:
                         raise ChatClientInvalidRequestException("A preview computer call must contain one action.")
                     computer_call_item["action"] = content.actions[0]
@@ -2256,7 +2345,7 @@ class RawOpenAIChatClient(
                 screenshot_output: dict[str, Any] = {"type": "computer_screenshot"}
                 if screenshot.type in ("data", "uri") and screenshot.uri:
                     screenshot_output["image_url"] = screenshot.uri
-                    if file_id := screenshot.additional_properties.get("file_id"):
+                    if file_id := screenshot.file_id or screenshot.additional_properties.get("file_id"):
                         screenshot_output["file_id"] = file_id
                 elif screenshot.type == "hosted_file" and screenshot.file_id:
                     screenshot_output["file_id"] = screenshot.file_id
@@ -2264,7 +2353,11 @@ class RawOpenAIChatClient(
                         screenshot_output["image_url"] = image_url
                 else:
                     raise ChatClientInvalidRequestException("A computer screenshot must have an image URL or file ID.")
-                if detail := screenshot.additional_properties.get("detail"):
+                if detail := _get_openai_metadata(
+                    screenshot.additional_properties,
+                    _OPENAI_IMAGE_DETAIL_KEY,
+                    "detail",
+                ):
                     screenshot_output["detail"] = detail
                 computer_output_item: dict[str, Any] = {
                     "type": "computer_call_output",
@@ -2279,10 +2372,10 @@ class RawOpenAIChatClient(
                     computer_output_item["acknowledged_safety_checks"] = content.acknowledged_safety_checks
                 return computer_output_item
             case "function_result":
-                shell_output_type = (
-                    content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
-                    if content.additional_properties
-                    else None
+                shell_output_type = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_SHELL_OUTPUT_TYPE_NAMESPACE_KEY,
+                    OPENAI_SHELL_OUTPUT_TYPE_KEY,
                 )
                 if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL:
                     return {
@@ -2290,10 +2383,10 @@ class RawOpenAIChatClient(
                         "type": OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
                         "output": self._to_shell_call_output_payload(content),
                     }
-                local_shell_call_item_id = (
-                    content.additional_properties.get(OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY)
-                    if content.additional_properties
-                    else None
+                local_shell_call_item_id = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_LOCAL_SHELL_CALL_ITEM_ID_NAMESPACE_KEY,
+                    OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY,
                 )
                 if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and local_shell_call_item_id:
                     return {
@@ -2342,9 +2435,7 @@ class RawOpenAIChatClient(
                     "id": content.id,
                     "arguments": content.function_call.arguments,  # type: ignore[union-attr]
                     "name": content.function_call.name,  # type: ignore[union-attr]
-                    "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
-                    if content.function_call.additional_properties  # type: ignore[union-attr]
-                    else None,
+                    "server_label": content.function_call.server_name,  # type: ignore[union-attr]
                 }
             case "function_approval_response":
                 return {
@@ -2378,14 +2469,23 @@ class RawOpenAIChatClient(
                 # the citation context for round-tripping.
                 if role == "assistant":
                     return {}
-                openai_content_type = content.additional_properties.get("openai_content_type")
+                openai_content_type = _get_openai_metadata(
+                    content.additional_properties,
+                    _OPENAI_CONTENT_TYPE_KEY,
+                    "openai_content_type",
+                )
                 if openai_content_type == "input_image" or (
                     openai_content_type is None and content.media_type and content.has_top_level_media_type("image")
                 ):
                     return {
                         "type": "input_image",
                         "file_id": content.file_id,
-                        "detail": content.additional_properties.get("detail", "auto"),
+                        "detail": _get_openai_metadata(
+                            content.additional_properties,
+                            _OPENAI_IMAGE_DETAIL_KEY,
+                            "detail",
+                            default="auto",
+                        ),
                     }
                 return {
                     "type": "input_file",
@@ -2578,10 +2678,16 @@ class RawOpenAIChatClient(
                         call_id=shell_call_id,
                         name=local_shell_tool_name,
                         arguments=json.dumps({"command": "\n".join(shell_commands).strip()}),
-                        additional_properties={
-                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
-                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
-                        },
+                        additional_properties=_openai_additional_properties(
+                            {
+                                _OPENAI_SHELL_OUTPUT_TYPE_NAMESPACE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+                                _OPENAI_LOCAL_SHELL_COMMAND_PARTS_NAMESPACE_KEY: shell_commands,
+                            },
+                            legacy={
+                                OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+                                OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
+                            },
+                        ),
                         raw_representation=item,
                     )
                 )
@@ -2592,7 +2698,7 @@ class RawOpenAIChatClient(
                         commands=shell_commands,
                         timeout_ms=shell_timeout_ms,
                         max_output_length=shell_max_output,
-                        status=getattr(item, "status", None),
+                        status=_provider_status(getattr(item, "status", None)),
                         raw_representation=item,
                     )
                 )
@@ -2616,11 +2722,18 @@ class RawOpenAIChatClient(
                         call_id=local_call_id,
                         name=local_shell_tool_name,
                         arguments=json.dumps({"command": local_command}),
-                        additional_properties={
-                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
-                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: local_call_item_id,
-                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
-                        },
+                        additional_properties=_openai_additional_properties(
+                            {
+                                _OPENAI_SHELL_OUTPUT_TYPE_NAMESPACE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+                                _OPENAI_LOCAL_SHELL_CALL_ITEM_ID_NAMESPACE_KEY: local_call_item_id,
+                                _OPENAI_LOCAL_SHELL_COMMAND_PARTS_NAMESPACE_KEY: local_command_parts,
+                            },
+                            legacy={
+                                OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+                                OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: local_call_item_id,
+                                OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
+                            },
+                        ),
                         raw_representation=item,
                     )
                 )
@@ -2630,7 +2743,7 @@ class RawOpenAIChatClient(
                         call_id=local_call_id,
                         commands=[local_command] if local_command else [],
                         timeout_ms=getattr(getattr(item, "action", None), "timeout_ms", None),
-                        status=getattr(item, "status", None),
+                        status=_provider_status(getattr(item, "status", None)),
                         raw_representation=item,
                     )
                 )
@@ -2726,11 +2839,18 @@ class RawOpenAIChatClient(
         """
         field = partial(_output_part_field, part)
         detail = field("detail")
-        extra: dict[str, Any] = {"detail": detail} if detail else {}
+        openai_values: dict[str, Any] = {_OPENAI_IMAGE_DETAIL_KEY: detail} if detail else {}
+        legacy_values: dict[str, Any] = {"detail": detail} if detail else {}
         if (part_type := field("type")) in ("input_image", "input_file"):
-            extra["openai_content_type"] = part_type
+            openai_values[_OPENAI_CONTENT_TYPE_KEY] = part_type
+            legacy_values["openai_content_type"] = part_type
         if filename := field("filename"):
-            extra["filename"] = filename
+            legacy_values["filename"] = filename
+        extra = (
+            _openai_additional_properties(openai_values, legacy=legacy_values)
+            if openai_values or legacy_values
+            else None
+        )
 
         if part_type == "input_text" and isinstance(text := field("text"), str):
             return Content.from_text(text, raw_representation=part)
@@ -2741,7 +2861,8 @@ class RawOpenAIChatClient(
             return Content.from_uri(
                 uri,
                 media_type=_media_type_from_uri(uri),
-                additional_properties=extra or None,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=extra,
                 raw_representation=part,
             )
 
@@ -2755,7 +2876,7 @@ class RawOpenAIChatClient(
                 # know is better left unset than asserted as octet-stream.
                 media_type=_guess_media_type(field("filename"), fallback=None),
                 name=field("filename"),
-                additional_properties=extra or None,
+                additional_properties=extra,
                 raw_representation=part,
             )
 
@@ -2929,12 +3050,19 @@ class RawOpenAIChatClient(
         call_id = getattr(item, "call_id", None)
         if not isinstance(item_id, str) or not isinstance(call_id, str):
             raise ChatClientInvalidRequestException("Computer call is missing its item id or call_id.")
-        additional_properties = {"computer_action_format": "single"} if is_preview else None
+        additional_properties = (
+            _openai_additional_properties(
+                {_OPENAI_COMPUTER_ACTION_FORMAT_KEY: "single"},
+                legacy={"computer_action_format": "single"},
+            )
+            if is_preview
+            else None
+        )
         return Content.from_computer_tool_call(
             id=item_id,
             call_id=call_id,
             actions=parsed_actions,
-            status=getattr(item, "status", None),
+            status=_provider_status(getattr(item, "status", None)),
             pending_safety_checks=self._parse_computer_safety_checks(getattr(item, "pending_safety_checks", None)),
             additional_properties=additional_properties,
             raw_representation=item,
@@ -2950,15 +3078,34 @@ class RawOpenAIChatClient(
         image_url = output.get("image_url")
         file_id = output.get("file_id")
         detail = output.get("detail")
-        screenshot_properties: dict[str, Any] = {}
+        openai_screenshot_properties: dict[str, Any] = {}
+        legacy_screenshot_properties: dict[str, Any] = {}
         if detail is not None:
-            screenshot_properties["detail"] = detail
+            openai_screenshot_properties[_OPENAI_IMAGE_DETAIL_KEY] = detail
+            legacy_screenshot_properties["detail"] = detail
         if isinstance(image_url, str) and image_url:
-            if file_id is not None:
-                screenshot_properties["file_id"] = file_id
-            screenshot = Content.from_uri(image_url, additional_properties=screenshot_properties)
+            screenshot = Content.from_uri(
+                image_url,
+                file_id=file_id if isinstance(file_id, str) else None,
+                additional_properties=_openai_additional_properties(
+                    openai_screenshot_properties,
+                    legacy={
+                        **legacy_screenshot_properties,
+                        **({"file_id": file_id} if isinstance(file_id, str) else {}),
+                    },
+                ),
+            )
         elif isinstance(file_id, str) and file_id:
-            screenshot = Content.from_hosted_file(file_id=file_id, additional_properties=screenshot_properties)
+            if isinstance(image_url, str) and image_url:
+                openai_screenshot_properties["image_url"] = image_url
+                legacy_screenshot_properties["image_url"] = image_url
+            screenshot = Content.from_hosted_file(
+                file_id=file_id,
+                additional_properties=_openai_additional_properties(
+                    openai_screenshot_properties,
+                    legacy=legacy_screenshot_properties,
+                ),
+            )
         else:
             raise ChatClientInvalidRequestException("Computer screenshot is missing its image URL or file ID.")
         call_id = getattr(item, "call_id", None)
@@ -2968,7 +3115,7 @@ class RawOpenAIChatClient(
             id=getattr(item, "id", None),
             call_id=call_id,
             screenshot=screenshot,
-            status=getattr(item, "status", None),
+            status=_provider_status(getattr(item, "status", None)),
             acknowledged_safety_checks=self._parse_computer_safety_checks(
                 getattr(item, "acknowledged_safety_checks", None)
             ),
@@ -3185,7 +3332,7 @@ class RawOpenAIChatClient(
             call_id=call_id,
             tool_name=self._get_search_tool_name(item_type),
             arguments=arguments,
-            status=getattr(item, "status", None),
+            status=_provider_status(getattr(item, "status", None)),
             raw_representation=item,
         )
 
@@ -3201,7 +3348,7 @@ class RawOpenAIChatClient(
             call_id=call_id,
             tool_name=self._get_search_tool_name(item_type),
             result=result,
-            status=getattr(item, "status", None),
+            status=_provider_status(getattr(item, "status", None)),
             raw_representation=item,
         )
 
@@ -3213,27 +3360,34 @@ class RawOpenAIChatClient(
         arguments: Any = None,
     ) -> Content:
         """Create informational-only function call content for hosted Responses items."""
-        additional_properties: dict[str, Any] = {"item_type": item.type}
+        openai_properties: dict[str, Any] = {"item_type": item.type}
+        legacy_properties: dict[str, Any] = {"item_type": item.type}
         match item.type:
             case "custom_tool_call":
                 call_id = item.call_id
                 if item.id:
-                    additional_properties["item_id"] = item.id
+                    openai_properties[_OPENAI_ITEM_ID_KEY] = item.id
+                    legacy_properties["item_id"] = item.id
                 if item.namespace:
-                    additional_properties["namespace"] = item.namespace
+                    openai_properties["namespace"] = item.namespace
+                    legacy_properties["namespace"] = item.namespace
             case "tool_search_call":
                 call_id = item.call_id or item.id
-                additional_properties["item_id"] = item.id
-                additional_properties["status"] = item.status
-                additional_properties["execution"] = item.execution
+                openai_properties[_OPENAI_ITEM_ID_KEY] = item.id
+                legacy_properties["item_id"] = item.id
+                openai_properties["execution"] = item.execution
+                legacy_properties["execution"] = item.execution
                 if item.created_by:
-                    additional_properties["created_by"] = item.created_by
+                    openai_properties["created_by"] = item.created_by
+                    legacy_properties["created_by"] = item.created_by
         return Content.from_function_call(
             call_id=call_id,
             name=name,
             arguments=self._serialize_provider_payload(arguments),
             informational_only=True,
-            additional_properties=additional_properties,
+            hosted=True,
+            status=_provider_status(getattr(item, "status", None)),
+            additional_properties=_openai_additional_properties(openai_properties, legacy=legacy_properties),
             raw_representation=item,
         )
 
@@ -3250,17 +3404,21 @@ class RawOpenAIChatClient(
         canonical ``Content`` items by :meth:`_function_call_output_result`, so a returned image or
         file stays addressable instead of arriving as JSON inside a text item.
         """
-        additional_properties: dict[str, Any] = {"item_type": item.type, "status": item.status}
+        openai_properties: dict[str, Any] = {"item_type": item.type}
+        legacy_properties: dict[str, Any] = {"item_type": item.type, "status": item.status}
         if item.id:
-            additional_properties["item_id"] = item.id
+            openai_properties[_OPENAI_ITEM_ID_KEY] = item.id
+            legacy_properties["item_id"] = item.id
         # `name` (and the other caller-attribution fields) only exist on newer openai SDKs; the
         # declared floor of 2.25.0 ships only call_id/id/output/status/type.
         if tool_name := getattr(item, "name", None):
-            additional_properties["name"] = tool_name
+            openai_properties["name"] = tool_name
+            legacy_properties["name"] = tool_name
         return Content.from_function_result(
             call_id=call_id,
             result=self._function_call_output_result(item.output),
-            additional_properties=additional_properties,
+            status=item.status,
+            additional_properties=_openai_additional_properties(openai_properties, legacy=legacy_properties),
             raw_representation=item,
         )
 
@@ -3324,7 +3482,10 @@ class RawOpenAIChatClient(
                                 text_content = Content.from_text(
                                     text=message_content.text,
                                     additional_properties=(
-                                        {"logprobs": self._serialize_provider_payload(logprobs)}
+                                        _openai_additional_properties(
+                                            {_OPENAI_LOGPROBS_KEY: self._serialize_provider_payload(logprobs)},
+                                            legacy={"logprobs": self._serialize_provider_payload(logprobs)},
+                                        )
                                         if logprobs is not None
                                         else None
                                     ),
@@ -3403,7 +3564,7 @@ class RawOpenAIChatClient(
                                 contents.append(
                                     Content.from_text(
                                         text=message_content.refusal,
-                                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                        additional_properties=_refusal_additional_properties(),
                                         raw_representation=message_content,
                                     )
                                 )
@@ -3412,14 +3573,21 @@ class RawOpenAIChatClient(
                     encrypted_content = getattr(item, "encrypted_content", None)
                     if item_content := getattr(item, "content", None):
                         for index, reasoning_content in enumerate(item_content):
-                            additional_properties: dict[str, Any] = {"reasoning_text": True}
+                            additional_properties = _openai_additional_properties(
+                                {_OPENAI_REASONING_TEXT_KEY: True},
+                                legacy={"reasoning_text": True},
+                            )
                             if hasattr(item, "summary") and item.summary and index < len(item.summary):
+                                additional_properties["openai"]["summary"] = self._serialize_provider_payload(
+                                    item.summary[index]
+                                )
                                 additional_properties["summary"] = item.summary[index]
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=item.id,
                                     text=reasoning_content.text,
                                     protected_data=encrypted_content if not added_reasoning else None,
+                                    status=_provider_status(getattr(item, "status", None)),
                                     raw_representation=reasoning_content,
                                     additional_properties=additional_properties or None,
                                 )
@@ -3432,6 +3600,7 @@ class RawOpenAIChatClient(
                                     id=item.id,
                                     text=summary.text,
                                     protected_data=encrypted_content if not added_reasoning else None,
+                                    status=_provider_status(getattr(item, "status", None)),
                                     raw_representation=summary,
                                 )
                             )
@@ -3445,6 +3614,7 @@ class RawOpenAIChatClient(
                                 id=item.id,
                                 text="",
                                 protected_data=encrypted_content,
+                                status=_provider_status(getattr(item, "status", None)),
                                 raw_representation=item,
                                 additional_properties=additional_properties_empty or None,
                             )
@@ -3474,6 +3644,7 @@ class RawOpenAIChatClient(
                             Content.from_code_interpreter_tool_call(
                                 call_id=call_id,
                                 inputs=[Content.from_text(text=code, raw_representation=item)],
+                                status=_provider_status(getattr(item, "status", None)),
                                 raw_representation=item,
                             )
                         )
@@ -3481,6 +3652,7 @@ class RawOpenAIChatClient(
                         Content.from_code_interpreter_tool_result(
                             call_id=call_id,
                             outputs=outputs,
+                            status=_provider_status(getattr(item, "status", None)),
                             raw_representation=item,
                         )
                     )
@@ -3491,7 +3663,11 @@ class RawOpenAIChatClient(
                             name=item.name,
                             arguments=item.arguments,
                             informational_only=item.name == local_shell_tool_name,
-                            additional_properties={"fc_id": item.id, "status": item.status},
+                            status=item.status,
+                            additional_properties=_openai_additional_properties(
+                                {_OPENAI_ITEM_ID_KEY: item.id},
+                                legacy={"fc_id": item.id, "status": item.status},
+                            ),
                             raw_representation=item,
                         )
                     )
@@ -3528,6 +3704,8 @@ class RawOpenAIChatClient(
                                 call_id=item.id,
                                 name=item.name,
                                 arguments=item.arguments,
+                                hosted=True,
+                                server_name=item.server_label,
                                 additional_properties={"server_label": item.server_label},
                                 raw_representation=item,
                             ),
@@ -3652,6 +3830,7 @@ class RawOpenAIChatClient(
         seen_reasoning_delta_item_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
+        del seen_reasoning_delta_item_ids
         # Read from `options` rather than a parameter; see
         # `_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION` for why the signature must not grow.
         seen_function_call_output_ids = cast("set[str] | None", options.get(_SEEN_FUNCTION_CALL_OUTPUT_IDS_OPTION))
@@ -3676,7 +3855,10 @@ class RawOpenAIChatClient(
             serialized = self._serialize_provider_payload(logprobs)
             if not isinstance(serialized, list):
                 return None
-            return {"logprobs": serialized}
+            return _openai_additional_properties(
+                {_OPENAI_LOGPROBS_KEY: serialized},
+                legacy={"logprobs": serialized},
+            )
 
         def parse_annotations(
             annotations: Sequence[Any],
@@ -3768,6 +3950,7 @@ class RawOpenAIChatClient(
                         contents.append(
                             Content.from_text(
                                 text=event_part.text,
+                                merge_mode="append",
                                 annotations=annotations or None,
                                 additional_properties=output_text_properties(cast(Any, event_part)),
                                 raw_representation=event,
@@ -3778,7 +3961,8 @@ class RawOpenAIChatClient(
                         contents.append(
                             Content.from_text(
                                 text=event_part.refusal,
-                                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                merge_mode="append",
+                                additional_properties=_refusal_additional_properties(),
                                 raw_representation=event,
                             )
                         )
@@ -3789,11 +3973,29 @@ class RawOpenAIChatClient(
                 if event_part.type == "output_text":
                     annotations = parse_annotations(event_part.annotations, event.item_id, event.content_index)
                     if annotations:
-                        contents.append(Content.from_text(text="", annotations=annotations, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text="",
+                                merge_mode="append",
+                                annotations=annotations,
+                                raw_representation=event,
+                            )
+                        )
             case "response.output_text.delta":
                 contents.append(
                     Content.from_text(
                         text=event.delta,
+                        merge_mode="append",
+                        additional_properties=output_text_properties(cast(Any, event)),
+                        raw_representation=event,
+                    )
+                )
+                metadata.update(self._get_metadata_from_response(event))
+            case "response.output_text.done":
+                contents.append(
+                    Content.from_text(
+                        text=event.text,
+                        merge_mode="replace",
                         additional_properties=output_text_properties(cast(Any, event)),
                         raw_representation=event,
                     )
@@ -3803,77 +4005,94 @@ class RawOpenAIChatClient(
                 contents.append(
                     Content.from_text(
                         text=event.delta,
-                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                        merge_mode="append",
+                        additional_properties=_refusal_additional_properties(),
+                        raw_representation=event,
+                    )
+                )
+            case "response.refusal.done":
+                contents.append(
+                    Content.from_text(
+                        text=event.refusal,
+                        merge_mode="replace",
+                        additional_properties=_refusal_additional_properties(),
                         raw_representation=event,
                     )
                 )
             case "response.reasoning_text.delta":
-                if seen_reasoning_delta_item_ids is not None:
-                    seen_reasoning_delta_item_ids.add(event.item_id)
                 contents.append(
                     Content.from_text_reasoning(
                         id=event.item_id,
                         text=event.delta,
+                        merge_mode="append",
                         raw_representation=event,
-                        additional_properties={"reasoning_text": True},
+                        additional_properties=_openai_additional_properties(
+                            {_OPENAI_REASONING_TEXT_KEY: True},
+                            legacy={"reasoning_text": True},
+                        ),
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.done":
-                # Done event carries the full accumulated text. Emit it only as a
-                # fallback when no delta was already received for this item_id, to
-                # avoid duplicating content in downstream accumulators (e.g. ag-ui).
-                if seen_reasoning_delta_item_ids is None or event.item_id not in seen_reasoning_delta_item_ids:
-                    contents.append(
-                        Content.from_text_reasoning(
-                            id=event.item_id,
-                            text=event.text,
-                            raw_representation=event,
-                            additional_properties={"reasoning_text": True},
-                        )
+                contents.append(
+                    Content.from_text_reasoning(
+                        id=event.item_id,
+                        text=event.text,
+                        merge_mode="replace",
+                        raw_representation=event,
+                        additional_properties=_openai_additional_properties(
+                            {_OPENAI_REASONING_TEXT_KEY: True},
+                            legacy={"reasoning_text": True},
+                        ),
                     )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.delta":
-                if seen_reasoning_delta_item_ids is not None:
-                    seen_reasoning_delta_item_ids.add(event.item_id)
                 contents.append(
                     Content.from_text_reasoning(
                         id=event.item_id,
                         text=event.delta,
+                        merge_mode="append",
                         raw_representation=event,
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_summary_text.done":
-                # Done event carries the full accumulated text. Emit it only as a
-                # fallback when no delta was already received for this item_id, to
-                # avoid duplicating content in downstream accumulators (e.g. ag-ui).
-                if seen_reasoning_delta_item_ids is None or event.item_id not in seen_reasoning_delta_item_ids:
-                    contents.append(
-                        Content.from_text_reasoning(
-                            id=event.item_id,
-                            text=event.text,
-                            raw_representation=event,
-                        )
+                contents.append(
+                    Content.from_text_reasoning(
+                        id=event.item_id,
+                        text=event.text,
+                        merge_mode="replace",
+                        raw_representation=event,
                     )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.code_interpreter_call_code.delta":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
-                ci_additional_properties = {
-                    "output_index": event.output_index,
-                    "sequence_number": event.sequence_number,
-                    "item_id": event.item_id,
-                }
+                ci_additional_properties = _openai_additional_properties(
+                    {
+                        "output_index": event.output_index,
+                        "sequence_number": event.sequence_number,
+                        _OPENAI_ITEM_ID_KEY: event.item_id,
+                    },
+                    legacy={
+                        "output_index": event.output_index,
+                        "sequence_number": event.sequence_number,
+                        "item_id": event.item_id,
+                    },
+                )
                 contents.append(
                     Content.from_code_interpreter_tool_call(
                         call_id=call_id,
                         inputs=[
                             Content.from_text(
                                 text=event.delta,
+                                merge_mode="append",
                                 raw_representation=event,
                                 additional_properties=ci_additional_properties,
                             )
                         ],
+                        merge_mode="append",
                         raw_representation=event,
                         additional_properties=ci_additional_properties,
                     )
@@ -3884,23 +4103,30 @@ class RawOpenAIChatClient(
                 # code_interpreter deltas the same way.
             case "response.code_interpreter_call_code.done":
                 call_id = getattr(event, "call_id", None) or getattr(event, "id", None) or event.item_id
-                ci_additional_properties = {
-                    "output_index": event.output_index,
-                    "sequence_number": event.sequence_number,
-                    "item_id": event.item_id,
-                    # Authoritative full code; core merges replace prior deltas.
-                    "stream_complete": True,
-                }
+                ci_additional_properties = _openai_additional_properties(
+                    {
+                        "output_index": event.output_index,
+                        "sequence_number": event.sequence_number,
+                        _OPENAI_ITEM_ID_KEY: event.item_id,
+                    },
+                    legacy={
+                        "output_index": event.output_index,
+                        "sequence_number": event.sequence_number,
+                        "item_id": event.item_id,
+                    },
+                )
                 contents.append(
                     Content.from_code_interpreter_tool_call(
                         call_id=call_id,
                         inputs=[
                             Content.from_text(
                                 text=event.code,
+                                merge_mode="replace",
                                 raw_representation=event,
                                 additional_properties=ci_additional_properties,
                             )
                         ],
+                        merge_mode="replace",
                         raw_representation=event,
                         additional_properties=ci_additional_properties,
                     )
@@ -3929,7 +4155,13 @@ class RawOpenAIChatClient(
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
-                        contents.append(Content.from_usage(usage_details=usage, raw_representation=event))
+                        contents.append(
+                            Content.from_usage(
+                                usage_details=usage,
+                                merge_mode="replace",
+                                raw_representation=event,
+                            )
+                        )
             case "response.output_item.added":
                 event_item = event.item
                 match event_item.type:
@@ -3960,6 +4192,8 @@ class RawOpenAIChatClient(
                                     call_id=event_item.id,
                                     name=event_item.name,
                                     arguments=event_item.arguments,
+                                    hosted=True,
+                                    server_name=event_item.server_label,
                                     additional_properties={"server_label": event_item.server_label},
                                     raw_representation=event_item,
                                 ),
@@ -4004,9 +4238,12 @@ class RawOpenAIChatClient(
                                     inputs=[
                                         Content.from_text(
                                             text=event_item.code,
+                                            merge_mode="append",
                                             raw_representation=event_item,
                                         )
                                     ],
+                                    status=_provider_status(getattr(event_item, "status", None)),
+                                    merge_mode="append",
                                     raw_representation=event_item,
                                 )
                             )
@@ -4014,6 +4251,8 @@ class RawOpenAIChatClient(
                             Content.from_code_interpreter_tool_result(
                                 call_id=call_id,
                                 outputs=outputs,
+                                status=_provider_status(getattr(event_item, "status", None)),
+                                merge_mode="append",
                                 raw_representation=event_item,
                             )
                         )
@@ -4032,18 +4271,26 @@ class RawOpenAIChatClient(
                         added_reasoning = False
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
-                                additional_properties: dict[str, Any] = {"reasoning_text": True}
+                                additional_properties = _openai_additional_properties(
+                                    {_OPENAI_REASONING_TEXT_KEY: True},
+                                    legacy={"reasoning_text": True},
+                                )
                                 if (
                                     hasattr(event_item, "summary")
                                     and event_item.summary
                                     and index < len(event_item.summary)
                                 ):
+                                    additional_properties["openai"]["summary"] = self._serialize_provider_payload(
+                                        event_item.summary[index]
+                                    )
                                     additional_properties["summary"] = event_item.summary[index]
                                 contents.append(
                                     Content.from_text_reasoning(
                                         id=reasoning_id or None,
                                         text=reasoning_content.text,
                                         protected_data=getattr(event_item, "encrypted_content", None),
+                                        status=_provider_status(getattr(event_item, "status", None)),
+                                        merge_mode="append",
                                         raw_representation=reasoning_content,
                                         additional_properties=additional_properties or None,
                                     )
@@ -4057,6 +4304,8 @@ class RawOpenAIChatClient(
                                     id=reasoning_id or None,
                                     text="",
                                     protected_data=getattr(event_item, "encrypted_content", None),
+                                    status=_provider_status(getattr(event_item, "status", None)),
+                                    merge_mode="append",
                                     raw_representation=event_item,
                                 )
                             )
@@ -4093,10 +4342,40 @@ class RawOpenAIChatClient(
                             name=name,
                             arguments=event.delta,
                             informational_only=name == local_shell_tool_name,
-                            additional_properties={
-                                "output_index": event.output_index,
-                                "fc_id": event.item_id,
-                            },
+                            merge_mode="append",
+                            additional_properties=_openai_additional_properties(
+                                {
+                                    "output_index": event.output_index,
+                                    _OPENAI_ITEM_ID_KEY: event.item_id,
+                                },
+                                legacy={
+                                    "output_index": event.output_index,
+                                    "fc_id": event.item_id,
+                                },
+                            ),
+                            raw_representation=event,
+                        )
+                    )
+            case "response.function_call_arguments.done":
+                call_id, name = function_call_ids.get(event.output_index, (None, None))
+                if call_id and name:
+                    contents.append(
+                        Content.from_function_call(
+                            call_id=call_id,
+                            name=name,
+                            arguments=event.arguments,
+                            informational_only=name == local_shell_tool_name,
+                            merge_mode="replace",
+                            additional_properties=_openai_additional_properties(
+                                {
+                                    "output_index": event.output_index,
+                                    _OPENAI_ITEM_ID_KEY: event.item_id,
+                                },
+                                legacy={
+                                    "output_index": event.output_index,
+                                    "fc_id": event.item_id,
+                                },
+                            ),
                             raw_representation=event,
                         )
                     )
@@ -4136,7 +4415,14 @@ class RawOpenAIChatClient(
                     annotation_index=event.annotation_index,
                 )
                 if annotations:
-                    contents.append(Content.from_text(text="", annotations=annotations, raw_representation=event))
+                    contents.append(
+                        Content.from_text(
+                            text="",
+                            merge_mode="append",
+                            annotations=annotations,
+                            raw_representation=event,
+                        )
+                    )
             case "response.output_item.done":
                 done_item = event.item
                 if getattr(done_item, "type", None) == "reasoning":
@@ -4147,6 +4433,7 @@ class RawOpenAIChatClient(
                                 id=getattr(done_item, "id", None),
                                 text="",
                                 protected_data=encrypted_content,
+                                merge_mode="append",
                                 raw_representation=done_item,
                             )
                         )
@@ -4156,7 +4443,12 @@ class RawOpenAIChatClient(
                             annotations = parse_annotations(part.annotations, done_item.id, content_index)
                             if annotations:
                                 contents.append(
-                                    Content.from_text(text="", annotations=annotations, raw_representation=event)
+                                    Content.from_text(
+                                        text="",
+                                        merge_mode="append",
+                                        annotations=annotations,
+                                        raw_representation=event,
+                                    )
                                 )
                 elif getattr(done_item, "type", None) == "mcp_call":
                     call_id = getattr(done_item, "id", None) or getattr(done_item, "call_id", None) or ""

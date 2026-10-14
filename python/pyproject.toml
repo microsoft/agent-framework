@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework"
-description = "Microsoft Agent Framework for building AI Agents with Python. This package contains all the core and optional packages."
+description = "Microsoft Agent Framework for building AI Agents with Python. This package contains core and a curated set of optional integrations."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
