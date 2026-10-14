@@ -1,0 +1,72 @@
+name: Validate Agent Skills
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "skills/**"
+      - ".github/workflows/agent-skills.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "skills/**"
+      - ".github/workflows/agent-skills.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version-file: "python/pyproject.toml"
+
+      - name: Validate Agent Skills specification
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          found_skill=0
+          while IFS= read -r skill_file; do
+            [[ -z "$skill_file" ]] && continue
+            found_skill=1
+            uvx --from "skills-ref==0.1.1" agentskills validate "$(dirname "$skill_file")"
+          done < <(find skills -mindepth 2 -maxdepth 2 -name SKILL.md -print | sort)
+
+          if (( found_skill == 0 )); then
+            echo "No public Agent Skills found under skills/." >&2
+            exit 1
+          fi
+
+      - name: Validate relative resource links
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          missing: list[str] = []
+          for path in Path("skills").rglob("*.md"):
+              for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
+                  if "://" in target or target.startswith(("#", "mailto:")):
+                      continue
+                  relative_path = target.split("#", 1)[0]
+                  if relative_path and not (path.parent / relative_path).resolve().exists():
+                      missing.append(f"{path}: {target}")
+
+          if missing:
+              raise SystemExit("\n".join(missing))
+          PY
+
+      - name: Validate GitHub skill publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh skill publish skills --dry-run
