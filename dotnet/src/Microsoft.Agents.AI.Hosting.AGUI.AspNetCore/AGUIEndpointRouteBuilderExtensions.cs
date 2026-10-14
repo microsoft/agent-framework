@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
@@ -90,6 +92,15 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// conversation identifier. If no session store is registered, sessions are ephemeral (not persisted).
     /// </para>
     /// <para>
+    /// <strong>AG-UI context.</strong> Each non-empty <c>RunAgentInput.Context</c> collection is forwarded
+    /// as one additional trailing <see cref="ChatRole.User"/> message. The message starts with
+    /// <c>AG-UI context (client-provided data):</c>; each context entry follows as a JSON object with
+    /// <c>description</c> and <c>value</c> string properties, one entry per line (newline-delimited JSON).
+    /// This client-provided grounding data is not promoted to system instructions and must be treated as
+    /// untrusted input. If a continuation request already contains the same most-recent AG-UI context
+    /// message, the endpoint does not append a duplicate.
+    /// </para>
+    /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
     /// from the wire and is treated as a chain-resume identifier, not as an authorization
     /// token. Multi-user hosts must register an <see cref="AgentIsolationKeyProvider"/> that
@@ -153,6 +164,28 @@ public static class AGUIEndpointRouteBuilderExtensions
                 ?? context.RequestServices.GetService<IOptions<AGUIStreamOptions>>()?.Value;
 
             var ctx = input.ToChatRequestContext(jsonSerializerOptions, streamOptions);
+            IEnumerable<ChatMessage> modelMessages = ctx.Messages;
+
+            // AG-UI context is client-provided grounding data, not trusted instructions. Add it as
+            // a separate user message so agents that accept arbitrary AIAgent inputs can consume it.
+            if (ctx.Input.Context is { Count: > 0 } contextItems)
+            {
+                var contextLines = new List<string> { "AG-UI context (client-provided data):" };
+                foreach (AGUIContext item in contextItems)
+                {
+                    contextLines.Add($"{{\"description\":\"{JsonEncodedText.Encode(item.Description ?? string.Empty)}\",\"value\":\"{JsonEncodedText.Encode(item.Value ?? string.Empty)}\"}}");
+                }
+
+                ChatMessage contextMessage = new(ChatRole.User, string.Join("\n", contextLines));
+                ChatMessage markedContextMessage = contextMessage.WithAgentRequestMessageSource(
+                    new AgentRequestMessageSourceType("AGUIContext"),
+                    "AGUIContext");
+                ChatMessage? mostRecentGeneratedContext = ctx.Messages.LastOrDefault(IsAGUIContextMessage);
+                if (mostRecentGeneratedContext?.Text != contextMessage.Text)
+                {
+                    modelMessages = [.. ctx.Messages, markedContextMessage];
+                }
+            }
 
             // AG-UI continuation is keyed by thread id. When the client does not supply one, generate a
             // stable id and write it back onto the input so the persisted session, the RUN_STARTED /
@@ -164,7 +197,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var events = hostAgent
                 .RunStreamingAsync(
-                    ctx.Messages,
+                    modelMessages,
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
@@ -189,6 +222,10 @@ public static class AGUIEndpointRouteBuilderExtensions
         MarkFeatureUsed();
         return endpoint;
     }
+
+    private static bool IsAGUIContextMessage(ChatMessage message) =>
+        message.GetAgentRequestMessageSourceType() == new AgentRequestMessageSourceType("AGUIContext") &&
+        message.GetAgentRequestMessageSourceId() == "AGUIContext";
 
     private static void MarkFeatureUsed()
     {
