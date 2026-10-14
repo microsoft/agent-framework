@@ -16,8 +16,9 @@ agents and uploads this folder only.
 ## Environment
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 export FOUNDRY_MODEL="your-local-model-deployment"
+# azd-managed hosted deployment variable:
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="your-hosted-model-deployment"
 ```
 

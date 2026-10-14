@@ -95,7 +95,8 @@ __all__ = [
 logger = logging.getLogger("agent_framework.anthropic")
 
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
-BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08-25"]
+BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
+UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -150,8 +151,8 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         a default of 1024 will be used.
 
     Keys:
-        temperature: Sampling temperature between 0 and 1.
-        top_p: Nucleus sampling parameter.
+        temperature: Unsupported by Anthropic SDK 1.x; ignored with a warning.
+        top_p: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         max_tokens: Maximum number of tokens to generate (REQUIRED).
         stop: Stop sequences,
             translates to ``stop_sequences`` in Anthropic API.
@@ -163,7 +164,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         instructions: System instructions for the model, translating to ``system`` in
             the Anthropic API. Use a string for generic instructions or structured
             Anthropic system blocks when you need prompt-cache ``cache_control``.
-        top_k: Number of top tokens to consider for sampling.
+        top_k: Unsupported by Anthropic SDK 1.x; ignored with a warning.
         service_tier: Service tier ("auto" or "standard_only").
         thinking: Extended thinking configuration for Claude models.
             When enabled, responses include ``thinking`` content blocks showing Claude's
@@ -174,8 +175,7 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         additional_beta_flags: Additional beta flags to enable on the request.
     """
 
-    # Anthropic-specific generation parameters (supported by all models)
-    top_k: int
+    # Anthropic-specific generation parameters
     service_tier: Literal["auto", "standard_only"]
 
     # Extended thinking (Claude models)
@@ -191,6 +191,9 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
     additional_beta_flags: list[str]
 
     # Unsupported base options (override with None to indicate not supported)
+    temperature: None  # type: ignore[misc]
+    top_p: None  # type: ignore[misc]
+    top_k: None
     logit_bias: None  # type: ignore[misc]
     seed: None  # type: ignore[misc]
     frequency_penalty: None  # type: ignore[misc]
@@ -227,6 +230,20 @@ def _apply_option_translations(options: dict[str, Any]) -> None:
             # ChatOptions allows a single stop string; stop_sequences takes a list.
             old_value = [old_value]
         options.setdefault(new_key, old_value)
+
+
+def _drop_unsupported_sampling_options(options: dict[str, Any]) -> None:
+    unsupported_options = [name for name in UNSUPPORTED_SAMPLING_OPTIONS if name in options]
+    if not unsupported_options:
+        return
+
+    for name in unsupported_options:
+        options.pop(name)
+
+    logger.warning(
+        "Ignoring unsupported Anthropic sampling options: %s",
+        ", ".join(unsupported_options),
+    )
 
 
 # region Role and Finish Reason Maps
@@ -332,7 +349,7 @@ class RawAnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -714,6 +731,7 @@ class RawAnthropicClient(
         }
         _apply_option_translations(filtered_kwargs)
         run_options.update(filtered_kwargs)
+        _drop_unsupported_sampling_options(run_options)
 
         # system message - Anthropic expects system instructions as a separate request parameter
         instructions = options.get("instructions")
@@ -1251,14 +1269,21 @@ class RawAnthropicClient(
                 usage_details: list[Content] = []
                 if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
                     usage_details.append(
-                        Content.from_usage(usage_details=self._incremental_usage(details, emitted_usage))
+                        Content.from_usage(
+                            usage_details=self._incremental_usage(details, emitted_usage),
+                            merge_mode="append",
+                        )
                     )
 
                 return ChatResponseUpdate(
                     role="assistant",
                     response_id=event.message.id,
                     contents=[
-                        *self._parse_contents_from_anthropic(event.message.content, request_state=request_state),
+                        *self._parse_contents_from_anthropic(
+                            event.message.content,
+                            request_state=request_state,
+                            streaming=True,
+                        ),
                         *usage_details,
                     ],
                     model=event.message.model,
@@ -1271,6 +1296,7 @@ class RawAnthropicClient(
                     contents=[
                         Content.from_usage(
                             usage_details=self._incremental_usage(usage, emitted_usage),
+                            merge_mode="append",
                             raw_representation=event.usage,
                         )
                     ]
@@ -1282,13 +1308,21 @@ class RawAnthropicClient(
             case "message_stop":
                 logger.debug("Received message_stop event; no content to process.")
             case "content_block_start":
-                contents = self._parse_contents_from_anthropic([event.content_block], request_state=request_state)
+                contents = self._parse_contents_from_anthropic(
+                    [event.content_block],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
                 )
             case "content_block_delta":
-                contents = self._parse_contents_from_anthropic([event.delta], request_state=request_state)
+                contents = self._parse_contents_from_anthropic(
+                    [event.delta],
+                    request_state=request_state,
+                    streaming=True,
+                )
                 return ChatResponseUpdate(
                     contents=contents,
                     raw_representation=event,
@@ -1352,8 +1386,15 @@ class RawAnthropicClient(
         self,
         content: Sequence[BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock],
         request_state: _AnthropicRequestState | None = None,
+        *,
+        streaming: bool = False,
     ) -> list[Content]:
-        """Parse contents from the Anthropic message."""
+        """Parse contents from the Anthropic message.
+
+        Anthropic does not supply Agent Framework merge modes. Streaming context selects the
+        type-specific mapping: text and function-call deltas append, while complete streamed
+        code-execution result snapshots replace.
+        """
         request_state = request_state or _AnthropicRequestState()
         contents: list[Content] = []
         for content_block in content:
@@ -1362,6 +1403,7 @@ class RawAnthropicClient(
                     contents.append(
                         Content.from_text(
                             text=content_block.text,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
@@ -1389,6 +1431,7 @@ class RawAnthropicClient(
                                         raw_representation=content_block,
                                     )
                                 ],
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1400,6 +1443,8 @@ class RawAnthropicClient(
                                 name=resolved_tool_name,
                                 arguments=content_block.input,
                                 informational_only=content_block.type == "server_tool_use",
+                                hosted=content_block.type == "server_tool_use",
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1407,7 +1452,11 @@ class RawAnthropicClient(
                     parsed_output: list[Content] | None = None
                     if content_block.content:
                         if isinstance(content_block.content, list):
-                            parsed_output = self._parse_contents_from_anthropic(content_block.content, request_state)
+                            parsed_output = self._parse_contents_from_anthropic(
+                                content_block.content,
+                                request_state,
+                                streaming=streaming,
+                            )
                         elif isinstance(content_block.content, (str, bytes)):
                             parsed_output = [
                                 Content.from_text(
@@ -1416,7 +1465,11 @@ class RawAnthropicClient(
                                 )
                             ]
                         else:
-                            parsed_output = self._parse_contents_from_anthropic([content_block.content], request_state)
+                            parsed_output = self._parse_contents_from_anthropic(
+                                [content_block.content],
+                                request_state,
+                                streaming=streaming,
+                            )
                     contents.append(
                         Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
@@ -1482,6 +1535,7 @@ class RawAnthropicClient(
                             call_id=content_block.tool_use_id,
                             raw_representation=content_block,
                             outputs=code_outputs,
+                            merge_mode="replace" if streaming else None,
                         )
                     )
                 case "bash_code_execution_tool_result":
@@ -1638,6 +1692,7 @@ class RawAnthropicClient(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
@@ -1646,6 +1701,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=content_block.thinking,
                             protected_data=getattr(content_block, "signature", None),
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )
@@ -1654,6 +1710,7 @@ class RawAnthropicClient(
                         Content.from_text_reasoning(
                             text=None,
                             protected_data=content_block.signature,
+                            merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
                     )
@@ -1774,7 +1831,7 @@ class AnthropicClient(
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
-                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+                The default flag is "mcp-client-2025-04-04".
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.

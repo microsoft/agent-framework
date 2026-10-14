@@ -3,9 +3,11 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import cast
 
 from agent_framework import Agent, Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -17,8 +19,6 @@ Anthropic Skills Agent Example
 
 This sample demonstrates using Anthropic with:
 - Listing and using Anthropic-managed Skills.
-- One approach to add additional beta flags.
-    You can also set additonal_chat_options with "additional_beta_flags" per request.
 - Creating an agent with the Code Interpreter tool and a Skill.
 - Catching and downloading generated files from the agent.
 
@@ -30,14 +30,15 @@ Environment variables:
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient[AnthropicChatOptions](additional_beta_flags=["skills-2025-10-02"])
+    client = AnthropicClient[AnthropicChatOptions]()
+    anthropic_client = cast(AsyncAnthropic, client.anthropic_client)
 
     # List Anthropic-managed Skills
-    skills = await client.anthropic_client.beta.skills.list(source="anthropic", betas=["skills-2025-10-02"])  # type: ignore
+    skills = await anthropic_client.skills.list(source="anthropic")
     for skill in skills.data:
-        print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
+        print(f"{skill.source}: {skill.id} (version: {skill.latest_version_id})")
 
-    # Create a agent with the pptx skill enabled
+    # Create an agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
     agent = Agent(
         client=client,
@@ -87,9 +88,7 @@ async def main() -> None:
         for idx, file in enumerate(files):
             if file.file_id is None:
                 continue
-            file_content = await client.anthropic_client.beta.files.download(  # type: ignore
-                file_id=file.file_id, betas=["files-api-2025-04-14"]
-            )
+            file_content = await anthropic_client.files.download(file_id=file.file_id)
             with open(Path(__file__).parent / f"python_programming-{idx}.pptx", "wb") as f:
                 await file_content.write_to_file(f.name)
             print(f"File {idx}: python_programming-{idx}.pptx saved to disk.")

@@ -139,6 +139,30 @@ public sealed class DefaultHttpRequestHandlerTests
         await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
+    [Fact]
+    public async Task SendAsyncWithRejectedLoopbackDestinationDoesNotSendAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using RawHttpServer server = new();
+        await using DefaultHttpRequestHandler handler = new((requestInfo, _) =>
+        {
+            Assert.Equal(server.Url, requestInfo.Url);
+            return Task.FromException<HttpClient?>(
+                new ArgumentException("Loopback destinations are not allowed.", nameof(requestInfo)));
+        });
+        HttpRequestInfo request = new() { Method = "GET", Url = server.Url };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Equal("requestInfo", exception.ParamName);
+        Assert.Contains("loopback", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(await server.TryReadRequestAsync());
+    }
+
     #endregion
 
     #region Send Behavior Tests
@@ -279,7 +303,7 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Act
         Exception? exception = await Record.ExceptionAsync(() => handler.SendAsync(request, cancellationToken));
-        string? rawRequest = await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
+        string? rawRequest = await server.TryReadRequestAsync();
 
         // Assert
         Assert.Null(rawRequest);
@@ -1369,6 +1393,9 @@ public sealed class DefaultHttpRequestHandlerTests
         }
 
         public string Url { get; }
+
+        public Task<string?> TryReadRequestAsync() =>
+            this.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
 
         public async Task<string?> TryReadRequestAsync(TimeSpan timeout)
         {

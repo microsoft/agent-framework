@@ -41,6 +41,24 @@ def resolve_request_info_filter(agents: list[str | SupportsAgentRun] | None) -> 
     return result
 
 
+def validate_request_info_filter(request_info_filter: set[str] | None, agent_ids: list[str]) -> None:
+    """Raise if the request info filter names an agent that is not a participant.
+
+    Args:
+        request_info_filter: Agent IDs passed to ``with_request_info(agents=...)``. Empty or None means all agents.
+        agent_ids: IDs of the agent participants in the orchestration.
+
+    Raises:
+        ValueError: If a name in the filter does not match any agent participant.
+    """
+    unknown = sorted((request_info_filter or set()) - set(agent_ids))
+    if unknown:
+        raise ValueError(
+            f"with_request_info() names agents that are not agent participants: "
+            f"{', '.join(repr(name) for name in unknown)}. Agent participants: {', '.join(agent_ids)}."
+        )
+
+
 @dataclass
 class AgentRequestInfoResponse:
     """Response containing additional information requested from users for agents.

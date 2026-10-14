@@ -51,7 +51,7 @@ from ._base_group_chat_orchestrator import (
     TerminationCondition,
 )
 from ._feature_usage import FeatureIndex
-from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_request_info import AgentApprovalExecutor, validate_request_info_filter
 from ._orchestrator_helpers import clean_conversation_for_handoff, extract_markdown_fence_bodies
 from ._participant_output_config import (
     UNSET,
@@ -519,8 +519,15 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             # Parse and validate the structured output
             agent_orchestration_output = self._parse_agent_output(agent_response)
 
-            if not agent_orchestration_output.terminate and not agent_orchestration_output.next_speaker:
-                raise ValueError("next_speaker must be provided if not terminating the conversation.")
+            if not agent_orchestration_output.terminate:
+                next_speaker = agent_orchestration_output.next_speaker
+                if not next_speaker:
+                    raise ValueError("next_speaker must be provided if not terminating the conversation.")
+                if next_speaker not in self._participant_registry.participants:
+                    raise ValueError(
+                        f"Orchestrator agent selected unknown participant '{next_speaker}'. "
+                        f"Valid participants: {', '.join(self._participant_registry.participants)}."
+                    )
 
             return agent_orchestration_output
 
@@ -1023,6 +1030,11 @@ class GroupChatBuilder:
                     f"Participants must be SupportsAgentRun or Executor instances. Got {type(participant).__name__}."
                 )
 
+        if self._request_info_enabled:
+            validate_request_info_filter(
+                self._request_info_filter,
+                [resolve_agent_id(p) for p in participants if not isinstance(p, Executor)],
+            )
         return executors
 
     def build(self) -> Workflow:

@@ -25,7 +25,7 @@ from agent_framework._workflows._edge import (
 )
 from agent_framework._workflows._edge_runner import create_edge_runner
 from agent_framework._workflows._state import State
-from agent_framework.observability import EdgeGroupDeliveryStatus
+from agent_framework.observability import EdgeGroupDeliveryStatus, OtelAttr
 
 
 @dataclass
@@ -386,6 +386,45 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter: InMemo
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_single_edge_group_tracing_exception_respects_sensitive_data(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
+    """Edge processing spans should keep error metadata without exporting private exception details."""
+    private_error_detail = "founder-secret-token"
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
+    def failing_condition(_: MockMessage) -> bool:
+        raise RuntimeError(f"Condition failed: {private_error_detail}")
+
+    executors: dict[str, Executor] = {source.id: source, target.id: target}
+    edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=failing_condition)
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+    message = WorkflowMessage(data=MockMessage(data="fail"), source_id=source.id)
+
+    span_exporter.clear()
+    with pytest.raises(RuntimeError, match="Condition failed"):
+        await edge_runner.send_message(message, state, ctx)
+
+    spans = span_exporter.get_finished_spans()
+    edge_group_spans = [span for span in spans if span.name == "edge_group.process SingleEdgeGroup"]
+    assert len(edge_group_spans) == 1
+    span = edge_group_spans[0]
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert span.status.status_code.name == "ERROR"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 async def test_single_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
@@ -1362,6 +1401,33 @@ def test_switch_case_edge_group() -> None:
     assert edge_group._selection_func is not None  # type: ignore
     assert edge_group._selection_func(MockMessage(data=-1), [target1.id, target2.id]) == [target1.id]  # type: ignore
     assert edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id]) == [target2.id]  # type: ignore
+
+
+def test_switch_case_edge_group_cases_share_a_target() -> None:
+    """Test that cases routing to the same target create one edge per target."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 0, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 1, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target1.id),
+        ],
+    )
+
+    assert len(edge_group.cases) == 4
+    assert [edge.target_id for edge in edge_group.edges] == [target2.id, target1.id]
+    assert edge_group.target_executor_ids == [target2.id, target1.id]
+
+    targets = [target2.id, target1.id]
+    assert edge_group._selection_func(MockMessage(data=-1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=0), targets) == [target1.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=2), targets) == [target1.id]  # type: ignore
 
 
 def test_switch_case_edge_group_invalid_number_of_cases():

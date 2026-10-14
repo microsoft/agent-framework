@@ -258,21 +258,15 @@ class TestAgentApprovalExecutor:
         assert executor._propagate_request is True  # type: ignore
 
     def test_ensure_trailing_user_turn_defaults_to_false(self):
-        """ensure_trailing_user_turn should default to False, preserving existing behavior"""
-
+        """ensure_trailing_user_turn should default to False, preserving existing behavior."""
         agent = _TestAgent(id="test_id", name="test_agent", description="test description")
-
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
-
         assert executor._ensure_trailing_user_turn is False  # type: ignore
 
     def test_ensure_trailing_user_turn_stored_on_executor(self):
         """ensure_trailing_user_turn=True should be stored on the AgentApprovalExecutor instance."""
-
         agent = _TestAgent(id="test_id", name="test_name", description="test description")
-
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent), ensure_trailing_user_turn=True)
-
         assert executor._ensure_trailing_user_turn is True  # type: ignore
 
     def test_ensure_trailing_user_turn_propagated_to_inner_agent_executor(self):
@@ -284,17 +278,43 @@ class TestAgentApprovalExecutor:
         would never get the synthetic trailing user turn.
         """
         agent = _TestAgent(id="test_id", name="test_agent", description="Test description")
-
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent), ensure_trailing_user_turn=True)
-
         inner_agent_executor = executor.workflow.get_start_executor()
         assert inner_agent_executor._ensure_trailing_user_turn is True  # type: ignore
 
     def test_ensure_trailing_user_turn_false_propagated_to_inner_agent_executor(self):
         """When left at the default, the inner AgentExecutor must also default to False."""
         agent = _TestAgent(id="test_id", name="test_agent", description="Test description")
-
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
-
         inner_agent_executor = executor.workflow.get_start_executor()
         assert inner_agent_executor._ensure_trailing_user_turn is False  # type: ignore
+
+
+def _build_with_request_info(builder_name: str, agents: list[str]) -> Any:
+    from agent_framework.orchestrations import ConcurrentBuilder, GroupChatBuilder, SequentialBuilder
+
+    participants = [
+        cast(SupportsAgentRun, _TestAgent(id="drafter_id", name="drafter")),
+        cast(SupportsAgentRun, _TestAgent(id="publisher_id", name="publisher")),
+    ]
+    if builder_name == "sequential":
+        return SequentialBuilder(participants=participants).with_request_info(agents=agents).build()
+    if builder_name == "concurrent":
+        return ConcurrentBuilder(participants=participants).with_request_info(agents=agents).build()
+    return (
+        GroupChatBuilder(participants=participants, selection_func=lambda state: "drafter")
+        .with_request_info(agents=agents)
+        .build()
+    )
+
+
+@pytest.mark.parametrize("builder_name", ["sequential", "concurrent", "group_chat"])
+class TestRequestInfoFilterValidation:
+    """Names passed to with_request_info(agents=...) must match an agent participant."""
+
+    def test_unknown_agent_name_raises(self, builder_name: str) -> None:
+        with pytest.raises(ValueError, match="'Publisher'"):
+            _build_with_request_info(builder_name, ["Publisher"])
+
+    def test_known_agent_name_builds(self, builder_name: str) -> None:
+        assert _build_with_request_info(builder_name, ["publisher"]) is not None

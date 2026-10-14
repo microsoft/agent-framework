@@ -2,10 +2,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Threading;
 using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
@@ -610,6 +616,228 @@ public sealed class GitHubCopilotAgentTests
         // Assert - the caller-supplied SessionConfig and its Hooks instance are not mutated.
         Assert.Null(callerHooks.OnPreToolUse);
         Assert.Same(callerHooks, sessionConfig.Hooks);
+    }
+
+    [Fact]
+    [UnsupportedOSPlatform("windows")]
+    public async Task ProcessDataContentAttachmentsAsync_OnUnix_UsesOwnerOnlyPermissionsAsync()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix file modes are not available on Windows.");
+
+        // Arrange
+        ChatMessage[] messages = CreateAttachmentMessages();
+
+        // Act
+        (List<AttachmentFile>? attachments, string? tempDir) = await InvokeProcessDataContentAttachmentsAsync(messages);
+        string tempFilePath = Assert.Single(attachments!).Path;
+        UnixFileMode directoryMode = File.GetUnixFileMode(tempDir!);
+        UnixFileMode fileMode = File.GetUnixFileMode(tempFilePath);
+        InvokeCleanupTempDir(tempDir);
+
+        // Assert
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, directoryMode);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, fileMode);
+        Assert.False(Directory.Exists(tempDir));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public async Task ProcessDataContentAttachmentsAsync_OnWindows_UsesProtectedOwnerOnlyAclAsync()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows access control lists are not available on Unix.");
+
+        // Arrange
+        ChatMessage[] messages = CreateAttachmentMessages();
+        SecurityIdentifier currentUser = WindowsIdentity.GetCurrent().User!;
+
+        // Act
+        (List<AttachmentFile>? attachments, string? tempDir) = await InvokeProcessDataContentAttachmentsAsync(messages);
+        string tempFilePath = Assert.Single(attachments!).Path;
+        DirectorySecurity directorySecurity = new DirectoryInfo(tempDir!).GetAccessControl();
+        FileSecurity fileSecurity = new FileInfo(tempFilePath).GetAccessControl();
+        InvokeCleanupTempDir(tempDir);
+
+        // Assert
+        Assert.True(directorySecurity.AreAccessRulesProtected);
+        AssertOwnerOnlyAccess(directorySecurity, currentUser);
+        Assert.True(fileSecurity.AreAccessRulesProtected);
+        AssertOwnerOnlyAccess(fileSecurity, currentUser);
+        Assert.False(Directory.Exists(tempDir));
+    }
+
+    [Fact]
+    public async Task ProcessDataContentAttachmentsAsync_WhenSavingFails_RemovesTempDirectoryAsync()
+    {
+        // Arrange
+        ChatMessage[] messages = CreateAttachmentMessages();
+        string testRoot = Path.Join(Path.GetTempPath(), $"af_copilot_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(testRoot);
+        using var cancellationTokenSource = new CancellationTokenSource();
+        cancellationTokenSource.Cancel();
+
+        try
+        {
+            MethodInfo method = GetProcessDataContentAttachmentsMethod();
+            bool supportsIsolatedRoot = method.GetParameters().Length == 3;
+            string searchRoot = supportsIsolatedRoot ? testRoot : Path.GetTempPath();
+            HashSet<string> existingDirectories = Directory.GetDirectories(searchRoot, "af_copilot_*").ToHashSet();
+
+            // Act
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => InvokeProcessDataContentAttachmentsAsync(messages, testRoot, cancellationTokenSource.Token));
+            string[] leakedDirectories = Directory.GetDirectories(searchRoot, "af_copilot_*")
+                .Where(path => !existingDirectories.Contains(path))
+                .ToArray();
+
+            foreach (string leakedDirectory in leakedDirectories)
+            {
+                Directory.Delete(leakedDirectory, recursive: true);
+            }
+
+            // Assert
+            Assert.Empty(leakedDirectories);
+        }
+        finally
+        {
+            Directory.Delete(testRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Assurance")]
+    [UnsupportedOSPlatform("windows")]
+    public async Task ProcessDataContentAttachmentsAsync_OnUnix_DeniesDirectoryAccessToUnprivilegedUserAsync()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix account permissions are not available on Windows.");
+
+        // Arrange
+        (string? runner, string[] prefix) = await GetUnprivilegedUserRunnerAsync();
+        Assert.SkipWhen(runner is null, "This assurance test requires root with runuser or passwordless sudo.");
+        ChatMessage[] messages = CreateAttachmentMessages();
+        string controlDir = Path.Join(Path.GetTempPath(), $"af_copilot_control_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(
+            controlDir,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        string? tempDir = null;
+
+        try
+        {
+            (int controlExitCode, _, string controlError) = await RunProcessAsync(
+                runner!,
+                [.. prefix, "/bin/ls", "--", controlDir]);
+            Assert.True(controlExitCode == 0, $"The unprivileged control listing failed: {controlError}");
+
+            (List<AttachmentFile>? attachments, string? stagedTempDir) = await InvokeProcessDataContentAttachmentsAsync(messages);
+            _ = Assert.Single(attachments!);
+            tempDir = Assert.IsType<string>(stagedTempDir);
+
+            // Act - list the staging directory as the unprivileged nobody account.
+            (int exitCode, _, _) = await RunProcessAsync(runner, [.. prefix, "/bin/ls", "--", tempDir]);
+
+            // Assert
+            Assert.NotEqual(0, exitCode);
+        }
+        finally
+        {
+            InvokeCleanupTempDir(tempDir);
+            Directory.Delete(controlDir);
+        }
+    }
+
+    private static ChatMessage[] CreateAttachmentMessages()
+        => [new ChatMessage(ChatRole.User, [new DataContent(new byte[] { 1, 2, 3 }, "application/octet-stream") { Name = "attachment.bin" }])];
+
+    private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> InvokeProcessDataContentAttachmentsAsync(
+        IEnumerable<ChatMessage> messages,
+        string? tempRoot = null,
+        CancellationToken cancellationToken = default)
+    {
+        MethodInfo method = GetProcessDataContentAttachmentsMethod();
+        object?[] parameters = method.GetParameters().Length == 3
+            ? [messages, tempRoot, cancellationToken]
+            : [messages, cancellationToken];
+        var task = (Task<(List<AttachmentFile>? Attachments, string? TempDir)>)method.Invoke(
+            obj: null,
+            parameters: parameters)!;
+        return await task;
+    }
+
+    private static MethodInfo GetProcessDataContentAttachmentsMethod()
+        => typeof(GitHubCopilotAgent).GetMethod(
+            "ProcessDataContentAttachmentsAsync",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+    private static async Task<(string? Runner, string[] Prefix)> GetUnprivilegedUserRunnerAsync()
+    {
+        if (File.Exists("/usr/sbin/runuser"))
+        {
+            (int idExitCode, string userId, _) = await RunProcessAsync("/usr/bin/id", ["-u"]);
+            if (idExitCode == 0 && userId.Trim() == "0")
+            {
+                return ("/usr/sbin/runuser", ["-u", "nobody", "--"]);
+            }
+        }
+
+        if (File.Exists("/usr/bin/sudo"))
+        {
+            string[] prefix = ["-n", "-u", "nobody", "--"];
+            (int sudoExitCode, _, _) = await RunProcessAsync("/usr/bin/sudo", [.. prefix, "/usr/bin/true"]);
+            if (sudoExitCode == 0)
+            {
+                return ("/usr/bin/sudo", prefix);
+            }
+        }
+
+        return (null, []);
+    }
+
+    private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunProcessAsync(
+        string fileName,
+        IEnumerable<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+
+        foreach (string argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = new Process { StartInfo = startInfo };
+        Assert.True(process.Start());
+        Task<string> standardOutput = process.StandardOutput.ReadToEndAsync();
+        Task<string> standardError = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await standardOutput, await standardError);
+    }
+
+    private static void InvokeCleanupTempDir(string? tempDir)
+    {
+        MethodInfo method = typeof(GitHubCopilotAgent).GetMethod(
+            "CleanupTempDir",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        method.Invoke(obj: null, parameters: [tempDir]);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void AssertOwnerOnlyAccess(FileSystemSecurity security, SecurityIdentifier currentUser)
+    {
+        AuthorizationRuleCollection rules = security.GetAccessRules(
+            includeExplicit: true,
+            includeInherited: true,
+            targetType: typeof(SecurityIdentifier));
+
+        FileSystemAccessRule rule = Assert.Single(rules.Cast<FileSystemAccessRule>());
+        Assert.Equal(currentUser, rule.IdentityReference);
+        Assert.Equal(AccessControlType.Allow, rule.AccessControlType);
+        Assert.Equal(FileSystemRights.FullControl, rule.FileSystemRights);
     }
 
     private static object CreateNonDefaultValue(Type type, int index)

@@ -8,6 +8,14 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 pip install agent-framework-ag-ui
 ```
 
+The base package supports Python 3.10–3.15. The optional A2UI integration
+currently supports Python 3.10–3.14 because `ag-ui-a2ui-toolkit` declares
+`Requires-Python <3.15`:
+
+```bash
+pip install "agent-framework-ag-ui[a2ui]"
+```
+
 ## Quick Start
 
 ### Server (Host an AI Agent)
@@ -505,8 +513,10 @@ shared multi-tenant deployment, even with a trusted resolver. Keep it disabled w
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
 values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
-Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
-into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+Keys owned by configured context providers or reserved for approval, message-injection, and standalone FIDES security
+middleware are not copied into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+A custom FIDES `session_state_key` is protected when its middleware is visible on the agent or its client before the
+run; use `SecureAgentConfig` for middleware that a context provider injects later.
 
 When scoped snapshots are configured, each category has one State Authority:
 

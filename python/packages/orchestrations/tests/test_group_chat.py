@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
@@ -33,6 +34,7 @@ from agent_framework.orchestrations import (
 )
 
 from agent_framework_orchestrations import AgentBasedGroupChatOrchestrator, BaseGroupChatOrchestrator
+from agent_framework_orchestrations._base_group_chat_orchestrator import ParticipantRegistry
 from agent_framework_orchestrations._orchestrator_helpers import extract_markdown_fence_bodies
 
 
@@ -213,6 +215,31 @@ class FencedJsonManagerAgent(Agent):
                 "```"
             )
         return AgentResponse(messages=[Message(role="assistant", contents=[text], author_name=self.name)])
+
+
+class ScriptedManagerAgent(Agent):
+    """Manager agent that picks the given speakers in order, then terminates."""
+
+    def __init__(self, speakers: list[str]) -> None:
+        super().__init__(client=cast(Any, MockChatClient()), name="scripted_manager", description="Scripted manager")
+        self._speakers = list(speakers)
+        self.received: list[list[Message]] = []
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        self.received.append(list(cast(list[Message], messages)))
+        if self._speakers:
+            payload = {"terminate": False, "reason": "delegate", "next_speaker": self._speakers.pop(0)}
+        else:
+            payload = {"terminate": True, "reason": "done", "next_speaker": None, "final_message": "scripted final"}
+        return AgentResponse(
+            messages=[Message(role="assistant", contents=[json.dumps(payload)], author_name=self.name)]
+        )
 
 
 def make_sequence_selector() -> Callable[[GroupChatState], str]:
@@ -789,6 +816,37 @@ class TestGroupChatWorkflow:
         with pytest.raises(RuntimeError, match="Selection function returned unknown participant 'unknown_agent'"):
             async for _ in workflow.run("test task", stream=True):
                 pass
+
+    async def test_agent_manager_unknown_participant_error(self) -> None:
+        """Test that a manager agent picking an unknown participant raises instead of stalling."""
+        writer = StubAgent("writer", "draft")
+        manager = ScriptedManagerAgent(["Writer"])
+
+        workflow = GroupChatBuilder(participants=[writer], orchestrator_agent=manager).build()
+
+        with pytest.raises(ValueError, match="unknown participant 'Writer'"):
+            await workflow.run("test task")
+
+    async def test_agent_manager_retries_after_unknown_participant(self) -> None:
+        """Test that an unknown participant pick counts as a failed attempt and is retried."""
+        writer = StubAgent("writer", "draft")
+        manager = ScriptedManagerAgent(["Writer", "writer"])
+        orchestrator = AgentBasedGroupChatOrchestrator(
+            agent=manager,
+            participant_registry=ParticipantRegistry([AgentExecutor(writer)]),
+            retry_attempts=1,
+        )
+
+        workflow = GroupChatBuilder(participants=[writer], orchestrator=orchestrator).build()
+        result = await workflow.run("test task")
+
+        outputs = result.get_outputs()
+        assert len(outputs) == 1
+        assert outputs[0].text == "scripted final"
+        # The retry prompt tells the manager which name was wrong.
+        assert "unknown participant 'Writer'" in manager.received[1][0].text
+        # The corrected pick reached the participant before the manager terminated.
+        assert any(m.author_name == "writer" and m.text == "draft" for m in manager.received[2])
 
 
 class TestCheckpointing:

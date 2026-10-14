@@ -68,7 +68,7 @@ async def test_runtime_configures_azure_monitor_with_sensitive_data(monkeypatch:
     monkeypatch.setenv("AZURE_COSMOS_DATABASE_NAME", "telegram")
     monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", "history")
     monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://sample.services.ai.azure.com/api/projects/sample")
-    monkeypatch.setenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5.6-luna")
+    monkeypatch.setenv("FOUNDRY_MODEL", "gpt-5.6-luna")
 
     client = SimpleNamespace(configure_azure_monitor=AsyncMock())
     agent_constructor = Mock(return_value=SimpleNamespace())

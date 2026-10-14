@@ -381,7 +381,8 @@ disables enforcement for every error, not just transient ones.
 Every content item on a message is submitted for evaluation, not just its text: `DataContent` is sent
 as Purview binary content, and `FunctionCallContent`, `FunctionResultContent` and other structured
 content are serialized to text. Only `UsageContent` is skipped, because it carries token counts rather
-than user data.
+than user data. Text annotations such as citations, `ErrorContent.Details` and `DataContent.Name`
+are submitted as additional text entries.
 
 ### Remote references are not dereferenced
 
