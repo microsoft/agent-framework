@@ -1117,7 +1117,13 @@ class InMemoryAgentFileStore(AgentFileStore):
         return entry[1] if entry is not None else None
 
     async def delete(self, path: str) -> bool:
-        """Delete the file and return whether anything was removed."""
+        """Delete the file and return whether anything was removed.
+
+        An explicitly created directory can also be deleted, but only when it is
+        empty: nothing is stored under it and no other explicit directory is
+        nested below it. This gives session-scoped directories a lifecycle instead
+        of staying in the shared map forever.
+        """
         key = self._key(path)
         async with self._lock:
             removed = self._files.pop(key, None)
@@ -1128,6 +1134,14 @@ class InMemoryAgentFileStore(AgentFileStore):
                         del self._dir_counts[ancestor]
                     else:
                         self._dir_counts[ancestor] = new_count
+                return True
+            if key in self._explicit_dirs:
+                if self._dir_counts.get(key, 0) > 0:
+                    return False
+                prefix = key + "/"
+                if any(other != key and other.startswith(prefix) for other in self._explicit_dirs):
+                    return False
+                del self._explicit_dirs[key]
                 return True
             return False
 

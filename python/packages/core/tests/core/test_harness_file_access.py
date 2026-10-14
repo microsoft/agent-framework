@@ -2719,3 +2719,20 @@ async def test_scope_alone_enables_scoped_mode(chat_client_base: SupportsChatGet
     provider = FileAccessProvider(store=store, scope="tenant-1")
     context = SessionContext(session_id=None, input_messages=[])
     await provider.before_run(agent=None, session=AgentSession(), context=context, state={})
+
+
+async def test_in_memory_store_delete_removes_empty_explicit_directory() -> None:
+    """An empty explicitly created directory can be deleted; a used one cannot."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete("sessions/s1") is True
+    children = await store.list_children("sessions")
+    assert all(entry.name != "s1" for entry in children)
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete("sessions/s2") is True
+    assert await store.delete("sessions") is True
