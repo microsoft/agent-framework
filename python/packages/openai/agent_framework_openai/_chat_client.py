@@ -43,6 +43,8 @@ from agent_framework._compaction import (
     GROUP_ID_KEY,
     CompactionStrategy,
     TokenizerProtocol,
+    included_messages,
+    set_excluded,
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
@@ -1769,7 +1771,7 @@ class RawOpenAIChatClient(
         """
         reasoning_items: dict[str, dict[str, Any]] = {}
         if not request_uses_service_side_storage:
-            chat_messages = self._drop_messages_before_latest_compaction(chat_messages)
+            chat_messages = self._exclude_messages_before_latest_compaction(chat_messages)
             reasoning_items = self._prepare_reasoning_items_for_openai(chat_messages)
             self._validate_reasoning_groups_for_stateless_replay(
                 chat_messages,
@@ -1793,28 +1795,32 @@ class RawOpenAIChatClient(
         return self._coalesce_pending_mcp_results(flat)
 
     @staticmethod
-    def _drop_messages_before_latest_compaction(chat_messages: Sequence[Message]) -> Sequence[Message]:
-        """Drop the history that a service-side compaction item already summarizes.
+    def _exclude_messages_before_latest_compaction(chat_messages: Sequence[Message]) -> Sequence[Message]:
+        """Mark the history that a service-side compaction item already summarizes as excluded.
 
-        The latest compaction item carries the context needed to continue, so for stateless
-        replay the messages before the one that contains it are not sent again. System and
-        developer messages are kept because they carry instructions rather than conversation
-        state. Whole messages are kept or dropped so tool calls stay paired with their results.
+        The latest compaction item with a replayable payload carries the context needed to
+        continue, so for stateless replay the messages before the one that contains it are marked
+        excluded rather than removed, matching how the built-in compaction strategies work. System
+        and developer messages are kept because they carry instructions rather than conversation
+        state. Whole messages are marked or kept so tool calls stay paired with their results.
+        Returns the messages that remain included.
         """
         latest_index = next(
             (
                 index
                 for index in range(len(chat_messages) - 1, -1, -1)
-                if any(content.type == "compaction" for content in chat_messages[index].contents)
+                if any(
+                    content.type == "compaction" and content.protected_data for content in chat_messages[index].contents
+                )
             ),
             None,
         )
         if latest_index is None or latest_index == 0:
             return chat_messages
-        return [
-            *(message for message in chat_messages[:latest_index] if message.role in ("system", "developer")),
-            *chat_messages[latest_index:],
-        ]
+        for message in chat_messages[:latest_index]:
+            if message.role not in ("system", "developer"):
+                set_excluded(message, excluded=True, reason="superseded by service-side compaction")
+        return included_messages(list(chat_messages))
 
     def _validate_reasoning_groups_for_stateless_replay(
         self,

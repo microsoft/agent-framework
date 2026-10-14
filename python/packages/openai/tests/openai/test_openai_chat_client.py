@@ -11086,6 +11086,30 @@ async def test_stateless_request_replays_latest_compaction_and_drops_earlier_his
     assert "First question" not in serialized
     assert "Second question" not in serialized
     assert "old-state" not in serialized
+    # Earlier history is marked excluded rather than removed from the caller's messages.
+    assert [m.additional_properties.get("_excluded", False) for m in messages] == [
+        False,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
+async def test_stateless_request_ignores_compaction_without_replayable_payload() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    messages = [
+        Message(role="user", contents=["First question"]),
+        Message(role="assistant", contents=[Content.from_compaction(id="cmp_empty", protected_data=""), "Answer"]),
+        Message(role="user", contents=["Second question"]),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    serialized = json.dumps(run_options["input"])
+    assert "First question" in serialized
+    assert not any(m.additional_properties.get("_excluded", False) for m in messages)
 
 
 async def test_request_with_service_side_storage_does_not_replay_or_prune_compaction() -> None:
