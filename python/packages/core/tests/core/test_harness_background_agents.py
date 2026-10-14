@@ -9,13 +9,18 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentSession,
     BackgroundAgentsProvider,
     BackgroundTaskInfo,
     BackgroundTaskStatus,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
     Message,
     ServiceSessionId,
+    UsageDetails,
 )
 from agent_framework._sessions import SessionContext
 
@@ -920,3 +925,147 @@ async def test_release_session_skips_drain_when_no_pending_tasks(
 
     assert drain_called is False
     assert session.session_id not in provider._runtime
+
+
+# --- Usage Accounting Tests ---
+
+
+def _usage(input_tokens: int, output_tokens: int) -> UsageDetails:
+    return UsageDetails(
+        input_token_count=input_tokens,
+        output_token_count=output_tokens,
+        total_token_count=input_tokens + output_tokens,
+    )
+
+
+class _UsageReportingFakeAgent(_FakeAgent):
+    """Fake background agent whose response reports token usage."""
+
+    def __init__(self, name: str, usage: UsageDetails) -> None:
+        super().__init__(name)
+        self._usage = usage
+
+    async def run(
+        self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
+    ) -> AgentResponse[Any]:
+        response = await super().run(messages, stream=stream, session=session, **kwargs)
+        response.usage_details = self._usage.copy()
+        return response
+
+
+def _script_parent_turns(client: Any, *turns: list[Content]) -> None:
+    """Script parent model turns that each spend 1 input and 1 output token."""
+    client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=contents), usage_details=_usage(1, 1))
+        for contents in turns
+    ]
+    client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(_usage(1, 1))])]
+        for contents in turns
+    ]
+
+
+def _start_task_call(call_id: str) -> Content:
+    return Content.from_function_call(
+        call_id=call_id,
+        name="background_agents_start_task",
+        arguments={"agent_name": "worker", "input": "do it", "description": "work"},
+    )
+
+
+async def _run_parent(agent: Agent[Any], session: AgentSession, *, stream: bool = False) -> AgentResponse[Any]:
+    if stream:
+        return await agent.run("Go.", session=session, stream=True).get_final_response()
+    return await agent.run("Go.", session=session)
+
+
+async def _await_background_tasks(provider: BackgroundAgentsProvider, session: AgentSession) -> None:
+    await asyncio.gather(*provider._runtime[session.session_id].in_flight_tasks.values())
+
+
+def _stored_task(session: AgentSession) -> BackgroundTaskInfo:
+    return BackgroundTaskInfo.from_dict(session.state["background_agents"]["tasks"][0])
+
+
+def test_task_info_serializes_usage() -> None:
+    info = BackgroundTaskInfo(
+        id=1,
+        agent_name="worker",
+        description="work",
+        status=BackgroundTaskStatus.COMPLETED,
+        result_text="done",
+        usage_details=_usage(5, 2),
+        usage_reported=True,
+    )
+    restored = BackgroundTaskInfo.from_dict(info.to_dict())
+    assert restored.usage_details == _usage(5, 2)
+    assert restored.usage_reported is True
+    assert "usage_details" not in BackgroundTaskInfo(id=2, agent_name="worker", description="work").to_dict()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_task_usage_charged_once_through_observing_tool(stream: bool) -> None:
+    from .conftest import MockBaseChatClient
+
+    provider = _make_provider(_UsageReportingFakeAgent("worker", _usage(50, 5)))
+    parent_client = MockBaseChatClient()
+    parent = Agent(client=parent_client, name="Parent", context_providers=[provider])
+    session = AgentSession()
+
+    _script_parent_turns(
+        parent_client,
+        [_start_task_call("start")],
+        [
+            Content.from_function_call(
+                call_id="wait", name="background_agents_wait_for_first_completion", arguments={"task_ids": [1]}
+            )
+        ],
+        [Content.from_text("waited")],
+    )
+    first = await _run_parent(parent, session, stream=stream)
+
+    # The wait tool observed the completion, so this run is charged the background run's usage.
+    assert first.usage_details == _usage(53, 8)
+    assert _stored_task(session).usage_reported is True
+
+    _script_parent_turns(
+        parent_client,
+        [
+            Content.from_function_call(
+                call_id="results", name="background_agents_get_task_results", arguments={"task_id": 1}
+            )
+        ],
+        [Content.from_text("read results")],
+    )
+    second = await _run_parent(parent, session, stream=stream)
+
+    # Later observations do not charge the same background run again.
+    assert second.usage_details == _usage(2, 2)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_task_usage_charged_once_to_run_whose_before_run_observes_completion(
+    stream: bool,
+) -> None:
+    from .conftest import MockBaseChatClient
+
+    provider = _make_provider(_UsageReportingFakeAgent("worker", _usage(50, 5)))
+    parent_client = MockBaseChatClient()
+    parent = Agent(client=parent_client, name="Parent", context_providers=[provider])
+    session = AgentSession()
+
+    _script_parent_turns(parent_client, [_start_task_call("start")], [Content.from_text("started")])
+    first = await _run_parent(parent, session, stream=stream)
+    assert first.usage_details == _usage(2, 2)
+
+    # The task finishes between runs, so the next run's before_run is the first to observe it.
+    await _await_background_tasks(provider, session)
+
+    _script_parent_turns(parent_client, [Content.from_text("noticed completion")])
+    second = await _run_parent(parent, session, stream=stream)
+    assert second.usage_details == _usage(51, 6)
+    assert _stored_task(session).usage_reported is True
+
+    _script_parent_turns(parent_client, [Content.from_text("nothing new")])
+    third = await _run_parent(parent, session, stream=stream)
+    assert third.usage_details == _usage(1, 1)

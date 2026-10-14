@@ -130,6 +130,14 @@ INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = co
     "inner_accumulated_usage", default=None
 )
 
+# Tracks token usage that tools reported on the agent's behalf (for example delegated sub-agent runs) within an
+# agent invoke. That usage is part of the agent response's usage_details, but the invoke_agent span reports only
+# the agent's own usage, so the response-usage fallback subtracts it. The dict is mutated in place so tool usage
+# recorded from a copied context still reaches the owning span.
+_INNER_DELEGATED_USAGE: Final[contextvars.ContextVar[dict[str, int] | None]] = contextvars.ContextVar(
+    "inner_delegated_usage", default=None
+)
+
 # Allows protocol adapters to supply an application-managed conversation identity for one execution
 # without putting that value into a service-owned continuation field.
 _TELEMETRY_CONVERSATION_ID: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
@@ -2394,6 +2402,8 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields: set[str] = set()
             inner_response_telemetry_captured_fields_token: contextvars.Token[set[str] | None] | None = None
             inner_accumulated_usage_token: contextvars.Token[UsageDetails | None] | None = None
+            inner_delegated_usage: dict[str, int] = {}
+            inner_delegated_usage_token: contextvars.Token[dict[str, int] | None] | None = None
             # Agent Framework's agents run in-process (the actual network call happens on a nested
             # chat span), so invoke_agent spans use the default INTERNAL kind.
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
@@ -2463,6 +2473,7 @@ class AgentTelemetryLayer:
                         capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
                         not in inner_response_telemetry_captured_fields,
                         capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
+                        delegated_usage=inner_delegated_usage,
                     )
                     _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
@@ -2487,6 +2498,8 @@ class AgentTelemetryLayer:
                         INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                     if inner_accumulated_usage_token is not None:
                         INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                    if inner_delegated_usage_token is not None:
+                        _INNER_DELEGATED_USAGE.reset(inner_delegated_usage_token)
                     _close_span()
 
             def _inner_telemetry_pull_context() -> contextlib.AbstractContextManager[Any]:
@@ -2497,11 +2510,13 @@ class AgentTelemetryLayer:
                 # underlying iterator is pulled, so inner chat completion spans created during the
                 # pull can still accumulate usage / mark captured fields.
                 nonlocal inner_response_telemetry_captured_fields_token, inner_accumulated_usage_token
+                nonlocal inner_delegated_usage_token
                 if inner_response_telemetry_captured_fields_token is None:
                     inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
                         inner_response_telemetry_captured_fields
                     )
                     inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
+                    inner_delegated_usage_token = _INNER_DELEGATED_USAGE.set(inner_delegated_usage)
                 return _activate_span(span)
 
             # The pull context manager attaches the span around each underlying iterator pull so
@@ -2533,6 +2548,8 @@ class AgentTelemetryLayer:
                 inner_response_telemetry_captured_fields
             )
             inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
+            inner_delegated_usage: dict[str, int] = {}
+            inner_delegated_usage_token = _INNER_DELEGATED_USAGE.set(inner_delegated_usage)
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
@@ -2554,6 +2571,7 @@ class AgentTelemetryLayer:
                                 capture_usage=(
                                     INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
                                 ),
+                                delegated_usage=inner_delegated_usage,
                             )
                             _apply_accumulated_usage(
                                 response_attributes,
@@ -2581,6 +2599,7 @@ class AgentTelemetryLayer:
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                _INNER_DELEGATED_USAGE.reset(inner_delegated_usage_token)
 
         return _run()
 
@@ -3497,6 +3516,32 @@ def _mark_inner_response_telemetry_captured(
             INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
 
 
+def _record_delegated_usage(usage: Mapping[str, Any] | None) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Record usage that tools reported on the active agent's behalf (e.g. a delegated sub-agent run).
+
+    The function invocation loop folds such usage into the agent response's ``usage_details``; the
+    ``invoke_agent`` span reports only the agent's own usage, so its response-usage fallback subtracts it.
+    """
+    delegated = _INNER_DELEGATED_USAGE.get()
+    if delegated is None or not usage:
+        return
+    for key, value in usage.items():
+        if isinstance(value, int) and not isinstance(value, bool):
+            delegated[key] = delegated.get(key, 0) + value
+
+
+def _subtract_usage(usage: Mapping[str, Any], delegated: Mapping[str, int]) -> dict[str, Any]:
+    """Return ``usage`` minus ``delegated`` token counts, dropping counts that are not positive."""
+    own: dict[str, Any] = {}
+    for key, value in usage.items():
+        if isinstance(value, int) and not isinstance(value, bool) and key in delegated:
+            value -= delegated[key]
+            if value <= 0:
+                continue
+        own[key] = value
+    return own
+
+
 def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:
     """Apply accumulated usage from inner chat spans to the invoke_agent span attributes."""
     if INNER_USAGE_CAPTURED_FIELD not in captured_fields:
@@ -3541,8 +3586,13 @@ def _get_response_attributes(
     *,
     capture_response_id: bool = True,
     capture_usage: bool = True,
+    delegated_usage: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Get the response attributes from a response."""
+    """Get the response attributes from a response.
+
+    ``delegated_usage`` is token usage that tools reported on the agent's behalf (e.g. sub-agent runs). It is
+    part of ``response.usage_details`` but excluded here so the span reports only the agent's own usage.
+    """
     if capture_response_id and response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = _get_response_finish_reason(response)
@@ -3551,7 +3601,7 @@ def _get_response_attributes(
     if model := getattr(response, "model", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
-        _apply_usage_attributes(attributes, usage)
+        _apply_usage_attributes(attributes, _subtract_usage(usage, delegated_usage) if delegated_usage else usage)
     return attributes
 
 

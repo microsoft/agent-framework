@@ -90,6 +90,7 @@ from ._harness._file_access import (
 )
 from ._harness._file_memory import DEFAULT_FILE_MEMORY_INSTRUCTIONS, DEFAULT_FILE_MEMORY_SOURCE_ID, FileMemoryProvider
 from ._harness._loop import (
+    AgentBudget,
     AgentLoopMiddleware,
     JudgeVerdict,
     background_tasks_running,
@@ -387,6 +388,7 @@ __all__ = [
     "USER_AGENT_KEY",
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
+    "AgentBudget",
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",

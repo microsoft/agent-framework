@@ -45,6 +45,7 @@ from agent_framework import (
     ToolApprovalMiddleware,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UsageDetails,
     VectorStoreHistoryProvider,
     chat_middleware,
     enqueue_messages,
@@ -4802,3 +4803,209 @@ async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
     # Two service calls -> the warning is emitted twice (one per call, not deduped).
     missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
     assert len(missing_id_warnings) == 2
+
+
+# region as_tool sub-agent usage roll-up
+
+
+def _usage(input_tokens: int, output_tokens: int) -> UsageDetails:
+    return UsageDetails(
+        input_token_count=input_tokens,
+        output_token_count=output_tokens,
+        total_token_count=input_tokens + output_tokens,
+    )
+
+
+def _script_turns(client: MockBaseChatClient, *turns: tuple[list[Content], UsageDetails]) -> None:
+    """Script the same model turns for streaming and non-streaming calls, each turn with its usage."""
+    client.run_responses = [
+        ChatResponse(messages=Message(role="assistant", contents=list(contents)), usage_details=usage)
+        for contents, usage in turns
+    ]
+    client.streaming_responses = [
+        [ChatResponseUpdate(role="assistant", contents=[*contents, Content.from_usage(usage)])]
+        for contents, usage in turns
+    ]
+
+
+def _delegate_call(call_id: str, name: str = "delegate") -> Content:
+    return Content.from_function_call(call_id=call_id, name=name, arguments={"task": "work"})
+
+
+async def _run_agent(agent: Agent[Any], stream: bool) -> AgentResponse:
+    if stream:
+        return await agent.run("Go.", stream=True).get_final_response()
+    return await agent.run("Go.")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_sub_agent_usage_rolls_into_parent_usage(stream: bool) -> None:
+    child_client = MockBaseChatClient()
+    _script_turns(child_client, ([Content.from_text("child answer")], _usage(10, 5)))
+    child = Agent(client=child_client, name="Child")
+
+    parent_client = MockBaseChatClient()
+    _script_turns(
+        parent_client,
+        ([_delegate_call("call-1")], _usage(3, 2)),
+        ([Content.from_text("parent answer")], _usage(4, 1)),
+    )
+    parent = Agent(client=parent_client, name="Parent", tools=[child.as_tool(name="delegate")])
+
+    response = await _run_agent(parent, stream)
+
+    assert response.text.endswith("parent answer")
+    assert response.usage_details == _usage(17, 8)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_nested_sub_agent_usage_counts_each_layer_once(stream: bool) -> None:
+    c_client = MockBaseChatClient()
+    _script_turns(c_client, ([Content.from_text("c answer")], _usage(10, 1)))
+    agent_c = Agent(client=c_client, name="AgentC")
+
+    b_client = MockBaseChatClient()
+    _script_turns(
+        b_client,
+        ([_delegate_call("b-call", name="c_tool")], _usage(20, 2)),
+        ([Content.from_text("b answer")], _usage(30, 3)),
+    )
+    agent_b = Agent(client=b_client, name="AgentB", tools=[agent_c.as_tool(name="c_tool")])
+
+    a_client = MockBaseChatClient()
+    _script_turns(
+        a_client,
+        ([_delegate_call("a-call", name="b_tool")], _usage(100, 10)),
+        ([Content.from_text("a answer")], _usage(200, 20)),
+    )
+    agent_a = Agent(client=a_client, name="AgentA", tools=[agent_b.as_tool(name="b_tool")])
+
+    response = await _run_agent(agent_a, stream)
+
+    # A spends 300/30 itself, B 50/5 and C 10/1; each layer is counted exactly once.
+    assert response.usage_details == _usage(360, 36)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_parallel_sub_agent_calls_sum_usage(stream: bool) -> None:
+    child_client = MockBaseChatClient()
+    _script_turns(
+        child_client,
+        ([Content.from_text("first child answer")], _usage(10, 1)),
+        ([Content.from_text("second child answer")], _usage(20, 2)),
+    )
+    child = Agent(client=child_client, name="Child")
+
+    parent_client = MockBaseChatClient()
+    _script_turns(
+        parent_client,
+        ([_delegate_call("call-1"), _delegate_call("call-2")], _usage(1, 1)),
+        ([Content.from_text("parent answer")], _usage(2, 2)),
+    )
+    parent = Agent(client=parent_client, name="Parent", tools=[child.as_tool(name="delegate")])
+
+    response = await _run_agent(parent, stream)
+
+    assert response.usage_details == _usage(33, 6)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_sub_agent_usage_survives_user_input_request(stream: bool) -> None:
+    """A sub-agent that ends on a user-input request raises out of the tool; its usage still rolls up."""
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        raise AssertionError("Unapproved child tool must not execute.")
+
+    child_client = MockBaseChatClient()
+    _script_turns(
+        child_client,
+        (
+            [
+                Content.from_function_call(call_id="child-write", name="guarded_write", arguments={}),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent"),
+            ],
+            _usage(10, 5),
+        ),
+    )
+    child = Agent(client=child_client, name="Child", tools=[guarded_write])
+
+    parent_client = MockBaseChatClient()
+    _script_turns(parent_client, ([_delegate_call("call-1")], _usage(3, 2)))
+    parent = Agent(client=parent_client, name="Parent", tools=[child.as_tool(name="delegate")])
+
+    response = await _run_agent(parent, stream)
+
+    assert [request.type for request in response.user_input_requests] == ["oauth_consent_request"]
+    assert response.usage_details == _usage(13, 7)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_sub_agent_usage_survives_unresolved_approval_error(stream: bool) -> None:
+    """A sub-agent stopped on an approval request becomes a tool error; its usage still rolls up."""
+
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        raise AssertionError("Unapproved child tool must not execute.")
+
+    child_client = MockBaseChatClient()
+    _script_turns(
+        child_client,
+        ([Content.from_function_call(call_id="child-write", name="guarded_write", arguments={})], _usage(10, 5)),
+    )
+    child = Agent(client=child_client, name="Child", tools=[guarded_write])
+
+    parent_client = MockBaseChatClient()
+    _script_turns(
+        parent_client,
+        ([_delegate_call("call-1")], _usage(3, 2)),
+        ([Content.from_text("parent answer")], _usage(4, 1)),
+    )
+    parent = Agent(client=parent_client, name="Parent", tools=[child.as_tool(name="delegate")])
+
+    response = await _run_agent(parent, stream)
+
+    function_results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 1
+    assert function_results[0].exception is not None
+    assert response.usage_details == _usage(17, 8)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_as_tool_sub_agent_usage_kept_when_middleware_overrides_result(stream: bool) -> None:
+    from agent_framework import FunctionMiddleware
+
+    class _OverrideResult(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            context.result = "overridden"
+
+    child_client = MockBaseChatClient()
+    _script_turns(child_client, ([Content.from_text("child answer")], _usage(10, 5)))
+    child = Agent(client=child_client, name="Child")
+
+    parent_client = MockBaseChatClient()
+    _script_turns(
+        parent_client,
+        ([_delegate_call("call-1")], _usage(3, 2)),
+        ([Content.from_text("parent answer")], _usage(4, 1)),
+    )
+    parent = Agent(
+        client=parent_client,
+        name="Parent",
+        tools=[child.as_tool(name="delegate")],
+        middleware=[_OverrideResult()],
+    )
+
+    response = await _run_agent(parent, stream)
+
+    function_results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [result.result for result in function_results] == ["overridden"]
+    assert response.usage_details == _usage(17, 8)
+
+
+# endregion

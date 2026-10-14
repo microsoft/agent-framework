@@ -132,6 +132,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FileMemoryProvider",
     ),
     "._harness._loop": (
+        "AgentBudget",
         "AgentLoopMiddleware",
         "JudgeVerdict",
         "background_tasks_running",
@@ -432,6 +433,7 @@ __all__ = [
     "USER_AGENT_KEY",
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
+    "AgentBudget",
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
