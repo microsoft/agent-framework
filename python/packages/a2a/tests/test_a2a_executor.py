@@ -1028,12 +1028,11 @@ class TestA2AExecutorForwardedKwargs:
         "reserved",
         ["stream", "messages", "options", "session", "middleware", "client_kwargs", "_internal"],
     )
-    @mark.parametrize("allowlist", ["accepted_function_invocation_kwargs", "accepted_client_kwargs"])
-    def test_framework_owned_names_cannot_be_accepted(
-        self, mock_agent: MagicMock, reserved: str, allowlist: str
-    ) -> None:
+    def test_framework_owned_names_cannot_be_accepted(self, mock_agent: MagicMock, reserved: str) -> None:
         with raises(ValueError, match=reserved):
-            A2AExecutor(mock_agent, **{allowlist: ["tenant", reserved]})
+            A2AExecutor(mock_agent, accepted_function_invocation_kwargs=["tenant", reserved])
+        with raises(ValueError, match=reserved):
+            A2AExecutor(mock_agent, accepted_client_kwargs=["tenant", reserved])
 
     @mark.parametrize(
         "metadata",
