@@ -13,6 +13,24 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class WorkflowExecutorStateTests
 {
+    [Fact]
+    public async Task MixedWorkflow_RequiresExplicitResetSupportForReuseAsync()
+    {
+        // Arrange
+        SessionStateExecutor executor = new(false);
+        ChatForwardingExecutor forwarding = new("forward");
+        Workflow workflow = new WorkflowBuilder(executor).AddEdge(executor, forwarding).Build();
+        workflow.TakeOwnership("first");
+        await workflow.ReleaseOwnershipAsync("first", null);
+
+        // Act
+        void reuse() => workflow.TakeOwnership("second");
+
+        // Assert
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(reuse);
+        Assert.Contains("Cannot reuse Workflow", exception.Message);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -23,9 +41,15 @@ public sealed class WorkflowExecutorStateTests
         TestWorkflowContext firstContext = new(executor.Id);
         using CancellationTokenSource cancellation = new();
         Mock<IWorkflowContext> interruptedContext = new();
+        interruptedContext.Setup(context => context.ReadOrInitStateAsync(
+                It.IsAny<string>(), It.IsAny<Func<List<ChatMessage>>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns((string key, Func<List<ChatMessage>> factory, string? scope, CancellationToken token) =>
+                firstContext.ReadOrInitStateAsync(key, factory, scope, token));
         interruptedContext.Setup(context => context.YieldOutputAsync(It.IsAny<object>(), It.IsAny<CancellationToken>()))
-            .Returns(() =>
+            .Returns((object output, CancellationToken token) =>
             {
+                List<ChatMessage> messages = Assert.IsType<List<ChatMessage>>(output);
+                Assert.Equal(["first"], messages.Select(message => message.Text));
                 if (cancel)
                 {
                     cancellation.Cancel();
@@ -139,9 +163,11 @@ public sealed class WorkflowExecutorStateTests
     }
 
     private sealed class ValueStateExecutor()
-        : StatefulExecutor<int>("value", () => 3, new StatefulExecutorOptions { StateKey = "value" })
+        : StatefulExecutor<int>("value", () => 3, new StatefulExecutorOptions { StateKey = "value" }), IResettableExecutor
     {
         protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) => protocolBuilder;
+
+        ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
 
         public async ValueTask<int> ReadAsync(IWorkflowContext context, bool useInvocation)
         {

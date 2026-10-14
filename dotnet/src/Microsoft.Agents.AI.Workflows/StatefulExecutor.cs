@@ -15,16 +15,14 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Provides a base class for executors that maintain and manage state across multiple message handling operations.
 /// </summary>
 /// <remarks>
-/// When a workflow releases a shared executor instance, its cached state is invalidated.
-/// Subsequent runs load state from their workflow context, including restored checkpoints.
+/// State is read from the current workflow context, including pending updates and restored checkpoints.
+/// Derived executors with instance state must explicitly implement <see cref="IResettableExecutor"/>
+/// to support resetting that state between runs.
 /// </remarks>
 /// <typeparam name="TState">The type of state associated with this Executor.</typeparam>
-public abstract class StatefulExecutor<TState> : Executor, IResettableExecutor
+public abstract class StatefulExecutor<TState> : Executor
 {
     private readonly Func<TState> _initialStateFactory;
-
-    private TState? _stateCache;
-    private bool _hasStateCache;
 
     /// <summary>
     /// Initializes the executor with a unique id and an initial value for the state.
@@ -57,29 +55,12 @@ public abstract class StatefulExecutor<TState> : Executor, IResettableExecutor
     /// Reads the state associated with this executor. If it is not initialized, it will be set to the initial state.
     /// </summary>
     /// <param name="context">The workflow context in which the executor executes.</param>
-    /// <param name="skipCache">Ignore the cached value, if any. State is not cached when running in Cross-Run Shareable
-    /// mode.</param>
+    /// <param name="skipCache">Retained for compatibility. State is always read from the workflow context.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns></returns>
-    protected async ValueTask<TState> ReadStateAsync(IWorkflowContext context, bool skipCache = false, CancellationToken cancellationToken = default)
-    {
-        if (!skipCache && this._hasStateCache && this._stateCache is not null)
-        {
-            return this._stateCache;
-        }
-
-        TState? state = await context.ReadOrInitStateAsync(this.StateKey, this._initialStateFactory, this.Options.ScopeName, cancellationToken)
-                                     .ConfigureAwait(false);
-
-        if (!context.ConcurrentRunsEnabled)
-        {
-            this._stateCache = state;
-            this._hasStateCache = true;
-        }
-
-        return state;
-    }
+    protected ValueTask<TState> ReadStateAsync(IWorkflowContext context, bool skipCache = false, CancellationToken cancellationToken = default)
+        => context.ReadOrInitStateAsync(this.StateKey, this._initialStateFactory, this.Options.ScopeName, cancellationToken);
 
     /// <summary>
     /// Queues up an update to the executor's state.
@@ -90,15 +71,7 @@ public abstract class StatefulExecutor<TState> : Executor, IResettableExecutor
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns></returns>
     protected ValueTask QueueStateUpdateAsync(TState state, IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        if (!context.ConcurrentRunsEnabled)
-        {
-            this._stateCache = state;
-            this._hasStateCache = true;
-        }
-
-        return context.QueueStateUpdateAsync(this.StateKey, state, this.Options.ScopeName, cancellationToken);
-    }
+        => context.QueueStateUpdateAsync(this.StateKey, state, this.Options.ScopeName, cancellationToken);
 
     /// <summary>
     /// Invokes an asynchronous operation that reads, updates, and persists workflow state associated with the specified
@@ -107,62 +80,27 @@ public abstract class StatefulExecutor<TState> : Executor, IResettableExecutor
     /// <param name="invocation">A delegate that receives the current state, workflow context, and cancellation token,
     /// and returns the updated state asynchronously.</param>
     /// <param name="context">The workflow context in which the executor executes.</param>
-    /// <param name="skipCache">Ignore the cached value, if any. State is not cached when running in Cross-Run Shareable
-    /// mode.</param>
+    /// <param name="skipCache">Retained for compatibility. State is always read from the workflow context.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask that represents the asynchronous operation.</returns>
-    protected async ValueTask InvokeWithStateAsync(
+    protected ValueTask InvokeWithStateAsync(
         Func<TState, IWorkflowContext, CancellationToken, ValueTask<TState?>> invocation,
         IWorkflowContext context,
         bool skipCache = false,
         CancellationToken cancellationToken = default)
-    {
-        if (!skipCache && !context.ConcurrentRunsEnabled)
-        {
-            if (!this._hasStateCache || this._stateCache is null)
-            {
-                this._stateCache = await context.ReadOrInitStateAsync(this.StateKey, this._initialStateFactory, this.Options.ScopeName, cancellationToken)
-                                                .ConfigureAwait(false);
-            }
-
-            TState newState = await invocation(this._stateCache ?? this._initialStateFactory(),
-                                               context,
-                                               cancellationToken).ConfigureAwait(false)
-                           ?? this._initialStateFactory();
-
-            await context.QueueStateUpdateAsync(this.StateKey,
-                                                newState,
-                                                this.Options.ScopeName,
-                                                cancellationToken).ConfigureAwait(false);
-
-            this._stateCache = newState;
-            this._hasStateCache = true;
-        }
-        else
-        {
-            await context.InvokeWithStateAsync(invocation,
-                                               this.StateKey,
-                                               this._initialStateFactory,
-                                               this.Options.ScopeName,
-                                               cancellationToken)
-                         .ConfigureAwait(false);
-        }
-    }
+        => context.InvokeWithStateAsync(invocation,
+                                        this.StateKey,
+                                        this._initialStateFactory,
+                                        this.Options.ScopeName,
+                                        cancellationToken);
 
     /// <inheritdoc cref="IResettableExecutor.ResetAsync"/>
     /// <remarks>
-    /// Invalidates cached state without changing persisted workflow state. Overrides should call the base implementation.
+    /// The base implementation has no instance state to reset and does not change persisted workflow state.
+    /// Derived executors can override this method to reset their own instance state.
     /// </remarks>
-    protected virtual ValueTask ResetAsync()
-    {
-        this._stateCache = default;
-        this._hasStateCache = false;
-
-        return default;
-    }
-
-    ValueTask IResettableExecutor.ResetAsync() => this.ResetAsync();
+    protected virtual ValueTask ResetAsync() => default;
 }
 
 /// <summary>
