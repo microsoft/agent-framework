@@ -1294,6 +1294,8 @@ def test_foundry_agents_declare_hosted_agent_session_id_as_server_owned() -> Non
     assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgent.service_session_state_keys
     # FoundryAgent is the recommended production class, so it must inherit the same protection.
     assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in FoundryAgent.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgentChatClient.service_session_state_keys
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in _FoundryAgentChatClient.service_session_state_keys
 
 
 async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
@@ -1332,6 +1334,66 @@ async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_fr
         "runtime": "value",
         "agent_session_id": "agent-session-123",
     }
+
+
+@pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent, None])
+@pytest.mark.parametrize("parent_handle", [None, "parent-agent-session"])
+async def test_foundry_agent_tools_isolate_service_state_between_children(
+    agent_type: type[RawFoundryAgent] | None, parent_handle: str | None
+) -> None:
+    """Delegated Foundry calls retain application state without sharing service handles."""
+    project = MagicMock()
+    project.get_openai_client.return_value = MagicMock()
+    children = [
+        agent_type(project_client=project, agent_name=name)
+        if agent_type is not None
+        else Agent(client=_FoundryAgentChatClient(project_client=project, agent_name=name), name=name)
+        for name in ("first-child", "second-child")
+    ]
+    parent = AgentSession(service_session_id="parent-response")
+    parent.state["ordinary"] = "parent-value"
+    if parent_handle is not None:
+        parent.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    observed_options: list[dict[str, Any]] = []
+    updates: list[AgentResponseUpdate] = []
+
+    def respond(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        assert kwargs["stream"] is True
+        observed_options.append(dict(kwargs["options"]))
+        call_number = len(observed_options)
+
+        async def stream() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(text="done")],
+                conversation_id=f"child-response-{call_number}",
+                additional_properties={"agent_session_id": f"child-agent-session-{call_number}"},
+            )
+
+        return ResponseStream(stream(), finalizer=ChatResponse.from_updates)
+
+    with patch.object(RawFoundryAgentChatClient, "_inner_get_response", side_effect=respond):
+        for child in (children[0], children[1], children[0]):
+            delegated_tool = child.as_tool(propagate_session=True, stream_callback=updates.append)
+            result = await delegated_tool.invoke(
+                context=FunctionInvocationContext(
+                    function=delegated_tool,
+                    arguments={"task": "Run child"},
+                    session=parent,
+                    parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
+                )
+            )
+            assert result[0].text == "done"
+
+    assert len(observed_options) == 3
+    assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
+    assert all(options.get("conversation_id") is None for options in observed_options)
+    assert len(updates) == 3
+    expected_state = {"ordinary": "parent-value"}
+    if parent_handle is not None:
+        expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
+    assert parent.state == expected_state
+    assert parent.service_session_id == "parent-response"
 
 
 def test_foundry_agent_updates_session_from_response_ids() -> None:
@@ -2075,6 +2137,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+async def test_run_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming agent run surfaces an oauth_consent_request output item instead of an empty answer."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "gpt-5.4",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+        max_retries=0,
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        agent = FoundryAgent(project_client=project_client, agent_name="toolbox-agent")
+        response = await agent.run("List my repos")
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
 
 
 def test_client_model_not_set_from_openai_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:

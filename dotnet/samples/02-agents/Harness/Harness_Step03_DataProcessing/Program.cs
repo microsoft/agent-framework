@@ -43,7 +43,7 @@ var instructions =
     ## Working with data
     - When asked to analyze data, read the relevant files first, then perform the analysis.
     - Show your analysis clearly with tables, summaries, and key insights.
-    - When calculations are needed, show the formulas, inputs, and results so the user can verify them.
+    - When calculations are needed, work through them step by step and show your reasoning.
 
     ## Writing output
     - When asked to produce output files (e.g., reports, summaries, filtered data), use file_access_write to write them.
@@ -53,8 +53,8 @@ var instructions =
     ## Important
     - Never modify or delete the original input data files unless explicitly asked to do so.
     - If asked about data you haven't read yet, read it first before answering.
-    - Explain decisions, actions, results, and important trade-offs at a high level. Do not expose private chain-of-thought or hidden reasoning.
-    - Keep the user informed with concise progress updates between tool calls, summarizing what you learned and what you will do next.
+    - Always explain your reasoning and thought process as you work through tasks.
+    - Always explain what you learned and what you are going to do next between tool calls, so the user can follow along with your thought process.
     """;
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

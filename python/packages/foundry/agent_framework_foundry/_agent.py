@@ -39,7 +39,7 @@ from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
+from agent_framework_foundry._oauth_helpers import parse_oauth_consent_output_items, try_parse_oauth_consent_event
 
 from ._constants import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from ._feature_usage import (
@@ -185,6 +185,9 @@ class RawFoundryAgentChatClient(
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
+
+    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+    """Service-owned state keys, including when this client is used by a generic Agent."""
 
     def __init__(
         self,
@@ -449,6 +452,10 @@ class RawFoundryAgentChatClient(
         options: dict[str, Any],
     ) -> Any:
         parsed_response = super()._parse_response_from_openai(response, options)
+        if parsed_response.messages:
+            parsed_response.messages[0].contents.extend(
+                parse_oauth_consent_output_items(getattr(response, "output", None))
+            )
         if agent_session_id := _extract_foundry_hosted_agent_session_id(response):
             parsed_response.additional_properties["agent_session_id"] = agent_session_id
         return parsed_response

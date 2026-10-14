@@ -11,8 +11,7 @@ import sys
 import uuid
 import warnings
 from binascii import Error as BinasciiError
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
-from functools import wraps
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
 
 import httpx
@@ -21,8 +20,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionTool,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -57,15 +56,6 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("agent_framework.ag_ui")
 
-
-def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
-    """Replace server_function_call instances with their underlying call content."""
-    for idx, content in enumerate(contents):
-        if content.type == "server_function_call":  # type: ignore[union-attr]
-            contents[idx] = content.function_call  # type: ignore[assignment, union-attr]
-
-
-BaseChatClientT = TypeVar("BaseChatClientT", bound=type[BaseChatClient[Any]])
 
 AGUIChatOptionsT = TypeVar(
     "AGUIChatOptionsT",
@@ -123,47 +113,6 @@ def _extract_legacy_json_state(message: Message) -> dict[str, Any] | None:
     return _decode_json_state(content)
 
 
-def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:
-    """Class decorator that unwraps server-side function calls after tool handling."""
-
-    original_get_response = client.get_response
-
-    @wraps(original_get_response)
-    def response_wrapper(
-        self, *args: Any, stream: bool = False, **kwargs: Any
-    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        if stream:
-            stream_response = original_get_response(self, *args, stream=True, **kwargs)
-            if isinstance(stream_response, ResponseStream):
-                return stream_response.with_transform_hook(_map_update)
-            return ResponseStream(_stream_wrapper_impl(stream_response))
-        return _response_wrapper_impl(self, original_get_response, *args, **kwargs)
-
-    async def _response_wrapper_impl(self, original_func: Any, *args: Any, **kwargs: Any) -> ChatResponse:
-        """Non-streaming wrapper implementation."""
-        response = await original_func(self, *args, stream=False, **kwargs)
-        if response.messages:
-            for message in response.messages:
-                _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], message.contents))
-        return response
-
-    async def _stream_wrapper_impl(stream: Any) -> AsyncIterable[ChatResponseUpdate]:
-        """Streaming wrapper implementation."""
-        if isinstance(stream, Awaitable):
-            stream = await stream
-        async for update in stream:
-            _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-            yield update
-
-    def _map_update(update: ChatResponseUpdate) -> ChatResponseUpdate:
-        _unwrap_server_function_call_contents(cast(MutableSequence[Content | dict[str, Any]], update.contents))
-        return update
-
-    client.get_response = response_wrapper  # type: ignore[assignment]
-    return client
-
-
-@_apply_server_function_call_unwrap
 class AGUIChatClient(
     FunctionInvocationLayer[AGUIChatOptionsT],
     ChatMiddlewareLayer[AGUIChatOptionsT],
@@ -310,28 +259,6 @@ class AGUIChatClient(
     async def __aexit__(self, *args: Any) -> None:
         """Exit async context manager."""
         await self.close()
-
-    def _register_server_tool_placeholder(self, tool_name: str) -> None:
-        """Register a declaration-only placeholder so function invocation skips execution."""
-
-        config = getattr(self, "function_invocation_configuration", None)
-        if not isinstance(config, dict):
-            return
-        additional_tools = list(config.get("additional_tools", []))
-        if any(getattr(tool, "name", None) == tool_name for tool in additional_tools):
-            return
-
-        placeholder: FunctionTool = FunctionTool(
-            name=tool_name,
-            description="Server-managed tool placeholder (AG-UI)",
-            func=None,
-        )
-        additional_tools.append(placeholder)
-        config["additional_tools"] = additional_tools
-        registered: set[str] = getattr(self, "_registered_server_tools", set())
-        registered.add(tool_name)
-        self._registered_server_tools = registered
-        logger.debug(f"[AGUIChatClient] Registered server placeholder: {tool_name}")
 
     def _extract_state_from_messages(
         self,
@@ -503,7 +430,7 @@ class AGUIChatClient(
 
         available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
-        async for event in self._http_service.post_run(
+        events = self._http_service.post_run(
             thread_id=thread_id,
             run_id=run_id,
             messages=agui_messages,
@@ -511,29 +438,50 @@ class AGUIChatClient(
             tools=agui_tools,
             available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
             resume=_serialize_resume(options.get("resume")),
-        ):
-            logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
-            update = converter.convert_event(event)
-            if update is not None:
-                logger.debug(
-                    "[AGUIChatClient] Converted update",
-                    extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
-                )
-                # Distinguish client vs server tools
-                for i, content in enumerate(update.contents):
-                    if content.type == "function_call":
-                        logger.debug(
-                            f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
-                        )
-                        if content.name in client_tool_set:
-                            # Client tool - let function invocation execute it
-                            if not content.additional_properties:
-                                content.additional_properties = {}
-                            content.additional_properties["agui_thread_id"] = thread_id
-                        else:
-                            # Server tool - wrap so function invocation ignores it
-                            logger.debug(f"[AGUIChatClient] Wrapping server tool: {content.name}")
-                            self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
-                            update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
+        )
+        body_failed = False
+        local_client_tool_call_started = False
+        try:
+            async for event in events:
+                logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+                event_type = str(event.get("type", "")).upper()
+                if event_type == "RUN_ERROR" and local_client_tool_call_started:
+                    raise ResponseInvalidatedException(
+                        "The AG-UI server invalidated partial output containing a local client tool call."
+                    )
+                update = converter.convert_event(event)
+                if update is not None:
+                    logger.debug(
+                        "[AGUIChatClient] Converted update",
+                        extra={"role": update.role, "contents": [type(c).__name__ for c in update.contents]},
+                    )
+                    # Distinguish client vs server tools
+                    for content in update.contents:
+                        if content.type == "function_call":
+                            logger.debug(
+                                f"[AGUIChatClient] Function call: {content.name}, in client_tool_set: {content.name in client_tool_set}"
+                            )
+                            if content.name in client_tool_set:
+                                local_client_tool_call_started = True
+                                if not content.additional_properties:
+                                    content.additional_properties = {}
+                                content.additional_properties["agui_thread_id"] = thread_id
+                            else:
+                                content.hosted = True
 
-                yield update
+                    yield update
+        except GeneratorExit:
+            # An explicit close() has no body failure to take precedence over cleanup.
+            raise
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    if not body_failed:
+                        raise
+                    logger.warning("AG-UI event cleanup failed while handling an existing exception.", exc_info=True)

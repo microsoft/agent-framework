@@ -6,6 +6,7 @@ These executors handle simple actions like SetValue, SendActivity, etc.
 Each action becomes a node in the workflow graph.
 """
 
+import math
 import uuid
 from collections.abc import Mapping
 from typing import Any, cast
@@ -517,6 +518,9 @@ class ParseValueExecutor(DeclarativeActionExecutor):
                 try:
                     if "." in value:
                         return float(value)
+                    if "e" in value.lower():
+                        parsed_value = float(value)
+                        return parsed_value if math.isfinite(parsed_value) else 0
                     return int(value)
                 except ValueError:
                     return 0

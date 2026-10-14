@@ -457,6 +457,10 @@ class FunctionInvocationContext:
                 bare ``Content`` of type ``function_approval_request``, which the
                 invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        parent_service_session_state_keys: Provider-owned keys in ``session.state`` declared by the invoking
+                parent agent and its client. The automatic function-calling loop supplies this value. Custom loops
+                that directly invoke an agent tool with session propagation must provide it explicitly, including
+                an empty collection when the parent declares no such keys.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
                 function-calling loop (for example via ``FunctionTool.invoke`` directly).
@@ -504,6 +508,7 @@ class FunctionInvocationContext:
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
         tools: list[ToolTypes] | None = None,
+        parent_service_session_state_keys: Collection[str] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -520,6 +525,8 @@ class FunctionInvocationContext:
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
                 appending or removing tools changes the model's available tools.
+            parent_service_session_state_keys: Provider-owned keys declared by the invoking parent agent and client,
+                or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
         self.arguments = arguments
@@ -527,6 +534,9 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.parent_service_session_state_keys: frozenset[str] | None = (
+            frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
+        )
         self.tools = tools
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)

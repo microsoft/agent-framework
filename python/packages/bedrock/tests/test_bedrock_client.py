@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections import deque
@@ -141,6 +142,10 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
 
     assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
     assert all(update.role == "assistant" for update in updates)
+    streamed_contents = [content for update in updates for content in update.contents]
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "text")
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "function_call")
+    assert all(content.merge_mode == "replace" for content in streamed_contents if content.type == "usage")
     assert response.text == "Checking the weather."
     function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
     assert function_call.call_id == "call-1"
@@ -311,10 +316,34 @@ def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
     reasoning = response.messages[0].contents[0]
     assert reasoning.type == "text_reasoning"
     assert reasoning.text is None
+    assert reasoning.additional_properties["bedrock"]["redacted_reasoning"] is True
+    assert reasoning.additional_properties["bedrock.redacted_reasoning"] is True
 
     _, conversation = client._prepare_bedrock_messages(response.messages)
     assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
     assert "toolUse" in conversation[0]["content"][1]
+
+
+@pytest.mark.parametrize(
+    "additional_properties",
+    [
+        {"bedrock": {"redacted_reasoning": True}},
+        {"bedrock.redacted_reasoning": True},
+    ],
+)
+def test_redacted_reasoning_replay_accepts_canonical_and_legacy_metadata(
+    additional_properties: dict[str, Any],
+) -> None:
+    client = _make_client()
+    redacted = b"encrypted-reasoning"
+    content = Content.from_text_reasoning(
+        protected_data=base64.b64encode(redacted).decode("utf-8"),
+        additional_properties=additional_properties,
+    )
+
+    block = client._convert_content_to_bedrock_block(content)
+
+    assert block == {"reasoningContent": {"redactedContent": redacted}}
 
 
 async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
@@ -526,18 +555,18 @@ def test_parse_usage_returns_none_when_no_recognized_keys() -> None:
     assert client._parse_usage(None) is None
 
 
+class _FakeSession:
+    def __init__(self, region_name: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.region_name = region_name
+
+    def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
+        self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
+        return _StubBedrockRuntime()
+
+
 def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     """BedrockChatClient should build a runtime client from a provided boto3 session."""
-
-    class _FakeSession:
-        def __init__(self) -> None:
-            self.calls: list[dict[str, Any]] = []
-            self.region_name: str | None = None
-
-        def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockRuntime:
-            self.calls.append({"service_name": service_name, "region_name": region_name, "config": config})
-            return _StubBedrockRuntime()
-
     session = _FakeSession()
 
     client = BedrockChatClient(
@@ -554,6 +583,53 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
             "config": session.calls[0]["config"],
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("region", "env_region", "session_region", "expected_region"),
+    [
+        (None, None, "eu-west-1", "eu-west-1"),
+        ("us-west-2", None, "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        (None, None, None, "us-east-1"),
+    ],
+    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+)
+def test_init_resolves_region_with_boto3_session(
+    monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
+    env_region: str | None,
+    session_region: str | None,
+    expected_region: str,
+) -> None:
+    """A configured region wins, then the provided session's region, then the default region."""
+    if env_region:
+        monkeypatch.setenv("BEDROCK_REGION", env_region)
+    else:
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name=session_region)
+
+    client = BedrockChatClient(model="amazon.titan-text", region=region, boto3_session=cast(Boto3Session, session))
+
+    assert session.calls[0]["region_name"] == expected_region
+    assert client.region == expected_region
+    assert client.service_url() == f"https://bedrock-runtime.{expected_region}.amazonaws.com"
+
+
+def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client wins, so the unused session should not change the reported region."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name="eu-west-1")
+
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        client=cast(BaseClient, _StubBedrockRuntime()),
+        boto3_session=cast(Boto3Session, session),
+    )
+
+    assert session.calls == []
+    assert client.region == "us-east-1"
+    assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
