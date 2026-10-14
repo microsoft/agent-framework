@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import stat
+import subprocess
 import sys
 import types
 from collections.abc import Iterable, Iterator, Mapping
@@ -984,6 +987,8 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
 
     existing = writable / "existing.txt"
     existing.write_text("before", encoding="utf-8")
+    unchanged = writable / "unchanged.txt"
+    unchanged.write_text("same", encoding="utf-8")
     (nested / "report.txt").write_text("old", encoding="utf-8")
     (readonly / "ignored.txt").write_text("unchanged", encoding="utf-8")
 
@@ -1005,6 +1010,7 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
 
     assert set(pre_state) == {"/work"}
     assert "existing.txt" in pre_state["/work"]
+    assert "unchanged.txt" in pre_state["/work"]
     assert "ignored.txt" not in pre_state["/work"]
     assert {item.additional_properties["path"] for item in data_items} == {
         "/work/artifact.bin",
@@ -1018,6 +1024,110 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
         if item.additional_properties["path"] == "/work/existing.txt"
     )
     assert all(not item.additional_properties["path"].startswith("/readonly/") for item in data_items)
+    assert all(item.additional_properties["path"] != "/work/unchanged.txt" for item in data_items)
+
+
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    is_reparse_point = bool(reparse_attribute and getattr(link.lstat(), "st_file_attributes", 0) & reparse_attribute)
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
+
+
+@pytest.mark.parametrize("create_before_snapshot", [True, False])
+def test_capture_written_files_skips_windows_junction(
+    tmp_path: Path,
+    create_before_snapshot: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    canary = outside / "canary.txt"
+    canary.write_text("before", encoding="utf-8")
+    junction = writable / "junction"
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+
+    if create_before_snapshot:
+        _create_junction_or_skip(link=junction, target=outside)
+    pre_state = execute_code_module._snapshot_writable_mounts([mount])
+    if not create_before_snapshot:
+        _create_junction_or_skip(link=junction, target=outside)
+
+    try:
+        assert "junction/canary.txt" not in pre_state["/input"]
+        canary.write_text("after-canary", encoding="utf-8")
+
+        captured = execute_code_module._capture_written_files([mount], pre_state)
+
+        assert not any(
+            item.type == "data" and item.additional_properties.get("path") == "/input/junction/canary.txt"
+            for item in captured
+        )
+    finally:
+        junction.rmdir()
+
+
+def test_iter_real_files_fails_closed_when_reparse_probe_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    readable = tmp_path / "readable.txt"
+    readable.write_text("safe", encoding="utf-8")
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    (blocked / "secret.txt").write_text("secret", encoding="utf-8")
+    original_probe = execute_code_module._is_link_or_reparse_point
+
+    def fail_for_blocked(path: Path) -> bool:
+        if path == blocked:
+            raise PermissionError("access denied")
+        return original_probe(path)
+
+    monkeypatch.setattr(execute_code_module, "_is_link_or_reparse_point", fail_for_blocked)
+
+    assert set(execute_code_module._iter_real_files(tmp_path)) == {readable}
+    assert execute_code_module._safe_capture_file_stat(root=tmp_path, entry=blocked / "secret.txt") is None
+
+
+def test_capture_written_files_revalidates_before_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "artifact.txt"
+    artifact.write_text("payload", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+    safety_checks = iter([artifact.lstat(), None])
+
+    monkeypatch.setattr(
+        execute_code_module,
+        "_safe_capture_file_stat",
+        lambda **_: next(safety_checks),
+    )
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert captured == []
 
 
 # ---------------------------------------------------------------------------
