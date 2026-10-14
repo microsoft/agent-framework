@@ -215,6 +215,44 @@ public sealed class A2ARequestScopedAgentTests
     }
 
     [Fact]
+    public async Task MapA2AJsonRpc_WithAgentSelectorReturningTask_RejectsReturnImmediatelyAsync()
+    {
+        // Arrange
+        await using WebApplication app = await StartAsync(
+            _ => { },
+            endpoints => endpoints.MapA2AJsonRpc(
+                "/a2a",
+                _ => new TurnCountingAgent("tasks"),
+                options => options.AgentRunMode = AgentRunMode.ReturnTask));
+        using HttpClient httpClient = app.GetTestClient();
+        using A2AClient client = new(new Uri(httpClient.BaseAddress!, "/a2a"), httpClient);
+
+        // Act
+        A2AException exception = await Assert.ThrowsAsync<A2AException>(
+            () => client.SendMessageAsync(CreateRequest("ctx-1", returnImmediately: true)));
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task MapA2AHttpJson_WithAgentSelectorReturningMessage_IgnoresReturnImmediatelyAsync()
+    {
+        // Arrange
+        await using WebApplication app = await StartAsync(
+            _ => { },
+            endpoints => endpoints.MapA2AHttpJson("/a2a", _ => new TurnCountingAgent("messages")));
+        using HttpClient httpClient = app.GetTestClient();
+        using A2AHttpJsonClient client = new(new Uri(httpClient.BaseAddress!, "/a2a"), httpClient);
+
+        // Act
+        SendMessageResponse response = await client.SendMessageAsync(CreateRequest("ctx-1", returnImmediately: true));
+
+        // Assert
+        Assert.Equal("messages turn 1", GetText(response));
+    }
+
+    [Fact]
     public async Task MapA2AHttpJson_WithAgentSelectorReturningNull_ReturnsNotFoundAsync()
     {
         // Arrange
@@ -280,7 +318,7 @@ public sealed class A2ARequestScopedAgentTests
         return app;
     }
 
-    private static SendMessageRequest CreateRequest(string contextId) => new()
+    private static SendMessageRequest CreateRequest(string contextId, bool returnImmediately = false) => new()
     {
         Message = new Message
         {
@@ -288,7 +326,8 @@ public sealed class A2ARequestScopedAgentTests
             ContextId = contextId,
             Role = Role.User,
             Parts = [Part.FromText("hi")]
-        }
+        },
+        Configuration = returnImmediately ? new SendMessageConfiguration { ReturnImmediately = true } : null
     };
 
     private static string? GetText(SendMessageResponse response)

@@ -123,7 +123,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler
         public void BindAgent(Message message)
         {
             AIHostAgent hostAgent = A2AServerServiceCollectionExtensions.CreateHostAgent(requestServices, agent, agentName, sessionStorageIdentity: agentName);
-            server.Bind(message, new A2AAgentHandler(hostAgent, runMode));
+            server.Bind(message, new A2AAgentHandler(hostAgent, runMode, allowReturnImmediately: false));
         }
     }
 

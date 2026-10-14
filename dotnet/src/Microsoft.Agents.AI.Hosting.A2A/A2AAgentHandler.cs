@@ -28,21 +28,28 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
     private readonly AIHostAgent _hostAgent;
     private readonly AgentRunMode _runMode;
+    private readonly bool _allowReturnImmediately;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="A2AAgentHandler"/> class.
     /// </summary>
     /// <param name="hostAgent">The hosted agent that provides the execution logic.</param>
     /// <param name="runMode">Controls which A2A artifact the agent response is returned as.</param>
+    /// <param name="allowReturnImmediately">
+    /// <see langword="false"/> to reject non-streaming requests with <c>ReturnImmediately = true</c> when
+    /// <paramref name="runMode"/> returns a task, because the run would continue after the request completes.
+    /// </param>
     public A2AAgentHandler(
         AIHostAgent hostAgent,
-        AgentRunMode runMode)
+        AgentRunMode runMode,
+        bool allowReturnImmediately = true)
     {
         ArgumentNullException.ThrowIfNull(hostAgent);
         ArgumentNullException.ThrowIfNull(runMode);
 
         this._hostAgent = hostAgent;
         this._runMode = runMode;
+        this._allowReturnImmediately = allowReturnImmediately;
     }
 
     /// <inheritdoc/>
@@ -149,6 +156,13 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // Decide which A2A artifact to return based on the configured run mode.
         var decisionContext = new A2ARunDecisionContext(context);
         var returnTask = await this._runMode.ShouldReturnTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+
+        if (returnTask && !aggregateTaskUpdates && !context.StreamingResponse && !this._allowReturnImmediately)
+        {
+            throw new A2AException(
+                "ReturnImmediately is not supported when the agent is selected for each request, because the selected agent and its services are bound to the HTTP request. Send the message with ReturnImmediately disabled.",
+                A2AErrorCode.UnsupportedOperation);
+        }
 
         var options = CreateRunOptions(context);
 
