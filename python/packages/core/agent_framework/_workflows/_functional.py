@@ -777,7 +777,8 @@ class RunContext:
         if self._non_replayable_step_cache_keys:
             raise ValueError(
                 "Cannot checkpoint @step calls without a durable replay identity and safely copyable result. "
-                "Use replay_key for captured state, return replayable values, or run without checkpointing/HITL."
+                "Use replay_key for opaque arguments or captured state, return replayable values, "
+                "or run without checkpointing/HITL."
             )
         return dict(self._step_cache)
 
@@ -828,10 +829,10 @@ class StepWrapper(Generic[R]):
     * **Caching** — results use a stable identity derived from bound,
       canonical arguments so HITL replay and checkpoint restore skip the
       matching logical invocation even if concurrent scheduling changes.
-      Use ``replay_key`` for opaque arguments or concurrent calls whose
-      identical arguments do not imply interchangeable results. On cache
-      hit a single ``executor_bypassed`` event is emitted instead of the
-      normal ``executor_invoked`` / ``executor_completed`` pair.
+      Use ``replay_key`` for opaque arguments in checkpoint/HITL replay or
+      concurrent calls whose identical arguments do not imply interchangeable
+      results. On cache hit a single ``executor_bypassed`` event is emitted
+      instead of the normal ``executor_invoked`` / ``executor_completed`` pair.
     * **Event emission** — ``executor_invoked`` / ``executor_completed`` /
       ``executor_failed`` events are emitted for observability.
     * **RunContext injection** — if the step function declares a parameter
@@ -850,6 +851,8 @@ class StepWrapper(Generic[R]):
     string-key mappings containing those values. Concurrent calls with the
     same automatic identity must produce interchangeable results; use
     distinct ``replay_key`` values otherwise.
+    Opaque arguments require ``replay_key`` for checkpoint/HITL replay;
+    sequential execution without replay still supports them.
     Functions with captured closure state require ``replay_key`` for
     concurrent or durable replay; the key is the caller's versioning contract
     for that captured state.
@@ -941,16 +944,19 @@ class StepWrapper(Generic[R]):
         if not self._wrapper_identity_is_durable:
             return None
 
+        identity = self._get_argument_replay_identity(args, kwargs)
+        if identity is None:
+            return None
+        return ("auto", identity)
+
+    def _get_argument_replay_identity(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
         identity_kwargs = kwargs
         if self._ctx_param_name is not None and self._ctx_param_name in kwargs:
             identity_kwargs = dict(kwargs)
             identity_kwargs.pop(self._ctx_param_name)
         bound = self._identity_signature.bind(*args, **identity_kwargs)
         bound.apply_defaults()
-        identity = _hash_step_identity(bound.arguments)
-        if identity is None:
-            return None
-        return ("auto", identity)
+        return _hash_step_identity(bound.arguments)
 
     async def _return_cached_result(self, ctx: RunContext, cache_key: str, cached: Any) -> R:
         ctx._advance_auto_request_info_index_for_cached_step(cache_key)
@@ -1027,11 +1033,23 @@ class StepWrapper(Generic[R]):
                     "Regenerate the checkpoint with the current version and provide replay_key for opaque or "
                     "non-interchangeable concurrent calls."
                 )
+            if replay_identity is None and self._get_argument_replay_identity(args, kwargs) is None:
+                raise ValueError(
+                    f"Cannot safely replay legacy order-based cache entry for @step '{self.name}' "
+                    "with opaque arguments. Start a new run with @step(replay_key=...) "
+                    "to identify each logical invocation."
+                )
             return await self._return_cached_result(ctx, legacy_cache_key, cached)
 
         if replay_identity is None and ctx._is_concurrent_execution():
             raise ValueError(
                 f"Cannot derive a stable replay identity for concurrent @step '{self.name}'. "
+                "Use @step(replay_key=...) to identify each logical invocation."
+            )
+
+        if replay_identity is None and ctx._on_step_completed is not None:
+            raise ValueError(
+                f"Cannot checkpoint @step '{self.name}' without a stable replay identity. "
                 "Use @step(replay_key=...) to identify each logical invocation."
             )
 
@@ -1069,7 +1087,7 @@ class StepWrapper(Generic[R]):
             ctx._auto_request_info_index - auto_request_info_index_before,
         )
         copied, cached_result = _try_snapshot_step_cache_value(result)
-        identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
+        identity_is_replayable = replay_identity is not None
         ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
         _, event_data = _try_snapshot_step_cache_value(result)
         await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
@@ -1122,10 +1140,11 @@ def step(
     Concurrent calls with identical automatic identities must produce
     interchangeable results. Use distinct ``replay_key`` values when opaque
     arguments, captured state, generated wrappers, or other state distinguish
-    the logical invocations. A function with closure state also needs
-    ``replay_key`` for checkpoint/HITL replay. Legacy order-based checkpoints replay sequential
-    steps, but concurrent legacy cache hits fail explicitly rather than
-    returning a potentially mismatched result.
+    the logical invocations. Calls with opaque arguments or closure state
+    require ``replay_key`` for checkpoint/HITL replay. Legacy order-based checkpoints
+    replay sequential steps with supported arguments, but opaque or concurrent
+    legacy cache hits fail explicitly rather than returning a potentially
+    mismatched result.
 
     Args:
         func: The async function to decorate (when using the bare

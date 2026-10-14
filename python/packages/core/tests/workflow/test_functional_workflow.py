@@ -15,6 +15,7 @@ from types import FunctionType
 from typing import Any, cast, overload
 
 import pytest
+from pydantic import BaseModel
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -40,6 +41,17 @@ from agent_framework._workflows._functional import RunContext as _RunContext
 from agent_framework._workflows._functional import _get_step_wrapper_identity
 
 _factory_step_calls: list[str] = []
+
+
+class _ReplayJob(BaseModel):
+    label: str
+
+
+@step
+async def _opaque_echo(job: _ReplayJob) -> str:
+    _factory_step_calls.append(job.label)
+    return job.label.upper()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -937,6 +949,141 @@ class TestCheckpointing:
 
 
 class TestStepReplayIdentity:
+    @pytest.mark.parametrize("checkpoint_in_build", [False, True])
+    async def test_checkpointed_nested_opaque_arguments_require_replay_key(self, checkpoint_in_build: bool) -> None:
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        @step
+        async def wrapper(label: str) -> str:
+            return await _opaque_echo(_ReplayJob(label=label))
+
+        @workflow
+        async def wf(_: str) -> list[str]:
+            return [await wrapper("a"), await wrapper("b")]
+
+        built = wf.build(checkpoint_storage=storage if checkpoint_in_build else None)
+        with pytest.raises(ValueError, match="stable replay identity.*replay_key"):
+            await built.run("input", checkpoint_storage=None if checkpoint_in_build else storage)
+
+        assert _factory_step_calls == []
+        assert await storage.list_checkpoints(workflow_name="wf") == []
+
+    async def test_checkpoint_restore_rejects_opaque_legacy_cache_hit(self) -> None:
+        from agent_framework import WorkflowCheckpoint
+
+        storage = InMemoryCheckpointStorage()
+        _factory_step_calls.clear()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def wf(_: str) -> str:
+            return await _opaque_echo(_ReplayJob(label="b"))
+
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="wf",
+            graph_signature_hash=wf.graph_signature_hash,
+            state={"_step_cache": {"_opaque_echo::0": "A"}, "_original_message": "input"},
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        with pytest.raises(ValueError, match="opaque arguments.*replay_key"):
+            await wf.run(checkpoint_id=checkpoint_id)
+
+        assert _factory_step_calls == []
+
+    async def test_nested_opaque_arguments_without_replay_succeed(self) -> None:
+        _factory_step_calls.clear()
+
+        @step
+        async def wrapper(label: str) -> str:
+            return await _opaque_echo(_ReplayJob(label=label))
+
+        @built_workflow
+        async def wf(_: str) -> list[str]:
+            return [await wrapper("a"), await wrapper("b")]
+
+        result = await wf.run("input")
+
+        assert result.get_outputs() == [["A", "B"]]
+        assert _factory_step_calls == ["a", "b"]
+
+    async def test_nested_opaque_arguments_reject_response_only_replay(self) -> None:
+        _factory_step_calls.clear()
+
+        @step
+        async def wrapper(label: str) -> str:
+            return await _opaque_echo(_ReplayJob(label=label))
+
+        @built_workflow
+        async def wf(_: str, ctx: RunContext) -> str:
+            result = await wrapper("a")
+            await ctx.request_info("continue", response_type=str, request_id="continue")
+            return result
+
+        with pytest.raises(ValueError, match="replay_key"):
+            await wf.run("input")
+
+        assert _factory_step_calls == ["a"]
+
+    async def test_checkpoint_restore_nested_opaque_arguments_with_replay_keys(self) -> None:
+        storage = InMemoryCheckpointStorage()
+        calls: list[str] = []
+        crash_at = "b"
+
+        @step(replay_key=lambda job: job.label)
+        async def tick(job: _ReplayJob) -> str:
+            calls.append(job.label)
+            if job.label == crash_at:
+                raise RuntimeError("killed")
+            return job.label.upper()
+
+        @step(replay_key=lambda job: job.label)
+        async def wrapper(job: _ReplayJob) -> str:
+            return await tick(job)
+
+        @workflow(name="nested_repro")
+        async def wf(_: str) -> list[str]:
+            return [await wrapper(_ReplayJob(label="a")), await wrapper(_ReplayJob(label="b"))]
+
+        with pytest.raises(RuntimeError, match="killed"):
+            await wf.build(checkpoint_storage=storage).run("input")
+
+        calls.clear()
+        crash_at = ""
+        latest = await storage.get_latest(workflow_name="nested_repro")
+        assert latest is not None
+        resumed = await wf.build(checkpoint_storage=storage).run(checkpoint_id=latest.checkpoint_id)
+
+        assert resumed.get_outputs() == [["A", "B"]]
+        assert calls == ["b"]
+
+    async def test_nested_opaque_arguments_with_replay_keys_resume_response_only(self) -> None:
+        calls: list[str] = []
+
+        @step(replay_key=lambda job: job.label)
+        async def tick(job: _ReplayJob, ctx: RunContext) -> str:
+            calls.append(job.label)
+            if job.label == "b":
+                await ctx.request_info("continue", response_type=str, request_id="continue")
+            return job.label.upper()
+
+        @step(replay_key=lambda job: job.label)
+        async def wrapper(job: _ReplayJob) -> str:
+            return await tick(job)
+
+        @built_workflow
+        async def wf(_: str) -> list[str]:
+            return [await wrapper(_ReplayJob(label="a")), await wrapper(_ReplayJob(label="b"))]
+
+        interrupted = await wf.run("input")
+        assert interrupted.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        calls.clear()
+        resumed = await wf.run(responses={"continue": "yes"})
+
+        assert resumed.get_outputs() == [["A", "B"]]
+        assert calls == ["b"]
+
     async def test_checkpoint_restore_preserves_concurrent_step_invocations(self):
         storage = InMemoryCheckpointStorage()
         predecessor_started = asyncio.Event()
