@@ -55,11 +55,21 @@ logger = logging.getLogger("agent_framework")
 _SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 _OperationState: TypeAlias = Literal["in_progress", "terminal"]
 _OPERATION_STATE_SERIALIZATION_KEY: Final[str] = "_operation_state"
+_EVALUATION_TOOLS_METADATA_KEY: Final[str] = "agent_framework.evaluation"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from ._tools import ToolTypes
+    from ._tools import FunctionTool, ToolTypes
+
+
+def _snapshot_evaluation_tool(tool: FunctionTool) -> FunctionTool:
+    """Detach an evaluation declaration from the executable tool and its mutable schema."""
+    from ._tools import FunctionTool
+
+    schema = deepcopy(tool.parameters())
+    json.dumps(schema, allow_nan=False)
+    return FunctionTool(name=tool.name, description=tool.description, input_model=schema)
 
 
 # region Content Parsing Utilities
@@ -3569,6 +3579,10 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         not on the `AgentResponse` itself. Use `response.messages[0].author_name` to access
         the author name of individual messages.
 
+        Agent runs with function tools include schema-only snapshots under the reserved
+        ``additional_properties["agent_framework.evaluation"]`` key. These snapshots
+        survive JSON and pickle serialization and contain no executable implementations.
+
     Examples:
         .. code-block:: python
 
@@ -3666,9 +3680,78 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self._operation_state: _OperationState | None = None
-        # Run-scoped definitions for post-hoc evaluation; never serialize executable tools.
-        self._evaluation_tools: list[ToolTypes] | None = None
+        self._evaluation_tools: list[FunctionTool] | None = None
         self.raw_representation = raw_representation
+
+    def _set_evaluation_tools(self, tools: Sequence[FunctionTool]) -> None:
+        """Attach captured declarations and their versioned, schema-only serialized form."""
+        seen: set[str] = set()
+        self._evaluation_tools = []
+        definitions: list[dict[str, Any]] = []
+        for tool in tools:
+            if tool.name in seen:
+                continue
+            seen.add(tool.name)
+            self._evaluation_tools.append(tool)
+            definitions.append({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": deepcopy(tool.parameters()),
+            })
+        if definitions:
+            self.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = {"version": 1, "tools": definitions}
+        else:
+            self.additional_properties.pop(_EVALUATION_TOOLS_METADATA_KEY, None)
+
+    def _get_evaluation_tools(self) -> list[FunctionTool] | None:
+        """Restore declaration-only tools from validated metadata when the runtime cache is absent."""
+        if self._evaluation_tools is not None:
+            return self._evaluation_tools
+        if _EVALUATION_TOOLS_METADATA_KEY not in self.additional_properties:
+            return None
+
+        metadata = self.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+        if not isinstance(metadata, dict):
+            raise ValueError("Invalid agent_framework.evaluation metadata: expected an object.")
+        metadata = cast(dict[str, Any], metadata)
+        if type(metadata.get("version")) is not int or metadata["version"] != 1:
+            raise ValueError("Unsupported agent_framework.evaluation metadata version; expected 1.")
+        definitions = metadata.get("tools")
+        if not isinstance(definitions, list):
+            raise ValueError("Invalid agent_framework.evaluation metadata: tools must be a list.")
+
+        from ._tools import FunctionTool
+
+        tools: list[FunctionTool] = []
+        seen: set[str] = set()
+        for entry in cast(list[Any], definitions):
+            if not isinstance(entry, dict):
+                raise ValueError("Invalid agent_framework.evaluation tool definition: expected an object.")
+            entry = cast(dict[str, Any], entry)
+            name = entry.get("name")
+            description = entry.get("description")
+            schema = entry.get("input_schema")
+            if not isinstance(name, str) or not name or name in seen:
+                raise ValueError(
+                    "Invalid agent_framework.evaluation tool definition: names must be non-empty and unique."
+                )
+            if not isinstance(description, str) or not isinstance(schema, dict):
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation tool definition for {name!r}: "
+                    "expected a string description and an input_schema object."
+                )
+            try:
+                tool = _snapshot_evaluation_tool(
+                    FunctionTool(name=name, description=description, input_model=cast(dict[str, Any], schema))
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid agent_framework.evaluation input_schema for {name!r}: expected JSON-serializable data."
+                ) from exc
+            tools.append(tool)
+            seen.add(name)
+        self._evaluation_tools = tools
+        return tools
 
     @property
     def text(self) -> str:
