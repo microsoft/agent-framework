@@ -355,10 +355,10 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_StoredRequestToolSetChanged_StillInjectsAsApprovedAsync()
+    public async Task GetResponseAsync_StoredRequestToolSetChanged_RejectsInsteadOfApprovingAsync()
     {
         // Arrange — tool was previously non-approval-required but is now wrapped in ApprovalRequiredAIFunction.
-        // The LLM still requires a complete set of responses, so we inject unconditionally.
+        // The stored decision no longer describes what would execute, so it must not be injected as approved.
         var fccTool = new FunctionCallContent("call1", "changingTool");
         var storedApproval = new ToolApprovalRequestContent("req1", fccTool);
 
@@ -377,14 +377,122 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
         var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
 
-        // The tool is now wrapped in ApprovalRequiredAIFunction — but we still inject unconditionally
         var approvalTool = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "result", "changingTool"));
         var options = new ChatOptions { Tools = [approvalTool] };
 
         // Act
         await RunWithAgentContextAsync(decorator, session, options);
 
-        // Assert — the stored request should still be injected as approved
+        // Assert — the call is answered with a rejection, so the gated tool is not executed.
+        Assert.NotNull(capturedMessages);
+        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        Assert.Equal("req1", injected.RequestId);
+        Assert.False(injected.Approved);
+
+        // The stored decision has been acted on, so it is not kept for another turn.
+        Assert.False(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out _, AgentJsonUtilities.DefaultOptions));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_StoredRequestToolNoLongerAvailable_RejectsInsteadOfApprovingAsync()
+    {
+        // Arrange — the stored tool name is absent from the current tool set entirely.
+        var storedApproval = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "goneTool"));
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { storedApproval },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done")]));
+        });
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "otherTool")] };
+
+        // Act
+        await RunWithAgentContextAsync(decorator, session, options);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        Assert.Equal("req1", injected.RequestId);
+        Assert.False(injected.Approved);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_StoredRequestsPartiallyChanged_RejectsOnlyChangedAsync()
+    {
+        // Arrange — one stored tool is still approval-free, the other has become approval-required.
+        var stillFree = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "freeTool"));
+        var nowGated = new ToolApprovalRequestContent("req2", new FunctionCallContent("call2", "changingTool"));
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { stillFree, nowGated },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done")]));
+        });
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions
+        {
+            Tools =
+            [
+                AIFunctionFactory.Create(() => "result", "freeTool"),
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "result", "changingTool"))
+            ]
+        };
+
+        // Act
+        await RunWithAgentContextAsync(decorator, session, options);
+
+        // Assert — the batch is answered in full, but only the unchanged call is approved.
+        Assert.NotNull(capturedMessages);
+        var injected = capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>().ToList();
+        Assert.Equal(2, injected.Count);
+        Assert.True(Assert.Single(injected, r => r.RequestId == "req1").Approved);
+        Assert.False(Assert.Single(injected, r => r.RequestId == "req2").Approved);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_StoredRequestToolStillApprovalFree_InjectsAsApprovedAsync()
+    {
+        // Arrange — the tool set is unchanged, so the stored decision still describes what would execute.
+        var storedApproval = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "normalTool"));
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { storedApproval },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Done")]));
+        });
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions { Tools = [AIFunctionFactory.Create(() => "result", "normalTool")] };
+
+        // Act
+        await RunWithAgentContextAsync(decorator, session, options);
+
+        // Assert
         Assert.NotNull(capturedMessages);
         var messagesList = capturedMessages!.ToList();
         Assert.Equal(2, messagesList.Count);
@@ -421,6 +529,46 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
         Assert.Single(updates);
         Assert.Equal("Hello", updates[0].Text);
         Assert.Equal(0, session.StateBag.Count);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_StoredRequestToolSetChanged_RejectsInsteadOfApprovingAsync()
+    {
+        // Arrange — the stored tool has become approval-required since the decision was made.
+        var storedApproval = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "changingTool"));
+
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { storedApproval },
+            AgentJsonUtilities.DefaultOptions);
+
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        var innerClient = CreateMockStreamingChatClient((messages, _, _) =>
+        {
+            capturedMessages = messages.ToList();
+            return ToAsyncEnumerableAsync(new ChatResponseUpdate(ChatRole.Assistant, "Done"));
+        });
+
+        var decorator = new ApprovalNotRequiredFunctionBypassingChatClient(innerClient);
+        var options = new ChatOptions
+        {
+            ConversationId = "conv-1",
+            Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "result", "changingTool"))]
+        };
+
+        // Act
+        var updates = new List<ChatResponseUpdate>();
+        await RunStreamingWithAgentContextAsync(decorator, session, updates, options);
+
+        // Assert — the call is answered with a rejection, so the gated tool is not executed.
+        Assert.NotNull(capturedMessages);
+        var injected = Assert.Single(capturedMessages!.Last().Contents.OfType<ToolApprovalResponseContent>());
+        Assert.Equal("req1", injected.RequestId);
+        Assert.False(injected.Approved);
+
+        Assert.False(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out _, AgentJsonUtilities.DefaultOptions));
     }
 
     [Fact]

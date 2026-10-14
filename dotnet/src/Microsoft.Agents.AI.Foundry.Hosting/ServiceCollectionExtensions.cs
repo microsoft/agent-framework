@@ -263,7 +263,11 @@ public static class FoundryHostingExtensions
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
-    /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
+    /// <param name="configureOptions">
+    /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
+    /// <see cref="FoundryToolboxOptions.StrictMode"/> or
+    /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// </param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(

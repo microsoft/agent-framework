@@ -5,14 +5,74 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 from agent_framework import (
+    Annotation,
+    ChatResponse,
     ChatResponseUpdate,
     Content,
+    Message,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _annotation_batch_from_update(update: ChatResponseUpdate) -> tuple[str, list[Annotation]] | None:
+    """Extract a message-linked annotation batch produced by this converter."""
+    custom_event = (update.additional_properties or {}).get("ag_ui_custom_event")
+    if not isinstance(custom_event, dict) or custom_event.get("name") != "annotations" or not update.message_id:
+        return None
+    annotations = [
+        annotation for content in update.contents if content.type == "text" for annotation in content.annotations or []
+    ]
+    return update.message_id, annotations
+
+
+def _finalize_agui_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+    """Aggregate AG-UI updates while attaching annotation events by message ID."""
+    annotation_batches: list[tuple[str, list[Annotation]]] = []
+    aggregatable_updates: list[ChatResponseUpdate] = []
+    for update in updates:
+        annotation_batch = _annotation_batch_from_update(update)
+        if annotation_batch is None:
+            aggregatable_updates.append(update)
+        else:
+            annotation_batches.append(annotation_batch)
+
+    response = ChatResponse.from_updates(aggregatable_updates)
+
+    # Annotation events are excluded from message aggregation, but their response metadata
+    # and raw representations retain their original stream ordering.
+    response.additional_properties.clear()
+    for update in updates:
+        if update.additional_properties:
+            response.additional_properties.update(update.additional_properties)
+    if updates:
+        response.raw_representation = [update.raw_representation for update in updates]
+        response.continuation_token = updates[-1].continuation_token
+
+    for message_id, batch_annotations in annotation_batches:
+        if not batch_annotations:
+            continue
+        message = next((message for message in response.messages if message.message_id == message_id), None)
+        if message is None:
+            response.messages.append(
+                Message(
+                    role="assistant",
+                    contents=[Content.from_text(text="", annotations=batch_annotations)],
+                    message_id=message_id,
+                )
+            )
+            continue
+        text_content = next((content for content in message.contents if content.type == "text"), None)
+        if text_content is None:
+            message.contents.append(Content.from_text(text="", annotations=batch_annotations))
+        else:
+            text_content.annotations = [*(text_content.annotations or []), *batch_annotations]
+
+    return response
 
 
 class AGUIEventConverter:
@@ -197,7 +257,7 @@ class AGUIEventConverter:
 
     def _handle_tool_call_result(self, event: dict[str, Any]) -> ChatResponseUpdate:
         """Handle TOOL_CALL_RESULT event."""
-        tool_call_id = event.get("toolCallId", "")
+        tool_call_id = self._get_tool_call_id(event) or ""
         result = event.get("result") if event.get("result") is not None else event.get("content")
 
         return ChatResponseUpdate(
@@ -261,9 +321,9 @@ class AGUIEventConverter:
     def _handle_custom_event(self, event: dict[str, Any], raw_event_type: str) -> ChatResponseUpdate:
         """Handle CUSTOM/CUSTOM_EVENT events.
 
-        Custom events are surfaced as metadata so callers can inspect protocol-specific payloads.
+        Custom events remain inspectable as metadata; annotation batches also restore text annotations.
         """
-        return ChatResponseUpdate(
+        update = ChatResponseUpdate(
             role="assistant",
             contents=[],
             additional_properties={
@@ -276,3 +336,19 @@ class AGUIEventConverter:
                 },
             },
         )
+        if event.get("name") == "annotations":
+            value = event.get("value")
+            message_id = value.get("messageId") if isinstance(value, dict) else None
+            annotations = value.get("annotations") if isinstance(value, dict) else None
+            if (
+                not isinstance(message_id, str)
+                or not message_id
+                or not isinstance(annotations, list)
+                or not all(isinstance(annotation, dict) for annotation in annotations)
+            ):
+                logger.warning("Invalid annotations custom event: expected messageId and an annotations array")
+            else:
+                update.message_id = message_id
+                if annotations:
+                    update.contents = [Content.from_text(text="", annotations=cast("list[Annotation]", annotations))]
+        return update

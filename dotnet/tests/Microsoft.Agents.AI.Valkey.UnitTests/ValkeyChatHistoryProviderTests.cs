@@ -122,6 +122,30 @@ public sealed class ValkeyChatHistoryProviderTests
         Assert.Equal("custom_key", keys[0]);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_NonPositiveMaxMessages_ThrowsArgumentOutOfRangeException(int maxMessages)
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ValkeyChatHistoryProvider(
+                CreateMockConnection().Object,
+                _ => new ValkeyChatHistoryProvider.State("conv-1"),
+                new ValkeyChatHistoryProviderOptions { MaxMessages = maxMessages }));
+    }
+
+    [Fact]
+    public void Constructor_NegativeMaxMessagesToRetrieve_ThrowsArgumentOutOfRangeException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ValkeyChatHistoryProvider(
+                CreateMockConnection().Object,
+                _ => new ValkeyChatHistoryProvider.State("conv-1"),
+                new ValkeyChatHistoryProviderOptions { MaxMessagesToRetrieve = -1 }));
+    }
+
     // --- ProvideChatHistoryAsync tests ---
 
     [Fact]
@@ -174,6 +198,30 @@ public sealed class ValkeyChatHistoryProviderTests
         // Assert — should use -5, -1 range
         dbMock.Verify(d => d.ListRangeAsync(
             It.IsAny<ValkeyKey>(), -5, -1), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProvideChatHistoryAsync_WithZeroMaxMessagesToRetrieve_ReturnsNoHistoryAsync()
+    {
+        // Arrange
+        var dbMock = new Mock<IDatabase>();
+        dbMock.Setup(d => d.ListRangeAsync(It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()))
+            .ReturnsAsync([JsonSerializer.Serialize(new ChatMessage(ChatRole.Assistant, "stored"))]);
+
+        var provider = new ValkeyChatHistoryProvider(
+            CreateMockConnection(dbMock).Object,
+            _ => new ValkeyChatHistoryProvider.State("conv-1"),
+            new ValkeyChatHistoryProviderOptions { MaxMessagesToRetrieve = 0 });
+
+        var context = TestHelpers.CreateChatHistoryInvokingContext();
+
+        // Act
+        var result = await provider.InvokingAsync(context);
+
+        // Assert — LRANGE key 0 -1 would return the whole list, so no range query is made
+        Assert.DoesNotContain(result, m => m.Text == "stored");
+        dbMock.Verify(d => d.ListRangeAsync(
+            It.IsAny<ValkeyKey>(), It.IsAny<long>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]

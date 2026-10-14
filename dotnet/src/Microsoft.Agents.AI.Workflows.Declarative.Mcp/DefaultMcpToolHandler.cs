@@ -339,6 +339,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             // origin even if a future change re-enables AutoDetect or redirects, or the SDK constructs a
             // request to a new URI (AdditionalHeaders are re-stamped by the transport, so HttpClient's own
             // redirect header-stripping does not cover them).
+            // Caveat for future maintainers: the handler strips credentials on every cross-origin request.
+            // That is safe today because this handler carries auth via static request headers, not the
+            // SDK's built-in OAuth flow. If OAuth support is ever added here, requests to the authorization
+            // server (a different origin than the MCP resource server) legitimately carry credentials, so
+            // those auth-server origins would need to be allow-listed to avoid breaking the token exchange.
             OriginPinningHandler pinningHandler = new(new Uri(serverUrl)) { InnerHandler = this._httpMessageHandlerFactory() };
             httpClient = new HttpClient(pinningHandler);
             if (httpClientCacheKey is null)
@@ -596,95 +601,5 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         return Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length);
-    }
-}
-
-/// <summary>
-/// A <see cref="DelegatingHandler"/> that strips credential-bearing headers from any outbound request
-/// whose origin does not match the origin the MCP client was configured with.
-/// </summary>
-/// <remarks>
-/// <para>
-/// This pins the Authorization token (and other credential headers) to the trusted server origin so a
-/// compromised or malicious MCP server cannot redirect them to a different origin — for example by
-/// advertising a cross-origin SSE message endpoint or issuing an HTTP redirect. Same-origin requests are
-/// left untouched so legitimate MCP traffic continues to carry its credentials.
-/// </para>
-/// <para>
-/// This is a defense-in-depth control. Using <see cref="HttpTransportMode.StreamableHttp"/> already removes
-/// the primary vector (a server-advertised cross-origin message endpoint) and disabling auto-redirect blocks
-/// redirect-based leakage; this handler backstops both so credentials stay pinned even if those settings
-/// change or the SDK builds a request to a new URI (<c>AdditionalHeaders</c> are re-stamped by the transport
-/// and are therefore not covered by <see cref="HttpClient"/>'s own redirect header-stripping).
-/// </para>
-/// <para>
-/// Caveat for future maintainers: this strips credentials on <em>every</em> cross-origin request. That is safe
-/// today because <see cref="DefaultMcpToolHandler"/> carries auth via static request headers, not the SDK's
-/// built-in OAuth flow. If OAuth support is ever added here, requests to the authorization server (a different
-/// origin than the MCP resource server) legitimately carry credentials, so those auth-server origins would need
-/// to be allow-listed to avoid breaking the token exchange.
-/// </para>
-/// </remarks>
-internal sealed class OriginPinningHandler : DelegatingHandler
-{
-    // Credential-bearing headers that must never cross the pinned-origin boundary.
-    private static readonly string[] s_credentialHeaderNames =
-    [
-        "Authorization",
-        "Proxy-Authorization",
-        "Cookie",
-    ];
-
-    private readonly Uri _pinnedEndpoint;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="OriginPinningHandler"/> class.
-    /// </summary>
-    /// <param name="pinnedEndpoint">The configured MCP server endpoint whose origin credentials are pinned to. Must be an absolute URI.</param>
-    public OriginPinningHandler(Uri pinnedEndpoint)
-    {
-        Throw.IfNull(pinnedEndpoint);
-        if (!pinnedEndpoint.IsAbsoluteUri)
-        {
-            throw new ArgumentException("The pinned endpoint must be an absolute URI.", nameof(pinnedEndpoint));
-        }
-
-        this._pinnedEndpoint = pinnedEndpoint;
-    }
-
-    /// <inheritdoc/>
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        StripCredentialHeadersOnCrossOrigin(request, this._pinnedEndpoint);
-        return base.SendAsync(request, cancellationToken);
-    }
-
-    /// <summary>
-    /// Removes credential headers from <paramref name="request"/> when its origin differs from that of
-    /// <paramref name="pinnedEndpoint"/>. Same-origin requests are left untouched. Origin comparison covers
-    /// scheme, host, and port (case-insensitive) via <see cref="Uri.Compare"/>, which normalizes default
-    /// ports so an explicit default port (for example <c>:443</c> for https) matches an omitted one. A
-    /// relative request URI is resolved by <see cref="HttpClient"/> against its base address (the pinned
-    /// origin) and so can never target a different origin; its headers are left untouched.
-    /// </summary>
-    internal static void StripCredentialHeadersOnCrossOrigin(HttpRequestMessage request, Uri pinnedEndpoint)
-    {
-        Throw.IfNull(request);
-        Throw.IfNull(pinnedEndpoint);
-
-        if (request.RequestUri is not { IsAbsoluteUri: true } requestUri)
-        {
-            return;
-        }
-
-        if (Uri.Compare(requestUri, pinnedEndpoint, UriComponents.SchemeAndServer, UriFormat.Unescaped, StringComparison.OrdinalIgnoreCase) == 0)
-        {
-            return;
-        }
-
-        foreach (string headerName in s_credentialHeaderNames)
-        {
-            request.Headers.Remove(headerName);
-        }
     }
 }

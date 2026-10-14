@@ -680,3 +680,15 @@ class TestSearchTableEdgeCases:
         result = search_table(items, "", "name")
         # Empty string matches everything
         assert len(result) == 2
+
+    def test_search_table_zero_is_a_value_not_a_blank(self):
+        """Test search_table with a numeric zero."""
+        items = [{"code": 0}, {"code": 10}, {"code": 2}]
+        assert [item["code"] for item in search_table(items, 0, "code")] == [0, 10]
+        # Blank still means "match everything".
+        assert [item["code"] for item in search_table(items, None, "code")] == [0, 10, 2]
+
+    def test_search_table_false_is_a_value_not_a_blank(self):
+        """Test search_table with a boolean False."""
+        items = [{"ok": True, "label": "yes"}, {"ok": False, "label": "no"}]
+        assert [item["label"] for item in search_table(items, False, "ok")] == ["no"]

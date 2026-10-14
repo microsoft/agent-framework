@@ -499,6 +499,7 @@ _MCP_SAMPLING_DEPRECATION_MESSAGE = (
 # and returns (or awaits to) a truthy value to approve the request or a falsy
 # value to deny it. Both synchronous and asynchronous callables are supported.
 SamplingApprovalCallback = Callable[["types.CreateMessageRequestParams"], "bool | Coroutine[Any, Any, bool]"]
+_MCPFunctionLoadCallback = Callable[[FunctionTool, Any], None]
 
 # region: Helpers
 
@@ -512,6 +513,12 @@ LOG_LEVEL_MAPPING: dict[str, int] = {
     "alert": logging.CRITICAL,
     "emergency": logging.CRITICAL,
 }
+
+
+def _is_mcp_prompt_function(func: FunctionTool) -> bool:
+    """Return whether a function was created from an MCP prompt."""
+    properties = func.additional_properties or {}
+    return isinstance(properties.get(_MCP_REMOTE_NAME_KEY), str) and not properties.get(_MCP_IS_TOOL_KEY)
 
 
 def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
@@ -529,10 +536,11 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> dict[str, Any]:
 
     for prompt_argument in prompt.arguments:
         # For prompts, all arguments are typically string type unless specified otherwise
-        properties[prompt_argument.name] = {
-            "type": "string",
-            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
-        }
+        # `description` is optional on PromptArgument and None when absent, which is not
+        # a valid JSON Schema description, so leave the key out instead.
+        properties[prompt_argument.name] = {"type": "string"}
+        if prompt_argument.description is not None:
+            properties[prompt_argument.name]["description"] = prompt_argument.description
         if prompt_argument.required:
             required.append(prompt_argument.name)
 
@@ -1047,6 +1055,7 @@ class MCPTool:
             self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
+        self._function_load_callback: _MCPFunctionLoadCallback | None = None
         self.use_progressive_disclosure = use_progressive_disclosure
         self.always_load = always_load
         self._always_load_names = set(always_load or ())
@@ -1758,6 +1767,13 @@ class MCPTool:
                         logger.warning(
                             "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
                         )
+                    # A connect that failed without leaving a session behind has nothing for this
+                    # owner to hold, so stop instead of blocking on the queue forever. Mirrors the
+                    # cancelled-connect branch above. The connected check matters because
+                    # is_connected is set before tools and prompts are loaded: when loading fails
+                    # the session is live and still needs this owner to close it later.
+                    if action == "connect" and not self.is_connected and queue.empty():
+                        return
                 else:
                     if not future.done():
                         future.set_result(None)
@@ -2431,8 +2447,17 @@ class MCPTool:
             logger.debug("Skipping MCP prompt loading because the server did not advertise prompts support.")
             return
 
-        # Track existing function names to prevent duplicates
-        existing_names = {func.name for func in self._functions}
+        # A complete prompts/list snapshot replaces previously loaded prompts; seed duplicate
+        # detection only with retained non-prompt functions (MCP tools and user-added functions).
+        existing_prompts: dict[str, FunctionTool] = {}
+        existing_names: set[str] = set()
+        for func in self._functions:
+            if _is_mcp_prompt_function(func):
+                existing_prompts[func.name] = func
+            else:
+                existing_names.add(func.name)
+        prompt_functions: list[FunctionTool] = []
+        retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
 
         params: types.PaginatedRequestParams | None = None
@@ -2497,16 +2522,39 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
-                new_functions.append(func)
                 existing_names.add(local_name)
+                existing_prompt = existing_prompts.get(local_name)
+                if (
+                    existing_prompt is not None
+                    and (existing_prompt.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == prompt.name
+                ):
+                    # Same remote prompt identity: keep its progressive-load state even if its metadata changed.
+                    retained_prompt_names.add(local_name)
+                    if (
+                        existing_prompt.description == func.description
+                        and existing_prompt.parameters() == func.parameters()
+                    ):
+                        # Keep the unchanged prompt function so local customizations survive a refresh.
+                        prompt_functions.append(existing_prompt)
+                        continue
+                prompt_functions.append(func)
+                new_functions.append(func)
 
             # Check if there are more pages
             if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
 
-        self._validate_config_names([*self._functions, *new_functions])
-        self._functions.extend(new_functions)
+        current_functions = [func for func in self._functions if not _is_mcp_prompt_function(func)]
+        current_functions.extend(prompt_functions)
+        self._validate_config_names(current_functions)
+        if self._function_load_callback is not None:
+            for function in new_functions:
+                self._function_load_callback(function, None)
+        self._functions[:] = current_functions
+        # Only prompts that keep the same remote identity retain their progressive-load state; a
+        # different remote prompt that normalizes to the same local name must start unloaded.
+        self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - retained_prompt_names)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -2545,6 +2593,7 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_task_support_by_name: dict[str, str] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
+        tool_annotations_by_name: dict[str, Any] = {}
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -2580,6 +2629,7 @@ class MCPTool:
                 raise ToolExecutionException("Failed to load tools.")
 
             for tool in tool_list.tools:
+                tool_annotations_by_name[tool.name] = tool.annotations
                 if tool.meta is not None:
                     tool_call_meta_by_name[tool.name] = _validate_mcp_meta(tool.meta) or {}
 
@@ -2663,6 +2713,17 @@ class MCPTool:
         ]
         current_functions.extend(new_functions)
         self._validate_config_names(current_functions)
+        for function in current_functions:
+            properties = function.additional_properties or {}
+            if not properties.get(_MCP_IS_TOOL_KEY):
+                continue
+            remote_name = properties.get(_MCP_REMOTE_NAME_KEY)
+            if (
+                isinstance(remote_name, str)
+                and remote_name in tool_annotations_by_name
+                and self._function_load_callback is not None
+            ):
+                self._function_load_callback(function, tool_annotations_by_name[remote_name])
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name

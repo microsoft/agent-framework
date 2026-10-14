@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import logging
 import os
 import re
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
 import anthropic as anthropic_sdk
-import httpx
+import httpx2
 import pytest
 from agent_framework import (
     Agent,
@@ -1129,13 +1130,12 @@ async def test_prepare_options_basic(mock_anthropic_client: MagicMock) -> None:
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=["Hello"])]
-    chat_options = ChatOptions(max_tokens=100, temperature=0.7)
+    chat_options = ChatOptions(max_tokens=100)
 
     run_options = client._prepare_options(messages, chat_options)
 
     assert run_options["model"] == client.model
     assert run_options["max_tokens"] == 100
-    assert run_options["temperature"] == 0.7
     assert "messages" in run_options
 
 
@@ -1286,7 +1286,7 @@ async def test_agent_run_preserves_structured_system_blocks(with_skills: bool) -
 
     agent = Agent(
         client=AnthropicClient(anthropic_client=transport, model="claude-3-5-sonnet-20241022"),
-        default_options=cast(
+        default_options=cast(  # type: ignore[arg-type]
             AnthropicChatOptions,
             {"model": "claude-3-5-sonnet-20241022", "max_tokens": 64, "instructions": system_blocks},
         ),
@@ -1479,16 +1479,23 @@ async def test_prepare_options_with_stop_sequences(
     assert run_options["stop_sequences"] == ["STOP", "END"]
 
 
-async def test_prepare_options_with_top_p(mock_anthropic_client: MagicMock) -> None:
-    """Test _prepare_options with top_p."""
+def test_prepare_options_ignores_unsupported_sampling_options(
+    mock_anthropic_client: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unsupported sampling options are dropped before calling Anthropic SDK 1.x."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=["Hello"])]
-    chat_options = ChatOptions(top_p=0.9)
+    chat_options = {"temperature": 0.7, "top_p": 0.9, "top_k": 40}
 
-    run_options = client._prepare_options(messages, chat_options)
+    with caplog.at_level(logging.WARNING, logger="agent_framework.anthropic"):
+        run_options = client._prepare_options(messages, chat_options)
 
-    assert run_options["top_p"] == 0.9
+    assert "temperature" not in run_options
+    assert "top_p" not in run_options
+    assert "top_k" not in run_options
+    assert "Ignoring unsupported Anthropic sampling options: temperature, top_p, top_k" in caplog.text
 
 
 async def test_prepare_options_excludes_stream_option(
@@ -1503,6 +1510,15 @@ async def test_prepare_options_excludes_stream_option(
     run_options = client._prepare_options(messages, chat_options)
 
     assert "stream" not in run_options
+
+
+def test_prepare_betas_uses_only_required_default_flags(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """GA features must not add redundant beta headers."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    assert client._prepare_betas({}) == {"mcp-client-2025-04-04"}
 
 
 async def test_prepare_options_consumes_additional_beta_flags(
@@ -1961,7 +1977,7 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
     chat_options = ChatOptions(max_tokens=10)
 
     chunks: list[ChatResponseUpdate] = []
-    async for chunk in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+    async for chunk in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
         messages=messages, options=chat_options, stream=True
     ):
         if chunk:
@@ -1987,7 +2003,7 @@ async def test_inner_get_response_ignores_options_stream_streaming(
     messages = [Message(role="user", contents=["Hi"])]
     options: dict[str, Any] = {"max_tokens": 10, "stream": False}
 
-    async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+    async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
         messages=messages,
         options=options,
         stream=True,
@@ -2001,8 +2017,8 @@ async def test_inner_get_response_ignores_options_stream_streaming(
 def _anthropic_status_error(
     error_cls: type[anthropic_sdk.APIStatusError], status_code: int, message: str
 ) -> anthropic_sdk.APIStatusError:
-    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
-    response = httpx.Response(status_code, request=request, json={"error": {"message": message}})
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx2.Response(status_code, request=request, json={"error": {"message": message}})
     return error_cls(message, response=response, body={"error": {"message": message}})
 
 
@@ -2051,7 +2067,7 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
         anthropic_sdk.AuthenticationError, 401, "invalid api key"
     )
     with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
-        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
             messages=messages, options=chat_options, stream=True
         ):
             pass
@@ -2066,7 +2082,7 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
     mock_anthropic_client.beta.messages.create.side_effect = None
     mock_anthropic_client.beta.messages.create.return_value = _raise_after_first_event()
     with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
-        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined, union-attr] # ty: ignore[not-iterable]
             messages=messages, options=chat_options, stream=True
         ):
             pass
@@ -3051,6 +3067,19 @@ def test_prepare_response_format_openai_style(mock_anthropic_client: MagicMock) 
     assert result["schema"]["properties"]["name"]["type"] == "string"
 
 
+def test_prepare_response_format_does_not_modify_caller_schema(mock_anthropic_client: MagicMock) -> None:
+    """The caller's schema dict keeps its own additionalProperties for later requests."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}, "additionalProperties": True}
+    response_format = {"json_schema": {"schema": schema}}
+
+    result = client._prepare_response_format(response_format)
+
+    assert result["schema"]["additionalProperties"] is False
+    assert schema["additionalProperties"] is True
+
+
 def test_prepare_response_format_direct_schema(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -3649,6 +3678,23 @@ def test_prepare_options_user_metadata_no_override(
     assert result["metadata"]["user_id"] == "existing_user"
 
 
+def test_prepare_options_user_does_not_mutate_caller_metadata(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Test mapping user to metadata.user_id leaves the caller's metadata dict untouched."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+    metadata = {"trace": "t1"}
+
+    first = client._prepare_options(messages, {"user": "alice", "metadata": metadata})
+    second = client._prepare_options(messages, {"user": "bob", "metadata": metadata})
+
+    assert metadata == {"trace": "t1"}
+    assert first["metadata"] == {"trace": "t1", "user_id": "alice"}
+    assert second["metadata"] == {"trace": "t1", "user_id": "bob"}
+
+
 def test_process_stream_event_message_stop(mock_anthropic_client: MagicMock) -> None:
     """Test processing message_stop event."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -4192,3 +4238,16 @@ async def test_anthropic_client_integration_tool_rich_content_image() -> None:
     assert len(response.text) > 0
     # sample_image.jpg contains a photo of a house; the model should mention it.
     assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+
+
+def test_option_translations_single_stop_string_becomes_list() -> None:
+    """stop_sequences is an array in the Anthropic API, so a single stop string is wrapped."""
+    from agent_framework_anthropic._chat_client import _apply_option_translations
+
+    options: dict[str, Any] = {"stop": "END"}
+    _apply_option_translations(options)
+    assert options == {"stop_sequences": ["END"]}
+
+    options = {"stop": ["END", "STOP"]}
+    _apply_option_translations(options)
+    assert options == {"stop_sequences": ["END", "STOP"]}

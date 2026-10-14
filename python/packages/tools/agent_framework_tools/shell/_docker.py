@@ -60,7 +60,13 @@ from .._feature_usage import FeatureIndex
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
 from ._truncate import truncate_head_tail as _truncate_bytes
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -802,7 +808,7 @@ class DockerShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -812,4 +818,5 @@ class DockerShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )

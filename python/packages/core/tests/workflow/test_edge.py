@@ -673,6 +673,61 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
         await edge_runner.send_message(message, state, ctx)
 
 
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection() -> None:
+    """Test that a target selected more than once receives the message once."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    # e.g. a message tagged both "billing" and "refund" when both tags route to target1
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target1.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    success = await edge_runner.send_message(message, state, ctx)
+
+    assert success is True
+    assert target1.call_count == 1
+    assert target2.call_count == 1
+
+
+async def test_source_edge_group_with_selection_func_send_message_with_duplicate_selection_keeps_order() -> None:
+    """Test that deduplicated targets are delivered in the order the selection function first names them."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = FanOutEdgeGroup(
+        source_id=source.id,
+        target_ids=[target1.id, target2.id],
+        selection_func=lambda data, target_ids: [target2.id, target1.id, target2.id],
+    )
+
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    edge_runner = create_edge_runner(edge_group, executors)
+    state = State()
+    ctx = InProcRunnerContext()
+
+    data = MockMessage(data="test")
+    message = WorkflowMessage(data=data, source_id=source.id)
+
+    with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
+        success = await edge_runner.send_message(message, state, ctx)
+
+        assert success is True
+        assert [call.args[0] for call in mock_send.call_args_list] == [target2.id, target1.id]
+
+
 async def test_source_edge_group_with_selection_func_send_message_with_target() -> None:
     """Test sending a message through a fan-out group with a selection func with a target."""
     source = MockExecutor(id="source_executor")
@@ -1307,6 +1362,33 @@ def test_switch_case_edge_group() -> None:
     assert edge_group._selection_func is not None  # type: ignore
     assert edge_group._selection_func(MockMessage(data=-1), [target1.id, target2.id]) == [target1.id]  # type: ignore
     assert edge_group._selection_func(MockMessage(data=1), [target1.id, target2.id]) == [target2.id]  # type: ignore
+
+
+def test_switch_case_edge_group_cases_share_a_target() -> None:
+    """Test that cases routing to the same target create one edge per target."""
+    source = MockExecutor(id="source_executor")
+    target1 = MockExecutor(id="target_executor_1")
+    target2 = MockExecutor(id="target_executor_2")
+
+    edge_group = SwitchCaseEdgeGroup(
+        source_id=source.id,
+        cases=[
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data < 0, target_id=target2.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 0, target_id=target1.id),
+            SwitchCaseEdgeGroupCase(condition=lambda x: x.data == 1, target_id=target2.id),
+            SwitchCaseEdgeGroupDefault(target_id=target1.id),
+        ],
+    )
+
+    assert len(edge_group.cases) == 4
+    assert [edge.target_id for edge in edge_group.edges] == [target2.id, target1.id]
+    assert edge_group.target_executor_ids == [target2.id, target1.id]
+
+    targets = [target2.id, target1.id]
+    assert edge_group._selection_func(MockMessage(data=-1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=0), targets) == [target1.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=1), targets) == [target2.id]  # type: ignore
+    assert edge_group._selection_func(MockMessage(data=2), targets) == [target1.id]  # type: ignore
 
 
 def test_switch_case_edge_group_invalid_number_of_cases():

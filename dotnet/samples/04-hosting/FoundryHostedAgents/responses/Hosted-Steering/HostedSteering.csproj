@@ -14,7 +14,7 @@
     <RootNamespace>HostedSteering</RootNamespace>
     <AssemblyName>HostedSteering</AssemblyName>
     <UserSecretsId>8197fe92-5ccf-45fd-ab1e-f45755ef3a48</UserSecretsId>
-    <AgentFrameworkVersion>1.18.0-preview.260818.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
     <LocalAgentFrameworkRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\src</LocalAgentFrameworkRoot>
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
   </PropertyGroup>
@@ -30,8 +30,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Projects" Version="3.0.0-beta.2" />
-    <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 

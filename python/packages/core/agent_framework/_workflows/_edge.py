@@ -871,7 +871,8 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
                     return [case.target_id]
             raise RuntimeError("No matching case found in SwitchCaseEdgeGroup")
 
-        target_ids = [case.target_id for case in cases]
+        # Several cases may route to the same executor, so keep one edge per target.
+        target_ids = list(dict.fromkeys(case.target_id for case in cases))
         # Call FanOutEdgeGroup constructor directly to avoid type checking issues
         edges = [Edge(source_id=source_id, target_id=target) for target in target_ids]
         EdgeGroup.__init__(self, edges, id=id, type=self.__class__.__name__)

@@ -33,6 +33,7 @@ from agent_framework_ag_ui._run_common import (
     _emit_tool_result,
     _extract_resume_payload,
     _extract_tool_result_state,
+    _is_snapshot_hydration_request,
     _normalize_resume_interrupts,
     _reconstruct_messages_from_thread_snapshot,
     _strict_resume_entries,
@@ -123,6 +124,42 @@ class TestNormalizeResumeInterrupts:
             [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
         )
         assert result == [{"id": "req_1", "value": {"approved": True}, "status": "resolved"}]
+
+
+@pytest.mark.parametrize(
+    ("input_data", "snapshot_enabled", "supports_checkpoint_resume", "expected"),
+    [
+        ({"messages": []}, True, False, True),
+        ({"messages": []}, True, True, True),
+        ({"messages": [{"role": "user", "content": "continue"}]}, True, False, False),
+        ({"messages": [], "resume": [{"interruptId": "i1"}]}, True, False, False),
+        ({"messages": [], "forwardedProps": {"resume": [{"interruptId": "i1"}]}}, True, False, False),
+        (
+            {"messages": [], "forwardedProps": {"command": {"resume": [{"interruptId": "i1"}]}}},
+            True,
+            False,
+            False,
+        ),
+        ({"messages": [], "forwardedProps": {"checkpoint_id": "cp1"}}, True, False, True),
+        ({"messages": [], "forwardedProps": {"checkpoint_id": "cp1"}}, True, True, False),
+        ({"messages": []}, False, False, False),
+    ],
+)
+def test_snapshot_hydration_classification_is_shared(
+    input_data: dict[str, Any],
+    snapshot_enabled: bool,
+    supports_checkpoint_resume: bool,
+    expected: bool,
+) -> None:
+    """Hydration admission matches runner resume capabilities."""
+    assert (
+        _is_snapshot_hydration_request(
+            input_data,
+            snapshot_enabled=snapshot_enabled,
+            supports_checkpoint_resume=supports_checkpoint_resume,
+        )
+        is expected
+    )
 
 
 class TestStrictResumeEntries:

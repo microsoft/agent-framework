@@ -8,12 +8,19 @@ from agent_framework.tools import LocalShellTool, ShellPolicy
 from dotenv import load_dotenv
 
 """
-LocalShellTool with a strict allow-list (no approval loop).
+LocalShellTool with command-text filtering (no approval loop).
 
-Every command must match one of the allow-list regexes and the deny-list
-still wins. Approval is disabled because the allow-list is doing the
-gating; this is the safest fully-automatic configuration of
-``LocalShellTool``.
+WARNING: This is an educational example, not a safe production configuration.
+Do not copy this approval-disabled setup into production. Use only an isolated,
+disposable environment without secrets or valuable data.
+
+The allow-list checks command text, not what the shell will execute. Embedded
+commands in $(...) or backticks can pass these filters and run; patterns that
+only check the start of a command can also allow extra operations. These filters
+do not enforce read-only access or protect against malicious model instructions.
+Commands run with the application's permissions and can access or change files
+and other resources available to it. Human approval and separately enforced
+isolation are not replaced by an allow-list.
 """
 
 load_dotenv()
@@ -24,6 +31,7 @@ async def main() -> None:
 
     shell = LocalShellTool(
         mode="stateless",
+        # Unsafe for production as shown: these filters do not replace human approval or isolation.
         approval_mode="never_require",
         acknowledge_unsafe=True,
         policy=ShellPolicy(
@@ -40,10 +48,7 @@ async def main() -> None:
 
     agent = Agent(
         client=client,
-        instructions=(
-            "You can run a narrow set of read-only shell commands (ls, pwd, cat, "
-            "git status/log/diff, python --version). Anything else will be rejected."
-        ),
+        instructions=("Use only these shell commands: ls, pwd, cat, git status/log/diff, python --version."),
         tools=[client.get_shell_tool(func=shell.as_function())],
     )
 

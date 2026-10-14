@@ -229,7 +229,7 @@ internal static class InputConverter
             ItemMessage msg => ConvertItemMessage(msg),
             FunctionCallOutputItemParam funcOutput => ConvertFunctionCallOutput(funcOutput),
             ItemFunctionToolCall funcCall => ConvertItemFunctionToolCall(funcCall),
-            ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
+            ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
             MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
             ItemReferenceParam => null,
             _ => null
@@ -312,12 +312,22 @@ internal static class InputConverter
     /// or fresh-input) to a <see cref="ToolApprovalRequestContent"/> wrapping a
     /// <see cref="FunctionCallContent"/>.
     /// </summary>
-    private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments)
+    private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments, AgentSessionStateBag? stateBag)
     {
-        var functionCall = new FunctionCallContent(id, name, ParseFunctionArgumentsObject(arguments));
+        var entry = ToolApprovalIdMap.ResolveEntry(stateBag, id);
+        if (entry is not { AfRequestId: string requestId } || entry.Name != name || entry.Arguments != arguments)
+        {
+            throw new InvalidOperationException(
+                $"Approval mapping for wire id '{id}' does not match the replayed approval request.");
+        }
+
+        var functionCall = new FunctionCallContent(
+            entry.CallId,
+            entry.Name,
+            ParseFunctionArgumentsObject(arguments));
         return new ChatMessage(
             ChatRole.Assistant,
-            [new ToolApprovalRequestContent(id, functionCall)]);
+            [new ToolApprovalRequestContent(requestId, functionCall)]);
     }
 
     /// <summary>
@@ -372,7 +382,7 @@ internal static class InputConverter
             OutputItemMessage msg => ConvertOutputItemMessageToChat(msg),
             OutputItemFunctionToolCall funcCall => ConvertOutputItemFunctionCall(funcCall),
             OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
-            OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments),
+            OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
             OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
             OutputItemReasoningItem => null,
             _ => null

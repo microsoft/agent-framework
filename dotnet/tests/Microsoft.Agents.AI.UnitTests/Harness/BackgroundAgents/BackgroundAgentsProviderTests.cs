@@ -313,7 +313,240 @@ public class BackgroundAgentsProviderTests
 
     #endregion
 
+    /// <summary>
+    /// Verify that failed session creation does not publish a background task that never started.
+    /// </summary>
+    [Fact]
+    public async Task StartBackgroundTask_SessionCreationFails_DoesNotLeaveTaskAsync()
+    {
+        // Arrange
+        var failure = new InvalidOperationException("Session creation failed.");
+        var sessionGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateMockAgentWithGatedSession("Research", sessionGate.Task,
+            () => Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done"))));
+        var (tools, provider, session) = await CreateToolsWithSessionAsync(agent);
+        AIFunction startTask = GetTool(tools, "background_agents_start_task");
+
+        // Act
+        Task<object?> pendingStart = startTask.InvokeAsync(new AIFunctionArguments
+        {
+            ["agentName"] = "Research",
+            ["input"] = "Task 1",
+            ["description"] = "First task",
+        }).AsTask();
+        sessionGate.SetException(failure);
+
+        // Assert
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => pendingStart));
+        object? allTasks = await GetTool(tools, "background_agents_get_all_tasks").InvokeAsync(new AIFunctionArguments());
+        Assert.Equal("No tasks.", GetStringResult(allTasks));
+        Assert.Empty(provider.GetIncompleteTasks(session));
+    }
+
+    /// <summary>
+    /// Verify that concurrent starts completing after release leave no task metadata or runtime references.
+    /// </summary>
+    [Fact]
+    public async Task ReleaseSessionAsync_ConcurrentPendingStarts_LeavesNoTasksAsync()
+    {
+        // Exercise the parallel continuations of a tool batch, rather than assuming its synchronous
+        // prefixes run on separate threads. Session creation stays pending until release completes.
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            // Arrange
+            var sessionGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            int runCount = 0;
+            var agent = CreateMockAgentWithGatedSession("Research", sessionGate.Task, () =>
+            {
+                Interlocked.Increment(ref runCount);
+                return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done")));
+            });
+            var (tools, provider, session) = await CreateToolsWithSessionAsync(agent);
+            AIFunction startTask = GetTool(tools, "background_agents_start_task");
+            Task<object?>[] starts = Enumerable.Range(0, 128).Select(index => startTask.InvokeAsync(new AIFunctionArguments
+            {
+                ["agentName"] = "Research",
+                ["input"] = $"Task {index}",
+                ["description"] = $"Concurrent task {index}",
+            }).AsTask()).ToArray();
+
+            // Act
+            await provider.ReleaseSessionAsync(session);
+            Task<object?[]> allStarts = Task.WhenAll(starts);
+            var inspectionStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task inspectTasks = Task.Run(async () =>
+            {
+                _ = provider.GetIncompleteTasks(session);
+                inspectionStarted.SetResult(true);
+                while (!allStarts.IsCompleted)
+                {
+                    _ = provider.GetIncompleteTasks(session);
+                    await Task.Yield();
+                }
+            });
+            await inspectionStarted.Task;
+            sessionGate.SetResult(true);
+            object?[] results = await allStarts;
+            await inspectTasks;
+
+            // Assert
+            Assert.All(results, result => Assert.Contains("released", GetStringResult(result)));
+            Assert.Equal(0, runCount);
+            object? allTasks = await GetTool(tools, "background_agents_get_all_tasks").InvokeAsync(new AIFunctionArguments());
+            Assert.Equal("No tasks.", GetStringResult(allTasks));
+            BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
+            Assert.Empty(runtimeState.InFlightTasks);
+            Assert.Empty(runtimeState.BackgroundTaskSessions);
+            Assert.Empty(runtimeState.TaskCancellations);
+        }
+    }
+
+    /// <summary>
+    /// Verify that concurrent session creation retains every task with a distinct ID.
+    /// </summary>
+    [Fact]
+    public async Task StartBackgroundTask_ConcurrentSessionCreation_RetainsDistinctTasksAsync()
+    {
+        // Arrange
+        const int TaskCount = 128;
+        var sessionGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runGate = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateMockAgentWithGatedSession("Research", sessionGate.Task, () => runGate.Task);
+        var (tools, provider, session) = await CreateToolsWithSessionAsync(agent);
+        AIFunction startTask = GetTool(tools, "background_agents_start_task");
+        Task<object?>[] starts = Enumerable.Range(0, TaskCount).Select(index => startTask.InvokeAsync(new AIFunctionArguments
+        {
+            ["agentName"] = "Research",
+            ["input"] = $"Task {index}",
+            ["description"] = $"Concurrent task {index}",
+        }).AsTask()).ToArray();
+
+        try
+        {
+            // Act
+            sessionGate.SetResult(true);
+            object?[] results = await Task.WhenAll(starts);
+
+            // Assert
+            Assert.All(results, result => Assert.Contains("started", GetStringResult(result)));
+            IReadOnlyList<BackgroundTaskInfo> tasks = provider.GetIncompleteTasks(session);
+            Assert.Equal(TaskCount, tasks.Count);
+            Assert.Equal(Enumerable.Range(1, TaskCount), tasks.OrderBy(task => task.Id).Select(task => task.Id));
+            Assert.Equal(TaskCount, tasks.Select(task => task.Description).Distinct().Count());
+        }
+        finally
+        {
+            runGate.SetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done")));
+            await provider.ReleaseSessionAsync(session);
+        }
+    }
+
     #region WaitForFirstCompletion Tests
+
+    /// <summary>
+    /// Verify that a waiter for an earlier run cannot finalize a continuation using the same task ID.
+    /// </summary>
+    [Fact]
+    public async Task WaitForFirstCompletion_StaleWaiterLeavesContinuationRunningAsync()
+    {
+        // Arrange
+        var firstResponse = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondResponse = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var continuationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int runCount = 0;
+        var agent = CreateMockAgentWithCallback("Research", () =>
+        {
+            if (Interlocked.Increment(ref runCount) == 1)
+            {
+                return firstResponse.Task;
+            }
+
+            continuationStarted.SetResult(true);
+            return secondResponse.Task;
+        });
+        var (tools, provider, session) = await CreateToolsWithSessionAsync(agent);
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction continueTask = GetTool(tools, "background_agents_continue_task");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
+        Task<AgentResponse>? continuationRun = null;
+        CancellationTokenSource? continuationCancellation = null;
+
+        try
+        {
+            await startBackgroundTask.InvokeAsync(new AIFunctionArguments
+            {
+                ["agentName"] = "Research",
+                ["input"] = "Task 1",
+                ["description"] = "First task",
+            });
+            BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
+            Task<AgentResponse> firstRun = runtimeState.InFlightTasks[1];
+            Task<object?> wait = waitForFirst.InvokeAsync(new AIFunctionArguments
+            {
+                ["taskIds"] = new List<int> { 1 },
+            }).AsTask();
+            Assert.False(wait.IsCompleted);
+
+            // Act — hold the lock until the continuation is registered so the old waiter observes the new run.
+            ValueTask<object?> continuation = default;
+            await Task.Run(() =>
+            {
+                lock (runtimeState.SyncRoot)
+                {
+                    firstResponse.SetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "First result")));
+                    Assert.True(SpinWait.SpinUntil(() => firstRun.IsCompleted, TimeSpan.FromSeconds(5)));
+                    Assert.Equal(TaskStatus.RanToCompletion, firstRun.Status);
+                    continuation = continueTask.InvokeAsync(new AIFunctionArguments
+                    {
+                        ["taskId"] = 1,
+                        ["text"] = "Follow-up",
+                    });
+                    Assert.True(continuation.IsCompletedSuccessfully);
+                    continuationRun = runtimeState.InFlightTasks[1];
+                    continuationCancellation = runtimeState.TaskCancellations[1];
+                    Assert.NotSame(firstRun, continuationRun);
+                    Assert.True(SpinWait.SpinUntil(() => continuationStarted.Task.IsCompleted, TimeSpan.FromSeconds(5)));
+                    Assert.False(wait.IsCompleted);
+                }
+            });
+
+            // Assert — the stale waiter preserves the continuation's metadata and runtime resources.
+            Assert.Equal("Task 1 continued with new input.", GetStringResult(await continuation));
+            Task completedWait = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(wait, completedWait);
+            Assert.Equal("Task 1 finished with status: Running.", GetStringResult(await wait));
+            BackgroundTaskInfo taskInfo = Assert.Single(provider.GetIncompleteTasks(session));
+            Assert.Equal(BackgroundTaskStatus.Running, taskInfo.Status);
+            Assert.Null(taskInfo.ResultText);
+            Assert.Null(taskInfo.ErrorText);
+            Assert.Same(continuationRun, runtimeState.InFlightTasks[1]);
+            Assert.Same(continuationCancellation, runtimeState.TaskCancellations[1]);
+            Assert.NotNull(continuationCancellation);
+            Assert.False(continuationCancellation.Token.IsCancellationRequested);
+
+            secondResponse.SetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Second result")));
+            Assert.NotNull(continuationRun);
+            await continuationRun;
+            object? result = await getResults.InvokeAsync(new AIFunctionArguments
+            {
+                ["taskId"] = 1,
+            });
+            Assert.Contains("Second result", GetStringResult(result));
+            Assert.DoesNotContain("First result", GetStringResult(result));
+        }
+        finally
+        {
+            firstResponse.TrySetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "First result")));
+            secondResponse.TrySetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Second result")));
+            if (continuationRun is not null)
+            {
+                await continuationRun;
+            }
+
+            await provider.ReleaseSessionAsync(session);
+        }
+    }
 
     /// <summary>
     /// Verify that WaitForFirstCompletion returns the ID of a completed task.
@@ -422,6 +655,58 @@ public class BackgroundAgentsProviderTests
         {
             ["taskIds"] = new List<int> { 1 },
         });
+    }
+
+    /// <summary>
+    /// Verify that cancelling a wait stops the invocation without cancelling the background task.
+    /// </summary>
+    [Fact]
+    public async Task WaitForFirstCompletion_CancellationLeavesTaskRunningAsync()
+    {
+        // Arrange
+        var tcs = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
+        var provider = new BackgroundAgentsProvider(new[] { agent });
+        var (tools, session) = await CreateToolsForSessionAsync(provider);
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
+        {
+            ["agentName"] = "Research",
+            ["input"] = "Task 1",
+            ["description"] = "First task",
+        });
+
+        using var cancellation = new CancellationTokenSource();
+        Task<object?> wait = waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        }, cancellation.Token).AsTask();
+
+        // Act & Assert
+        try
+        {
+            Assert.False(wait.IsCompleted);
+            cancellation.Cancel();
+            Task completedWait = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(wait, completedWait);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
+
+            BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
+            Assert.False(runtimeState.InFlightTasks[1].IsCompleted);
+            Assert.Equal(BackgroundTaskStatus.Running, Assert.Single(provider.GetIncompleteTasks(session)).Status);
+        }
+        finally
+        {
+            tcs.TrySetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done")));
+        }
+
+        object? completed = await waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        });
+        Assert.Contains("finished with status: Completed", GetStringResult(completed));
     }
 
     /// <summary>

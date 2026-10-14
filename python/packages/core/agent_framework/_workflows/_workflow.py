@@ -11,7 +11,8 @@ import types
 import uuid
 import warnings
 import weakref
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -531,7 +532,7 @@ class Workflow(DictConvertible):
         | Mapping[str, Any]
         | None = None,
         client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-    ) -> AsyncIterable[WorkflowEvent]:
+    ) -> AsyncGenerator[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
         All workflow entry points create a NEW workflow span. It is the responsibility
@@ -644,20 +645,21 @@ class Workflow(DictConvertible):
 
                 # Activate the workflow span for each runner pull, then detach before yielding to callers.
                 runner_events = self._runner.run_until_convergence()
-                while True:
-                    with _activate_span(span):
-                        try:
-                            event = await anext(runner_events)
-                        except StopAsyncIteration:
-                            break
-                    yield event
+                async with aclosing(runner_events):
+                    while True:
+                        with _activate_span(span):
+                            try:
+                                event = await anext(runner_events)
+                            except StopAsyncIteration:
+                                break
+                        yield event
 
-                    if event.type == "request_info" and not emitted_in_progress_pending:
-                        emitted_in_progress_pending = True
-                        self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
-                        with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status
+                        if event.type == "request_info" and not emitted_in_progress_pending:
+                            emitted_in_progress_pending = True
+                            self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+                            with _framework_event_origin():
+                                pending_status = WorkflowEvent.status(self._status)
+                            yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending.
                 # Continuations such as cancellation may retain an existing sibling request without
                 # re-emitting its request_info event during this run.
@@ -976,26 +978,32 @@ class Workflow(DictConvertible):
                         ),
                     )
 
+            if responses is not None and checkpoint_id is None:
+                await self._validate_responses_internal(responses)
+
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=initial_executor_fn,
-                is_continuation=(message is None),
-                streaming=streaming,
-                tools=tools,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-            ):
-                if event.type == "request_info" and event.request_id in (responses or {}):
-                    # Don't yield request_info events for which we have responses to send -
-                    # these are considered "handled". This prevents the caller from seeing
-                    # events for requests they are already responding to.
-                    # This usually happens when responses are provided with a checkpoint
-                    # (restore then send), because the request_info events are stored in the
-                    # checkpoint and would be emitted on restoration by the runner regardless
-                    # of if a response is provided or not.
-                    continue
-                yield event
+            async with aclosing(
+                self._run_workflow_with_tracing(
+                    initial_executor_fn=initial_executor_fn,
+                    is_continuation=(message is None),
+                    streaming=streaming,
+                    tools=tools,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                )
+            ) as events:
+                async for event in events:
+                    if event.type == "request_info" and event.request_id in (responses or {}):
+                        # Don't yield request_info events for which we have responses to send -
+                        # these are considered "handled". This prevents the caller from seeing
+                        # events for requests they are already responding to.
+                        # This usually happens when responses are provided with a checkpoint
+                        # (restore then send), because the request_info events are stored in the
+                        # checkpoint and would be emitted on restoration by the runner regardless
+                        # of if a response is provided or not.
+                        continue
+                    yield event
         finally:
             # Whether this run is still the active one (no successor ``run()`` has
             # installed a new weakref since we started). Captured once because the
@@ -1115,8 +1123,10 @@ class Workflow(DictConvertible):
         await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
         await self._send_responses_internal(responses)
 
-    async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
-        """Internal method to validate and send responses to the executors."""
+    async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate responses before a run can consume pending requests."""
+        from ._agent_executor import _validate_computer_tool_result  # pyright: ignore[reportPrivateUsage]
+
         pending_requests = await self._runner.context.get_pending_request_info_events()
         if not pending_requests:
             raise RuntimeError("No pending requests found in workflow context.")
@@ -1128,8 +1138,14 @@ class Workflow(DictConvertible):
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
             response = _coerce_request_info_response(response, pending_request.response_type, request_id)
+            if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
+                _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
+        return coerced_responses
 
+    async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
+        """Send validated responses to the executors."""
+        coerced_responses = await self._validate_responses_internal(responses)
         # Cancelling siblings on error, like every other concurrent write into runner state. Each
         # coroutine pops its own request id, so a sibling of a failing one still finds its own event
         # pending and would go on to write a RESPONSE message into the queue after the caller had
@@ -1493,6 +1509,21 @@ class Workflow(DictConvertible):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
 
         async def apply_cancellations() -> None:
+            pending = await self._runner.context.get_pending_request_info_events()
+            computer_executor_ids = {
+                event.source_executor_id
+                for request_id, event in pending.items()
+                if request_id in selected_ids
+                and event.source_executor_id
+                and isinstance(event.data, Content)
+                and event.data.type == "computer_tool_call"
+            }
+            if computer_executor_ids:
+                selected_ids.update(
+                    request_id
+                    for request_id, event in pending.items()
+                    if event.source_executor_id in computer_executor_ids
+                )
             cancelled_events = await self._runner.context.cancel_request_info_events(selected_ids)
             for request_id, request_event in cancelled_events.items():
                 source_executor_id = request_event.source_executor_id

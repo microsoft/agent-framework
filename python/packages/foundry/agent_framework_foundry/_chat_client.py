@@ -56,7 +56,7 @@ from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
+from agent_framework_foundry._oauth_helpers import parse_oauth_consent_output_items, try_parse_oauth_consent_event
 
 from ._feature_usage import (
     FeatureIndex,
@@ -346,6 +346,9 @@ class RawFoundryChatClient(
                 if getattr(item, "type", None) != "reasoning":
                     continue
                 self._attach_foundry_reasoning_replay_item(chat_response.messages[0].contents, item)
+            chat_response.messages[0].contents.extend(
+                parse_oauth_consent_output_items(getattr(response, "output", None))
+            )
         return chat_response
 
     @override
@@ -923,6 +926,23 @@ class RawFoundryChatClient(
         if update_delay is not None:
             params["update_delay"] = update_delay
         return MemorySearchPreviewTool(**params)
+
+    @staticmethod
+    def get_computer_tool() -> Any:
+        """Create a non-preview Foundry computer tool (requires azure-ai-projects >= 2.3.0).
+
+        Older supported SDK releases can still import this client; calling this
+        factory on those releases raises ``ImportError`` with upgrade guidance.
+        """
+        try:
+            from azure.ai.projects.models import ComputerTool
+        except ImportError as exc:
+            raise ImportError(
+                "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
+                "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
+            ) from exc
+
+        return ComputerTool()
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)

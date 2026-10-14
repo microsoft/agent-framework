@@ -97,9 +97,28 @@ class TestTelegramCommand:
     def test_bot_suffixed_command_with_args_normalizes(self) -> None:
         assert telegram_command(_message_update(text="/echo@mybot hello")) == "/echo hello"
 
+    def test_bot_suffixed_command_only_matches_its_target(self) -> None:
+        update = _message_update(text="/new@OtherBot")
+        assert telegram_command(update, bot_username="mybot") is None
+        assert telegram_command(update, bot_username="otherbot") == "/new"
+        assert telegram_command(_message_update(text="/new"), bot_username="mybot") == "/new"
+
     def test_edited_message_text(self) -> None:
         update = {"update_id": 1, "edited_message": {"chat": {"id": 1}, "text": "/help"}}
         assert telegram_command(update) == "/help"
+
+    @pytest.mark.parametrize("message_type", ["message", "edited_message"])
+    def test_media_caption_command_matches_target(self, message_type: str) -> None:
+        update = {"update_id": 1, message_type: {"chat": {"id": -1}, "caption": "/new@OtherBot", "photo": []}}
+        assert telegram_command(update, bot_username="mybot") is None
+        assert telegram_command(update, bot_username="otherbot") == "/new"
+
+    def test_callback_data_takes_precedence_over_media_caption(self) -> None:
+        update = {
+            "message": {"caption": "/new@otherbot"},
+            "callback_query": {"data": "/help@mybot"},
+        }
+        assert telegram_command(update, bot_username="mybot") == "/help"
 
     def test_callback_query_data(self) -> None:
         update = {"update_id": 1, "callback_query": {"id": "cb1", "data": "/confirm@mybot yes"}}

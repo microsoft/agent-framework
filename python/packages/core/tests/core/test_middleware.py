@@ -30,7 +30,7 @@ from agent_framework._middleware import (
     MiddlewareTermination,
     categorize_middleware,
 )
-from agent_framework._tools import FunctionTool
+from agent_framework._tools import FunctionTool, ToolTypes
 
 
 class TestAgentContext:
@@ -71,6 +71,22 @@ class TestAgentContext:
         assert context.stream is False
         assert context.metadata == {}
 
+    def test_stream_transform_alias_assignment_stays_synchronized(self, mock_agent: SupportsAgentRun) -> None:
+        """Legacy and preferred transform fields share one backing configuration."""
+        context = AgentContext(agent=mock_agent, messages=[Message(role="user", contents=["test"])])
+
+        def legacy(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            return update
+
+        def preferred(response: AgentResponse[Any]) -> AgentResponse[Any]:
+            return response
+
+        context.stream_transform_hooks = cast(Any, [legacy])
+        assert context.stream_update_transforms == [legacy]
+
+        context.stream_result_transforms = [preferred]
+        assert context.stream_result_hooks == [preferred]
+
 
 class TestFunctionInvocationContext:
     """Test cases for FunctionInvocationContext."""
@@ -93,6 +109,84 @@ class TestFunctionInvocationContext:
         assert context.function is mock_function
         assert context.arguments == arguments
         assert context.metadata == metadata
+
+
+def test_remove_flat_function_mapping_by_name() -> None:
+    """Flat Responses-style function mappings can be removed by name."""
+    lookup = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {"type": "object"},
+    }
+    tools: list[ToolTypes] = [lookup]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    context.remove_tools("lookup")
+
+    assert tools == []
+
+
+def test_add_rejects_duplicate_flat_function_mapping() -> None:
+    """Flat function mappings participate in duplicate-name checks."""
+    lookup = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {"type": "object"},
+    }
+    duplicate = {
+        "type": "function",
+        "name": "lookup",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+        },
+    }
+    tools: list[ToolTypes] = [lookup]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    with pytest.raises(ValueError, match="lookup"):
+        context.add_tools(duplicate)
+
+
+def test_remove_name_preserves_non_function_builtin_mapping() -> None:
+    """A named non-function built-in mapping is not treated as a function."""
+    builtin_tool = {
+        "type": "web_search_preview",
+        "name": "lookup",
+    }
+    tools: list[ToolTypes] = [builtin_tool]
+
+    context = FunctionInvocationContext(
+        function=FunctionTool(
+            name="loader",
+            description="Load tools",
+            func=lambda: None,
+        ),
+        arguments={},
+        tools=tools,
+    )
+
+    context.remove_tools("lookup")
+
+    assert tools == [builtin_tool]
 
 
 class TestChatContext:
@@ -130,6 +224,22 @@ class TestChatContext:
         assert context.options is chat_options
         assert context.stream is True
         assert context.metadata == metadata
+
+    def test_stream_transform_alias_assignment_stays_synchronized(self, mock_chat_client: Any) -> None:
+        """Legacy and preferred transform fields share one backing configuration."""
+        context = ChatContext(client=mock_chat_client, messages=[], options={})
+
+        def preferred(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            return update
+
+        def legacy(response: ChatResponse[Any]) -> ChatResponse[Any]:
+            return response
+
+        context.stream_update_transforms = [preferred]
+        assert context.stream_transform_hooks == [preferred]
+
+        context.stream_result_hooks = cast(Any, [legacy])
+        assert context.stream_result_transforms == [legacy]
 
     def test_record_message_replacement(self, mock_chat_client: Any) -> None:
         """Replacement provenance is validated, deduplicated, and returned."""
@@ -684,6 +794,38 @@ class TestChatMiddlewarePipeline:
         assert updates[0].text == "chunk1"
         assert updates[1].text == "chunk2"
         assert execution_order == ["test_before", "test_after", "handler_start", "handler_end"]
+
+    async def test_stream_result_transforms_follow_middleware_unwind_order(self, mock_chat_client: Any) -> None:
+        """Inner middleware transforms run before outer post-processing transforms."""
+
+        class ResultTransformMiddleware(ChatMiddleware):
+            def __init__(self, suffix: str):
+                self.suffix = suffix
+
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                def append_suffix(response: ChatResponse) -> ChatResponse:
+                    return ChatResponse(
+                        messages=[Message(role="assistant", contents=[f"{response.text}{self.suffix}"])]
+                    )
+
+                context.stream_result_transforms.append(append_suffix)
+                await call_next()
+
+        pipeline = ChatMiddlewarePipeline(
+            ResultTransformMiddleware("-outer"),
+            ResultTransformMiddleware("-inner"),
+        )
+        context = ChatContext(client=mock_chat_client, messages=[], options={}, stream=True)
+
+        def final_handler(_: ChatContext) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("base")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        stream = await pipeline.execute(context, final_handler)
+        assert isinstance(stream, ResponseStream)
+        assert (await stream.get_final_response()).text == "base-inner-outer"
 
     async def test_execute_with_pre_next_termination(self, mock_chat_client: Any) -> None:
         """Test pipeline execution with termination before next()."""

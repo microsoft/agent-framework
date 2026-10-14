@@ -6,6 +6,22 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > This package is in **beta**. APIs may change before its stable release. It is
 > included in `agent-framework[all]`.
 
+## FIDES compatibility
+
+> [!WARNING]
+> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
+> made inside generated code bypass the agent's function middleware, so FIDES
+> policy enforcement and label tracking do not apply to those nested calls or
+> intermediate code values. Checks on the outer `execute_code` invocation do not
+> enforce the policies of individual tools called inside it.
+>
+> Registering tools with recognized FIDES `additional_properties` logs a warning,
+> but does not block execution. This is a best-effort diagnostic: FIDES also uses
+> defaults for unannotated tools, so no warning does not imply support or safety.
+> Keep tools that require FIDES as direct agent tools, not Monty-managed tools, and
+> enforce authorization and destination restrictions inside host functions.
+> See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
 ## Installation
 
 ```bash
@@ -197,6 +213,20 @@ Available primitives:
 | `await call_tool("name", **kwargs)` | Generic fallback that dispatches by tool name. Not type-checked. |
 | `asyncio.gather(...)` | Fans out concurrent tool calls. |
 | `print(...)` | Captured and surfaced as text in the tool result. |
+
+## Network access and Python packages
+
+Monty runs its own Python interpreter, not the host's Python environment. This
+integration exposes no `pip` or package-installation option; installing a
+dependency on the host does not make it importable in Monty code. Use the
+interpreter's supported modules for code that runs inside Monty.
+
+Unlike Hyperlight, `MontyCodeActProvider` and `MontyExecuteCodeTool` do not expose
+an `allowed_domains` option. For external API calls or operations requiring
+host-installed packages, register a host function in `tools` and invoke it with
+`await tool_name(...)` or `await call_tool("name", ...)`. Keep credentials,
+authorization, and any destination allow-list checks inside that function.
+These functions execute on the host rather than inside the Monty interpreter.
 
 ## Notes
 

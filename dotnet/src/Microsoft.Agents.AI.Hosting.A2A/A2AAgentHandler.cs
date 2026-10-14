@@ -144,6 +144,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
+        bool executionFailed = false;
         try
         {
             if (returnTask)
@@ -169,9 +170,14 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
+        catch (Exception)
+        {
+            executionFailed = true;
+            throw;
+        }
         finally
         {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
     }
 
@@ -185,6 +191,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var options = CreateRunOptions(context);
 
         AgentResponse response;
+        bool executionFailed = false;
         try
         {
             response = await this._hostAgent.RunAsync(
@@ -195,17 +202,19 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         catch (OperationCanceledException)
         {
+            executionFailed = true;
             throw;
         }
         catch (Exception)
         {
+            executionFailed = true;
             var failUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
             await failUpdater.FailAsync(message: null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         finally
         {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+            await this.SaveSessionAsync(contextId, session, suppressFailure: executionFailed).ConfigureAwait(false);
         }
 
         if (response.ContinuationToken is null)
@@ -225,6 +234,20 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 : null;
 
             await taskUpdater.StartWorkAsync(progressMessage, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SaveSessionAsync(string contextId, AgentSession session, bool suppressFailure)
+    {
+        try
+        {
+            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
+        }
+#pragma warning disable CA1031, RCS1075 // Preserve the exception already propagating from agent execution.
+        catch (Exception) when (suppressFailure)
+#pragma warning restore CA1031, RCS1075
+        {
+            // Best-effort persistence must not replace the agent run failure.
         }
     }
 

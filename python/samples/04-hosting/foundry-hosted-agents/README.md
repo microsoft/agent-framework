@@ -15,17 +15,30 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 2 | [Tools](responses/tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
 | 3 | [MCP](responses/mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
 | 4 | [Foundry Toolbox](responses/foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
-| 5 | [Workflows](responses/workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Files](responses/files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 5 | [Native Workflows](responses/workflows/) | Typed native Responses workflows, including exact checkpoint continuation and approval resume without `.as_agent()`. |
+| 6 | [Files](responses/files/) | Bounded, symlink-safe reads of explicitly uploaded files under the current sandbox's home, with local staging and hosted upload guidance. |
 | 7 | [Observability](responses/observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
 | 8 | [Azure AI Search RAG](responses/azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
 | 9 | [Foundry Memory](responses/foundry_memory/) | An agent with persistent semantic memory backed by a Microsoft Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
 | 10 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
-| 13 | [Custom Storage](responses/custom_storage/) | An agent demonstrating how to implement a custom storage provider for agent sessions (in-memory and Cosmos DB). |
-| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A long-running, crash-resilient workflow demonstrating how `resilient_background=True` lets a background response survive a hard crash of the server process and resume from its last checkpoint instead of restarting from scratch. |
-| 15 | [Steerable Long-Running Agent](responses/steerable_long_running_agent/) | A long-running, non-workflow agent demonstrating how `steerable_conversations=True` lets a new turn on the same conversation cancel and replace a still-running turn instead of waiting for it to finish. Steering is only supported for non-workflow agents. |
+| 13 | [Custom Storage](responses/custom_storage/) | Trusted user-and-sandbox session snapshots with create-only/ETag writes and managed-identity Cosmos authentication; local snapshots need no account. |
+| 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A model-free native background workflow that pairs each outer response snapshot with its exact scoped checkpoint for crash recovery. |
+| 15 | [Long-Running Agent (steering gated)](responses/steerable_long_running_agent/) | A working long-running Responses agent with ordinary background polling; steering currently fails at host construction until a patched AgentServer SDK is published and verified. |
 | 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
+
+The integration examples use **request-owned factories** and the current
+`history_source="agent_server"` API. Use the current workspace, or a hosting
+release containing that API; before the coordinated beta is published, older
+PyPI wheels are not evidence that the examples include these behaviors.
+Toolbox/skills connections inherit the current request's call ID and are closed
+afterward. Files and custom MAF state are sandbox-specific; Foundry Memory
+intentionally shares long-term memories across the **same user's** sandboxes.
+Their READMEs document the external resource/permission boundaries. GitHub MCP
+PAT/OAuth and Telegram/Key Vault require separate setup; the
+[Hyperlight container example](../container/hyperlight_codeact/) requires a
+hypervisor unavailable in the default Foundry runtime. Offline checks do not
+claim any of those deployments or credential-gated integrations ran.
 
 ## Session Identifiers
 
@@ -42,26 +55,41 @@ Agent Framework `AgentSession`, but they are not interchangeable.
 During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
 
 ```python
-session.service_session_id
 # Response or conversation continuation handle
+session.service_session_id
 
-session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 # Foundry hosted-agent session ID
+session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
 ```
 
 Keep the same `AgentSession` across turns so Agent Framework can forward both values correctly. When cleaning up,
 read the Foundry `agent_session_id` from `session.state` and pass that value to the Foundry session deletion API.
 See [Using deployed agent](responses/using_deployed_agent.py) for service-created and user-created lifecycle examples.
 
+On the **hosted server**, response/conversation IDs may be canonical store
+lookup keys for snapshots whose inner `AgentSession.session_id` is different.
+The custom store must preserve that inner ID while isolating each lookup key
+by trusted platform user **and** sandbox, with per-key conditional writes.
+An opaque call ID correlates one request; it is not a storage namespace.
+
 ### Invocations API
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](invocations/basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
+| 1 | [Basic](invocations/basic/) | An Invocations agent with a custom JSON parser, durable MAF history, and JSON/SSE responses. |
 | 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 | 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
+| 4 | [Native Workflow](invocations/basic/README.md#native-workflow-with-typed-tickets) | An explicit JSON parser maps typed tickets and pending review replies to a freshly built native workflow, with scoped exact-checkpoint continuation and JSON/SSE output. |
 
 ## Running the Agent Host Locally
+
+The Responses integration entrypoints declare their additional imports in
+**PEP 723 inline script metadata**, not a project dependency group. With a hosting
+release that contains the current API, `uv run --script --prerelease=allow main.py`
+resolves those script dependencies. While developing this coordinated beta,
+use the current workspace's installed packages with
+`uv run --no-sync python <sample>/main.py`. Do not add sample-only dependencies
+to workspace, package or sample `pyproject.toml` files.
 
 ### Using `azd`
 
@@ -110,7 +138,7 @@ This will create the following Azure resources:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+export FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -118,7 +146,7 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
+$env:FOUNDRY_MODEL="<your-model-deployment-name>"
 # And any other environment variables required by the sample
 ```
 
@@ -163,11 +191,11 @@ Or in PowerShell:
 
 #### Running the Agent Host with Python
 
-Clone the repository containing the sample code:
+Clone the repository containing the sample code and change directory to the selected sample (here we use `/responses/basic`):
 
 ```bash
 git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
+cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses/basic
 ```
 
 #### Environment setup
@@ -197,7 +225,7 @@ cd agent-framework/python/samples/04-hosting/foundry-hosted-agents/responses
    uv pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with your Foundry configuration following the `env.example` file in the sample.
+3. Create a `.env` file with your Foundry configuration following the `.env.example` file in the sample.
 
 4. Make sure you are logged in with the Azure CLI:
 
@@ -218,6 +246,10 @@ Right now, the agent host should be running on `http://localhost:8088`
 On another terminal, run the following command to invoke the agent:
 
 ```bash
+# Windows Command Prompt
+curl.exe -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d "{\"input\":\"Hello!\"}"
+
+# macOS/Linux
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hello!"}'
 ```
 
@@ -252,7 +284,7 @@ azd deploy
 > The Foundry hosting infrastructure will inject the following environment variables into your agent at runtime:
 >
 > - `FOUNDRY_PROJECT_ENDPOINT`: The endpoint URL for the Foundry project where the agent is deployed.
-> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of the model deployment in your Foundry project. This is configured during the agent initialization process with `azd ai agent init`.
+> - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The azd-managed model deployment name configured by `azd ai agent init`. Sample code prefers `FOUNDRY_MODEL` for local runs and falls back to this hosted value.
 > - `APPLICATIONINSIGHTS_CONNECTION_STRING`: The connection string for Application Insights to enable telemetry for your agent.
 
 This will package your agent and deploy it to the Foundry environment, making it accessible through the Foundry project endpoint. Once it's deployed, you can also access the agent through the Foundry UI.

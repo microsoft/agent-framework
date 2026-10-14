@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import inspect
 import json
 import os
@@ -1652,6 +1653,48 @@ def test_get_computer_use_tool() -> None:
     assert tool_obj.display_height == 1080
 
 
+def test_get_computer_tool_uses_non_preview_sdk_model() -> None:
+    from azure.ai.projects.models import ComputerTool
+
+    tool = FoundryChatClient.get_computer_tool()
+    assert isinstance(tool, ComputerTool)
+    assert tool.type == "computer"
+    assert isinstance(RawFoundryChatClient.get_computer_tool(), ComputerTool)
+
+
+def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=mock_project_client, model="test-model")
+    result = Content.from_computer_tool_result(call_id="call_1")
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_content_for_openai("tool", result)
+
+
+def test_get_computer_tool_fails_only_when_invoked_with_older_sdk() -> None:
+    original_import = builtins.__import__
+
+    def missing_computer_tool(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "azure.ai.projects.models" and "ComputerTool" in fromlist:
+            raise ImportError("cannot import name 'ComputerTool' from azure.ai.projects.models")
+        return original_import(name, globals, locals, fromlist, level)
+
+    with (
+        patch.object(builtins, "__import__", side_effect=missing_computer_tool),
+        pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info,
+    ):
+        FoundryChatClient.get_computer_tool()
+    assert "Upgrade azure-ai-projects to >=2.3.0 to use this tool." in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, ImportError)
+
+
 @pytest.mark.filterwarnings("ignore::FutureWarning")
 def test_get_browser_automation_tool() -> None:
     """Browser automation tool factory wraps the connection id in the params type."""
@@ -1938,6 +1981,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+async def test_get_response_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming response carrying an oauth_consent_request output item surfaces the consent link."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        response = await client.get_response([Message(role="user", contents=["List my repos"])])
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
 
 
 def test_agent_accepts_foundry_chat_clients() -> None:

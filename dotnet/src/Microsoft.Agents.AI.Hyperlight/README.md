@@ -35,6 +35,24 @@ Both surfaces support:
   the meantime.
 * A Hyperlight Python guest module when using `SandboxBackend.Wasm`.
 
+## Network access and guest packages
+
+`HyperlightCodeActProviderOptions.AllowedDomains` controls outbound requests
+from the sandbox. It does not install guest packages or expose host-installed
+dependencies to guest code.
+
+`CreateForWasm(modulePath)` selects an existing `.wasm` or `.aot` guest module;
+it does not build a guest or install Python packages. The Agent Framework
+integration does not provide a custom guest build or package installation
+workflow. Package availability depends on the selected module and backend;
+the default JavaScript backend does not run Python code.
+
+For operations requiring application dependencies or external APIs, register
+an `AIFunction` in `Tools` and invoke it from the guest with `call_tool(...)`.
+Keep credentials and authorization in the host function. These functions run
+outside the guest, so `AllowedDomains` does not restrict their network requests;
+enforce any required destination policy in the host function.
+
 ## Status
 
 Preview. API may change until the underlying Hyperlight SDK reaches a stable

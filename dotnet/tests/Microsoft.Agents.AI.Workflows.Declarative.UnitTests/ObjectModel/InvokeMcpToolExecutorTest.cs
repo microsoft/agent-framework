@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -279,6 +281,61 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task InvokeMcpToolWithProtectedIdentifierThrowsAsync(bool useConnectionName)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        StringExpression protectedExpression = StringExpression.Expression("Env.PROTECTED_SETTING");
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolWithProtectedIdentifierThrowsAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            ConversationId = useConnectionName ? null : new StringExpression.Builder(protectedExpression),
+            Connection = useConnectionName
+                ? new RemoteConnection.Builder { Name = new StringExpression.Builder(protectedExpression) }
+                : null,
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        MockMcpToolProvider mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("sensitive value", exception.Message);
+        Assert.Contains(useConnectionName ? "connection name" : "conversation ID", exception.Message);
+        Assert.Contains(nameof(InvokeMcpTool), exception.Message);
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [Fact]
     public async Task InvokeMcpToolExecuteWithRequireApprovalAndHeadersAsync()
     {
@@ -294,6 +351,62 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Act and Assert
         await this.ExecuteTestAsync(model);
+    }
+
+    [Theory]
+    [InlineData(McpInvocationValueLocation.ServerUrl, false)]
+    [InlineData(McpInvocationValueLocation.ServerLabel, false)]
+    [InlineData(McpInvocationValueLocation.ToolName, false)]
+    [InlineData(McpInvocationValueLocation.Argument, false)]
+    [InlineData(McpInvocationValueLocation.Header, false)]
+    [InlineData(McpInvocationValueLocation.ServerUrl, true)]
+    [InlineData(McpInvocationValueLocation.ServerLabel, true)]
+    [InlineData(McpInvocationValueLocation.ToolName, true)]
+    [InlineData(McpInvocationValueLocation.Argument, true)]
+    [InlineData(McpInvocationValueLocation.Header, true)]
+    public async Task InvokeMcpToolWithProtectedEnvironmentValueThrowsAsync(
+        McpInvocationValueLocation location,
+        bool requireApproval)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithEnvironmentExpression(location, requireApproval);
+        MockMcpToolProvider mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        ValueTask ExecuteAsync() =>
+            action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(async () => await ExecuteAsync());
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Empty(emittedRequests);
+        FieldInfo? approvalSnapshotsField = typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(approvalSnapshotsField);
+        object? approvalSnapshotsValue = approvalSnapshotsField.GetValue(action);
+        Assert.NotNull(approvalSnapshotsValue);
+        ConcurrentDictionary<string, ApprovalSnapshot> approvalSnapshots =
+            Assert.IsType<ConcurrentDictionary<string, ApprovalSnapshot>>(approvalSnapshotsValue);
+        Assert.Empty(approvalSnapshots);
     }
 
     [Fact]
@@ -339,6 +452,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Defense in depth: the credential value must not appear anywhere in the serialized approval content.
         string serializedApproval = System.Text.Json.JsonSerializer.Serialize(capturedRequest.AgentResponse);
+        Assert.DoesNotContain("Authorization", serializedApproval);
         Assert.DoesNotContain("super-secret-token", serializedApproval);
 
         ValueTask CaptureRequestAsync(IWorkflowContext context, ExternalInputRequest request, CancellationToken cancellationToken)
@@ -647,6 +761,59 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #region CaptureResponseAsync Tests
 
     [Fact]
+    public async Task InvokeMcpToolCaptureResponseWithNewlySensitiveConversationIdThrowsBeforeInvocationAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("ConversationId", FormulaValue.New("conversation-id"));
+        this.State.Bind();
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolCaptureResponseWithNewlySensitiveConversationIdThrowsBeforeInvocationAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            ConversationId = new StringExpression.Builder(
+                StringExpression.Variable(PropertyPath.TopicVariable("ConversationId"))),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        ExternalInputResponse response = CreateApprovalResponseFor(emittedRequests, approved: true);
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act
+        Task CaptureResponseAsync() => action.CaptureResponseAsync(
+            mockContext.Object,
+            response,
+            CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(CaptureResponseAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolCaptureResponseWithApprovalApprovedAsync()
     {
         // Arrange
@@ -847,6 +1014,632 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #endregion
 
     #region Approval Snapshot Security Tests
+
+    [Fact]
+    public async Task InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync()
+    {
+        // Arrange
+        const string ApprovedHeaderValue = "approved-value";
+        const string MutatedHeaderValue = "mutated-value";
+
+        this.State.Set("HeaderValue", FormulaValue.New(ApprovedHeaderValue));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(MutatedHeaderValue));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(ApprovedHeaderValue, capturedHeaders["X-Test-Header"]);
+    }
+
+    [Theory]
+    [InlineData("", "added-value", false, null)]
+    [InlineData("removed-value", "", true, "removed-value")]
+    public async Task InvokeMcpToolCaptureResponseUsesApprovedHeaderPresenceAsync(
+        string approvedHeaderValue,
+        string mutatedHeaderValue,
+        bool expectedPresent,
+        string? expectedValue)
+    {
+        // Arrange
+        this.State.Set("HeaderValue", FormulaValue.New(approvedHeaderValue));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolCaptureResponseUsesApprovedHeaderPresenceAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(mutatedHeaderValue));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(expectedPresent, capturedHeaders.ContainsKey("X-Test-Header"));
+        if (expectedPresent)
+        {
+            Assert.Equal(expectedValue, capturedHeaders["X-Test-Header"]);
+        }
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolApprovedHeadersUseCaseInsensitiveNamesIndependentOfOrderAsync()
+    {
+        // Arrange
+        this.State.Set("FirstHeader", FormulaValue.New("first-approved"));
+        this.State.Set("SecondHeader", FormulaValue.New("second-approved"));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeaders(
+            displayName: nameof(InvokeMcpToolApprovedHeadersUseCaseInsensitiveNamesIndependentOfOrderAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            ("x-second", "SecondHeader"),
+            ("X-First", "FirstHeader"));
+
+        IDictionary<string, string>? capturedHeaders = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaders = headers)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("FirstHeader", FormulaValue.New("first-mutated"));
+        this.State.Set("SecondHeader", FormulaValue.New("second-mutated"));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedHeaders);
+        Assert.Equal(2, capturedHeaders.Count);
+        Assert.Equal("first-approved", capturedHeaders["x-first"]);
+        Assert.Equal("second-approved", capturedHeaders["X-SECOND"]);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolHeaderSnapshotsAreRequestIsolatedAndReplaySafeAsync()
+    {
+        // Arrange
+        this.State.Set("HeaderValue", FormulaValue.New("header-a"));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolHeaderSnapshotsAreRequestIsolatedAndReplaySafeAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "X-Test-Header",
+            variableName: "HeaderValue");
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New("header-b"));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse responseA = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
+        ExternalInputResponse responseB = CreateApprovalResponseForRequest(emittedRequests[1], approved: true);
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, responseB, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, responseA, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, responseA, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["header-b", "header-a"], capturedHeaderValues);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolRestoredApprovalReissuesWithoutPersistingHeadersAsync()
+    {
+        // Arrange
+        const string BeforeRestoreHeader = "before-restore-secret";
+        const string AfterRestoreHeader = "after-restore-secret";
+
+        this.State.Set("HeaderValue", FormulaValue.New(BeforeRestoreHeader));
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeMcpTool model = this.CreateModelWithVariableHeader(
+            displayName: nameof(InvokeMcpToolRestoredApprovalReissuesWithoutPersistingHeadersAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            headerName: "Authorization",
+            variableName: "HeaderValue");
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["Authorization"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        ExternalInputResponse staleResponse = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
+
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+        string serializedCheckpoint = System.Text.Json.JsonSerializer.Serialize(stateStore);
+        Assert.DoesNotContain("Authorization", serializedCheckpoint);
+        Assert.DoesNotContain(BeforeRestoreHeader, serializedCheckpoint);
+
+        await action.ResetAsync();
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+
+        this.State.Set("HeaderValue", FormulaValue.New(AfterRestoreHeader));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, staleResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Empty(capturedHeaderValues);
+        Assert.Equal(2, emittedRequests.Count);
+
+        string staleRequestId = emittedRequests[0].AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single()
+            .RequestId;
+        string freshRequestId = emittedRequests[1].AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single()
+            .RequestId;
+        Assert.NotEqual(staleRequestId, freshRequestId);
+
+        string serializedFreshApproval = System.Text.Json.JsonSerializer.Serialize(emittedRequests[1].AgentResponse);
+        Assert.DoesNotContain("Authorization", serializedFreshApproval);
+        Assert.DoesNotContain(AfterRestoreHeader, serializedFreshApproval);
+
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseForRequest(emittedRequests[1], approved: true),
+            CancellationToken.None);
+        Assert.Equal([AfterRestoreHeader], capturedHeaderValues);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolLegacyRestoredApprovalRevalidatesConnectionNameAsync()
+    {
+        // Arrange
+        const string RequestId = "legacy-request";
+        this.State.InitializeSystem();
+
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolLegacyRestoredApprovalRevalidatesConnectionNameAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            Connection = new RemoteConnection.Builder
+            {
+                Name = new StringExpression.Builder(
+                    StringExpression.Expression("Env.PROTECTED_SETTING"))
+            },
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        Mock<IMcpToolHandler> mockProvider = new();
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = new()
+        {
+            ["_approvalSnapshots"] = new Dictionary<string, ApprovalSnapshot>
+            {
+                [RequestId] = new(TestServerUrl, null, TestToolName, null, "legacy-connection")
+            }
+        };
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("sensitive-connection"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        McpServerToolCallContent toolCall = new(RequestId, TestToolName, TestServerUrl);
+        ToolApprovalRequestContent approvalRequest = new(RequestId, toolCall);
+        ExternalInputResponse response = new(
+            new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]));
+
+        // Act
+        Task CaptureResponseAsync() => action.CaptureResponseAsync(
+            mockContext.Object,
+            response,
+            CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(CaptureResponseAsync);
+        Assert.Contains("connection name", exception.Message);
+        Assert.Empty(emittedRequests);
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolLegacyRestoredApprovalReissuesValidatedConnectionNameAsync()
+    {
+        // Arrange
+        const string RequestId = "legacy-request";
+        const string CurrentConnectionName = "current-connection";
+        this.State.InitializeSystem();
+
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeMcpToolLegacyRestoredApprovalReissuesValidatedConnectionNameAsync)),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(TestServerUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(TestToolName)),
+            Connection = new RemoteConnection.Builder
+            {
+                Name = new StringExpression.Builder(
+                    StringExpression.Variable(PropertyPath.TopicVariable("ConnectionName")))
+            },
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
+        string? capturedConnectionName = null;
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, _, connectionName, _) => capturedConnectionName = connectionName)
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Dictionary<string, object?> stateStore = new()
+        {
+            ["_approvalSnapshots"] = new Dictionary<string, ApprovalSnapshot>
+            {
+                [RequestId] = new(TestServerUrl, null, TestToolName, null, "legacy-connection")
+            }
+        };
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(emittedRequests, stateStore);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
+        this.State.Set("ConnectionName", FormulaValue.New(CurrentConnectionName));
+        this.State.Bind();
+
+        McpServerToolCallContent toolCall = new(RequestId, TestToolName, TestServerUrl);
+        ToolApprovalRequestContent approvalRequest = new(RequestId, toolCall);
+        ExternalInputResponse response = new(
+            new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert
+        ExternalInputRequest freshRequest = Assert.Single(emittedRequests);
+        ToolApprovalRequestContent freshApproval = Assert.Single(
+            freshRequest.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.NotEqual(RequestId, freshApproval.RequestId);
+
+        ConcurrentDictionary<string, ApprovalSnapshot> liveSnapshots = (ConcurrentDictionary<string, ApprovalSnapshot>)typeof(InvokeMcpToolExecutor)
+            .GetField("_approvalSnapshots", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(action)!;
+        Assert.False(liveSnapshots.ContainsKey(RequestId));
+        ApprovalSnapshot freshSnapshot = Assert.Single(liveSnapshots).Value;
+        Assert.True(freshSnapshot.ConnectionNameValidated);
+        Assert.Equal(CurrentConnectionName, freshSnapshot.ConnectionName);
+
+        mockProvider.Verify(provider => provider.InvokeToolAsync(
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<IDictionary<string, object?>?>(),
+            It.IsAny<IDictionary<string, string>?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseForRequest(freshRequest, approved: true),
+            CancellationToken.None);
+        Assert.Equal(CurrentConnectionName, capturedConnectionName);
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolWorkflowRestoreRoutesReapprovalToExternalInputAsync()
+    {
+        // Arrange
+        const string HeaderValue = "fresh-header-value";
+        using StringReader yamlReader = new(
+            $$"""
+                kind: Workflow
+                trigger:
+
+                  kind: OnConversationStart
+                  id: restored_mcp_approval_workflow
+                  actions:
+
+                    - kind: InvokeMcpTool
+                      id: invoke_mcp_tool
+                      serverUrl: {{TestServerUrl}}
+                      serverLabel: {{TestServerLabel}}
+                      toolName: {{TestToolName}}
+                      requireApproval: true
+                      headers:
+                        X-Test-Header: {{HeaderValue}}
+                      output:
+                        autoSend: false
+                        result: Local.ToolResult
+                """);
+
+        List<string> capturedHeaderValues = [];
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+            .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
+            {
+                Outputs = [new TextContent("result")]
+            });
+
+        DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object)
+        {
+            McpToolHandler = mockProvider.Object,
+        };
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+
+        // Act - run to the original approval request and restore from its checkpoint.
+        (RequestInfoEvent initialRequestEvent, CheckpointInfo initialCheckpoint) =
+            await RunToRequestAsync(workflow, checkpointManager, "restored-mcp-approval");
+        ExternalInputRequest initialRequest = Assert.IsType<ExternalInputRequest>(
+            initialRequestEvent.Request.Data.As<ExternalInputRequest>());
+        ToolApprovalRequestContent initialApproval = initialRequest.AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+
+        RequestInfoEvent replacementRequestEvent = await ResumeThroughReapprovalAsync(
+            workflow,
+            checkpointManager,
+            initialCheckpoint,
+            initialRequestEvent.Request.CreateResponse(
+                new ExternalInputResponse(
+                    new ChatMessage(ChatRole.Tool, [initialApproval.CreateResponse(approved: true)]))));
+
+        ExternalInputRequest replacementRequest = Assert.IsType<ExternalInputRequest>(
+            replacementRequestEvent.Request.Data.As<ExternalInputRequest>());
+        ToolApprovalRequestContent replacementApproval = replacementRequest.AgentResponse.Messages
+            .SelectMany(message => message.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+
+        // Assert
+        Assert.NotEqual(initialApproval.RequestId, replacementApproval.RequestId);
+        Assert.Equal([HeaderValue], capturedHeaderValues);
+
+        static async Task<(RequestInfoEvent Request, CheckpointInfo Checkpoint)> RunToRequestAsync(
+            Workflow workflow,
+            CheckpointManager checkpointManager,
+            string runId)
+        {
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "start", checkpointManager, runId);
+            return await ReadRequestAndCheckpointAsync(run, response: null);
+        }
+
+        static async Task<RequestInfoEvent> ResumeThroughReapprovalAsync(
+            Workflow workflow,
+            CheckpointManager checkpointManager,
+            CheckpointInfo checkpoint,
+            ExternalResponse response)
+        {
+            await using StreamingRun run = await InProcessExecution.ResumeStreamingAsync(workflow, checkpoint, checkpointManager);
+            await run.SendResponseAsync(response);
+            RequestInfoEvent? replacementRequestEvent = null;
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new InvalidOperationException("Unexpected workflow failure.");
+                }
+
+                if (workflowEvent is RequestInfoEvent candidate &&
+                    candidate.Request.RequestId != response.RequestId)
+                {
+                    replacementRequestEvent = candidate;
+                    ExternalInputRequest replacementRequest = Assert.IsType<ExternalInputRequest>(
+                        candidate.Request.Data.As<ExternalInputRequest>());
+                    ToolApprovalRequestContent replacementApproval = replacementRequest.AgentResponse.Messages
+                        .SelectMany(message => message.Contents)
+                        .OfType<ToolApprovalRequestContent>()
+                        .Single();
+                    await run.SendResponseAsync(
+                        candidate.Request.CreateResponse(
+                            new ExternalInputResponse(
+                                new ChatMessage(ChatRole.Tool, [replacementApproval.CreateResponse(approved: true)]))));
+                }
+            }
+
+            Assert.NotNull(replacementRequestEvent);
+            return replacementRequestEvent;
+        }
+
+        static async Task<(RequestInfoEvent Request, CheckpointInfo Checkpoint)> ReadRequestAndCheckpointAsync(
+            StreamingRun run,
+            ExternalResponse? response)
+        {
+            RequestInfoEvent? requestEvent = null;
+            CheckpointInfo? checkpoint = null;
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new InvalidOperationException("Unexpected workflow failure.");
+                }
+
+                if (workflowEvent is RequestInfoEvent candidate &&
+                    (response is null || candidate.Request.RequestId != response.RequestId))
+                {
+                    requestEvent = candidate;
+                }
+
+                if (workflowEvent is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } completedCheckpoint })
+                {
+                    checkpoint = completedCheckpoint;
+                }
+            }
+
+            Assert.NotNull(requestEvent);
+            Assert.NotNull(checkpoint);
+            return (requestEvent, checkpoint);
+        }
+    }
 
     /// <summary>
     /// Verifies that mutating the tool name variable after approval does not change
@@ -1772,6 +2565,93 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
         };
         return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    private InvokeMcpTool CreateModelWithVariableHeader(
+        string displayName,
+        string serverUrl,
+        string toolName,
+        string headerName,
+        string variableName)
+    {
+        return this.CreateModelWithVariableHeaders(
+            displayName,
+            serverUrl,
+            toolName,
+            (headerName, variableName));
+    }
+
+    private InvokeMcpTool CreateModelWithVariableHeaders(
+        string displayName,
+        string serverUrl,
+        string toolName,
+        params (string HeaderName, string VariableName)[] headers)
+    {
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            ServerUrl = new StringExpression.Builder(StringExpression.Literal(serverUrl)),
+            ToolName = new StringExpression.Builder(StringExpression.Literal(toolName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+        };
+        foreach ((string headerName, string variableName) in headers)
+        {
+            builder.Headers.Add(
+                headerName,
+                new StringExpression.Builder(StringExpression.Variable(PropertyPath.TopicVariable(variableName))));
+        }
+        return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    private InvokeMcpTool CreateModelWithEnvironmentExpression(
+        McpInvocationValueLocation location,
+        bool requireApproval)
+    {
+        const string EnvironmentExpression = "Env.PROTECTED_SETTING";
+
+        InvokeMcpTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(
+                $"{nameof(InvokeMcpToolWithProtectedEnvironmentValueThrowsAsync)}_{location}_{requireApproval}"),
+            ServerUrl = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ServerUrl
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestServerUrl)),
+            ServerLabel = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ServerLabel
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestServerLabel)),
+            ToolName = new StringExpression.Builder(
+                location == McpInvocationValueLocation.ToolName
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal(TestToolName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(requireApproval)),
+        };
+
+        builder.Arguments.Add(
+            "argument",
+            location == McpInvocationValueLocation.Argument
+                ? ValueExpression.Expression(EnvironmentExpression)
+                : ValueExpression.Literal(new StringDataValue("argument-value")));
+        builder.Headers.Add(
+            "X-Value",
+            new StringExpression.Builder(
+                location == McpInvocationValueLocation.Header
+                    ? StringExpression.Expression(EnvironmentExpression)
+                    : StringExpression.Literal("header-value")));
+
+        return AssignParent<InvokeMcpTool>(builder);
+    }
+
+    public enum McpInvocationValueLocation
+    {
+        ServerUrl,
+        ServerLabel,
+        ToolName,
+        Argument,
+        Header,
     }
 
     #endregion

@@ -68,6 +68,7 @@ logger = logging.getLogger("agent_framework")
 
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
+_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -175,7 +176,7 @@ def _get_message_hash(message: Message) -> MessageIdentity:
 
 
 def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
-    """Filters incoming messages to only those that are truly new.
+    """Return messages after the ordered overlap with persisted history.
 
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
@@ -186,23 +187,20 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     existing_hashes = [_get_message_hash(m) for m in existing]
     incoming_hashes = [_get_message_hash(m) for m in incoming]
 
-    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
-        return list(incoming[len(existing) :])
+    for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+        if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+            if i == 0 and len(existing) == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+                break  # A repeated input without an ID is more important to retain than a possible replay.
+            return list(incoming[i + len(existing_hashes) :])
 
-    try:
-        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
-            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
-                return list(incoming[i + len(existing_hashes) :])
-    except Exception:
-        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+    for overlap in range(min(len(existing_hashes), len(incoming_hashes)), 0, -1):
+        if existing_hashes[-overlap:] != incoming_hashes[:overlap]:
+            continue
+        if overlap == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+            continue
+        return list(incoming[overlap:])
 
-    existing_set = set(existing_hashes)
-    new_msgs: list[Message] = []
-    for m, h in zip(incoming, incoming_hashes):
-        if h not in existing_set:
-            new_msgs.append(m)
-            existing_set.add(h)
-    return new_msgs
+    return list(incoming)
 
 
 @dataclass(frozen=True, slots=True)
@@ -939,6 +937,53 @@ def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Messa
     return filtered_messages
 
 
+def _paired_local_function_results(contents: Sequence[Content]) -> dict[int, Content]:
+    """Match completed local results to their function-call occurrences."""
+    results_by_call_id: dict[str, deque[Content]] = {}
+    for content in contents:
+        if content.type == "function_result" and content.call_id:
+            results_by_call_id.setdefault(content.call_id, deque()).append(content)
+    pairs: dict[int, Content] = {}
+    for content in contents:
+        if (
+            content.type == "function_call"
+            and not content.informational_only
+            and content.id
+            and content.call_id
+            and (results := results_by_call_id.get(content.call_id))
+        ):
+            pairs[id(content)] = results.popleft()
+    return pairs
+
+
+def _without_deferred_workflow_function_results(messages: Sequence[Message]) -> list[Message]:
+    """Persist mixed computer turns without results staged for workflow resume."""
+    start = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in message.contents)
+        ),
+        None,
+    )
+    if start is None:
+        return list(messages)
+    contents = [content for message in messages[start:] for content in message.contents]
+    deferred_ids = {id(result) for result in _paired_local_function_results(contents).values()}
+    if not deferred_ids:
+        return list(messages)
+    stored = list(messages[:start])
+    for message in messages[start:]:
+        kept = [content for content in message.contents if id(content) not in deferred_ids]
+        if len(kept) == len(message.contents):
+            stored.append(message)
+        elif kept:
+            copied = copy.copy(message)
+            copied.contents = kept
+            stored.append(copied)
+    return stored
+
+
 class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
@@ -1069,7 +1114,14 @@ class HistoryProvider(ContextProvider):
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_outputs and context.response and context.response.messages:
-            messages_to_store.extend(context.response.messages)
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
@@ -2403,21 +2455,7 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    existing_messages: list[Message] = []
-                    if file_path.exists():
-                        with file_path.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    payload = self.loads(line)
-                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                                    existing_messages.append(msg)
-                                except Exception:
-                                    logger.debug("failed to parse history line for deduplication")
-                                    continue
-
+                    existing_messages = self._read_json_messages(file_path) if file_path.exists() else []
                     new_messages = filter_new_messages(existing_messages, messages)
                     if new_messages:
                         with file_path.open("a", encoding="utf-8") as file_handle:

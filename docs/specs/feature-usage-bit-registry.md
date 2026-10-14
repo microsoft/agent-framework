@@ -158,7 +158,7 @@ only to approved first-party endpoints.
 | 56 | `openai` | OpenAI clients | `agent_framework_openai` |
 | 57 | `anthropic` | Anthropic clients | `agent_framework_anthropic` |
 | 58 | `bedrock` | AWS Bedrock clients | `agent_framework_bedrock` |
-| 59 | `gemini` | Gemini chat client | `agent_framework_gemini` |
+| 59 | `gemini` | Gemini chat and embedding clients | `agent_framework_gemini` |
 | 60 | `mistral` | Mistral embedding client | `agent_framework_mistral` |
 | 61 | `ollama` | Ollama clients | `agent_framework_ollama` |
 | 62 | `claude` | Claude Agent SDK agent | `agent_framework_claude` |

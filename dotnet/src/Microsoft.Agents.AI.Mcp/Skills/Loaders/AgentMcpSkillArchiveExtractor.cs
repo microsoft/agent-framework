@@ -2,8 +2,11 @@
 
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI;
 
@@ -13,8 +16,9 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Supports ZIP payloads. Extraction is guarded against path-traversal ("zip-slip") attacks and
 /// bounded by a maximum file count and total uncompressed size to mitigate decompression-bomb attacks.
+/// Later entries resolving to an existing file are skipped, preserving the first file's content.
 /// </remarks>
-internal static class AgentMcpSkillArchiveExtractor
+internal static partial class AgentMcpSkillArchiveExtractor
 {
     /// <summary>
     /// The default maximum number of files that may be extracted from a single archive, sized for a
@@ -77,6 +81,7 @@ internal static class AgentMcpSkillArchiveExtractor
     /// <param name="targetDirectory">The directory the archive is unpacked into. Created if missing.</param>
     /// <param name="maxFileCount">The maximum number of files that may be extracted from the archive.</param>
     /// <param name="maxUncompressedSizeBytes">The maximum total uncompressed size, in bytes, of all extracted files.</param>
+    /// <param name="logger">An optional logger reporting each skipped colliding archive member.</param>
     /// <exception cref="NotSupportedException">The format is not <see cref="ArchiveFormat.Zip"/>.</exception>
     /// <exception cref="InvalidDataException">The archive exceeds one of the supplied limits.</exception>
     internal static void Extract(
@@ -84,7 +89,8 @@ internal static class AgentMcpSkillArchiveExtractor
         ArchiveFormat format,
         string targetDirectory,
         int? maxFileCount = null,
-        long? maxUncompressedSizeBytes = null)
+        long? maxUncompressedSizeBytes = null,
+        ILogger? logger = null)
     {
         maxFileCount ??= DefaultMaxFileCount;
         maxUncompressedSizeBytes ??= DefaultMaxUncompressedSizeBytes;
@@ -98,15 +104,17 @@ internal static class AgentMcpSkillArchiveExtractor
         string fullTarget = Path.GetFullPath(targetDirectory);
 
         using var source = new MemoryStream(bytes, writable: false);
-        ExtractZip(source, fullTarget, maxFileCount.Value, maxUncompressedSizeBytes.Value);
+        ExtractZip(source, fullTarget, maxFileCount.Value, maxUncompressedSizeBytes.Value, logger ?? NullLogger.Instance);
     }
 
-    private static void ExtractZip(Stream source, string fullTarget, int maxFileCount, long maxUncompressedSizeBytes)
+    private static void ExtractZip(Stream source, string fullTarget, int maxFileCount, long maxUncompressedSizeBytes, ILogger logger)
     {
         using var archive = new ZipArchive(source, ZipArchiveMode.Read, leaveOpen: true);
 
         long remainingBytes = maxUncompressedSizeBytes;
         int fileCount = 0;
+        var destinations = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        string skillName = SanitizePathForLog(Path.GetFileName(fullTarget));
 
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
@@ -127,11 +135,34 @@ internal static class AgentMcpSkillArchiveExtractor
                 continue;
             }
 
+            // Normalization can map distinct archive names to one path; keep the first file.
+            if (!destinations.Add(destination))
+            {
+                LogArchiveMemberCollision(logger, skillName, SanitizePathForLog(entry.FullName));
+                continue;
+            }
+
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
-            using Stream entryStream = entry.Open();
-            using FileStream output = File.Create(destination);
-            CopyWithLimit(entryStream, output, ref remainingBytes);
+            // CreateNew also prevents overwrites through filesystem aliases, such as trailing dots on Windows.
+            FileStream output;
+            try
+            {
+#pragma warning disable CA5389 // ResolveDestination canonicalizes the path and rejects destinations outside fullTarget.
+                output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+#pragma warning restore CA5389
+            }
+            catch (IOException) when (File.Exists(destination))
+            {
+                LogArchiveMemberCollision(logger, skillName, SanitizePathForLog(entry.FullName));
+                continue;
+            }
+
+            using (output)
+            {
+                using Stream entryStream = entry.Open();
+                CopyWithLimit(entryStream, output, ref remainingBytes);
+            }
         }
     }
 
@@ -212,4 +243,26 @@ internal static class AgentMcpSkillArchiveExtractor
             prefix,
             OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Replaces control characters in a file-system path with <c>?</c> so the path is safe to include
+    /// in log messages without risking terminal-escape injection.
+    /// </summary>
+    internal static string SanitizePathForLog(string path)
+    {
+        char[]? chars = null;
+        for (int i = 0; i < path.Length; i++)
+        {
+            if (char.IsControl(path[i]))
+            {
+                chars ??= path.ToCharArray();
+                chars[i] = '?';
+            }
+        }
+
+        return chars is null ? path : new string(chars);
+    }
+
+    [LoggerMessage(LogLevel.Warning, "Skipping duplicate archive member '{MemberPath}' for skill '{SkillName}'; keeping the first file.")]
+    private static partial void LogArchiveMemberCollision(ILogger logger, string skillName, string memberPath);
 }
