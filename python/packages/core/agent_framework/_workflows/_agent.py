@@ -59,8 +59,16 @@ _INTERNAL_CALL_CONTENT_TYPES = frozenset({"function_call", "function_approval_re
 
 
 def _contains_internal_call_content(contents: Sequence[Content] | None) -> bool:
-    """True when any content is a function-call envelope (a call or an approval response)."""
-    return any(getattr(content, "type", None) in _INTERNAL_CALL_CONTENT_TYPES for content in contents or ())
+    """True when any content is a function-call envelope (a call or an approval response).
+
+    Informational-only calls are transcript records that intentionally have no tool
+    result, so they stay caller-facing instead of being treated as internal envelopes.
+    """
+    return any(
+        getattr(content, "type", None) in _INTERNAL_CALL_CONTENT_TYPES
+        and not getattr(content, "informational_only", False)
+        for content in contents or ()
+    )
 
 
 def _caller_facing_messages(messages: Iterable[Message]) -> list[Message]:
@@ -81,21 +89,23 @@ def _caller_facing_messages(messages: Iterable[Message]) -> list[Message]:
 
 
 class _StreamingRoleGate:
-    """Track the last declared role across a stream of response updates.
+    """Track the declared role per streamed message across response updates.
 
     Non-assistant streams may declare ``role`` only on their first delta and use
-    ``role=None`` continuation chunks. Updates without a declared role inherit the
-    last declared one, so user content streamed as role-less chunks cannot leak
-    through the assistant-only filter.
+    ``role=None`` continuation chunks. A declared role is remembered per message id, so
+    continuation chunks of a user stream cannot leak through the assistant-only filter
+    while an unrelated role-less message from another stream (or a later message of the
+    same run) is not stained by it. Updates without a message id share one fallback
+    slot, which stays conservative for streams that never identify their messages.
     """
 
     def __init__(self) -> None:
-        self._last_declared_role: str | None = None
+        self._declared_roles: dict[str | None, str] = {}
 
-    def should_forward(self, role: str | None) -> bool:
+    def should_forward(self, role: str | None, message_id: str | None = None) -> bool:
         if role is not None:
-            self._last_declared_role = role
-        effective_role = role if role is not None else self._last_declared_role
+            self._declared_roles[message_id] = role
+        effective_role = role if role is not None else self._declared_roles.get(message_id)
         return effective_role is None or effective_role == "assistant"
 
 
@@ -636,19 +646,21 @@ class WorkflowAgent(BaseAgent):
 
                 if isinstance(data, AgentResponse):
                     # Only caller-facing assistant messages survive; see
-                    # _caller_facing_messages for the full policy.
+                    # _caller_facing_messages for the full policy. Usage and creation
+                    # time describe the billed child-agent call itself, so they merge
+                    # even when every message of the response was filtered out.
                     assistant_messages = _caller_facing_messages(data.messages)
+                    messages.extend(assistant_messages)
                     if assistant_messages:
-                        messages.extend(assistant_messages)
                         raw_representations.append(data.raw_representation)
-                        merged_usage = add_usage_details(merged_usage, data.usage_details)
-                        latest_created_at = (
-                            data.created_at
-                            if not latest_created_at
-                            else max(latest_created_at, data.created_at)
-                            if data.created_at
-                            else latest_created_at
-                        )
+                    merged_usage = add_usage_details(merged_usage, data.usage_details)
+                    latest_created_at = (
+                        data.created_at
+                        if not latest_created_at
+                        else max(latest_created_at, data.created_at)
+                        if data.created_at
+                        else latest_created_at
+                    )
                 elif isinstance(data, Message):
                     if data.role == "assistant" and not _contains_internal_call_content(data.contents):
                         messages.append(data)
@@ -721,7 +733,9 @@ class WorkflowAgent(BaseAgent):
                 # Role-less continuation chunks inherit the last declared role from
                 # the gate, and updates carrying function-call envelopes are dropped
                 # so their orphaned calls cannot be persisted by from_updates.
-                if not role_gate.should_forward(data.role) or _contains_internal_call_content(data.contents):
+                if not role_gate.should_forward(data.role, data.message_id) or _contains_internal_call_content(
+                    data.contents
+                ):
                     return []
                 # Construct a fresh AgentResponseUpdate so we don't mutate a payload
                 # that AgentExecutor still holds a reference to in its `updates` list.

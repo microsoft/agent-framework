@@ -2953,3 +2953,99 @@ class TestWorkflowAgentToolApproval:
         assert len(chunks2) == 1
         assert chunks2[0].role == "assistant"
         assert chunks2[0].text == "Answer: stream_q2"
+
+
+class TestWorkflowAsAgentFilteringRound8:
+    """Round-8 review fixes: informational calls, per-message role gate, usage retention."""
+
+    async def test_workflow_as_agent_keeps_informational_only_call(self) -> None:
+        """Informational-only calls have no result by contract and stay caller-facing."""
+
+        @executor
+        async def informational_call_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, list[Message]],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output([
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="info-1", name="mcp_server_status", arguments={}, informational_only=True
+                        ),
+                    ],
+                ),
+            ])
+
+        workflow = WorkflowBuilder(start_executor=informational_call_executor).build()
+        agent = workflow.as_agent("informational-call-agent")
+
+        result = await agent.run("test")
+        assert len(result.messages) == 1
+        assert result.messages[0].contents[0].type == "function_call"
+
+        updates: list[AgentResponseUpdate] = []
+        async for chunk in agent.run("test", stream=True):
+            updates.append(chunk)
+        assert len(updates) >= 1
+        assert updates[0].contents[0].type == "function_call"
+
+    async def test_workflow_as_agent_stream_role_gate_scoped_per_message(self) -> None:
+        """A declared role stains only its own message; other streams are not stained.
+
+        A user declaration on one message id must not drop an unrelated role-less
+        chunk of a different message, while the user message's own continuations
+        stay filtered (review: gate shared per run survives concurrent branches).
+        """
+
+        @executor
+        async def mixed_stream_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text("user said hi")], role="user", message_id="m-user"
+                )
+            )
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text("assistant answer")], message_id="m-answer")
+            )
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=[Content.from_text(" and more user")], message_id="m-user")
+            )
+
+        workflow = WorkflowBuilder(start_executor=mixed_stream_executor).build()
+        agent = workflow.as_agent("mixed-stream-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for chunk in agent.run("test", stream=True):
+            updates.append(chunk)
+
+        assert len(updates) == 1
+        assert updates[0].text == "assistant answer"
+
+    async def test_workflow_as_agent_keeps_usage_when_every_message_is_filtered(self) -> None:
+        """Usage and creation time describe the billed call and survive message filtering."""
+
+        @executor
+        async def filtered_usage_executor(
+            messages: list[Message],
+            ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(
+                AgentResponse(
+                    messages=[Message(role="user", contents=[Content.from_text("echoed user")])],
+                    usage_details=UsageDetails(input_token_count=11, output_token_count=7, total_token_count=18),
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=filtered_usage_executor).build()
+        agent = workflow.as_agent("filtered-usage-agent")
+
+        result = await agent.run("test")
+        assert result.messages == []
+        assert result.usage_details is not None
+        usage = result.usage_details
+        total = usage.total_token_count if hasattr(usage, "total_token_count") else usage.get("total_token_count")
+        assert total == 18
