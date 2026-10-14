@@ -2,9 +2,16 @@
 
 """Tests for predictive state handling."""
 
+from typing import Any
+
 from ag_ui.core import StateDeltaEvent
 
 from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
+
+
+def _first_op(event: StateDeltaEvent) -> dict[str, Any]:
+    """Return the event's first JSON Patch operation as a dict, however ag-ui-protocol models it."""
+    return event.model_dump()["delta"][0]
 
 
 class TestPredictiveStateHandlerInit:
@@ -155,9 +162,9 @@ class TestEmitStreamingDeltas:
         events = handler.emit_streaming_deltas("write", '{"text": "hello"}')
         assert len(events) == 1
         assert isinstance(events[0], StateDeltaEvent)
-        assert events[0].delta[0]["path"] == "/doc"
-        assert events[0].delta[0]["value"] == "hello"
-        assert events[0].delta[0]["op"] == "replace"
+        assert _first_op(events[0])["path"] == "/doc"
+        assert _first_op(events[0])["value"] == "hello"
+        assert _first_op(events[0])["op"] == "replace"
 
     def test_emits_delta_on_partial_json(self):
         """Emits delta from partial JSON using regex."""
@@ -165,7 +172,7 @@ class TestEmitStreamingDeltas:
         # First chunk - partial
         events = handler.emit_streaming_deltas("write", '{"text": "hel')
         assert len(events) == 1
-        assert events[0].delta[0]["value"] == "hel"
+        assert _first_op(events[0])["value"] == "hel"
 
     def test_does_not_emit_duplicate_deltas(self):
         """Does not emit delta when value unchanged."""
@@ -190,7 +197,7 @@ class TestEmitStreamingDeltas:
         handler.streaming_tool_args = ""
         events2 = handler.emit_streaming_deltas("write", '{"text": "world"}')
         assert len(events2) == 1
-        assert events2[0].delta[0]["value"] == "world"
+        assert _first_op(events2[0])["value"] == "world"
 
     def test_tracks_pending_updates(self):
         """Tracks pending state updates."""
@@ -208,7 +215,7 @@ class TestEmitPartialDeltas:
         handler.streaming_tool_args = '{"text": "line1\\nline2'
         events = handler._emit_partial_deltas("write")
         assert len(events) == 1
-        assert events[0].delta[0]["value"] == "line1\nline2"
+        assert _first_op(events[0])["value"] == "line1\nline2"
 
     def test_handles_escaped_quotes_partially(self):
         """Handles escaped quotes - regex stops at quote character."""
@@ -225,7 +232,7 @@ class TestEmitPartialDeltas:
         # After .replace("\\\\", "\\") -> "say \"
         # After .replace('\\"', '"') -> "say "  (but actually still "say \" due to order)
         # The actual result: backslash is preserved since it's not a valid escape sequence
-        assert events[0].delta[0]["value"] == "say \\"
+        assert _first_op(events[0])["value"] == "say \\"
 
     def test_unescapes_backslashes(self):
         """Unescapes \\\\ in partial values."""
@@ -233,7 +240,7 @@ class TestEmitPartialDeltas:
         handler.streaming_tool_args = '{"text": "path\\\\to\\\\file'
         events = handler._emit_partial_deltas("write")
         assert len(events) == 1
-        assert events[0].delta[0]["value"] == "path\\to\\file"
+        assert _first_op(events[0])["value"] == "path\\to\\file"
 
 
 class TestEmitCompleteDeltas:
@@ -244,7 +251,7 @@ class TestEmitCompleteDeltas:
         handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "text"}})
         events = handler._emit_complete_deltas("write", {"text": "content"})
         assert len(events) == 1
-        assert events[0].delta[0]["value"] == "content"
+        assert _first_op(events[0])["value"] == "content"
 
     def test_skips_non_matching_tool(self):
         """Skips tools not matching config."""
@@ -258,7 +265,7 @@ class TestEmitCompleteDeltas:
         args = {"key1": "val1", "key2": "val2"}
         events = handler._emit_complete_deltas("update", args)
         assert len(events) == 1
-        assert events[0].delta[0]["value"] == args
+        assert _first_op(events[0])["value"] == args
 
     def test_skips_missing_argument(self):
         """Skips when tool_argument not in args."""
@@ -276,9 +283,9 @@ class TestCreateDeltaEvent:
         event = handler._create_delta_event("key", "value")
 
         assert isinstance(event, StateDeltaEvent)
-        assert event.delta[0]["op"] == "replace"
-        assert event.delta[0]["path"] == "/key"
-        assert event.delta[0]["value"] == "value"
+        assert _first_op(event)["op"] == "replace"
+        assert _first_op(event)["path"] == "/key"
+        assert _first_op(event)["value"] == "value"
 
     def test_increments_count(self):
         """Increments state_delta_count."""

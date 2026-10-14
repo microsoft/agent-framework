@@ -215,15 +215,9 @@ class PredictiveStateHandler:
         elif self.state_delta_count % 100 == 0:
             logger.info(f"StateDeltaEvent #{self.state_delta_count} emitted")
 
-        return StateDeltaEvent(
-            delta=[
-                {
-                    "op": "replace",
-                    "path": f"/{state_key}",
-                    "value": value,
-                }
-            ],
-        )
+        # A JSON Patch as plain operation dicts: ag-ui-protocol 1.0 validates them into operation models.
+        delta: list[Any] = [{"op": "replace", "path": f"/{state_key}", "value": value}]
+        return StateDeltaEvent(delta=delta)
 
     def apply_pending_updates(self) -> None:
         """Apply pending updates to current state and clear them."""

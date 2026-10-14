@@ -32,7 +32,13 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   without emitting empty text deltas. Provider `raw_representation` is omitted; `AGUIChatClient` restores the
   annotations on text content. These live custom events are not replayed by `MESSAGES_SNAPSHOT`.
 - Inbound custom event aliases are accepted: `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`.
-- Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
+- Multimodal user inputs support both legacy (`text`, `binary`) and AG-UI 1.0 (`image`, `audio`, `video`, `document`) shapes.
+- `ag-ui-protocol` 0.1.x and 1.x are both supported. Build every `RUN_STARTED` with `_build_run_started_event` so it
+  declares `protocolVersion` when the installed SDK has one. Snapshot messages keep media as `binary` parts; pass them
+  through `snapshot_messages_for_wire` when building a `MESSAGES_SNAPSHOT`, which rewrites them to the 1.0 shape when
+  1.0 is installed (1.0 rejects `binary`).
+- A 1.0 `ContentPart[]` tool result becomes the function result's Content items, so media reaches chat clients with
+  rich function output; text-only results stay text.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
 - `Interrupt` and `ResumeEntry` come from the `ag-ui-protocol` package (`ag_ui.core`), not from an Agent Framework-specific interrupt model.
 - Tool approval interrupts, including approvals surfaced through workflow `request_info`, advertise standard

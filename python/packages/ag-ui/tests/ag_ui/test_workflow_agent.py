@@ -24,6 +24,7 @@ from agent_framework import (
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+from agent_framework_ag_ui._message_adapters import snapshot_messages_for_wire
 
 
 class _HitlMessageRequestExecutor(Executor):
@@ -807,7 +808,10 @@ async def test_workflow_hitl_content_reply_survives_snapshot_hydration(workflow_
     hydrated = await _run(agent, {"thread_id": "content-thread", "messages": [], _SNAPSHOT_SCOPE_INPUT_KEY: "scope"})
     replay = next(event for event in hydrated if event.type == "MESSAGES_SNAPSHOT")
     replay_replies = [message for message in replay.messages if message.role == "user" and message.id != "start"]
-    assert [message.model_dump(by_alias=True, exclude_none=True) for message in replay_replies] == user_replies
+    # The wire snapshot carries media in the shape the installed ag-ui-protocol accepts.
+    assert [message.model_dump(by_alias=True, exclude_none=True) for message in replay_replies] == (
+        snapshot_messages_for_wire(user_replies)
+    )
     assert len(handled) == 1
 
 
@@ -931,7 +935,7 @@ async def test_workflow_hitl_resume_dedupes_normalized_current_turn_content(
         for message in replay.messages
         if message.role == "user"
     ]
-    assert replay_users == [message["content"] for message in user_messages]
+    assert replay_users == [message["content"] for message in snapshot_messages_for_wire(user_messages)]
     assert handled == [resume_replies]
 
 

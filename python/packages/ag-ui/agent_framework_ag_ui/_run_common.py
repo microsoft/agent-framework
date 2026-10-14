@@ -24,6 +24,7 @@ from ag_ui.core import (
     ReasoningStartEvent,
     RunFinishedEvent,
     RunFinishedInterruptOutcome,
+    RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -38,6 +39,7 @@ from agent_framework import Content, ResponseStream
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import (
+    _AGUI_PROTOCOL_VERSION,
     _approval_interrupt_id,
     _extract_mcp_tool_result_host_payload,
     _extract_tool_result_marker_values,
@@ -503,6 +505,18 @@ def _approval_interrupt_for_function_call(
         "responseSchema": dict(response_schema or _approval_response_schema(argument_mapping)),
         "metadata": {"agent_framework": agent_framework_metadata},
     }
+
+
+def _build_run_started_event(run_id: str, thread_id: str) -> RunStartedEvent:
+    """Create a RUN_STARTED event that declares the AG-UI protocol version this producer speaks.
+
+    AG-UI 1.0 requires a producer to declare ``protocolVersion`` on the event that opens a run, and the
+    ``ag-ui-protocol`` SDK leaves it unset by default. Releases before 1.0 have no such field, so nothing is
+    declared there. Every RUN_STARTED is built here so no emitter can forget the declaration.
+    """
+    if _AGUI_PROTOCOL_VERSION is None:
+        return RunStartedEvent(run_id=run_id, thread_id=thread_id)
+    return RunStartedEvent(run_id=run_id, thread_id=thread_id, protocol_version=_AGUI_PROTOCOL_VERSION)
 
 
 def _build_run_finished_event(
