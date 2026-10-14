@@ -3444,6 +3444,63 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert resumed.get_outputs() == [5]
 
+    async def test_gather_shield_wrapped_request_info_pauses_and_resumes(self):
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            return await ctx.request_info("y?", int, request_id="y")
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(asyncio.shield(ask())))
+
+        paused = await wf.run(1)
+        resumed = await wf.run(responses={"y": 5})
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert resumed.get_outputs() == [[5]]
+
+    async def test_user_cancellation_after_swallowed_pause_is_not_reclassified(self):
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            return await ctx.request_info("y?", int, request_id="y")
+
+        @built_workflow
+        async def wf(_: int) -> None:
+            await asyncio.gather(ask(), return_exceptions=True)
+            raise asyncio.CancelledError("user cancel")
+
+        with pytest.raises(asyncio.CancelledError):
+            await wf.run(1)
+
+    @pytest.mark.parametrize("mode", ["raise", "cancel"])
+    async def test_empty_root_cancellation_after_swallowed_pause_is_not_reclassified(self, mode: str):
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> None:
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("y?", int, request_id="y")
+            if mode == "cancel":
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+                await asyncio.sleep(0)
+            raise asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await wf.run(1)
+
+    async def test_helper_empty_cancellation_after_swallowed_pause_is_not_reclassified(self):
+        @built_workflow
+        async def wf(_: int, ctx: RunContext) -> None:
+            async def helper() -> None:
+                with suppress(asyncio.CancelledError):
+                    await ctx.request_info("y?", int, request_id="y")
+                raise asyncio.CancelledError
+
+            await helper()
+
+        with pytest.raises(asyncio.CancelledError):
+            await wf.run(1)
+
     async def test_concurrent_unhandled_step_failure_replaces_pause(self):
         ask_started = asyncio.Event()
         fail_started = asyncio.Event()
@@ -3514,6 +3571,188 @@ class TestHITLInStepWithCaching:
 
         with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
+
+    async def test_explicit_sibling_task_cancel_replaces_pause(self):
+        sibling_started = asyncio.Event()
+        interrupting = asyncio.Event()
+        sibling_task: asyncio.Task[str] | None = None
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await sibling_started.wait()
+            interrupting.set()
+            return await ctx.request_info("y?", int, request_id="y")
+
+        @step(replay_key=lambda: "sibling")
+        async def sibling() -> str:
+            nonlocal sibling_task
+            sibling_task = asyncio.current_task()
+            sibling_started.set()
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), sibling()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await interrupting.wait()
+        assert sibling_task is not None
+        sibling_task.cancel("user cancel")
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=5)
+
+    async def test_preexisting_child_cancel_is_not_claimed_by_cleanup(self):
+        sibling_started = asyncio.Event()
+        interrupting = asyncio.Event()
+        release_sibling = asyncio.Event()
+        background_started = asyncio.Event()
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await sibling_started.wait()
+            interrupting.set()
+            return await ctx.request_info("y?", int, request_id="y")
+
+        async def background() -> None:
+            background_started.set()
+            await asyncio.Event().wait()
+
+        @step(replay_key=lambda: "sibling")
+        async def sibling() -> str:
+            sibling_started.set()
+            await release_sibling.wait()
+            background_task = asyncio.create_task(background())
+            await background_started.wait()
+            background_task.cancel("user cancel")
+            return "done"
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), sibling()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await interrupting.wait()
+        release_sibling.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=5)
+
+    async def test_swallowed_child_cancel_can_be_cancelled_by_cleanup(self):
+        sibling_started = asyncio.Event()
+        interrupting = asyncio.Event()
+        release_sibling = asyncio.Event()
+        background_started = asyncio.Event()
+        background_finished = asyncio.Event()
+
+        @step(replay_key=lambda: "ask")
+        async def ask(ctx: RunContext) -> int:
+            await sibling_started.wait()
+            interrupting.set()
+            return await ctx.request_info("y?", int, request_id="y")
+
+        async def background() -> None:
+            background_started.set()
+            with suppress(asyncio.CancelledError):
+                await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                background_finished.set()
+
+        @step(replay_key=lambda: "sibling")
+        async def sibling() -> str:
+            sibling_started.set()
+            await release_sibling.wait()
+            background_task = asyncio.create_task(background())
+            await background_started.wait()
+            background_task.cancel("user cancel")
+            return "done"
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(ask(), sibling()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await interrupting.wait()
+        release_sibling.set()
+        paused = await asyncio.wait_for(run_task, timeout=5)
+
+        assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        assert background_finished.is_set()
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_later_task_cancel_after_swallowed_pause_is_not_suppressed(self):
+        second_started = asyncio.Event()
+        first_swallowed = asyncio.Event()
+        second_interrupting = asyncio.Event()
+        first_task: asyncio.Task[str] | None = None
+
+        @step(replay_key=lambda: "first")
+        async def first(ctx: RunContext) -> str:
+            nonlocal first_task
+            first_task = asyncio.current_task()
+            await second_started.wait()
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("first?", int, request_id="r1")
+            first_swallowed.set()
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        @step(replay_key=lambda: "second")
+        async def second(ctx: RunContext) -> int:
+            second_started.set()
+            await first_swallowed.wait()
+            second_interrupting.set()
+            return await ctx.request_info("second?", int, request_id="r2")
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(first(), second()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await second_interrupting.wait()
+        assert first_task is not None
+        first_task.cancel("user cancel")
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=5)
+
+    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
+    async def test_later_empty_cancellation_after_swallowed_pause_is_not_suppressed(self):
+        second_started = asyncio.Event()
+        first_swallowed = asyncio.Event()
+        second_interrupting = asyncio.Event()
+        release_first = asyncio.Event()
+
+        @step(replay_key=lambda: "first")
+        async def first(ctx: RunContext) -> str:
+            await second_started.wait()
+            with suppress(asyncio.CancelledError):
+                await ctx.request_info("first?", int, request_id="r1")
+            first_swallowed.set()
+            await release_first.wait()
+            raise asyncio.CancelledError
+
+        @step(replay_key=lambda: "second")
+        async def second(ctx: RunContext) -> int:
+            second_started.set()
+            await first_swallowed.wait()
+            second_interrupting.set()
+            return await ctx.request_info("second?", int, request_id="r2")
+
+        @built_workflow
+        async def wf(_: int) -> list[object]:
+            return list(await asyncio.gather(first(), second()))
+
+        run_task = asyncio.ensure_future(wf.run(1))
+        await second_interrupting.wait()
+        await asyncio.sleep(0)
+        release_first.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(run_task, timeout=5)
 
     async def test_concurrent_plain_failure_cancels_hanging_sibling(self):
         hanging_finished = asyncio.Event()
