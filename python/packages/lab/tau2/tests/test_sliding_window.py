@@ -225,7 +225,10 @@ def test_get_token_count_warns_over_max():
             role="user",
             contents=[
                 Content.from_text(
-                    text="hello world, this message is intentionally long so it clearly exceeds the tiny ten token budget"
+                    text=(
+                        "hello world, this message is intentionally long "
+                        "so it clearly exceeds the tiny ten token budget"
+                    )
                 )
             ],
         )
