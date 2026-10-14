@@ -1003,20 +1003,21 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
-    def telemetry_test_tool(x: int, y: int) -> int:
-        """A function that adds two numbers for telemetry testing."""
-        return x + y
+    def telemetry_test_tool(expression: str) -> str:
+        """A function that echoes an expression for telemetry testing."""
+        return expression
 
     # Mock the histogram
     mock_histogram = Mock()
     telemetry_test_tool._invocation_duration_histogram = mock_histogram
     span_exporter.clear()
+    expression = "(12345 + 67890) / 3"
     # Call invoke
-    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    result = await telemetry_test_tool.invoke(expression=expression, tool_call_id="test_call_id")
 
     # Verify result
     assert isinstance(result, list)
-    assert result[0].text == "3"
+    assert result[0].text == expression
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -1028,8 +1029,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"expression": "(12345 + 67890) / 3"}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == expression  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
@@ -1038,6 +1039,9 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert OtelAttr.TOOL_ARGUMENTS not in attributes
+    assert OtelAttr.TOOL_RESULT not in attributes
+    assert expression not in attributes.values()
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -1206,6 +1210,8 @@ async def test_tool_invoke_telemetry_with_exception(
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert OtelAttr.TOOL_ARGUMENTS not in attributes
+    assert OtelAttr.TOOL_RESULT not in attributes
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):

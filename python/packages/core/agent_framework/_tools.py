@@ -1230,7 +1230,9 @@ class FunctionTool(SerializationMixin):
                 logger.debug("Function result: None")
             return parsed
 
-        attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        span_attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
+        metric_attributes = dict(span_attributes)
+        metric_attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
         # Filter out framework kwargs that are not JSON serializable.
         serializable_kwargs = {
             k: v
@@ -1250,13 +1252,12 @@ class FunctionTool(SerializationMixin):
         # as span attributes when that semconv version is active.
         emit_tool_call_attrs = OBSERVABILITY_SETTINGS.emit_tool_call_attributes
         if emit_tool_call_attrs:
-            attributes.update({
+            span_attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
                 )
             })
-        with get_function_span(attributes=attributes) as span:
-            attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
+        with get_function_span(attributes=span_attributes) as span:
             logger.info(f"Function name: {self.name}")
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {serializable_kwargs}")
@@ -1267,7 +1268,7 @@ class FunctionTool(SerializationMixin):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
-                attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 logger.error(f"Function failed. Error: {exception}")
                 raise
@@ -1294,7 +1295,7 @@ class FunctionTool(SerializationMixin):
                         parsed = configured_parser(result)
                     except Exception as exception:
                         self.invocation_exception_count += 1
-                        attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                        metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                             capture_exception(span=span, exception=exception, timestamp=time_ns())
                             logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
@@ -1321,7 +1322,7 @@ class FunctionTool(SerializationMixin):
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
-                self._invocation_duration_histogram.record(duration, attributes=attributes)
+                self._invocation_duration_histogram.record(duration, attributes=metric_attributes)
                 logger.info("Function duration: %fs", duration)
 
     @property
