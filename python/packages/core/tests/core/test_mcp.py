@@ -9461,9 +9461,13 @@ async def test_fetch_task_result_reconnects_during_fetch() -> None:
     assert fetch_calls == 2
 
 
-async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and_cancels() -> None:
-    from anyio import ClosedResourceError
-
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and_cancels(
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_error_detail = "founder-secret-token"
     tool = _make_task_tool()
 
     cancel_called = False
@@ -9476,7 +9480,12 @@ async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and
         if method == "tasks/get":
             return _make_task_snapshot(task_id="r2", status="completed")
         if method == "tasks/result":
-            raise ClosedResourceError
+            raise McpError(
+                types.ErrorData(
+                    code=types.INTERNAL_ERROR,
+                    message=f"session terminated: {private_error_detail}",
+                )
+            )
         if method == "tasks/cancel":
             cancel_called = True
             return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
@@ -9486,9 +9495,16 @@ async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and
 
     with (
         patch.object(MCPTool, "connect", new=AsyncMock(return_value=None)),
-        pytest.raises(ToolExecutionException, match="task state unknown"),
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException, match="task state unknown") as exc_info,
     ):
         await tool.call_tool("slow_op")
+
+    from agent_framework import _mcp as _mcp_module
+
+    assert isinstance(exc_info.value, _mcp_module._MCPTaskAbandoned)
+    assert private_error_detail in str(exc_info.value.args[1])
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
 
     # Drain the fire-and-forget cancel so the assertion is deterministic.
     pending = list(tool._pending_reload_tasks)
@@ -9630,13 +9646,18 @@ async def test_call_tool_as_task_poll_transient_request_timeout_keeps_polling(
     assert cancel_called is False
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
     monkeypatch: pytest.MonkeyPatch,
+    span_exporter: Any,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from agent_framework import _mcp as _mcp_module
 
     monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
 
+    private_error_detail = "founder-secret-token"
     tool = _make_task_tool()
 
     cancel_called = False
@@ -9647,7 +9668,12 @@ async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
         if method == "tools/call":
             return _make_create_task_result(task_id="h1")
         if method == "tasks/get":
-            raise McpError(types.ErrorData(code=types.INVALID_PARAMS, message="bad task id"))
+            raise McpError(
+                types.ErrorData(
+                    code=types.INVALID_PARAMS,
+                    message=f"bad task id: {private_error_detail}",
+                )
+            )
         if method == "tasks/cancel":
             cancel_called = True
             return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
@@ -9655,8 +9681,15 @@ async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
 
     tool.session.send_request = AsyncMock(side_effect=fake_send)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
-    with pytest.raises(ToolExecutionException, match="bad task id"):
+    with (
+        caplog.at_level(logging.DEBUG, logger="agent_framework"),
+        pytest.raises(ToolExecutionException, match="bad task id") as exc_info,
+    ):
         await tool.call_tool("slow_op")
+
+    assert isinstance(exc_info.value, _mcp_module._MCPTaskAbandoned)
+    assert private_error_detail in str(exc_info.value)
+    assert (private_error_detail in caplog.text) is enable_sensitive_data
 
     pending = list(tool._pending_reload_tasks)
     if pending:

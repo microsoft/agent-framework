@@ -76,6 +76,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _mcp_exception_log_level() -> Literal[10] | None:
+    """Return the automatic exception log level allowed by observability settings."""
+    from .observability import OBSERVABILITY_SETTINGS
+
+    return 10 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None
+
+
 def _log_mcp_exception(
     level: int,
     exception: BaseException,
@@ -111,12 +118,10 @@ def _mcp_tool_exception(
     inner_exception: Exception | None = None,
 ) -> ToolException:
     """Create an MCP tool lifecycle exception without leaking details through automatic logs."""
-    from .observability import OBSERVABILITY_SETTINGS
-
     return ToolException(
         message,
         inner_exception=inner_exception,
-        log_level=10 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None,
+        log_level=_mcp_exception_log_level(),
     )
 
 
@@ -125,12 +130,10 @@ def _mcp_tool_execution_exception(
     inner_exception: Exception | None = None,
 ) -> ToolExecutionException:
     """Create an MCP tool exception without leaking details through automatic logs."""
-    from .observability import OBSERVABILITY_SETTINGS
-
     return ToolExecutionException(
         message,
         inner_exception=inner_exception,
-        log_level=10 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED else None,
+        log_level=_mcp_exception_log_level(),
     )
 
 
@@ -804,6 +807,14 @@ class _MCPTaskAbandoned(ToolExecutionException):
 
     Subclass of ToolExecutionException so callers see a normal tool failure.
     """
+
+    def __init__(self, message: str, inner_exception: Exception | None = None) -> None:
+        """Create an abandonment exception without leaking details through automatic logs."""
+        super().__init__(
+            message,
+            inner_exception=inner_exception,
+            log_level=_mcp_exception_log_level(),
+        )
 
 
 class _MCPDeadlineExpired(Exception):
