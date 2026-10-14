@@ -12688,7 +12688,8 @@ async def test_endpoint_canonical_resume_preserves_hosted_approval_for_provider(
         call_id=call_id,
         name="docs_search",
         arguments={"query": "azure"},
-        additional_properties={"server_label": server_label},
+        hosted=True,
+        server_name=server_label,
     )
 
     def docs_search(query: str) -> str:
@@ -12772,7 +12773,9 @@ async def test_endpoint_canonical_resume_preserves_hosted_approval_for_provider(
     assert approval_responses[0].id == call_id
     assert approval_responses[0].approved is True
     assert approval_responses[0].function_call is not None
-    assert approval_responses[0].function_call.additional_properties["server_label"] == server_label
+    assert approval_responses[0].function_call.hosted is True
+    assert approval_responses[0].function_call.server_name == server_label
+    assert "server_label" not in approval_responses[0].function_call.additional_properties
 
     retry_response = client.post(
         "/approval",

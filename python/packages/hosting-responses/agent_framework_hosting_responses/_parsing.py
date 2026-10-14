@@ -21,7 +21,15 @@ from collections.abc import AsyncIterator, Iterator, Mapping, MutableMapping, Se
 from copy import copy
 from typing import Any, Literal, cast
 
-from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    ChatOptions,
+    Content,
+    Message,
+    ResponseStream,
+    get_namespaced_value,
+)
 from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
@@ -69,13 +77,39 @@ _STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
+
+
+def _openai_value(content: Content, key: str, *legacy_keys: str, default: Any = None) -> Any:
+    value = get_namespaced_value(content.additional_properties, "openai", key, None)
+    if value is not None:
+        return value
+    for legacy_key in legacy_keys:
+        if legacy_key in content.additional_properties:
+            return content.additional_properties[legacy_key]
+    return default
 
 
 def _code_interpreter_projection_key(content: Content) -> tuple[str, str] | None:
     if content.type not in {"code_interpreter_tool_call", "code_interpreter_tool_result"}:
         return None
-    call_id = content.call_id or content.additional_properties.get("item_id")
+    call_id = content.call_id or _openai_value(content, "item_id", "item_id")
     if not isinstance(call_id, str) or not call_id:
         return None
     return content.type, call_id
@@ -101,7 +135,7 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
             raise ValueError("refusal requires a non-empty string `refusal`")
         return Content.from_text(
             text=refusal,
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
     if item_type == "input_image":
         image_url: Any = item.get("image_url")
@@ -109,18 +143,49 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
             image_url = cast("Mapping[str, Any]", image_url).get("url")
         if not isinstance(image_url, str) or not image_url:
             raise ValueError("input_image requires a non-empty string `image_url`")
-        return Content.from_uri(uri=image_url, media_type=None if image_url.startswith("data:image/") else "image/*")
+        detail = item.get("detail")
+        return Content.from_uri(
+            uri=image_url,
+            media_type=None if image_url.startswith("data:image/") else "image/*",
+            additional_properties={
+                "openai": {
+                    "content_type": "input_image",
+                    **({"image_detail": detail} if isinstance(detail, str) else {}),
+                },
+                "openai_content_type": "input_image",
+                **({"detail": detail} if isinstance(detail, str) else {}),
+            },
+        )
     if item_type == "input_file":
         file_url = item.get("file_url")
         if file_url is not None:
             if not isinstance(file_url, str) or not file_url:
                 raise ValueError("input_file `file_url` must be a non-empty string")
-            return Content.from_uri(uri=file_url, media_type=item.get("mime_type"))
+            filename = item.get("filename")
+            return Content.from_uri(
+                uri=file_url,
+                media_type=item.get("mime_type"),
+                name=filename if isinstance(filename, str) else None,
+                additional_properties={
+                    "openai": {"content_type": "input_file"},
+                    "openai_content_type": "input_file",
+                    **({"filename": filename} if isinstance(filename, str) else {}),
+                },
+            )
         file_id = item.get("file_id")
         if file_id is not None:
             if not isinstance(file_id, str) or not file_id:
                 raise ValueError("input_file `file_id` must be a non-empty string")
-            return Content(type="hosted_file", file_id=file_id)
+            filename = item.get("filename")
+            return Content.from_hosted_file(
+                file_id=file_id,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties={
+                    "openai": {"content_type": "input_file"},
+                    "openai_content_type": "input_file",
+                    **({"filename": filename} if isinstance(filename, str) else {}),
+                },
+            )
         raise ValueError("input_file requires a non-empty string `file_url` or `file_id`")
     raise ValueError(f"Unsupported Responses input content type: {item_type!r}")
 
@@ -764,12 +829,12 @@ def _function_call_output_item(content: Content, *, status: str) -> ResponseOutp
     return cast(
         ResponseOutputItem,
         ResponseFunctionToolCall(
-            id=content.additional_properties.get("fc_id") if content.additional_properties else None,
+            id=_openai_value(content, "item_id", "fc_id"),
             type="function_call",
             call_id=content.call_id or f"call_{uuid.uuid4().hex}",
             name=content.name or "tool",
             arguments=_arguments_to_str(content.arguments),
-            status=_message_status(status),  # type: ignore[arg-type]
+            status=_message_status(content.status or status),  # type: ignore[arg-type]
         ),
     )
 
@@ -794,7 +859,7 @@ def _function_result_output_item(content: Content, *, status: str) -> ResponseOu
     return cast(
         ResponseOutputItem,
         ResponseFunctionToolCallOutputItem(
-            id=f"fcout_{uuid.uuid4().hex}",
+            id=_content_item_id(content) or f"fcout_{uuid.uuid4().hex}",
             type="function_call_output",
             call_id=content.call_id or f"call_{uuid.uuid4().hex}",
             output=output,
@@ -875,7 +940,7 @@ def _mcp_result_output_item(content: Content, *, status: str) -> ResponseOutputI
 
 def _shell_call_output_item(content: Content, *, status: str) -> ResponseOutputItem:
     return _response_output_item({
-        "id": content.additional_properties.get("item_id") or f"shell_{uuid.uuid4().hex}",
+        "id": _openai_value(content, "item_id", "item_id") or f"shell_{uuid.uuid4().hex}",
         "type": "shell_call",
         "call_id": content.call_id or f"call_{uuid.uuid4().hex}",
         "action": {
@@ -899,7 +964,7 @@ def _shell_result_output_item(content: Content, *, status: str) -> ResponseOutpu
             outputs.append({"stdout": item.stdout or "", "stderr": item.stderr or "", "outcome": outcome})
 
     return _response_output_item({
-        "id": content.additional_properties.get("item_id") or f"shellout_{uuid.uuid4().hex}",
+        "id": _openai_value(content, "item_id", "item_id") or f"shellout_{uuid.uuid4().hex}",
         "type": "shell_call_output",
         "call_id": content.call_id or f"call_{uuid.uuid4().hex}",
         "output": outputs,
@@ -913,11 +978,9 @@ def _function_approval_request_output_item(content: Content) -> ResponseOutputIt
     return _response_output_item({
         "id": content.id or f"approval_{uuid.uuid4().hex}",
         "type": "mcp_approval_request",
-        "server_label": (
-            function_call.additional_properties.get("server_label", "agent_framework")
-            if function_call is not None
-            else "agent_framework"
-        ),
+        "server_label": function_call.server_name
+        if function_call is not None and function_call.server_name
+        else "agent_framework",
         "name": function_call.name if function_call is not None and function_call.name else "tool",
         "arguments": _arguments_to_str(function_call.arguments if function_call is not None else None),
     })
@@ -992,21 +1055,24 @@ def _image_generation_content_result(content: Content) -> str | None:
 
 
 def _content_item_id(content: Content, result_content: Content | None = None) -> str | None:
-    item_id = content.additional_properties.get("item_id")
+    item_id = _openai_value(content, "item_id", "item_id")
     if isinstance(item_id, str) and item_id:
         return item_id
     if result_content is not None:
-        result_item_id = result_content.additional_properties.get("item_id")
+        result_item_id = _openai_value(result_content, "item_id", "item_id")
         if isinstance(result_item_id, str) and result_item_id:
             return result_item_id
-    return content.call_id or (result_content.call_id if result_content is not None else None)
+    return None
 
 
 def _content_property(content: Content, result_content: Content | None, key: str) -> Any:
-    if key in content.additional_properties:
-        return content.additional_properties[key]
-    if result_content is not None and key in result_content.additional_properties:
-        return result_content.additional_properties[key]
+    value = _openai_value(content, key, key)
+    if value is not None:
+        return value
+    if result_content is not None:
+        value = _openai_value(result_content, key, key)
+        if value is not None:
+            return value
     return None
 
 
@@ -1177,6 +1243,21 @@ async def responses_from_streaming_run(
         if part_type == "refusal":
             return {"type": "refusal", "refusal": text}
         return {"type": "output_text", "text": text, "annotations": []}
+
+    def consume_text_update(text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        nonlocal content_text
+        if merge_mode != "replace":
+            content_text += text
+            return text
+
+        previous = content_text
+        if text.startswith(previous):
+            content_text = text
+            return text[len(previous) :]
+        if not previous:
+            content_text = text
+            return text
+        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
 
     def close_content_part() -> list[str]:
         nonlocal content_type, content_text
@@ -1379,8 +1460,8 @@ async def responses_from_streaming_run(
                     for stream_event in close_content_part():
                         yield stream_event
                     yield open_content_part(requested_content_type)
-                content_text += text
-                if not text:
+                delta = consume_text_update(text, content.merge_mode)
+                if not delta:
                     continue
                 delta_type = (
                     "response.refusal.delta" if requested_content_type == "refusal" else "response.output_text.delta"
@@ -1389,7 +1470,7 @@ async def responses_from_streaming_run(
                     "item_id": message_id,
                     "output_index": output_index,
                     "content_index": content_index,
-                    "delta": text,
+                    "delta": delta,
                 }
                 if requested_content_type == "output_text":
                     delta_payload["logprobs"] = []

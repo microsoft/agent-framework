@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
+from agent_framework import get_namespaced_value
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import SettingNotFoundError
@@ -55,9 +56,39 @@ AzureTokenProvider = Callable[[], str | Awaitable[str]]
 
 
 PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+OPENAI_ADDITIONAL_PROPS_NAMESPACE = "openai"
+_MISSING = object()
 
 
 MP3_MEDIA_TYPES = frozenset({"audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"})
+
+
+def _get_openai_metadata(  # pyright: ignore[reportUnusedFunction]
+    additional_properties: Mapping[str, Any] | None,
+    key: str,
+    *legacy_keys: str,
+    default: Any = None,
+) -> Any:
+    """Read OpenAI metadata from its namespace, then legacy flat keys."""
+    value = get_namespaced_value(additional_properties, OPENAI_ADDITIONAL_PROPS_NAMESPACE, key, _MISSING)
+    if value is not _MISSING:
+        return value
+    for legacy_key in legacy_keys:
+        if additional_properties and legacy_key in additional_properties:
+            return additional_properties[legacy_key]
+    return default
+
+
+def _openai_additional_properties(  # pyright: ignore[reportUnusedFunction]
+    values: Mapping[str, Any],
+    *,
+    legacy: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build namespaced OpenAI metadata with optional legacy compatibility keys."""
+    return {
+        OPENAI_ADDITIONAL_PROPS_NAMESPACE: dict(values),
+        **dict(legacy or {}),
+    }
 
 
 def _is_mp3_media_type(  # pyright: ignore[reportUnusedFunction]
@@ -87,10 +118,16 @@ def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
 
     GPT-5.6 and later models accept an explicit cache breakpoint on supported content
     blocks; users opt in per part via
-    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    ``Content.additional_properties["core"]["prompt_cache_breakpoint"]``.
+    The legacy top-level key remains readable.
     """
     props = content.additional_properties
-    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    breakpoint_value = get_namespaced_value(
+        props,
+        "core",
+        PROMPT_CACHE_BREAKPOINT_KEY,
+        props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None,
+    )
     if isinstance(breakpoint_value, Mapping):
         part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
     return part

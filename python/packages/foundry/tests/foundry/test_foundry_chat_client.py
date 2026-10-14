@@ -656,6 +656,44 @@ def test_streaming_stateless_replay_prefers_completed_foundry_reasoning_item() -
     }
 
 
+async def test_stateless_replay_accepts_canonical_foundry_reasoning_metadata() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_canonical",
+        "response_id": "resp_canonical",
+        "summary": [],
+        "content": [],
+    }
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_canonical",
+                    text="",
+                    additional_properties={"foundry": {"reasoning_item": reasoning_item}},
+                ),
+                Content.from_function_call(
+                    call_id="call_canonical",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_canonical", result="probe-result-step-1")],
+        ),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"][0] == reasoning_item
+
+
 async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> None:
     project_client = MagicMock()
     project_client.get_openai_client.return_value = _make_mock_openai_client()
