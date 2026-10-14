@@ -11,6 +11,7 @@ available in CI / dev sandboxes).
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -459,6 +460,35 @@ def test_as_function_carries_shell_kind():
         or getattr(fn, "kind", None) == SHELL_TOOL_KIND_VALUE
         or SHELL_TOOL_KIND_VALUE in str(getattr(fn, "_kind", ""))
     )
+
+
+async def test_as_function_preserves_structured_shell_result() -> None:
+    shell_result = ShellResult(
+        stdout="container output",
+        stderr="container error",
+        exit_code=7,
+        duration_ms=25,
+    )
+    tool = DockerShellTool(mode="stateless")
+
+    with patch.object(tool, "run", AsyncMock(return_value=shell_result)):
+        function = tool.as_function()
+        result = await function.invoke(arguments={"command": "ignored"})
+        raw_result = await function.invoke(arguments={"command": "ignored"}, skip_parsing=True)
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == shell_result.format_for_model()
+    assert result[0].additional_properties == {
+        "stdout": "container output",
+        "stderr": "container error",
+        "exit_code": 7,
+        "truncated": False,
+        "timed_out": False,
+    }
+    assert isinstance(raw_result, str)
+    assert raw_result == shell_result.format_for_model()
+    assert json.loads(json.dumps(raw_result)) == shell_result.format_for_model()
 
 
 async def test_start_and_close_are_noops_in_stateless_mode() -> None:

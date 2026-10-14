@@ -141,7 +141,7 @@ def add_agent_framework_fastapi_endpoint(
             path. Keepalive comments are transport traffic and do not change AG-UI events.
         a2ui_config: Optional backend A2UI config used when the runtime auto-injects
             the surface-generation tool (``forwardedProps.injectA2UITool``). Keys:
-            ``inject_a2ui_tool`` (backend opt-in override), ``default_catalog_id``,
+            ``inject_a2ui_tool`` (required backend opt-in), ``default_catalog_id``,
             ``catalog``, ``guidelines``, ``recovery``, ``default_surface_id``.
         detached_runs: Whether agent/workflow execution continues after the SSE client disconnects. Defaults to False.
             When enabled, the endpoint owns a bounded background producer and completes runner persistence even if the
@@ -288,13 +288,8 @@ def add_agent_framework_fastapi_endpoint(
                     async for event in protocol_runner.run(input_data):
                         event_count += 1
                         event_type_name = getattr(event, "type", type(event).__name__)
-                        # Log important events at INFO level
                         if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
-                            if hasattr(event, "model_dump"):
-                                event_data = event.model_dump(exclude_none=True)
-                                logger.info(f"[{path}] Event {event_count}: {event_type_name} - {event_data}")
-                            else:
-                                logger.info(f"[{path}] Event {event_count}: {event_type_name}")
+                            logger.info("[%s] Event %d: %s", path, event_count, event_type_name)
 
                         try:
                             encoded = encoder.encode(event)

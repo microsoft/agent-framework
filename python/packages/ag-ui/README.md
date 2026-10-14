@@ -8,6 +8,14 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 pip install agent-framework-ag-ui
 ```
 
+The base package supports Python 3.10–3.15. The optional A2UI integration
+currently supports Python 3.10–3.14 because `ag-ui-a2ui-toolkit` declares
+`Requires-Python <3.15`:
+
+```bash
+pip install "agent-framework-ag-ui[a2ui]"
+```
+
 ## Quick Start
 
 ### Server (Host an AI Agent)
@@ -118,6 +126,42 @@ through `http_client`. Supplied clients retain their headers, cookies, timeout, 
 and response-cookie handling, and must be closed by the caller. Scope a cookie-bearing
 client to a single authenticated principal; do not share it across users. AG-UI thread IDs
 are correlation identifiers, not authentication boundaries.
+
+## Citations and annotations
+
+Text content carrying `Content.annotations` emits a message-linked `CUSTOM` event named `annotations`.
+This includes annotation-only updates received after the response text, such as SharePoint grounding
+citations from the Responses API. The event arrives before `RUN_FINISHED` and does not repeat response text:
+
+```json
+{
+  "type": "CUSTOM",
+  "name": "annotations",
+  "value": {
+    "messageId": "assistant-message-id",
+    "annotations": [
+      {
+        "type": "citation",
+        "title": "Document",
+        "url": "https://example.sharepoint.com/document.pdf",
+        "annotated_regions": [
+          {"type": "text_span", "start_index": 0, "end_index": 6}
+        ]
+      }
+    ]
+  }
+}
+```
+
+Each event contains a batch of newly emitted annotations for the indicated text message. Frontends can
+append those annotations to that message and use the citation URL, title, or file ID to render sources.
+Framework annotation fields and additional properties are retained, but provider `raw_representation`
+objects are omitted.
+
+`AGUIChatClient` restores these batches as `Content.annotations` in streaming updates and aggregated
+responses, while retaining the custom-event payload in `update.additional_properties["ag_ui_custom_event"]`.
+Custom events are live run metadata: citation rendering and persistence alongside frontend message history
+remain application responsibilities; `MESSAGES_SNAPSHOT` does not restore these custom events.
 
 ## Tool Return Helpers
 
@@ -469,8 +513,10 @@ shared multi-tenant deployment, even with a trusted resolver. Keep it disabled w
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
 values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
-Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
-into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+Keys owned by configured context providers or reserved for approval, message-injection, and standalone FIDES security
+middleware are not copied into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+A custom FIDES `session_state_key` is protected when its middleware is visible on the agent or its client before the
+run; use `SecureAgentConfig` for middleware that a context provider injects later.
 
 When scoped snapshots are configured, each category has one State Authority:
 

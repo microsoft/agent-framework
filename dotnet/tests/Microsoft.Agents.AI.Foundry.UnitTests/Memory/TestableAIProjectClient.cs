@@ -88,9 +88,9 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
         this._searchMemoriesResponse = searchMemoriesResponse ?? """{"memories":[]}""";
         this._updateMemoriesResponse = updateMemoriesResponse ?? """{"update_id":"test-update-id","status":"queued"}""";
         this._searchStatusCode = searchStatusCode ?? HttpStatusCode.OK;
-        this._updateStatusCode = updateStatusCode ?? HttpStatusCode.OK;
-        this._deleteStatusCode = deleteStatusCode ?? HttpStatusCode.NoContent;
-        this._createStoreStatusCode = createStoreStatusCode ?? HttpStatusCode.Created;
+        this._updateStatusCode = updateStatusCode ?? HttpStatusCode.Accepted;
+        this._deleteStatusCode = deleteStatusCode ?? HttpStatusCode.OK;
+        this._createStoreStatusCode = createStoreStatusCode ?? HttpStatusCode.OK;
         this._getStoreStatusCode = getStoreStatusCode ?? HttpStatusCode.NotFound;
     }
 
@@ -115,27 +115,27 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
         string path = request.RequestUri?.AbsolutePath ?? "";
 
         // Route based on path and method
-        if (path.Contains("/memory-stores/") && path.Contains("/search") && request.Method == HttpMethod.Post)
+        if (path.Contains("/memory_stores/") && path.Contains(":search_memories") && request.Method == HttpMethod.Post)
         {
             return CreateResponse(this._searchStatusCode, this._searchMemoriesResponse);
         }
 
-        if (path.Contains("/memory-stores/") && path.Contains("/memories") && request.Method == HttpMethod.Post)
+        if (path.Contains("/memory_stores/") && path.EndsWith(":update_memories", StringComparison.Ordinal) && request.Method == HttpMethod.Post)
         {
             return CreateResponse(this._updateStatusCode, this._updateMemoriesResponse);
         }
 
-        if (path.Contains("/memory-stores/") && path.Contains("/scopes") && request.Method == HttpMethod.Delete)
+        if (path.Contains("/memory_stores/") && path.EndsWith(":delete_scope", StringComparison.Ordinal) && request.Method == HttpMethod.Post)
         {
-            return CreateResponse(this._deleteStatusCode, "");
+            return CreateResponse(this._deleteStatusCode, """{"object":"memory_store.scope.deleted","name":"test-store","scope":"test-scope","deleted":true}""");
         }
 
-        if (path.Contains("/memory-stores") && request.Method == HttpMethod.Post)
+        if (path.EndsWith("/memory_stores", StringComparison.Ordinal) && request.Method == HttpMethod.Post)
         {
             return CreateResponse(this._createStoreStatusCode, """{"name":"test-store","status":"active"}""");
         }
 
-        if (path.Contains("/memory-stores/") && request.Method == HttpMethod.Get)
+        if (path.Contains("/memory_stores/") && request.Method == HttpMethod.Get)
         {
             return CreateResponse(this._getStoreStatusCode, """{"name":"test-store","status":"active"}""");
         }

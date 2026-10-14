@@ -2,9 +2,10 @@
 
 
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -25,6 +26,12 @@ from azure.ai.agentserver.core.storage import (
 from ._scope import FoundryRequestScope
 
 StoreT = TypeVar("StoreT")
+
+
+def _encoded_checkpoint_hash(value: Any) -> str:
+    """Hash the exact JSON-compatible representation acknowledged by storage."""
+    payload = json.dumps(value, sort_keys=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _store_scope(config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FoundryRequestScope | None:
@@ -148,6 +155,14 @@ class FoundryCheckpointStore:
             await store.set_item(checkpoint.checkpoint_id, encoded_checkpoint, call_id=self.platform_context.call_id)
             return checkpoint.checkpoint_id
 
+    async def _load_encoded(self, checkpoint_id: CheckpointID) -> Any:
+        store = await self._get_store()
+        async with store:
+            item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
+        if item is None:
+            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
+        return item.value
+
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
         """Load a workflow checkpoint from the store.
 
@@ -162,12 +177,21 @@ class FoundryCheckpointStore:
         """
         from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
 
-        store = await self._get_store()
-        async with store:
-            item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
-        if item is None:
-            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
-        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value, allowed_types=self._allowed_types))
+        encoded = await self._load_encoded(checkpoint_id)
+        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(encoded, allowed_types=self._allowed_types))
+
+    async def load_with_hash(self, checkpoint_id: CheckpointID) -> tuple[WorkflowCheckpoint, str]:
+        """Load a checkpoint and hash its exact persisted encoding.
+
+        Pickle is not a canonical serialization across Python versions or repeated
+        encodes. Hashing the acknowledged storage value preserves exact tamper
+        detection without rejecting an unchanged checkpoint after deserialization.
+        """
+        from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
+
+        encoded = await self._load_encoded(checkpoint_id)
+        checkpoint = WorkflowCheckpoint.from_dict(decode_checkpoint_value(encoded, allowed_types=self._allowed_types))
+        return checkpoint, _encoded_checkpoint_hash(encoded)
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List all workflow checkpoints for a given workflow name."""
@@ -232,6 +256,22 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         """
         self._allowed_checkpoint_types = allowed_checkpoint_types
 
+    def validate_checkpoint_value(self, value: object) -> None:
+        """Verify a value can round-trip through this provider's restricted decoder.
+
+        Native hosts use this before claiming a stored typed workflow turn so an
+        omitted application allowlist fails before executors or tools run.
+        """
+        from agent_framework._workflows._checkpoint_encoding import (
+            decode_checkpoint_value,
+            encode_checkpoint_value,
+        )
+
+        decode_checkpoint_value(
+            encode_checkpoint_value(value),
+            allowed_types=frozenset(self._allowed_checkpoint_types or ()),
+        )
+
     def get_store(
         self,
         *,
@@ -243,11 +283,34 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
+        return self.get_store_for_scope(
+            context_id=context_id,
+            platform_context=platform_context,
+            scope=_store_scope(config, platform_context),
+        )
+
+    def get_store_for_scope(
+        self,
+        *,
+        scope: FoundryRequestScope | None,
+        context_id: str,
+        platform_context: FoundryAgentRequestContext,
+    ) -> CheckpointStorage:
+        """Create a checkpoint store using a host's already validated scope.
+
+        Native hosts use this after protocol-specific identity resolution.
+        ``get_store`` retains its strict configuration-based scope validation.
+
+        Args:
+            scope: Trusted user and sandbox scope resolved by the protocol host.
+            context_id: Native workflow lineage's checkpoint collection.
+            platform_context: The current request's storage authorization context.
+        """
         return FoundryCheckpointStore(
             context_id,
             platform_context,
             allowed_checkpoint_types=self._allowed_checkpoint_types,
-            scope=_store_scope(config, platform_context),
+            scope=scope,
         )
 
 

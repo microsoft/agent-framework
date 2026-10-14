@@ -11,12 +11,13 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, Message, ResponseStream
 from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
 )
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -547,6 +548,74 @@ async def test_get_response_model_from_response() -> None:
     assert response.model == "gemini-2.5-pro-002"
 
 
+async def test_get_response_streaming_model_from_chunk() -> None:
+    """Populates the update model from the model_version field on each chunk."""
+    client, mock = _make_gemini_client()
+    chunks = [_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_streaming_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when a chunk carries no model_version."""
+    client, mock = _make_gemini_client()
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-flash"
+
+
+async def test_get_response_streaming_model_falls_back_to_requested_model() -> None:
+    """Falls back to the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro"
+
+
+async def test_get_response_streaming_keeps_model_version_seen_earlier() -> None:
+    """A later chunk without model_version must not replace a version already seen in the stream."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    first = _make_response([_make_part(text="Hi")], finish_reason=None, model_version="gemini-2.5-pro-002")
+    last = _make_response([_make_part(text="!")], finish_reason="STOP")
+    last.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([first, last]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.model for update in updates] == ["gemini-2.5-pro-002", "gemini-2.5-pro-002"]
+    assert final.model == "gemini-2.5-pro-002"
+
+
 async def test_get_response_uses_model_from_options() -> None:
     """Uses the model specified in options, overriding the client's default."""
     client, mock = _make_gemini_client(model="gemini-2.5-flash")
@@ -691,6 +760,12 @@ async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chu
     updates = [update async for update in stream]
 
     assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert all(
+        content.merge_mode == "append" for update in updates for content in update.contents if content.type == "text"
+    )
+    assert all(
+        content.merge_mode == "replace" for update in updates for content in update.contents if content.type == "usage"
+    )
     assert any(c.type == "usage" for c in updates[-1].contents)
 
 
@@ -1217,6 +1292,7 @@ def test_server_side_tool_call_part_is_informational_only() -> None:
     assert contents[0].name == "FILE_SEARCH"
     assert contents[0].parse_arguments() == {"query": "docs"}
     assert contents[0].informational_only is True
+    assert contents[0].hosted is True
 
 
 def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
@@ -1241,6 +1317,38 @@ def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
     assert parts[0].tool_call.id == "search-1"
     assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
     assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_replays_from_first_class_fields_without_raw_part() -> None:
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = client._parse_parts([raw_part])[0]
+    content.raw_representation = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_rejects_unsupported_replay_tool_name() -> None:
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="UNKNOWN_SERVER_TOOL",
+        arguments={"query": "docs"},
+        informational_only=True,
+        hosted=True,
+    )
+
+    with pytest.raises(ContentError, match="supported tool name"):
+        client._convert_message_contents([content], {})
 
 
 def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
@@ -2927,3 +3035,26 @@ async def test_integration_code_execution() -> None:
 
     assert response.messages
     assert response.messages[0].text
+
+
+async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
+    """Stopping early must close the Gemini SDK stream instead of leaving it to garbage collection."""
+    closed = False
+
+    async def sdk_stream():
+        nonlocal closed
+        try:
+            yield _make_response([_make_part(text="first")], finish_reason=None)
+            yield _make_response([_make_part(text="second")])
+        finally:
+            closed = True
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=sdk_stream())
+    stream = client._inner_get_response(messages=[Message(role="user", contents=["hello"])], options={}, stream=True)
+    assert isinstance(stream, ResponseStream)
+    async with stream:
+        async for _ in stream:
+            break
+
+    assert closed

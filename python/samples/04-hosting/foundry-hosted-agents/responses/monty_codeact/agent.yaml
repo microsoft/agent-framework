@@ -12,4 +12,4 @@ environment_variables:
   - name: ENABLE_INSTRUMENTATION
     value: "true"
   - name: ENABLE_SENSITIVE_DATA
-    value: "true"
+    value: "false"
