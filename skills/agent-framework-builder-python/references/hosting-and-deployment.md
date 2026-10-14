@@ -139,17 +139,9 @@ the application did not intend to use.
 
 ## Deploy a hosted agent to Microsoft Foundry
 
-After local readiness is proven, follow the Foundry Hosted Agent deployment flow rather than inventing manifests or
-infrastructure files:
-
-1. Start from a compatible `agent.manifest.yaml` for the selected Responses or Invocations host.
-2. Initialize the deployment project with `azd ai agent init -m <manifest-url>`.
-3. Run `azd provision` only when the required Foundry project, model deployment, registry, and monitoring resources do
-   not already exist.
-4. Test the host locally with `azd ai agent run` and `azd ai agent invoke --local`.
-5. Deploy with `azd deploy`.
-
-Use these instructions according to the scenario:
+Foundry deployment commands, manifests, prerequisites, injected environment variables, and supported deployment paths
+change independently from Agent Framework. Do not reproduce or infer them from memory. After local readiness is proven,
+open the current authoritative guide for the scenario:
 
 - [Agent Framework: Foundry hosted agents and deployment](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent#deploying-to-foundry)
 - [Foundry quickstart: deploy your first hosted agent with azd](https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent)
@@ -159,9 +151,8 @@ Use these instructions according to the scenario:
 - [Manage deployed hosted agents](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent)
 - [Agent Framework hosted-agent sample deployment instructions](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents#deploying-the-agent-to-foundry)
 
-Use dedicated Foundry tooling for provisioning, deployment, invocation, traces, RBAC, quota, capacity, and
-troubleshooting. Host manifests and runtime environment variables are deployment contracts; copy them from the current
-guide or sample for the selected protocol instead of constructing them from memory.
+Use the selected guide or sample as the source of truth for `azd`, provisioning, deployment, invocation, traces, RBAC,
+quota, capacity, troubleshooting, manifests, and runtime configuration.
 
 Current examples:
 

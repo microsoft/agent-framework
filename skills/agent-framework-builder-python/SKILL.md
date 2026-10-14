@@ -71,6 +71,15 @@ relying on remembered preview-era syntax.
 Use local guidance for stable decisions and common patterns. For provider matrices, package maturity, hosted tools,
 deployment details, or unfamiliar APIs, consult current sources before generating code:
 
+When the coding agent supports MCP, configure the Microsoft Learn MCP Server as a Streamable HTTP server:
+
+```text
+https://learn.microsoft.com/api/mcp
+```
+
+See [Microsoft Learn MCP Server setup](https://learn.microsoft.com/training/support/mcp-get-started) for client
+configuration. The endpoint is for MCP clients and returns an error when opened directly in a browser.
+
 1. Search Microsoft Learn with `microsoft_docs_search`.
 2. Fetch the relevant page with `microsoft_docs_fetch`.
 3. Use `microsoft_code_sample_search` when a current implementation example is needed.
