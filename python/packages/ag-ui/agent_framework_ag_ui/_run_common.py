@@ -41,6 +41,7 @@ from ._utils import (
     _approval_interrupt_id,
     _extract_mcp_tool_result_host_payload,
     _extract_tool_result_marker_values,
+    _function_call_is_hosted,
     _mcp_host_history_fields,
     _model_items_for_agui_replay,
     _stringify_tool_result,
@@ -997,7 +998,7 @@ def _emit_approval_request(
         )
     )
     if interrupt_id:
-        response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
+        response_schema = _approval_response_schema() if _function_call_is_hosted(func_call) else None
         flow.interrupts.append(
             _approval_interrupt_for_function_call(
                 interrupt_id=str(interrupt_id),

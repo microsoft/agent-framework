@@ -53,6 +53,10 @@ pip install "agent-framework-lab[tau2]"
 pip install "agent-framework-lab[lightning]"
 ```
 
+Lab currently supports Python 3.10–3.14. The GAIA extra depends on a PyArrow
+release without Python 3.15 wheels, while the Tau2 dependency chain includes
+`cachebox` 5.x, whose PyO3 version rejects Python 3.15 builds.
+
 ## Usage
 
 Import and use lab modules from the `agent_framework.lab` namespace.

@@ -55,7 +55,7 @@ class StubSystemOneResponse(SystemOneResponse):
     """SystemOneResponse with deterministic request metadata."""
 
     @property
-    def request_id(self) -> str:
+    def request_id(self) -> str:  # ty: ignore[invalid-property-type-override]
         """Return a deterministic request identifier."""
         return "request-123"
 
