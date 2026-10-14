@@ -874,10 +874,10 @@ def _to_eval_item(
     typed_tools: list[FunctionTool] = []
     if tools is not None:
         typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
-    elif response._evaluation_tools is not None:  # pyright: ignore[reportPrivateUsage]
+    elif (response_tools := response._get_evaluation_tools()) is not None:  # pyright: ignore[reportPrivateUsage]
         seen: set[str] = set()
-        for tool in response._evaluation_tools:  # pyright: ignore[reportPrivateUsage]
-            if isinstance(tool, FunctionTool) and tool.name not in seen:
+        for tool in response_tools:
+            if tool.name not in seen:
                 typed_tools.append(tool)
                 seen.add(tool.name)
     elif agent:
@@ -1629,10 +1629,11 @@ async def evaluate_agent(
 
     If ``responses`` is provided, skips running the agent and evaluates those
     responses directly. Tool definitions come from the original run when
-    available, falling back to the agent's configured tools. Run-scoped
-    definitions are not serialized; supply ``tools`` for restored responses
-    that used context-provider or run-level tools. In this mode ``queries``
-    is required to construct the conversation.
+    available, including schema-only snapshots retained through JSON or pickle
+    serialization. Responses without captured definitions fall back to the
+    agent's configured tools; supply ``tools`` when those definitions are
+    unavailable or need to be overridden. In this mode ``queries`` is required
+    to construct the conversation.
 
     Args:
         agent: An agent-framework agent instance.

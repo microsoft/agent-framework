@@ -194,8 +194,9 @@ class TestToEvalItem:
             "run_skill_script",
         }
         assert len(item.tools) == len(definitions)
-        assert definitions["calculate"] is default_tool
-        assert definitions["search"] is mcp_tool
+        assert definitions["calculate"].parameters() == default_tool.parameters()
+        assert definitions["search"].parameters() == mcp_tool.parameters()
+        assert all(tool.declaration_only for tool in item.tools)
         assert definitions["load_skill"].parameters()["required"] == ["skill_name"]
         expected_content = await skill.get_content()
         assert any(
@@ -220,6 +221,17 @@ class TestToEvalItem:
         assert AgentResponse.from_json(response.to_json()).messages[0].contents[0].name == "load_skill"
         restored = pickle.loads(pickle.dumps(response))
         assert restored._evaluation_tools is None
+        for restored_response in [
+            AgentResponse.from_dict(serialized),
+            AgentResponse.from_json(response.to_json()),
+            restored,
+        ]:
+            restored_item = _to_eval_item(query="Use the skill", response=restored_response)
+            assert restored_item.tools is not None
+            assert {tool.name: (tool.description, tool.parameters()) for tool in restored_item.tools} == {
+                tool.name: (tool.description, tool.parameters()) for tool in item.tools
+            }
+            assert all(tool.declaration_only for tool in restored_item.tools)
 
     async def test_context_provider_tools_are_isolated_per_run(self, chat_client_base: Any) -> None:
         class QueryToolsProvider(ContextProvider):
@@ -275,12 +287,116 @@ class TestToEvalItem:
 
         item = _to_eval_item(query="Test", response=response)
 
-        assert item.tools == [loader, finish_tool]
+        assert item.tools is not None
+        assert [tool.name for tool in item.tools] == ["load", "finish"]
+        assert all(tool.declaration_only for tool in item.tools)
         assert any(
             content.type == "function_result" and content.result == "Finished"
             for message in response.messages
             for content in message.contents
         )
+
+    @pytest.mark.parametrize("serialization", ["dict", "json", "pickle"])
+    async def test_schema_snapshots_do_not_retain_runtime_objects(
+        self,
+        chat_client_base: Any,
+        serialization: str,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
+            "required": ["city"],
+            "additionalProperties": False,
+        }
+        tool = FunctionTool(
+            name="weather",
+            description="Original description",
+            func=lambda city: city,
+            input_model=schema,
+            additional_properties={"runtime_marker": "not-in-snapshot"},
+        )
+        agent = Agent(client=chat_client_base, tools=[tool])
+        response = await agent.run("Weather?")
+        tool.description = "Changed description"
+        tool.parameters()["properties"]["city"]["enum"].append("London")
+        agent.default_options["tools"] = []
+        if serialization == "dict":
+            restored = AgentResponse.from_dict(response.to_dict())
+        elif serialization == "json":
+            restored = AgentResponse.from_json(response.to_json())
+        else:
+            restored = pickle.loads(pickle.dumps(response))
+
+        item = _to_eval_item(query="Weather?", response=restored, agent=agent)
+
+        assert item.tools is not None
+        assert len(item.tools) == 1
+        captured = item.tools[0]
+        assert captured.name == "weather"
+        assert captured.description == "Original description"
+        assert captured.parameters()["properties"]["city"]["enum"] == ["Seattle", "Paris"]
+        assert captured.parameters()["additionalProperties"] is False
+        assert captured.func is None
+        assert captured.additional_properties is None
+        metadata = response.to_dict()["additional_properties"]["agent_framework.evaluation"]
+        assert metadata == {
+            "version": 1,
+            "tools": [
+                {
+                    "name": "weather",
+                    "description": "Original description",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
+                        "required": ["city"],
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        }
+        assert "not-in-snapshot" not in response.to_json()
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            None,
+            {},
+            {"version": 2, "tools": []},
+            {"version": True, "tools": []},
+            {"version": 1, "tools": {}},
+            {"version": 1, "tools": [None]},
+            {"version": 1, "tools": [{"name": "", "description": "", "input_schema": {}}]},
+            {"version": 1, "tools": [{"name": "weather", "description": None, "input_schema": {}}]},
+            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": []}]},
+            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": {"default": object()}}]},
+            {
+                "version": 1,
+                "tools": [
+                    {"name": "weather", "description": "", "input_schema": {}},
+                    {"name": "weather", "description": "", "input_schema": {}},
+                ],
+            },
+        ],
+    )
+    def test_invalid_serialized_tool_metadata_raises(self, metadata: Any) -> None:
+        response = AgentResponse(additional_properties={"agent_framework.evaluation": metadata})
+
+        with pytest.raises(ValueError, match="agent_framework.evaluation"):
+            _to_eval_item(query="Weather?", response=response)
+
+        explicit = FunctionTool(name="explicit", func=lambda: "")
+        assert _to_eval_item(query="Weather?", response=response, tools=[explicit]).tools == [explicit]
+
+    def test_serialized_empty_definitions_do_not_fall_back_to_agent_tools(self) -> None:
+        response = AgentResponse(
+            additional_properties={
+                "agent_framework.evaluation": {"version": 1, "tools": []},
+            }
+        )
+        agent = MagicMock()
+        agent.default_options = {"tools": [FunctionTool(name="unused", func=lambda: "")]}
+
+        assert _to_eval_item(query="Test", response=response, agent=agent).tools is None
 
 
 class TestEvaluateAgentTools:
@@ -308,6 +424,9 @@ class TestEvaluateAgentTools:
         assert {tool.name for tool in item.tools} == {"load_skill", "read_skill_resource", "run_skill_script"}
         assert len(item.tools) == 3
         assert chat_client_base.call_count == 2
+        restored_item = _to_eval_item(query="Test", response=AgentResponse.from_json(response.to_json()))
+        assert restored_item.tools is not None
+        assert {tool.name for tool in restored_item.tools} == {"load_skill", "read_skill_resource", "run_skill_script"}
 
     async def test_evaluate_agent_includes_skill_tools(self, chat_client_base: Any) -> None:
         skill = InlineSkill(
@@ -348,6 +467,40 @@ class TestEvaluateAgentTools:
 
         assert results[0].passed == 1
         assert chat_client_base.call_count == 1
+
+    @pytest.mark.parametrize("serialization", ["json", "pickle"])
+    async def test_evaluate_restored_response_discovers_skill_tools(
+        self,
+        chat_client_base: Any,
+        serialization: str,
+    ) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        provider = SkillsProvider(skill)
+        provider.before_run = AsyncMock(wraps=provider.before_run)  # type: ignore[method-assign]
+        agent = Agent(client=chat_client_base, context_providers=[provider])
+        response = await agent.run("Test")
+        restored = (
+            AgentResponse.from_json(response.to_json())
+            if serialization == "json"
+            else pickle.loads(pickle.dumps(response))
+        )
+
+        @evaluator
+        def has_skill_tools(tools: list[FunctionTool]) -> bool:
+            return all(tool.declaration_only for tool in tools) and "load_skill" in {tool.name for tool in tools}
+
+        results = await evaluate_agent(
+            queries="Test",
+            responses=restored,
+            evaluators=LocalEvaluator(has_skill_tools),
+        )
+
+        assert results[0].passed == 1
+        assert chat_client_base.call_count == 1
+        provider.before_run.assert_awaited_once()
 
     async def test_explicit_tools_override_fresh_run(self, chat_client_base: Any) -> None:
         configured_tool = FunctionTool(name="configured", func=lambda: "")
