@@ -116,6 +116,16 @@ class ApiCompatibilityTests(unittest.TestCase):
 
         self.assertEqual([spec.module for spec in specs], ["stable_api"])
 
+    def test_package_status_row_allows_optional_meta_package_column(self) -> None:
+        rows = [
+            "| `agent-framework-core` | `python/packages/core` | `released` |",
+            "| `agent-framework-core` | `python/packages/core` | `released` | `yes` |",
+        ]
+
+        for row in rows:
+            with self.subTest(row=row):
+                self.assertIsNotNone(api_checker._PACKAGE_STATUS_ROW.match(row))
+
     def test_filters_base_unreleased_apis_but_not_head_only_decorators(self) -> None:
         self.write_status([("agent-framework-core", "core", "released")])
         self.write_module(

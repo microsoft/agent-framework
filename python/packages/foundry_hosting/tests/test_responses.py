@@ -148,7 +148,12 @@ def _make_function_approval_request_content(
 ) -> Content:
     """Build a function_approval_request Content with an embedded function_call."""
     function_call = Content.from_function_call(
-        call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
+        call_id,
+        name,
+        arguments=arguments,
+        hosted=True,
+        server_name=server_label,
+        additional_properties={"server_label": server_label},
     )
     return Content.from_function_approval_request(request_id, function_call)
 
@@ -675,7 +680,10 @@ async def test_item_to_message_marks_refusal_text() -> None:
 
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot help."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 class _CapturingASGITransport:
@@ -4448,6 +4456,55 @@ class TestStreaming:
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
 
+    async def test_text_snapshot_emits_only_missing_delta(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello ", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello ", "world"]
+        assert done["data"]["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_divergent_or_shrinking_text_snapshot_fails_stream(self, replacement: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text(replacement, merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello world"]
+        assert done["data"]["text"] == "Hello world"
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
     async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
         resp = await _post(
             _make_server(_make_agent(stream_updates=_container_file_citation_updates())),
@@ -5068,6 +5125,9 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5348,6 +5408,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -5363,6 +5424,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5382,6 +5444,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5475,6 +5538,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5541,6 +5605,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -5570,6 +5635,8 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
+        assert msg.contents[0].additional_properties["openai"]["server_label"] == "my_server"
+        assert msg.contents[0].additional_properties["server_label"] == "my_server"
 
     async def test_structured_outputs_dict(self) -> None:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
@@ -5686,6 +5753,9 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5978,6 +6048,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -5996,6 +6067,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -6016,6 +6088,7 @@ class TestItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -6096,6 +6169,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -6183,6 +6257,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -7882,7 +7957,7 @@ class TestOAuthConsentSurfacing:
 
         duplicate = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
         assert [event async for event in tracker.handle(duplicate)] == []
 
@@ -7921,7 +7996,7 @@ class TestOAuthConsentSurfacing:
     async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
         consent = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
 
         async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
