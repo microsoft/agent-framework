@@ -51,7 +51,7 @@ uv run poe venv --python 3.12
 # Intentionally upgrade a specific dependency to reduce lockfile conflicts
 uv lock --upgrade-package <dependency-name> && uv run poe install
 
-# Refresh exact development dependency-group pins, lockfile, and validation in one run
+# Refresh exact development and on-demand tool pins, lockfiles, and validation
 uv run poe upgrade-dev-dependencies
 
 # Release cuts: refresh uv.lock and probe changed packages at both bound extremes.
@@ -96,11 +96,21 @@ uv run poe test
   project task can drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
-- Keep shared tooling and source/type-check support in the root or package `dev` group. Put package-specific test
-  fixtures in a `test` group, and use a feature-named group for local-only executable dependencies that cannot be
-  expressed in published runtime metadata.
-- Use `upgrade-dev-dependencies` for repo-wide development dependency refreshes; it repins exact dependencies
-  across development groups, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
+- Keep the test framework and Poe in the root `dev` group across Python
+  versions. Put script-only libraries in `tool-runtime`. Put tools used by
+  only one Python version in a named `tool-*` group or pinned
+  `tooling/requirements-*.txt` file, and add the smallest relevant group or
+  bundle to each command. Keep source/type-check support that is part of a
+  package's import surface in a package dependency group. Put package-specific
+  test fixtures in a `test` group.
+- Use `upgrade-dev-dependencies` for repo-wide development and tool dependency
+  refreshes; it repins exact dependencies across development groups and
+  `tooling/requirements-*.txt`, refreshes `uv.lock`, and reruns `check` and
+  `typing`.
+- Upgrade the root uv version manually as one coordinated change across the
+  `dev` requirement, `[tool.uv].required-version`, setup workflows, and the
+  uv pre-commit revision. Automated dependency updates intentionally ignore
+  the root uv pin.
 - Run Lab dependency and validation commands from `packages/lab`; root workspace tasks deliberately do not
   discover or update the Lab project.
 

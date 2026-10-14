@@ -173,6 +173,20 @@ class TestMessagesFromResponsesInput:
         ])
         assert any(getattr(c, "uri", None) == "https://example.com/cat.png" for c in msgs[0].contents)
 
+    @pytest.mark.parametrize("as_object", [False, True])
+    def test_image_data_url_keeps_its_media_type(self, as_object: bool) -> None:
+        data_url = "data:image/png;base64,iVBORw0KGgo="
+        image_url: Any = {"url": data_url} if as_object else data_url
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": image_url}])
+        image = msgs[0].contents[0]
+        assert image.type == "data"
+        assert image.uri == data_url
+        assert image.media_type == "image/png"
+
+    def test_image_https_url_keeps_generic_image_media_type(self) -> None:
+        msgs = messages_from_responses_input([{"type": "input_image", "image_url": "https://example.com/cat.png"}])
+        assert msgs[0].contents[0].media_type == "image/*"
+
     def test_unknown_input_type_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported"):
             messages_from_responses_input([{"type": "weird"}])

@@ -12,7 +12,7 @@ import struct
 import sys
 import typing
 import warnings
-from collections import deque
+from collections import Counter, deque
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -23,7 +23,10 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import dataclass
-from functools import partial, wraps
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import time as datetime_time
+from decimal import Decimal
+from functools import cache, partial, wraps
 from time import perf_counter, time, time_ns
 from typing import (
     TYPE_CHECKING,
@@ -40,11 +43,12 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, create_model
+from pydantic_core import to_jsonable_python
 
 from ._serialization import SerializationMixin
 from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
@@ -167,6 +171,71 @@ class _OpaqueArgumentToken:
     identity: int
 
 
+@cache
+def _pydantic_tzinfo_type() -> type:
+    """Return the fixed-offset time zone type pydantic parses UTC offsets into."""
+    # pydantic-core only exports this type from 2.10, so take it from a parsed value.
+    return type(TypeAdapter(datetime).validate_python("2000-01-01T00:00:00Z").tzinfo)
+
+
+def _timedelta_token(value: timedelta) -> tuple[Any, ...]:
+    return (timedelta, value.days, value.seconds, value.microseconds)
+
+
+def _time_zone_token(zone: tzinfo | None) -> tuple[Any, ...] | None:
+    """Return a token for no time zone or a fixed-offset one, or None for any other time zone."""
+    if zone is None:
+        return (None,)
+    if type(zone) is timezone:
+        # A timezone holds its offset and, when one was given, its name (repr() shows it).
+        offset, *name = cast(Any, zone).__getinitargs__()
+        if type(offset) is timedelta and all(type(part) is str for part in name):
+            return (timezone, _timedelta_token(offset), *name)
+        return None
+    if type(zone) is _pydantic_tzinfo_type():
+        # pydantic's time zone holds only its offset.
+        return (type(zone), _timedelta_token(cast(timedelta, zone.utcoffset(None))))
+    return None
+
+
+def _immutable_scalar_token(value: Any) -> tuple[Any, ...] | None:
+    """Return a token for an immutable value an input model produces, or None for any other value.
+
+    These are the values an input model converts JSON arguments to (for example
+    "2026-01-02" -> date). Only the exact types are trusted, because a subclass can add
+    mutable state. A token lists every field of the value that a tool can observe, so two
+    values share a token only when a tool cannot tell them apart. Neither ``==`` nor
+    ``str()`` does that: Decimal("1.0") equals Decimal("1.00"), equal instants in different
+    time zones compare equal, and ``str()`` leaves out a datetime's ``fold``, a UUID's
+    ``is_safe`` and a time zone's name.
+    """
+    value_type = cast(type[object], type(value))
+    if value_type is date:
+        return (date, value.year, value.month, value.day)
+    if value_type is datetime or value_type is datetime_time:
+        zone = _time_zone_token(value.tzinfo)
+        if zone is None:
+            return None
+        date_fields = (value.year, value.month, value.day) if value_type is datetime else ()
+        return (value_type, *date_fields, value.hour, value.minute, value.second, value.microsecond, value.fold, zone)
+    if value_type is timedelta:
+        return _timedelta_token(value)
+    if value_type is Decimal:
+        return (Decimal, value.as_tuple())
+    if value_type is UUID:
+        return (UUID, value.int, value.is_safe)
+    return None
+
+
+def _unordered_token(tokens: Iterable[Any]) -> frozenset[tuple[Any, int]]:
+    """Return an order-free token that keeps how many items share each token.
+
+    A plain frozenset would merge distinct items that share a token: a set or dict can hold
+    several NaNs, because NaN is not equal to itself, and every NaN gets the same token.
+    """
+    return frozenset(Counter(tokens).items())
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -174,7 +243,7 @@ def _argument_comparison_token(value: Any) -> Any:
     if isinstance(value, dict):
         return (
             "dict",
-            frozenset(
+            _unordered_token(
                 (_argument_comparison_token(key), _argument_comparison_token(item))
                 for key, item in cast(dict[Any, Any], value).items()
             ),
@@ -183,10 +252,17 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
     if isinstance(value, tuple):
         return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, frozenset):
+        return ("frozenset", _unordered_token(_argument_comparison_token(item) for item in cast(frozenset[Any], value)))
+    if isinstance(value, set):
+        return ("set", _unordered_token(_argument_comparison_token(item) for item in cast(set[Any], value)))
     if isinstance(value, float):
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
+    scalar_token = _immutable_scalar_token(value)
+    if scalar_token is not None:
+        return scalar_token
     value_type = cast(type[object], type(value))
     return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
 
@@ -844,6 +920,7 @@ class FunctionTool(SerializationMixin):
         if arguments is None:
             return {}
 
+        validated_by_model = False
         try:
             if isinstance(arguments, Mapping):
                 parsed_arguments = dict(arguments)
@@ -855,6 +932,7 @@ class FunctionTool(SerializationMixin):
                     # parameter the model deliberately set to null, failing the
                     # invocation on the missing argument (#5934).
                     parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
             elif isinstance(arguments, BaseModel):
                 if (
                     self.input_model is not None
@@ -862,7 +940,17 @@ class FunctionTool(SerializationMixin):
                     and not isinstance(arguments, self.input_model)
                 ):
                     raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                parsed_arguments = arguments.model_dump(exclude_unset=True)
+                if self.input_model is not None and not self._schema_supplied:
+                    # An instance can skip validation (model_construct) or be changed after it,
+                    # so its data is validated like mapping arguments and the function receives
+                    # the annotated types (#8661). Checking its JSON form is not enough: a date
+                    # in a datetime field serializes to a valid string. Validation reports any
+                    # mismatch, so the dump skips pydantic's serializer warnings.
+                    parsed_arguments = arguments.model_dump(exclude_unset=True, warnings=False)
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+                    validated_by_model = True
+                else:
+                    parsed_arguments = arguments.model_dump(exclude_unset=True)
             else:
                 raise TypeError(
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
@@ -877,6 +965,12 @@ class FunctionTool(SerializationMixin):
                 str(exc),
                 redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
+
+        if validated_by_model:
+            # The input model already enforced the full schema and converted JSON values
+            # to the annotated Python types (e.g. datetime, set, tuple), which the
+            # lightweight JSON type checks below would wrongly reject (#8661).
+            return parsed_arguments
 
         try:
             return _validate_arguments_against_schema(
@@ -1944,9 +2038,46 @@ def _function_argument_validation_error_result(
     )
 
 
+def _replacement_arguments(tool: FunctionTool, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return middleware-repaired arguments in the JSON form a replacement approval request holds.
+
+    The request is persisted with the session, so its arguments must be JSON-native. Approving it
+    prepares the JSON arguments again, so they must reproduce the repaired values exactly. JSON
+    cannot carry a datetime's ``fold`` or a UUID's ``is_safe``, and offsets parse into pydantic's
+    own time zone type; for such values every approval would only lead to another replacement.
+    """
+    from ._middleware import MiddlewareFailure
+
+    message = (
+        "Function arguments changed after approval to values a replacement approval request cannot "
+        "represent exactly. Middleware should produce the values the tool's input model parses from JSON."
+    )
+    try:
+        json_arguments = cast(dict[str, Any], to_jsonable_python(dict(arguments)))
+    except Exception as exc:
+        # Not only PydanticSerializationError: bytes that are not UTF-8 raise UnicodeDecodeError, a
+        # circular value raises ValueError, and a value that runs code while it is serialized can
+        # raise anything. None of them can be represented, so all of them fail closed the same way.
+        raise MiddlewareFailure(message) from exc
+    try:
+        repaired = tool._prepare_arguments(arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError:
+        # Arguments that do not validate (such as approval-visible security placeholders, or a
+        # short-circuited repair) produce no values to reproduce.
+        return json_arguments
+    try:
+        reproduced = tool._prepare_arguments(json_arguments)  # pyright: ignore[reportPrivateUsage]
+    except _FunctionArgumentValidationError as exc:
+        raise MiddlewareFailure(message) from exc
+    if _argument_comparison_token(reproduced) != _argument_comparison_token(repaired):
+        raise MiddlewareFailure(message)
+    return json_arguments
+
+
 def _replacement_approval_request(
     function_call: Content,
     arguments: Mapping[str, Any],
+    tool: FunctionTool,
 ) -> Content:
     """Create a new approval generation for middleware-repaired arguments."""
     from ._types import Content
@@ -1959,7 +2090,7 @@ def _replacement_approval_request(
     repaired_call = Content.from_function_call(
         call_id=call_id,
         name=function_call.name,  # type: ignore[arg-type]
-        arguments=copy.deepcopy(dict(arguments)),
+        arguments=_replacement_arguments(tool, arguments),
         id=occurrence_id,
         annotations=copy.deepcopy(function_call.annotations),
         additional_properties=copy.deepcopy(function_call.additional_properties),
@@ -2263,7 +2394,7 @@ async def _auto_invoke_function(
             except _FunctionArgumentsChangedAfterApproval as exc:
                 raise MiddlewareTermination(
                     "Function arguments changed after approval.",
-                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                    result=_replacement_approval_request(function_call_content, exc.arguments, tool),
                 ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -2286,7 +2417,7 @@ async def _auto_invoke_function(
     except _FunctionArgumentsChangedAfterApproval as exc:
         raise MiddlewareTermination(
             "Function arguments changed after approval.",
-            result=_replacement_approval_request(function_call_content, exc.arguments),
+            result=_replacement_approval_request(function_call_content, exc.arguments, tool),
         ) from exc
     except _FunctionArgumentValidationError as exc:
         return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
@@ -3351,6 +3482,8 @@ def _match_mixed_pause_responses(
                 host_items_by_occurrence[request.id] = index
 
     matched_content_ids: set[int] = set()
+    preexisting_response_indexes = {index for index, item in enumerate(items) if item.get("response") is not None}
+    current_idless_response_indexes: set[int] = set()
     for match_idless_host_results in (False, True):
         for response in responses:
             is_idless_host_result = response.type == "function_result" and response.id is None
@@ -3391,6 +3524,18 @@ def _match_mixed_pause_responses(
                         if items[pending_index].get("response") is None
                     ]
                     if len(unanswered_indexes) == 1:
+                        if any(
+                            pending_index in preexisting_response_indexes
+                            and isinstance(items[pending_index].get("response"), Mapping)
+                            and _same_mixed_pause_response(
+                                cast(Mapping[str, Any], items[pending_index]["response"]),
+                                response.to_dict(),
+                            )
+                            for pending_index in host_items_by_call[response.call_id]
+                        ):
+                            raise RuntimeError(
+                                f"Ambiguous id-less Host response for mixed pause call_id {response.call_id!r}."
+                            )
                         item_index = unanswered_indexes[0]
                     elif not unanswered_indexes and allow_idless_host_duplicates:
                         duplicate_indexes = [
@@ -3404,6 +3549,13 @@ def _match_mixed_pause_responses(
                         ]
                         if len(duplicate_indexes) == 1:
                             item_index = duplicate_indexes[0]
+                        elif any(
+                            pending_index in current_idless_response_indexes
+                            for pending_index in host_items_by_call[response.call_id]
+                        ):
+                            raise RuntimeError(
+                                f"Conflicting id-less Host responses for mixed pause call_id {response.call_id!r}."
+                            )
             else:
                 continue
 
@@ -3418,6 +3570,8 @@ def _match_mixed_pause_responses(
                 raise RuntimeError(f"Conflicting response for mixed pause occurrence {candidate.id!r}.")
             items[item_index]["response"] = candidate_state
             matched_content_ids.add(id(response))
+            if is_idless_host_result:
+                current_idless_response_indexes.add(item_index)
 
     if any(item.get("response") is None for item in items):
         return matched_content_ids, True, [], set()
@@ -3464,22 +3618,177 @@ def _stage_pending_mixed_pause_responses(
             consume=False,
         )
 
-    responses = [
-        content
-        for message in messages
-        for content in message.contents
-        if content.type in {"function_approval_response", "function_result"}
+    def attributed_staged_replay_item_index(
+        content: Content,
+        reserved_item_indexes: set[int],
+    ) -> int | None:
+        if content.type == "function_approval_response":
+            candidate = bind_approval_response(content)
+        elif content.type == "function_result":
+            candidate = content
+        else:
+            return None
+        if candidate is None:
+            return None
+
+        candidate_state = candidate.to_dict()
+        for item_index, item in enumerate(items):
+            if item_index in reserved_item_indexes:
+                continue
+            stored_response = item.get("response")
+            if not isinstance(stored_response, Mapping) or not _same_mixed_pause_response(
+                cast(Mapping[str, Any], stored_response),
+                candidate_state,
+            ):
+                continue
+            request = _content_from_state(item.get("request"))
+            if request is None:
+                continue
+            if item.get("kind") == "approval" and candidate.type == "function_approval_response":
+                request_ids = {
+                    str(identity)
+                    for identity in (
+                        request.id,
+                        request.function_call.id if request.function_call is not None else None,
+                    )
+                    if identity is not None
+                }
+                candidate_ids = {
+                    str(identity)
+                    for identity in (
+                        candidate.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                        candidate.id,
+                    )
+                    if identity is not None
+                }
+                if request_ids.intersection(candidate_ids):
+                    return item_index
+            elif (
+                item.get("kind") == "host"
+                and candidate.type == "function_result"
+                and candidate.call_id == request.call_id
+                and (candidate.id is None or candidate.id == request.id)
+            ):
+                return item_index
+        return None
+
+    host_requests = [
+        request
+        for item in items
+        if item.get("kind") == "host"
+        and item.get("response") is None
+        and (request := _content_from_state(item.get("request"))) is not None
+        and request.call_id is not None
     ]
+    approval_request_ids = {
+        str(identity)
+        for item in items
+        if item.get("kind") == "approval"
+        and item.get("response") is None
+        and (request := _content_from_state(item.get("request"))) is not None
+        for identity in (
+            request.id,
+            request.function_call.id if request.function_call is not None else None,
+        )
+        if identity is not None
+    }
+    host_call_ids = {request.call_id for request in host_requests if request.call_id is not None}
+    host_occurrences = {
+        (request.call_id, request.id)
+        for request in host_requests
+        if request.call_id is not None and request.id is not None
+    }
+    approval_anchor: int | None = None
+    host_anchor: int | None = None
+    idless_host_anchor: int | None = None
+    indexed_contents: list[tuple[int, Content]] = []
+    content_positions: dict[int, tuple[int, int]] = {}
+    current_input_indexes: set[int] = set()
+    content_index = -1
+    for message_index, message in enumerate(messages):
+        message_start = content_index + 1
+        is_current_input = "_attribution" not in message.additional_properties
+        for message_content_index, content in enumerate(message.contents):
+            content_index += 1
+            indexed_contents.append((content_index, content))
+            content_positions[content_index] = (message_index, message_content_index)
+            if not is_current_input:
+                continue
+            current_input_indexes.add(content_index)
+            if content.type == "function_approval_response" and approval_anchor is None:
+                bound_approval = bind_approval_response(content)
+                if bound_approval is not None and approval_request_ids.intersection(
+                    str(identity)
+                    for identity in (
+                        bound_approval.additional_properties.get(_APPROVAL_REQUEST_ID_KEY),
+                        bound_approval.id,
+                    )
+                    if identity is not None
+                ):
+                    approval_anchor = message_start
+            elif (
+                content.type == "function_result"
+                and content.call_id is not None
+                and content.id is not None
+                and (content.call_id, content.id) in host_occurrences
+                and host_anchor is None
+            ):
+                host_anchor = message_start
+            elif (
+                content.type == "function_result"
+                and content.id is None
+                and content.call_id in host_call_ids
+                and idless_host_anchor is None
+            ):
+                idless_host_anchor = message_start
+    response_start = min(
+        (anchor for anchor in (approval_anchor, host_anchor, idless_host_anchor) if anchor is not None),
+        default=None,
+    )
+    attributed_contents = [
+        (message_index, content_index, content)
+        for message_index, message in enumerate(messages)
+        if "_attribution" in message.additional_properties
+        for content_index, content in enumerate(message.contents)
+    ]
+    attributed_replay_occurrences: set[tuple[int, int]] = set()
+    reserved_replay_item_indexes: set[int] = set()
+    for match_idless_host_results in (False, True):
+        for message_index, content_index, content in attributed_contents:
+            is_idless_host_result = content.type == "function_result" and content.id is None
+            if is_idless_host_result != match_idless_host_results:
+                continue
+            item_index = attributed_staged_replay_item_index(content, reserved_replay_item_indexes)
+            if item_index is not None:
+                reserved_replay_item_indexes.add(item_index)
+                attributed_replay_occurrences.add((message_index, content_index))
+    response_entries = [
+        (index, content)
+        for index, content in indexed_contents
+        if response_start is not None
+        and index >= response_start
+        and index in current_input_indexes
+        and content.type in {"function_approval_response", "function_result"}
+    ]
+    responses = [content for _, content in response_entries]
     matched_content_ids, incomplete, ordered_responses, host_result_ids = _match_mixed_pause_responses(
         items,
         responses,
         approval_response_binder=bind_approval_response,
     )
+    matched_current_occurrences = {
+        content_positions[index] for index, content in response_entries if id(content) in matched_content_ids
+    }
 
-    if matched_content_ids:
+    if matched_current_occurrences or attributed_replay_occurrences:
         filtered_messages: list[Message] = []
-        for message in messages:
-            message.contents = [content for content in message.contents if id(content) not in matched_content_ids]
+        for message_index, message in enumerate(messages):
+            message.contents = [
+                content
+                for content_index, content in enumerate(message.contents)
+                if (message_index, content_index) not in matched_current_occurrences
+                and (message_index, content_index) not in attributed_replay_occurrences
+            ]
             if message.contents:
                 filtered_messages.append(message)
         messages[:] = filtered_messages

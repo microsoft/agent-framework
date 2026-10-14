@@ -60,5 +60,5 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_sql_server --cov-report
 cmd = 'pytest -m integration tests'
 
 [build-system]
-requires = ["flit-core>=3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

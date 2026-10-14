@@ -3,7 +3,7 @@
   <!--
     This project is part of the repo's solution and targets .NET 10 like the rest of the repo, but it
     intentionally opts out of Central Package Management and source-referencing Microsoft.Agents.AI:
-    it consumes the *published* AgentMemory NuGet packages (which target Microsoft.Agents.AI 1.9.0)
+    it consumes the *published* AgentMemory NuGet packages (which target Microsoft.Agents.AI 1.23.0)
     instead. Run it with `dotnet run` from this folder.
 
     ManagePackageVersionsCentrally is off, but dotnet/Directory.Packages.props still unconditionally
@@ -38,10 +38,10 @@
   <ItemGroup>
     <!-- AgentMemory (published) — an unofficial .NET port of the Neo4j Labs agent-memory library + its
          Microsoft Agent Framework adapter. -->
-    <PackageReference Include="AgentMemory" Version="1.5.0" />
-    <PackageReference Include="AgentMemory.AgentFramework" Version="1.5.0" />
+    <PackageReference Include="AgentMemory" Version="1.8.0" />
+    <PackageReference Include="AgentMemory.AgentFramework" Version="1.8.0" />
     <!-- Microsoft Agent Framework (matches AgentMemory's target) + the OpenAI/Foundry chat & embedding clients. -->
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.9.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.23.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.1" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
