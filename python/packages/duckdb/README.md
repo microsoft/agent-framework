@@ -12,10 +12,13 @@ caller-provided `duckdb.DuckDBPyConnection` objects use the same implementation.
 pip install agent-framework-duckdb --pre
 ```
 
-Python 3.10+ and DuckDB 1.4.1–1.5.x are required. The package also installs
-`pytz`, which DuckDB uses when returning timezone-aware timestamps. Import
-`DuckDBStore` and `DuckDBCollection` directly from `agent_framework_duckdb`;
-this alpha package is not part of `agent-framework-core[all]`.
+Python 3.10–3.14 and DuckDB 1.4.1–1.5.x are officially supported. DuckDB does
+not yet publish Python 3.15 wheels; installation may build it from source, but
+this connector does not advertise Python 3.15 support until upstream wheels are
+available. The package also installs `pytz`, which DuckDB uses when returning
+timezone-aware timestamps. Import `DuckDBStore` and `DuckDBCollection` directly
+from `agent_framework_duckdb`; this alpha package is not part of
+`agent-framework-core[all]`.
 
 ## Connections and persistence
 

@@ -465,6 +465,8 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+            assert updates[0].contents[0].merge_mode == "append"
+            assert updates[1].contents[0].merge_mode == "append"
 
     async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
         """Test run(stream=True) final response includes ResultMessage metadata."""
@@ -500,10 +502,11 @@ class TestClaudeAgentRunStream:
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
             stream = agent.run("Hello", stream=True)
-            async for _ in stream:
-                pass
+            updates = [update async for update in stream]
             response = await stream.get_final_response()
 
+        usage_content = next(content for update in updates for content in update.contents if content.type == "usage")
+        assert usage_content.merge_mode == "replace"
         assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,

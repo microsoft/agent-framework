@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections import deque
@@ -141,6 +142,10 @@ async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
 
     assert [update.text for update in updates if update.text] == ["Checking", " the weather."]
     assert all(update.role == "assistant" for update in updates)
+    streamed_contents = [content for update in updates for content in update.contents]
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "text")
+    assert all(content.merge_mode == "append" for content in streamed_contents if content.type == "function_call")
+    assert all(content.merge_mode == "replace" for content in streamed_contents if content.type == "usage")
     assert response.text == "Checking the weather."
     function_call = next(content for content in response.messages[0].contents if content.type == "function_call")
     assert function_call.call_id == "call-1"
@@ -311,10 +316,34 @@ def test_redacted_reasoning_content_is_replayed_unchanged() -> None:
     reasoning = response.messages[0].contents[0]
     assert reasoning.type == "text_reasoning"
     assert reasoning.text is None
+    assert reasoning.additional_properties["bedrock"]["redacted_reasoning"] is True
+    assert reasoning.additional_properties["bedrock.redacted_reasoning"] is True
 
     _, conversation = client._prepare_bedrock_messages(response.messages)
     assert conversation[0]["content"][0] == {"reasoningContent": {"redactedContent": redacted}}
     assert "toolUse" in conversation[0]["content"][1]
+
+
+@pytest.mark.parametrize(
+    "additional_properties",
+    [
+        {"bedrock": {"redacted_reasoning": True}},
+        {"bedrock.redacted_reasoning": True},
+    ],
+)
+def test_redacted_reasoning_replay_accepts_canonical_and_legacy_metadata(
+    additional_properties: dict[str, Any],
+) -> None:
+    client = _make_client()
+    redacted = b"encrypted-reasoning"
+    content = Content.from_text_reasoning(
+        protected_data=base64.b64encode(redacted).decode("utf-8"),
+        additional_properties=additional_properties,
+    )
+
+    block = client._convert_content_to_bedrock_block(content)
+
+    assert block == {"reasoningContent": {"redactedContent": redacted}}
 
 
 async def test_stream_redacted_reasoning_content_is_replayed_unchanged() -> None:
