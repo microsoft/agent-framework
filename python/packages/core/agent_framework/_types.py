@@ -1870,6 +1870,8 @@ class Content:
         annotations = remaining.pop("annotations", None)
         additional_properties = remaining.pop("additional_properties", None)
         raw_representation = remaining.pop("raw_representation", None)
+        if content_type == "function_call" and "hosted" in remaining and remaining["hosted"] is None:
+            raise ValueError("Function-call hosted must be true or false.")
 
         # Special handling for DataContent with data and media_type
         if content_type == "data" and "data" in remaining and "media_type" in remaining:

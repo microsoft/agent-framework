@@ -3336,6 +3336,7 @@ async def _item_to_message(
                     "file_search",
                     arguments=_json_safe_to_str({"queries": item["queries"]}),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3343,7 +3344,7 @@ async def _item_to_message(
     if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True, hosted=True)],
         )
 
     if item["type"] == "computer_call":
@@ -3397,6 +3398,7 @@ async def _item_to_message(
                     item["name"],
                     arguments=item["input"],
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3429,6 +3431,7 @@ async def _item_to_message(
                     "apply_patch",
                     arguments=_json_safe_to_str(item["operation"]),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )

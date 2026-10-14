@@ -896,6 +896,13 @@ def test_function_call_hosted_serialization_and_legacy_inference() -> None:
             "name": "f",
             "hosted": "yes",
         })
+    with pytest.raises(ValueError, match="hosted must be true or false"):
+        Content.from_dict({
+            "type": "function_call",
+            "call_id": "invalid-null",
+            "name": "f",
+            "hosted": None,
+        })
     with pytest.raises(ValueError, match="conflicts"):
         Content.from_function_call(
             call_id="conflict",

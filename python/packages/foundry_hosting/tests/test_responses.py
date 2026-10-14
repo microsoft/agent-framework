@@ -5408,6 +5408,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -5423,6 +5424,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5536,6 +5538,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5602,6 +5605,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -6044,6 +6048,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -6062,6 +6067,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -6163,6 +6169,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -6250,6 +6257,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
