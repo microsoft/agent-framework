@@ -110,9 +110,11 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   when the application intentionally uses a provider continuation id as its AG-UI Thread id.
 - A workflow run resolves its Thread id once. A generated id for an omitted `threadId` is the id reported in
   `RUN_STARTED`, keys the `workflow_factory` cache and Thread Snapshot, and owns the run's live `request_info`
-  interrupts, so a continuation must send it back. Checkpoint ownership binds only client-supplied Thread ids; a
-  checkpoint of a run without one also records the generated id as an alias, so both the reported id and legacy
-  id-less restores resume it.
+  interrupts, so a continuation must send it back. A `workflow_factory` request without `threadId` that carries a
+  `resume` entry or a tool or approval-response message (as `_extract_responses_from_messages` defines them) is
+  rejected with `WORKFLOW_RESUME_NOT_FOUND` before a workflow instance is built. Checkpoint ownership binds only
+  client-supplied Thread ids; a checkpoint of a run without one also records the generated id as an alias, so both
+  the reported id and legacy id-less restores resume it.
 - A configured Snapshot Scope and the client-owned Thread id are combined into a deterministic internal
   `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
   in different trusted scopes cannot collide in context-provider state. The deprecated

@@ -35,7 +35,11 @@ from agent_framework import CheckpointID, CheckpointStorage, Content, Message, W
 from agent_framework._telemetry import mark_feature_used
 
 from ._feature_usage import FeatureIndex
-from ._message_adapters import agent_framework_messages_to_agui, agui_messages_to_snapshot_format
+from ._message_adapters import (
+    agent_framework_messages_to_agui,
+    agui_messages_to_snapshot_format,
+    normalize_agui_input_messages,
+)
 from ._run_common import (
     _cancelled_resume_interrupt_ids,
     _extract_resume_payload,
@@ -61,7 +65,11 @@ from ._utils import (
     generate_event_id,
     make_json_safe,
 )
-from ._workflow_run import _pending_request_events, run_workflow_stream  # pyright: ignore[reportPrivateUsage]
+from ._workflow_run import (  # pyright: ignore[reportPrivateUsage]
+    _extract_responses_from_messages,
+    _pending_request_events,
+    run_workflow_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +238,12 @@ def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
     if checkpoint_id is None:
         return None
     return str(checkpoint_id)
+
+
+def _message_response_ids(raw_messages: list[dict[str, Any]]) -> set[str]:
+    """Return the request ids that tool or approval-response messages in a request answer."""
+    messages, _ = normalize_agui_input_messages(raw_messages, sanitize_tool_history=False)
+    return set(_extract_responses_from_messages(messages))
 
 
 def _checkpoint_request_owner(metadata: dict[str, Any]) -> WorkflowRequestOwner | None:
@@ -777,8 +791,14 @@ class AgentFrameworkWorkflow:
             for interrupt in _normalize_resume_interrupts(resume_payload)
             if interrupt.get("id") is not None
         }
-        if self.workflow is None and resume_interrupt_ids and checkpoint_id is None and supplied_thread_id is None:
-            # Factory runs that omit threadId report a new generated id, so nothing can be pending on it.
+        if (
+            self.workflow is None
+            and checkpoint_id is None
+            and supplied_thread_id is None
+            and (resume_interrupt_ids or _message_response_ids(raw_messages))
+        ):
+            # A factory run that omits threadId reports a new generated id, so nothing can be pending on it and a
+            # resume entry, tool result, or approval response cannot continue anything.
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             yield RunErrorEvent(
                 message="No pending interrupt found for this AG-UI thread.",

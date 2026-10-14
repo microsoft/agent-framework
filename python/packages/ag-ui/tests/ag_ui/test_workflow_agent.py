@@ -275,8 +275,27 @@ async def test_workflow_wrapper_empty_thread_ids_own_checkpoints_like_omitted(em
     assert handled == ["a"]
 
 
-async def test_workflow_wrapper_factory_rejects_resume_without_thread_id() -> None:
-    """A factory run cannot be continued without a thread id, and the rejection builds no workflow instance."""
+_FACTORY_CONTINUATIONS: dict[str, dict[str, Any]] = {
+    "resume-entry": _choice_resume(),
+    "tool-message": {"messages": [{"role": "tool", "toolCallId": "choice", "content": '{"selection": "a"}'}]},
+    "approval-message": {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [{"id": "choice", "type": "function", "function": {"name": "choose", "arguments": "{}"}}],
+            },
+            {"role": "tool", "toolCallId": "choice", "content": '{"accepted": true}'},
+        ]
+    },
+}
+
+
+@pytest.mark.parametrize("continuation", list(_FACTORY_CONTINUATIONS.values()), ids=list(_FACTORY_CONTINUATIONS))
+async def test_workflow_wrapper_factory_rejects_continuations_without_thread_id(
+    continuation: dict[str, Any],
+) -> None:
+    """A resume entry, tool result, or approval response cannot continue a factory run without a thread id."""
     handled: list[str] = []
     factory_thread_ids: list[str] = []
 
@@ -290,7 +309,7 @@ async def test_workflow_wrapper_factory_rejects_resume_without_thread_id() -> No
     reported = _reported_thread_ids(first_events)
     assert factory_thread_ids == reported
 
-    rejected = await _run(agent, _choice_resume())
+    rejected = await _run(agent, deepcopy(continuation))
     assert [event.code for event in rejected if event.type == "RUN_ERROR"] == ["WORKFLOW_RESUME_NOT_FOUND"]
     assert factory_thread_ids == reported
     assert handled == []
@@ -298,6 +317,25 @@ async def test_workflow_wrapper_factory_rejects_resume_without_thread_id() -> No
     resumed = await _run(agent, _choice_resume(reported[0]))
     assert "RUN_ERROR" not in [event.type for event in resumed]
     assert handled == ["a"]
+
+
+async def test_workflow_wrapper_factory_runs_requests_without_responses_when_thread_id_is_omitted() -> None:
+    """Only continuations are rejected without a thread id; a new request still starts a run under a new id."""
+    handled: list[str] = []
+    factory_thread_ids: list[str] = []
+
+    def workflow_factory(thread_id: str) -> Workflow:
+        factory_thread_ids.append(thread_id)
+        return WorkflowBuilder(start_executor=_ChoiceRecorder(handled)).build()
+
+    agent = AgentFrameworkWorkflow(workflow_factory=workflow_factory)
+
+    first = _reported_thread_ids(await _run(agent, {"messages": [{"role": "user", "content": "start"}]}))
+    second = _reported_thread_ids(await _run(agent, {"messages": [{"role": "user", "content": "start again"}]}))
+
+    assert factory_thread_ids == first + second
+    assert first != second
+    assert handled == []
 
 
 async def test_workflow_wrapper_checkpoint_resumes_with_reported_or_omitted_thread_id() -> None:
