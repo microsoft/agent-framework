@@ -298,16 +298,16 @@ class MockAgentSession(AgentSession):
 # Mock Agent implementation for testing
 class MockAgent(SupportsAgentRun):
     @property
-    def id(self) -> str:  # type: ignore[override]  # pyrefly: ignore[bad-override]
+    def id(self) -> str:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-property-type-override]
         return str(uuid4())
 
     @property
-    def name(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
+    def name(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-property-type-override]
         """Returns the name of the agent."""
         return "Name"
 
     @property
-    def description(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
+    def description(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-property-type-override]
         return "Description"
 
     def run(  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]

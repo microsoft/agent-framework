@@ -58,8 +58,8 @@ math = [
 [dependency-groups]
 dev = [
     "agent-framework-openai>=1.14.2,<2",
-    "uv==0.12.23",
-    "ruff==0.16.10",
+    "uv==0.13.1",
+    "ruff==0.17.0",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -68,7 +68,7 @@ dev = [
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
-    "tomli==2.4.1",
+    "tomli==2.5.0",
     "tomli-w==1.2.0",
     "prek==0.5.5",
 ]

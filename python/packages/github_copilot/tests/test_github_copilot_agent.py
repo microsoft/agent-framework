@@ -727,6 +727,7 @@ class TestGitHubCopilotAgentRunStreaming:
         assert isinstance(responses[0], AgentResponseUpdate)
         assert responses[0].role == "assistant"
         assert responses[0].contents[0].text == "Hello"
+        assert responses[0].contents[0].merge_mode == "append"
 
     async def test_run_streaming_captures_assistant_usage_event(
         self,
@@ -875,6 +876,7 @@ class TestGitHubCopilotAgentRunStreaming:
         assert content.call_id == "call_abc123"
         assert content.name == "get_weather"
         assert content.arguments == {"city": "Seattle"}
+        assert content.hosted is True
         assert content.raw_representation is tool_event_data
 
     async def test_run_streaming_tool_execution_complete(

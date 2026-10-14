@@ -20,6 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
@@ -28,7 +29,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv==0.12.23",
+    "uv==0.13.1",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -58,7 +59,7 @@ tool-markdown = [
 [tool.uv]
 package = false
 prerelease = "if-necessary"
-required-version = "==0.12.23"
+required-version = "==0.13.1"
 # Security floors for transitive dependencies.
 override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
