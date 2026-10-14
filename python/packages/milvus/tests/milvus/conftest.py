@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import VectorStoreCollectionDefinition, VectorStoreField
-from pymilvus import MilvusClient
+from pymilvus import DataType, MilvusClient
 
 from agent_framework_milvus import MilvusCollection, MilvusStore
 
@@ -68,6 +68,18 @@ def mock_client():
             {"id": 2, "distance": 0.10, "entity": {"body": "world", "price": 2.0, "flag": False}},
         ]
     ]
+    # Matches the `definition` fixture so ensure_collection_exists validates cleanly when present.
+    client.describe_collection.return_value = {
+        "collection_name": "docs",
+        "fields": [
+            {"name": "point_key", "type": DataType.INT64, "is_primary": True, "params": {}},
+            {"name": "body", "type": DataType.VARCHAR, "params": {"max_length": 65535}},
+            {"name": "price", "type": DataType.DOUBLE, "params": {}},
+            {"name": "flag", "type": DataType.BOOL, "params": {}},
+            {"name": "dense", "type": DataType.FLOAT_VECTOR, "params": {"dim": 3}},
+        ],
+    }
+    client.describe_index.return_value = {"metric_type": "COSINE"}
     return client
 
 

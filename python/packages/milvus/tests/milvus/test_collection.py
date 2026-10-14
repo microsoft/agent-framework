@@ -62,10 +62,33 @@ async def test_ensure_collection_exists_creates_when_absent(collection, mock_cli
     assert mock_client.create_collection.call_args.kwargs["collection_name"] == "docs"
 
 
-async def test_ensure_collection_exists_skips_when_present(collection, mock_client):
+async def test_ensure_collection_exists_validates_when_present(collection, mock_client):
     mock_client.has_collection.return_value = True
     await collection.ensure_collection_exists()
     mock_client.create_collection.assert_not_called()
+    mock_client.describe_collection.assert_called_once()
+
+
+async def test_ensure_collection_exists_rejects_dimension_mismatch(collection, mock_client):
+    mock_client.has_collection.return_value = True
+    mock_client.describe_collection.return_value = {
+        "fields": [
+            {"name": "point_key", "type": DataType.INT64, "is_primary": True, "params": {}},
+            {"name": "body", "type": DataType.VARCHAR, "params": {"max_length": 65535}},
+            {"name": "price", "type": DataType.DOUBLE, "params": {}},
+            {"name": "flag", "type": DataType.BOOL, "params": {}},
+            {"name": "dense", "type": DataType.FLOAT_VECTOR, "params": {"dim": 99}},
+        ]
+    }
+    with pytest.raises(ValueError, match="dimension"):
+        await collection.ensure_collection_exists()
+
+
+async def test_ensure_collection_exists_rejects_metric_mismatch(collection, mock_client):
+    mock_client.has_collection.return_value = True
+    mock_client.describe_index.return_value = {"metric_type": "L2"}
+    with pytest.raises(ValueError, match="metric"):
+        await collection.ensure_collection_exists()
 
 
 async def test_ensure_collection_deleted(collection, mock_client):

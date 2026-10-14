@@ -19,6 +19,7 @@ from agent_framework import (
     SearchType,
     SecretString,
     VectorStoreCollectionDefinition,
+    VectorStoreField,
     load_settings,
 )
 from agent_framework._telemetry import FeatureIndex, mark_feature_used
@@ -158,6 +159,35 @@ def _format_scalar(value: Any) -> str:
 
 def _format_list(values: Any) -> str:
     return "[" + ", ".join(_format_scalar(item) for item in values) + "]"
+
+
+def _check_scalar_operand(field: VectorStoreField, value: Any) -> None:
+    """Reject operands whose Python type does not match the field's declared type.
+
+    Booleans are kept distinct from numbers so a filter like ``eq`` on a numeric field with a
+    boolean operand is rejected rather than emitting an invalid, type-mismatched comparison.
+    """
+    kind = field.type_ or "str"
+    if kind == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(f"Filter on boolean field '{field.name}' requires a boolean operand.")
+    elif kind == "str":
+        if not isinstance(value, str):
+            raise ValueError(f"Filter on string field '{field.name}' requires a string operand.")
+    elif kind in ("int", "float"):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"Filter on numeric field '{field.name}' requires a non-boolean numeric operand.")
+    else:
+        raise NotImplementedError(
+            f"Milvus filters do not support equality or membership on '{kind}' field '{field.name}'."
+        )
+
+
+def _check_numeric_field(field: VectorStoreField) -> None:
+    if (field.type_ or "str") not in ("int", "float"):
+        raise NotImplementedError(
+            f"Milvus ordered comparisons require a declared int or float field; '{field.name}' is '{field.type_}'."
+        )
 
 
 class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT, ModelT], Generic[KeyT, ModelT]):
@@ -317,9 +347,15 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         return schema, index_params
 
     async def ensure_collection_exists(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
-        """Create the collection and its vector indexes when it does not exist."""
+        """Create the collection and its vector indexes, or validate an existing one.
+
+        When a collection with this name already exists, its schema and vector indexes are
+        validated against the data model definition so a stale or unrelated collection is not
+        silently accepted; a mismatch raises ``ValueError``.
+        """
         options = _validate_operation_options(operation_options, _CREATE_OPTIONS)
         if await self.collection_exists():
+            await self._validate_existing_collection()
             return
         schema, index_params = self._build_schema_and_index()
         try:
@@ -333,9 +369,48 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         except Exception:
             # The check-then-create sequence is not atomic: a concurrent worker may have
             # created the collection between the existence check and this call. Treat an
-            # already-created collection as success (ensure semantics); otherwise re-raise.
+            # already-created collection as success (ensure semantics) after validating that
+            # its schema matches; otherwise re-raise the original error.
             if not await self.collection_exists():
                 raise
+            await self._validate_existing_collection()
+
+    async def _validate_existing_collection(self) -> None:
+        """Validate an existing collection's fields, vector dimensions and metrics."""
+        info = cast(
+            "Mapping[str, Any]", await asyncio.to_thread(self._client.describe_collection, self.collection_name)
+        )
+        raw_fields = cast("Sequence[Mapping[str, Any]]", info.get("fields") or [])
+        fields: dict[str, Mapping[str, Any]] = {str(field["name"]): field for field in raw_fields}
+        key = fields.get(self._key_storage_name)
+        if key is None or not key.get("is_primary"):
+            raise ValueError(
+                f"Existing Milvus collection '{self.collection_name}' has no primary key "
+                f"'{self._key_storage_name}' matching the data model."
+            )
+        for field in self.definition.data_fields:
+            if (field.storage_name or field.name) not in fields:
+                raise ValueError(
+                    f"Existing Milvus collection '{self.collection_name}' is missing field "
+                    f"'{field.storage_name or field.name}'."
+                )
+        for field in self.definition.vector_fields:
+            name = field.storage_name or field.name
+            existing = fields.get(name)
+            if existing is None:
+                raise ValueError(
+                    f"Existing Milvus collection '{self.collection_name}' is missing vector field '{name}'."
+                )
+            dimensions = cast("Mapping[str, Any]", existing.get("params") or {}).get("dim")
+            if dimensions is not None and int(dimensions) != int(cast(int, field.dimensions)):
+                raise ValueError(
+                    f"Existing Milvus vector field '{name}' has dimension {dimensions}, expected {field.dimensions}."
+                )
+            index = await asyncio.to_thread(self._client.describe_index, self.collection_name, name)
+            metric = cast("Mapping[str, Any]", index).get("metric_type") if isinstance(index, Mapping) else None
+            expected = _METRICS[cast(str, field.distance_function)]
+            if metric is not None and metric != expected:
+                raise ValueError(f"Existing Milvus vector field '{name}' uses metric {metric}, expected {expected}.")
 
     async def ensure_collection_deleted(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Delete this collection if it exists."""
@@ -554,24 +629,24 @@ class MilvusCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             raise NotImplementedError("Milvus filters do not operate on vector fields.")
         name = field.storage_name or field.name
         operator, value = expression.operator, expression.value
-        if operator == "eq":
-            return f"({name} == {_format_scalar(value)})"
-        if operator == "ne":
-            return f"({name} != {_format_scalar(value)})"
-        if operator == "gt":
-            return f"({name} > {_format_scalar(value)})"
-        if operator == "gte":
-            return f"({name} >= {_format_scalar(value)})"
-        if operator == "lt":
-            return f"({name} < {_format_scalar(value)})"
-        if operator == "lte":
-            return f"({name} <= {_format_scalar(value)})"
+        if operator in ("eq", "ne"):
+            _check_scalar_operand(field, value)
+            return f"({name} {'==' if operator == 'eq' else '!='} {_format_scalar(value)})"
+        if operator in ("gt", "gte", "lt", "lte"):
+            _check_numeric_field(field)
+            _check_scalar_operand(field, value)
+            symbol = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[operator]
+            return f"({name} {symbol} {_format_scalar(value)})"
         if operator == "between":
+            _check_numeric_field(field)
+            _check_scalar_operand(field, value[0])
+            _check_scalar_operand(field, value[1])
             return f"({name} >= {_format_scalar(value[0])} and {name} <= {_format_scalar(value[1])})"
-        if operator == "in":
-            return f"({name} in {_format_list(value)})"
-        if operator == "not_in":
-            return f"({name} not in {_format_list(value)})"
+        if operator in ("in", "not_in"):
+            for item in value:
+                _check_scalar_operand(field, item)
+            keyword = "in" if operator == "in" else "not in"
+            return f"({name} {keyword} {_format_list(value)})"
         raise NotImplementedError(f"Milvus does not support portable filter operator '{operator}'.")
 
 

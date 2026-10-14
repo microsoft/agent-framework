@@ -51,6 +51,27 @@ def test_unsupported_operator(collection):
         collection._prepare_filter(Filter("text", "contains", "a"))
 
 
+def test_boolean_operand_on_numeric_field_rejected(collection):
+    # Filter("number", "eq", True) must not emit `price == true`.
+    with pytest.raises(ValueError, match="numeric field"):
+        collection._prepare_filter(Filter("number", "eq", True))
+
+
+def test_type_mismatched_operand_rejected(collection):
+    with pytest.raises(ValueError, match="string field"):
+        collection._prepare_filter(Filter("text", "eq", 5))
+
+
+def test_membership_element_type_checked(collection):
+    with pytest.raises(ValueError, match="numeric field"):
+        collection._prepare_filter(Filter("number", "in", [1, True]))
+
+
+def test_ordered_comparison_requires_numeric_field(collection):
+    with pytest.raises(NotImplementedError, match="ordered comparisons"):
+        collection._prepare_filter(Filter("text", "gt", "a"))
+
+
 def test_unknown_field(collection):
     with pytest.raises(NotImplementedError):
         collection._prepare_filter(Filter("missing", "eq", "a"))
