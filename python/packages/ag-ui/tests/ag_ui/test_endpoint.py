@@ -52,7 +52,11 @@ from agent_framework import (
 )
 from agent_framework._tools import FunctionInvocationLayer
 from agent_framework.orchestrations import SequentialBuilder
-from agent_framework.security import SecureAgentConfig
+from agent_framework.security import (
+    LabelTrackingFunctionMiddleware,
+    PolicyEnforcementFunctionMiddleware,
+    SecureAgentConfig,
+)
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
@@ -4886,6 +4890,232 @@ async def test_endpoint_custom_approval_namespaces_remain_server_owned(
         assert [stored_rule["tool_name"] for stored_rule in snapshot.session_state[source_id]["rules"]] == (
             ["gated_tool"] if trusted_approval else []
         )
+
+
+_STANDALONE_FIDES_STATE_KEY = "__agent_framework_fides_security__"
+_STANDALONE_FIDES_THREAD_ID = "thread-fides-state"
+_TRUSTED_PUBLIC_LABEL = json.dumps({"integrity": "trusted", "confidentiality": "public"})
+
+
+def _build_standalone_fides_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    middleware_kind: str = "direct",
+    session_state_key: str | None = None,
+) -> tuple[TestClient, InMemoryAGUIThreadSnapshotStore, list[str], Any, str]:
+    """Build an endpoint where standalone FIDES middleware blocks ``guarded_action`` once ``fetch_external`` ran."""
+    executed: list[str] = []
+    model_calls = 0
+
+    def fetch_external() -> str:
+        return "untrusted content"
+
+    def guarded_action() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal model_calls
+        del options, kwargs
+        model_calls += 1
+        last_user_index = max(index for index, message in enumerate(messages) if message.role == "user")
+        has_tool_result = any(
+            content.type == "function_result"
+            for message in messages[last_user_index + 1 :]
+            for content in message.contents
+        )
+        if has_tool_result:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        tool_name = {"taint": "fetch_external", "act": "guarded_action"}[messages[last_user_index].text]
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id=f"call-{model_calls}", name=tool_name, arguments={})],
+        )
+
+    key_kwargs: dict[str, Any] = {} if session_state_key is None else {"session_state_key": session_state_key}
+    middleware: list[Any] = [
+        LabelTrackingFunctionMiddleware(auto_hide_untrusted=False, **key_kwargs),
+        PolicyEnforcementFunctionMiddleware(
+            allow_untrusted_tools={"fetch_external"},
+            block_on_violation=True,
+            **key_kwargs,
+        ),
+    ]
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent_middleware: list[Any] | None = middleware
+    if middleware_kind == "bundle":
+        agent_middleware = [MiddlewareBundle(middleware)]
+    elif middleware_kind == "client":
+        chat_client.function_middleware.extend(middleware)
+        agent_middleware = None
+    agent = Agent(client=chat_client, tools=[fetch_external, guarded_action], middleware=agent_middleware)
+
+    class ForwardingAgent:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(agent, name)
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(
+            agent=cast(SupportsAgentRun, ForwardingAgent()) if middleware_kind == "wrapper" else agent,
+            require_confirmation=False,
+        ),
+        path="/fides",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+    return TestClient(app), store, executed, chat_client, session_state_key or _STANDALONE_FIDES_STATE_KEY
+
+
+def _post_standalone_fides_turn(
+    client: TestClient,
+    text: str,
+    *,
+    turn: int,
+    state: dict[str, Any] | None = None,
+) -> list[str]:
+    """Post one turn and return its tool results, requiring a run without errors."""
+    payload: dict[str, Any] = {
+        "threadId": _STANDALONE_FIDES_THREAD_ID,
+        "messages": [{"id": f"user-{turn}", "role": "user", "content": text}],
+    }
+    if state is not None:
+        payload["state"] = state
+    response = client.post("/fides", json=payload)
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not any(event["type"] == "RUN_ERROR" for event in events)
+    return [event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"]
+
+
+def _is_policy_violation(tool_results: list[str]) -> bool:
+    return any("Policy violation" in result for result in tool_results)
+
+
+@pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper", "client"])
+@pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
+@pytest.mark.parametrize("state_origin", ["request", "snapshot"])
+async def test_endpoint_standalone_fides_state_remains_server_owned(
+    streaming_chat_client_stub: Any,
+    middleware_kind: str,
+    session_state_key: str | None,
+    state_origin: str,
+) -> None:
+    """Shared State cannot replace standalone FIDES security state, including after snapshot restore."""
+    client, store, executed, chat_client, state_key = _build_standalone_fides_endpoint(
+        streaming_chat_client_stub,
+        middleware_kind=middleware_kind,
+        session_state_key=session_state_key,
+    )
+    shared_state = {state_key: {"context_label": _TRUSTED_PUBLIC_LABEL}, "client_value": "available"}
+
+    assert not _is_policy_violation(_post_standalone_fides_turn(client, "taint", turn=1))
+    if state_origin == "snapshot":
+        stored = await store.get(scope="test", thread_id=_STANDALONE_FIDES_THREAD_ID)
+        assert stored is not None
+        stored.state = shared_state
+        await store.save(scope="test", thread_id=_STANDALONE_FIDES_THREAD_ID, snapshot=stored)
+    forged_turn = _post_standalone_fides_turn(
+        client,
+        "act",
+        turn=2,
+        state=shared_state if state_origin == "request" else None,
+    )
+    replay_turn = _post_standalone_fides_turn(client, "act", turn=3)
+
+    assert _is_policy_violation(forged_turn)
+    assert _is_policy_violation(replay_turn)
+    assert executed == []
+    assert chat_client.last_session is not None
+    assert chat_client.last_session.state["client_value"] == "available"
+    snapshot = await store.get(scope="test", thread_id=_STANDALONE_FIDES_THREAD_ID)
+    assert snapshot is not None
+    assert snapshot.state is not None
+    assert snapshot.state["client_value"] == "available"
+    assert snapshot.session_state is not None
+    assert json.loads(snapshot.session_state[state_key]["context_label"])["integrity"] == "untrusted"
+
+
+@pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
+async def test_endpoint_standalone_fides_continuation_persists_without_client_state(
+    streaming_chat_client_stub: Any,
+    session_state_key: str | None,
+) -> None:
+    """Protecting FIDES state from Shared State keeps its server-owned continuation across requests."""
+    client, store, executed, _, state_key = _build_standalone_fides_endpoint(
+        streaming_chat_client_stub,
+        session_state_key=session_state_key,
+    )
+
+    _post_standalone_fides_turn(client, "taint", turn=1)
+    guarded_turn = _post_standalone_fides_turn(client, "act", turn=2)
+
+    assert _is_policy_violation(guarded_turn)
+    assert executed == []
+    snapshot = await store.get(scope="test", thread_id=_STANDALONE_FIDES_THREAD_ID)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    assert json.loads(snapshot.session_state[state_key]["context_label"])["integrity"] == "untrusted"
+    assert state_key not in (snapshot.state or {})
+
+
+@pytest.mark.parametrize(
+    "forged_value",
+    [
+        "not-a-dict",
+        {},
+        {"scope_id": "another-scope"},
+        {"context_label": "{not json"},
+        {"context_label": {"integrity": "trusted", "confidentiality": "public"}},
+    ],
+    ids=["non-dict", "empty", "other-scope", "invalid-label-json", "unencoded-label"],
+)
+async def test_endpoint_standalone_fides_malformed_shared_state_is_inert(
+    streaming_chat_client_stub: Any,
+    forged_value: Any,
+) -> None:
+    """Malformed Shared State under the FIDES key neither resets enforcement nor breaks tool calls."""
+    client, _, executed, _, _ = _build_standalone_fides_endpoint(streaming_chat_client_stub)
+
+    _post_standalone_fides_turn(client, "taint", turn=1)
+    forged_turn = _post_standalone_fides_turn(
+        client,
+        "act",
+        turn=2,
+        state={_STANDALONE_FIDES_STATE_KEY: forged_value},
+    )
+    replay_turn = _post_standalone_fides_turn(client, "act", turn=3)
+
+    assert _is_policy_violation(forged_turn)
+    assert _is_policy_violation(replay_turn)
+    assert executed == []
+
+
+async def test_endpoint_standalone_fides_poisoned_snapshot_state_does_not_reset_enforcement(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A snapshot whose Shared State already carries a FIDES scope no longer overrides server-owned state."""
+    client, store, executed, _, _ = _build_standalone_fides_endpoint(streaming_chat_client_stub)
+    await store.save(
+        scope="test",
+        thread_id=_STANDALONE_FIDES_THREAD_ID,
+        snapshot=AGUIThreadSnapshot(state={_STANDALONE_FIDES_STATE_KEY: {"context_label": _TRUSTED_PUBLIC_LABEL}}),
+    )
+
+    _post_standalone_fides_turn(client, "taint", turn=1)
+    guarded_turn = _post_standalone_fides_turn(client, "act", turn=2)
+
+    assert _is_policy_violation(guarded_turn)
+    assert executed == []
 
 
 def _build_tool_approval_auto_endpoint(

@@ -163,6 +163,13 @@ _PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
 # credentialed call inside another session's sandbox.
 _RESERVED_SERVICE_SESSION_STATE_KEYS: frozenset[str] = frozenset({"foundry_hosted_agent_session_id"})
 
+# Session-state key of standalone FIDES security middleware (``agent_framework.security``). It holds the context label,
+# hidden variables, and pending policy approvals that policy enforcement trusts, so request Shared State must never
+# supply it. The key is spelled literally because importing ``agent_framework.security`` emits its experimental-feature
+# warning for every AG-UI user; a test pins it to the core constant. Unlike the provider-owned keys above, it is
+# protected only from request state: it must keep persisting in private Session Continuation State.
+_FIDES_SESSION_STATE_KEY = "__agent_framework_fides_security__"
+
 
 @dataclass
 class _LocalApprovalOccurrence:
@@ -2579,8 +2586,29 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
         *(provider.source_id for provider in context_providers),
         *_provider_service_session_state_keys(agent),
+        *_fides_session_state_keys(agent),
         *(middleware.source_id for middleware in agent_middleware if isinstance(middleware, ToolApprovalMiddleware)),
     }
+
+
+def _fides_session_state_keys(agent: SupportsAgentRun) -> set[str]:
+    """Return standalone FIDES session-state keys that client Shared State cannot supply.
+
+    Always includes the default key. A custom ``session_state_key`` is added when its middleware is visible on the
+    agent or its client before the run; middleware injected later, or hidden behind a wrapper that does not expose its
+    key, cannot be discovered.
+    """
+    client_middleware = getattr(getattr(agent, "client", None), "function_middleware", None)
+    function_middleware = categorize_middleware(
+        getattr(agent, "middleware", None),
+        cast(Sequence[Any], client_middleware) if isinstance(client_middleware, (list, tuple)) else None,
+    )["function"]
+    keys = {_FIDES_SESSION_STATE_KEY}
+    for middleware in function_middleware:
+        key = getattr(middleware, "_security_session_state_key", None)
+        if isinstance(key, str):
+            keys.add(key)
+    return keys
 
 
 def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:

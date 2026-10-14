@@ -3760,6 +3760,110 @@ async def test_reserved_service_session_keys_protected_without_agent_declaration
     assert observed_state == [{"client_value": "available"}]
 
 
+def test_standalone_fides_default_state_key_matches_core():
+    """AG-UI spells the default FIDES key literally, so it must stay identical to the key core's middleware uses."""
+    from agent_framework.security import (
+        _STANDALONE_SESSION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY
+
+    assert _FIDES_SESSION_STATE_KEY == _STANDALONE_SESSION_STATE_KEY
+
+
+@pytest.mark.parametrize("location", ["agent", "bundle", "client", "client-tuple", "forwarding-wrapper"])
+def test_request_state_protected_keys_include_configured_standalone_fides_keys(location: str):
+    """Configured FIDES state keys stay server-owned wherever their middleware is visible before the run."""
+    from types import SimpleNamespace
+
+    from agent_framework import FunctionMiddleware, MiddlewareBundle
+    from agent_framework.security import LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class ForwardingMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    middleware = [
+        LabelTrackingFunctionMiddleware(session_state_key="label_state"),
+        PolicyEnforcementFunctionMiddleware(session_state_key="policy_state"),
+    ]
+    stub = StubAgent()
+    if location == "agent":
+        setattr(stub, "middleware", middleware)
+    elif location == "bundle":
+        setattr(stub, "middleware", [MiddlewareBundle(middleware)])
+    elif location == "client":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=middleware)
+    elif location == "client-tuple":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=tuple(middleware))
+    else:
+        setattr(stub, "middleware", [ForwardingMiddleware(item) for item in middleware])
+
+    assert {_FIDES_SESSION_STATE_KEY, "label_state", "policy_state"} <= _request_state_protected_keys(stub)
+
+
+def test_request_state_protected_keys_reserve_default_standalone_fides_key_without_discoverable_middleware():
+    """The default FIDES key stays server-owned for agents that expose no middleware or hide it behind a wrapper."""
+    from agent_framework import FunctionMiddleware
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class OpaqueMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+    wrapped = StubAgent()
+    setattr(wrapped, "middleware", [OpaqueMiddleware(LabelTrackingFunctionMiddleware())])
+
+    for agent in (StubAgent(), wrapped):
+        assert _FIDES_SESSION_STATE_KEY in _request_state_protected_keys(agent)
+
+
+def test_standalone_fides_state_is_not_a_provider_service_session_key():
+    """FIDES state is protected from request state but must keep persisting in private continuation.
+
+    Reserving it like a provider-owned key would also drop it from stateless Session Continuation State, silently
+    discarding the server's own context label.
+    """
+    from agent_framework import AgentSession
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import (
+        _FIDES_SESSION_STATE_KEY,
+        _provider_service_session_state_keys,
+        _serialize_session_continuation_state,
+    )
+
+    stub = StubAgent()
+    setattr(stub, "middleware", [LabelTrackingFunctionMiddleware(session_state_key="custom_state")])
+    expected = {_FIDES_SESSION_STATE_KEY: {"context_label": "default"}, "custom_state": {"context_label": "custom"}}
+    session = AgentSession()
+    session.state.update(expected)
+
+    assert not set(expected) & _provider_service_session_state_keys(stub)
+    assert (
+        _serialize_session_continuation_state(
+            session,
+            stub,
+            shared_state_keys=set(),
+            include_service_session_id=False,
+        )
+        == expected
+    )
+
+
 async def test_request_state_cannot_assign_service_session_id():
     """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
 
