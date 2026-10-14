@@ -856,6 +856,15 @@ class AgentEvalConverter:
                         provider_tools = [execute_code_tool.create_run_tool()]
                     except Exception:
                         provider_tools = None
+            elif (
+                provider_tools is None
+                and hasattr(provider, "get_tools")
+                and callable(getattr(provider, "get_tools", None))
+            ):
+                try:
+                    provider_tools = provider.get_tools()
+                except Exception:
+                    provider_tools = None
             if provider_tools:
                 for tool in normalize_tools(provider_tools):
                     if isinstance(tool, FunctionTool) and tool.name not in seen:
@@ -920,6 +929,15 @@ def _to_eval_item(
                         provider_tools = [execute_code_tool.create_run_tool()]
                     except Exception:
                         provider_tools = None
+            elif (
+                provider_tools is None
+                and hasattr(provider, "get_tools")
+                and callable(getattr(provider, "get_tools", None))
+            ):
+                try:
+                    provider_tools = provider.get_tools()
+                except Exception:
+                    provider_tools = None
             if provider_tools:
                 for tool in normalize_tools(provider_tools):
                     if isinstance(tool, FunctionTool) and tool.name not in seen:

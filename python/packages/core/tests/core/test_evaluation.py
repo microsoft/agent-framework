@@ -90,6 +90,37 @@ class TestAgentEvalConverterCompatibility:
         assert tool_names == ["execute_code"]
         assert "sandbox_helper" not in tool_names
 
+    def test_extract_tools_with_get_tools_only_provider(self) -> None:
+        custom_tool = FunctionTool(name="custom_tool", description="From get_tools", func=lambda: "ok")
+        provider = MagicMock(spec=["get_tools"])
+        provider.get_tools = MagicMock(return_value=[custom_tool])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            tools = AgentEvalConverter.extract_tools(agent)
+
+        tool_names = [t["name"] for t in tools]
+        assert tool_names == ["custom_tool"]
+
+    def test_extract_tools_with_secure_agent_config(self) -> None:
+        from agent_framework.security import SecureAgentConfig
+
+        provider = SecureAgentConfig()
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            tools = AgentEvalConverter.extract_tools(agent)
+
+        tool_names = [t["name"] for t in tools]
+        assert "quarantined_llm" in tool_names
+        assert "inspect_variable" in tool_names
+
 
 class TestToEvalItem:
     def test_string_query(self) -> None:
@@ -248,6 +279,39 @@ class TestToEvalItem:
         tool_names = [tool.name for tool in item.tools]
         assert tool_names == ["execute_code"]
         assert "calculate_sum" not in tool_names
+
+    def test_with_agent_get_tools_only_provider(self) -> None:
+        custom_tool = FunctionTool(name="custom_tool", description="From get_tools", func=lambda: "ok")
+        provider = MagicMock(spec=["get_tools"])
+        provider.get_tools = MagicMock(return_value=[custom_tool])
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Test get_tools", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert tool_names == ["custom_tool"]
+
+    def test_with_agent_secure_agent_config(self) -> None:
+        from agent_framework.security import SecureAgentConfig
+
+        provider = SecureAgentConfig()
+        agent = MagicMock()
+        agent.default_options = {}
+        agent.mcp_tools = []
+        agent.context_providers = [provider]
+        response = AgentResponse(messages=[Message("assistant", ["Done"])])
+
+        item = _to_eval_item(query="Secure test", response=response, agent=agent)
+
+        assert item.tools is not None
+        tool_names = [tool.name for tool in item.tools]
+        assert "quarantined_llm" in tool_names
+        assert "inspect_variable" in tool_names
 
     def test_explicit_tools_override_agent(self) -> None:
         agent_tool = FunctionTool(name="agent_tool", description="from agent", func=lambda: "")
