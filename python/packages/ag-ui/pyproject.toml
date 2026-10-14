@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.20.0,<2",
-    "ag-ui-protocol>=0.1.19,<0.2",
+    "ag-ui-protocol>=0.1.19,<2",
     "fastapi>=0.121.0,<0.142.0",
     "httpx>=0.28.1,<1",
     "sse-starlette>=3.4.5,<4",

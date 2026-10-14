@@ -22,7 +22,6 @@ from ag_ui.core import (
     ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
-    RunStartedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -33,10 +32,12 @@ from ag_ui.core import (
 )
 from agent_framework import CheckpointID, CheckpointStorage, Content, Message, Workflow, WorkflowCheckpoint
 from agent_framework._telemetry import mark_feature_used
+from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 from ._message_adapters import agent_framework_messages_to_agui, agui_messages_to_snapshot_format
 from ._run_common import (
+    _build_run_started_event,
     _cancelled_resume_interrupt_ids,
     _extract_resume_payload,
     _is_snapshot_hydration_request,
@@ -400,7 +401,8 @@ class _WorkflowSnapshotBuilder:
         self._flush_open_reasoning_message()
         if self._open_text_message is not None and self._open_text_message.get("id") != event.message_id:
             self._flush_open_text_message()
-        self._open_text_message = {"id": event.message_id, "role": event.role, "content": ""}
+        # ag-ui-protocol 1.0 no longer defaults the role to "assistant"; a stored message needs one to replay.
+        self._open_text_message = {"id": event.message_id, "role": event.role or "assistant", "content": ""}
 
     def _observe_text_content(self, event: TextMessageContentEvent) -> None:
         if self._open_text_message is None or self._open_text_message.get("id") != event.message_id:
@@ -465,7 +467,14 @@ class _WorkflowSnapshotBuilder:
             "id": event.message_id,
             "role": "tool",
             "toolCallId": event.tool_call_id,
-            "content": event.content,
+            # ag-ui-protocol 1.0 parses content parts into models; store them as wire dictionaries so the
+            # snapshot serializes and replays like any other stored message.
+            "content": [
+                part.model_dump(by_alias=True, exclude_none=True) if isinstance(part, BaseModel) else part
+                for part in cast(list[Any], event.content)
+            ]
+            if isinstance(event.content, list)
+            else event.content,
         }
         if getattr(event, _AGUI_MCP_TOOL_RESULT_KEY, False) is True:
             message[_AGUI_MCP_TOOL_RESULT_KEY] = True
@@ -767,7 +776,7 @@ class AgentFrameworkWorkflow:
             for request_event in live_pending_events.values():
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
                 if owner != request_owner and (owner is not None or request_owner != (None, None)):
-                    yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                    yield _build_run_started_event(run_id, thread_id)
                     yield RunErrorEvent(
                         message="No pending interrupt found for this AG-UI thread.",
                         code="WORKFLOW_RESUME_NOT_FOUND",
@@ -779,14 +788,14 @@ class AgentFrameworkWorkflow:
                     raise LookupError(f"checkpoint '{checkpoint_id}' was not found")
                 checkpoint = await owned_checkpoint_storage.load(checkpoint_id)
             except PermissionError:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield _build_run_started_event(run_id, thread_id)
                 yield RunErrorEvent(
                     message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",
                     code="WORKFLOW_RESUME_NOT_FOUND",
                 )
                 return
             except Exception as exc:
-                yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                yield _build_run_started_event(run_id, thread_id)
                 yield RunErrorEvent(
                     message=f"Could not load workflow checkpoint '{checkpoint_id}': {exc}",
                     code="WORKFLOW_CHECKPOINT_LOAD_FAILED",
@@ -802,7 +811,7 @@ class AgentFrameworkWorkflow:
                 request_event = live_pending_events.get(interrupt_id)
                 owner = getattr(request_event, _REQUEST_OWNER_ATTRIBUTE, None)
                 if owner != request_owner and (owner is not None or request_owner != (None, None)):
-                    yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+                    yield _build_run_started_event(run_id, thread_id)
                     yield RunErrorEvent(
                         message=f"No pending interrupt found for resume interruptId '{interrupt_id}'.",
                         code="WORKFLOW_RESUME_NOT_FOUND",

@@ -621,6 +621,7 @@ class TestEmitToolResultWithState:
         approval_snapshot = _resolved_tool_result_snapshot_messages(
             [Message(role="tool", contents=[content], message_id="approval-result")]
         )["mcp-1"]
+        assert isinstance(approval_event.content, str)
         assert json.loads(approval_event.content) == host_payload
         assert approval_snapshot["content"] == "Summary"
         assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
@@ -689,6 +690,7 @@ class TestEmitToolResultWithState:
         assert json.loads(result_event.content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "Summary"
         assert json.loads(flow.tool_results[-1][_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == display_payload
+        assert isinstance(approval_event.content, str)
         assert json.loads(approval_event.content) == display_payload
         assert approval_snapshot["content"] == "Summary"
         assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == display_payload

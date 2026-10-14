@@ -25,6 +25,9 @@ from agent_framework.ag_ui import AgentFrameworkAgent
 from pydantic import BaseModel, Field
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
+from agent_framework_ag_ui._message_adapters import (
+    snapshot_messages_for_wire,
+)
 
 
 class StepStatus(str, Enum):
@@ -149,7 +152,9 @@ class TaskStepsAgentWithExecution(AgentFrameworkWorkflow):
                 case StateDeltaEvent(delta=delta):
                     # Apply state delta to final_state
                     if delta:
-                        for patch in delta:
+                        for operation in delta:
+                            # ag-ui-protocol 1.0 parses JSON Patch operations into models; 0.1.x keeps dicts.
+                            patch = operation.model_dump() if isinstance(operation, BaseModel) else operation
                             if patch.get("op") == "replace" and patch.get("path") == "/steps":
                                 final_state["steps"] = patch.get("value", [])
                                 logger.info(
@@ -291,9 +296,10 @@ class TaskStepsAgentWithExecution(AgentFrameworkWorkflow):
                 final_messages.append(summary_message)
 
                 # Emit MessagesSnapshotEvent to persist in history
+                # Legacy binary attachments in the history must take the AG-UI 1.0 media shape first.
                 yield MessagesSnapshotEvent(
                     type=EventType.MESSAGES_SNAPSHOT,
-                    messages=final_messages,
+                    messages=snapshot_messages_for_wire(final_messages),
                 )
             except Exception as e:
                 logger.error(f"Error generating summary: {e}")

@@ -22,6 +22,7 @@ from ._state import TOOL_RESULT_DISPLAY_KEY
 from ._utils import (
     _AGUI_HOST_PAYLOAD_OMITTED_KEY,
     _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_PROTOCOL_VERSION,
     _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
     _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
     _MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
@@ -329,12 +330,11 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
                 existing_idx = seen_keys[key]
                 existing_msg = unique_messages[existing_idx]
 
-                existing_result = None
+                existing_empty = True
                 if existing_msg.contents and existing_msg.contents[0].type == "function_result":
-                    existing_result = existing_msg.contents[0].result
-                new_result = msg.contents[0].result
+                    existing_empty = not _function_result_has_output(existing_msg.contents[0])
 
-                if (not existing_result or existing_result == "") and new_result:
+                if existing_empty and _function_result_has_output(msg.contents[0]):
                     logger.info(f"Replacing empty tool result at index {existing_idx} with data from index {idx}")
                     unique_messages[existing_idx] = msg
                 else:
@@ -407,7 +407,9 @@ def _extract_multimodal_source_fields(
         elif source_type in {"base64", "data", "binary"}:
             data = cast(str | None, source_dict.get("value") or source_dict.get("data"))
         elif source_type in {"id", "file"}:
-            binary_id = cast(str | None, source_dict.get("id"))
+            # An AG-UI 1.0 file source carries its provider-issued handle in ``value``; like an ``id`` reference,
+            # it is unresolved and left to application-owned policy.
+            binary_id = cast(str | None, source_dict.get("id") or source_dict.get("value"))
         else:
             url = cast(str | None, source_dict.get("url") or source_dict.get("uri") or url)
             data = cast(str | None, source_dict.get("value") or source_dict.get("data") or data)
@@ -474,6 +476,61 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
         )
 
     return None
+
+
+def _snapshot_media_part(part: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a legacy ``binary`` part to the AG-UI 1.0 media part shape (``image``/``audio``/``video``/``document``).
+
+    AG-UI 1.0 removed the ``binary`` part, so a snapshot holding one fails validation. The part is mapped to the
+    media type its MIME type names. Returns ``None`` for a part that only references a binary ``id``, which has no
+    1.0 representation.
+    """
+    url, data, _, mime_type = _extract_multimodal_source_fields(part)
+    top_level_type = (mime_type or "").split("/", 1)[0].lower()
+    part_type = top_level_type if top_level_type in {"image", "audio", "video"} else "document"
+
+    source: dict[str, Any]
+    if isinstance(url, str) and url:
+        source = {"type": "url", "value": url}
+    elif isinstance(data, str) and data:
+        source = {"type": "url", "value": data} if data.startswith("data:") else {"type": "data", "value": data}
+        if source["type"] == "data" and not mime_type:
+            mime_type = "application/octet-stream"
+    else:
+        logger.warning("Omitting an AG-UI %s part without a url or data source from MESSAGES_SNAPSHOT.", part_type)
+        return None
+    if mime_type:
+        source["mimeType"] = mime_type
+    return {"type": part_type, "source": source}
+
+
+def snapshot_messages_for_wire(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rewrite legacy ``binary`` parts in snapshot messages to the AG-UI 1.0 media part shape.
+
+    Snapshot messages keep media as ``binary`` parts (and thread snapshots saved earlier hold them too), which a
+    1.0 ``MessagesSnapshotEvent`` rejects. Every snapshot event passes its messages through here, so media
+    replays with ag-ui-protocol 1.0; before 1.0 the messages are returned unchanged.
+    """
+    if _AGUI_PROTOCOL_VERSION is None:
+        return messages
+    upgraded: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list) or not any(
+            isinstance(part, dict) and cast(dict[str, Any], part).get("type") == "binary"
+            for part in cast(list[Any], content)
+        ):
+            upgraded.append(message)
+            continue
+        parts: list[Any] = []
+        for part in cast(list[Any], content):
+            if isinstance(part, dict) and cast(dict[str, Any], part).get("type") == "binary":
+                if (media_part := _snapshot_media_part(cast(dict[str, Any], part))) is not None:
+                    parts.append(media_part)
+            else:
+                parts.append(part)
+        upgraded.append({**message, "content": parts})
+    return upgraded
 
 
 def sanitize_legacy_snapshot_media(
@@ -634,6 +691,43 @@ def _normalize_snapshot_content(content: Any) -> Any:
         return ""
 
     return content
+
+
+def _tool_content_parts_to_result(content: list[Any], tool_call_id: str) -> str | list[Content] | None:
+    """Convert an AG-UI ``ContentPart[]`` tool result to a function result.
+
+    Text-only content becomes its concatenated text. When media parts are present, every part becomes a Content
+    item (media parts the same way as user media), so chat clients with rich function output receive the media.
+    Parts that cannot be represented are dropped with a warning. Returns ``None`` when ``content`` is not a list
+    of content parts, so other list payloads keep their existing handling.
+    """
+    # "binary" is the shape stored snapshots keep tool media in, so replayed history converts the same way.
+    content_part_types = {"text", "image", "audio", "video", "document", "binary"}
+    if not content or not all(
+        isinstance(part, dict) and cast(dict[str, Any], part).get("type") in content_part_types for part in content
+    ):
+        return None
+    parts = cast(list[dict[str, Any]], content)
+    if all(part["type"] == "text" for part in parts):
+        return "".join(str(part.get("text", "")) for part in parts)
+
+    items: list[Content] = []
+    dropped: list[str] = []
+    for part in parts:
+        if part["type"] == "text":
+            items.append(Content.from_text(text=str(part.get("text", ""))))
+        elif (media_content := _parse_multimodal_media_part(part)) is not None:
+            items.append(media_content)
+        else:
+            dropped.append(str(part["type"]))
+    if dropped:
+        logger.warning(
+            "Dropping %d media part(s) (%s) without a usable source from the result of tool call %r.",
+            len(dropped),
+            ", ".join(dropped),
+            tool_call_id,
+        )
+    return items or ""
 
 
 def normalize_agui_input_messages(
@@ -803,6 +897,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
             result_content = msg.get("content")
             if result_content is None:
                 result_content = msg.get("result", "")
+            elif isinstance(result_content, list):
+                converted = _tool_content_parts_to_result(cast(list[Any], result_content), str(tool_call_id))
+                if converted is not None:
+                    result_content = converted
 
             # Distinguish approval payloads from actual tool results
             parsed: dict[str, Any] | None = None
@@ -1119,6 +1217,36 @@ def _convert_framework_content_to_agui(content: Content) -> dict[str, Any] | Non
     return {"type": part_type, "source": source}
 
 
+def _function_result_has_output(content: Content) -> bool:
+    """Whether a function result carries any output: text, or media items (an image-only result has no text)."""
+    if content.result:
+        return True
+    return any(item.type in {"uri", "data"} for item in content.items or [])
+
+
+def _function_result_to_agui_content(content: Content) -> str | list[dict[str, Any]]:
+    """Encode a function result as AG-UI tool message content.
+
+    A result holding media items becomes AG-UI 1.0 content parts, so media received from a tool result survives
+    into the next request's history; that needs ag-ui-protocol 1.0, since earlier tool messages only take text.
+    Any other result is its text, as before. MCP results keep their own handling: their model content travels in
+    a sidecar that host-history budgeting may deliberately omit.
+    """
+    text = content.result if content.result is not None else ""
+    items = content.items or []
+    if _AGUI_PROTOCOL_VERSION is None or not any(item.type in {"uri", "data"} for item in items):
+        return text
+    if _extract_mcp_tool_result_host_payload(content)[0]:
+        return text
+    parts: list[dict[str, Any]] = []
+    for item in items:
+        if item.type == "text":
+            parts.append({"type": "text", "text": item.text or ""})
+        elif (media_part := _convert_framework_content_to_agui(item)) is not None:
+            parts.append(media_part)
+    return parts or text
+
+
 def _encode_agui_segment(contents: list[Content], role: str) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
     """Encode a framework content segment into AG-UI message content and tool calls.
 
@@ -1236,7 +1364,7 @@ def _split_mixed_message_to_agui(
         tool_message: dict[str, Any] = {
             "id": next_id(),
             "role": "tool",
-            "content": content.result if content.result is not None else "",
+            "content": _function_result_to_agui_content(content),
             "toolCallId": content.call_id,
         }
         messages.append(tool_message)
