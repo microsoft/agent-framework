@@ -18,7 +18,7 @@ from typing import (
 
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._types import ChatResponse, Content, Message
+from ._types import APPROVAL_REJECTION_RESULT_KEY, ChatResponse, Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
@@ -1183,14 +1183,19 @@ def _count_included_tokens(messages: list[Message]) -> int:
     return included_token_count(messages)
 
 
-def _latest_included_group(messages: list[Message]) -> list[Message]:
-    ordered_group_ids = _ordered_group_ids_from_annotations(messages)
+def _latest_group(messages: list[Message], *, include_excluded: bool) -> list[Message]:
     grouped = _group_messages_by_id(messages)
-    for group_id in reversed(ordered_group_ids):
-        group = grouped.get(group_id, [])
-        if any(not message.additional_properties.get(EXCLUDED_KEY, False) for message in group):
-            return group
+    for message in reversed(messages):
+        if not include_excluded and message.additional_properties.get(EXCLUDED_KEY, False):
+            continue
+        group_id = _group_id(message)
+        if group_id is not None:
+            return grouped.get(group_id, [])
     return []
+
+
+def _latest_included_group(messages: list[Message]) -> list[Message]:
+    return _latest_group(messages, include_excluded=False)
 
 
 def _completed_function_calls(
@@ -1209,7 +1214,12 @@ def _completed_function_calls(
         content.call_id
         for message in candidate_messages
         for content in message.contents
-        if content.type == "function_result" and content.call_id and content.exception is None
+        if (
+            content.type == "function_result"
+            and content.call_id
+            and content.exception is None
+            and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
+        )
     }
     return [
         content
@@ -1236,8 +1246,9 @@ class AgentTriggeredCompactionStrategy:
     Wrapped strategies may provide ``create_trigger_tool()`` to replace the
     default ``compact_context`` tool with one specialized for their inputs.
 
-    The trigger is stored on the function-call content rather than on this
-    strategy instance, so one strategy can be shared safely by concurrent runs.
+    The consumed marker is stored on each trigger-group message rather than on
+    this strategy instance, so one strategy can be shared safely by concurrent
+    runs.
     """
 
     DEFAULT_TOOL_NAME: Final[str] = "compact_context"
@@ -1425,9 +1436,16 @@ class UnloadSkillsCompactionStrategy:
 
         def request_skill_unload(skill_name: str | Sequence[str] | None = None) -> str:
             """Unload the full instructions and resources for selected skills."""
-            requested_names = (
-                [skill_name] if isinstance(skill_name, str) else skill_name if isinstance(skill_name, Sequence) else []
-            )
+            if skill_name is None:
+                requested_names: Sequence[str] = []
+            elif isinstance(skill_name, str):
+                requested_names = [skill_name]
+            elif isinstance(skill_name, Sequence) and not isinstance(skill_name, (bytes, bytearray)):
+                if any(not isinstance(name, str) for name in skill_name):
+                    raise TypeError("skill_name must contain only strings.")
+                requested_names = skill_name
+            else:
+                raise TypeError("skill_name must be a string, a sequence of strings, or None.")
             normalized_names = [name.strip() for name in requested_names if name.strip()]
             if normalized_names:
                 formatted_names = ", ".join(f"'{name}'" for name in normalized_names)
@@ -1462,11 +1480,8 @@ class UnloadSkillsCompactionStrategy:
         )
 
     def _requested_skill_names(self, messages: list[Message]) -> set[str] | None:
-        ordered_group_ids = _ordered_group_ids_from_annotations(messages)
-        grouped = _group_messages_by_id(messages)
-        latest_group = grouped.get(ordered_group_ids[-1], []) if ordered_group_ids else []
         requests = _completed_function_calls(
-            latest_group,
+            _latest_group(messages, include_excluded=True),
             tool_name=self.tool_name,
             include_consumed=True,
             include_excluded=True,
@@ -1478,18 +1493,17 @@ class UnloadSkillsCompactionStrategy:
         for request in requests:
             arguments = request.parse_arguments() or {}
             raw_skill_names = arguments.get("skill_name")
-            skill_names = (
-                [raw_skill_names]
-                if isinstance(raw_skill_names, str)
-                else cast("Sequence[Any]", raw_skill_names)
-                if isinstance(raw_skill_names, Sequence)
-                else []
-            )
-            normalized_names = {
-                skill_name.strip().casefold()
-                for skill_name in skill_names
-                if isinstance(skill_name, str) and skill_name.strip()
-            }
+            if raw_skill_names is None:
+                skill_names: Sequence[Any] = []
+            elif isinstance(raw_skill_names, str):
+                skill_names = [raw_skill_names]
+            elif isinstance(raw_skill_names, Sequence) and not isinstance(raw_skill_names, (bytes, bytearray)):
+                skill_names = cast("Sequence[Any]", raw_skill_names)
+            else:
+                return set()
+            if any(not isinstance(skill_name, str) for skill_name in skill_names):
+                return set()
+            normalized_names = {skill_name.strip().casefold() for skill_name in skill_names if skill_name.strip()}
             if not normalized_names:
                 return None
             requested_names.update(normalized_names)
@@ -1498,11 +1512,17 @@ class UnloadSkillsCompactionStrategy:
     @staticmethod
     def _skill_names_for_removable_group(group: Sequence[Message]) -> set[str] | None:
         included_messages = [message for message in group if not message.additional_properties.get(EXCLUDED_KEY, False)]
-        calls = [
-            content for message in included_messages for content in message.contents if content.type == "function_call"
+        tool_calls = [
+            content
+            for message in included_messages
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
         ]
-        if not calls or any(call.name not in _SKILL_CONTEXT_TOOL_NAMES for call in calls):
+        if not tool_calls or any(
+            call.type != "function_call" or call.name not in _SKILL_CONTEXT_TOOL_NAMES for call in tool_calls
+        ):
             return None
+        calls = tool_calls
 
         completed_call_ids = {
             content.call_id
