@@ -4658,6 +4658,7 @@ def test_parse_result_non_ascii_unicode():
     data = {"columns": ["Año", "Género", "Categoría"]}
     parsed = FunctionTool.parse_result(data)
     assert len(parsed) == 1
+    assert parsed[0].text is not None
     assert "Año" in parsed[0].text
     assert "Género" in parsed[0].text
     assert "\\u00f1" not in parsed[0].text
@@ -4669,6 +4670,7 @@ def test_parse_result_list_non_ascii_unicode():
     data = [{"name": "Año"}, {"name": "Género"}]
     parsed = FunctionTool.parse_result(data)
     assert len(parsed) == 1
+    assert parsed[0].text is not None
     assert "Año" in parsed[0].text
     assert "Género" in parsed[0].text
     assert "\\u00f1" not in parsed[0].text
@@ -4678,6 +4680,7 @@ def test_from_function_result_non_ascii_unicode():
     """Test that Content.from_function_result preserves UTF-8 unicode in dict results."""
     data = {"city": "München", "country": "España"}
     content = Content.from_function_result(call_id="call-1", result=data)
+    assert content.result is not None
     assert "München" in content.result
     assert "España" in content.result
     assert "\\u00fc" not in content.result
