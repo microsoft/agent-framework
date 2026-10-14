@@ -1764,18 +1764,25 @@ class FunctionalWorkflow:
             #   async def my_workflow(data: str, ctx: RunContext) -> str:
             #   async def my_workflow(data: str, ctx) -> str:
             call_args: list[Any] = []
+            call_kwargs: dict[str, Any] = {}
             message_injected = False
 
             for param in params:
                 resolved = hints.get(param.name, param.annotation)
                 if resolved is RunContext or param.name == "ctx":
-                    call_args.append(ctx)
+                    if param.kind == inspect.Parameter.KEYWORD_ONLY:
+                        call_kwargs[param.name] = ctx
+                    else:
+                        call_args.append(ctx)
                 elif not message_injected:
                     # First non-ctx param gets the message
-                    call_args.append(message)
+                    if param.kind == inspect.Parameter.KEYWORD_ONLY:
+                        call_kwargs[param.name] = message
+                    else:
+                        call_args.append(message)
                     message_injected = True
 
-            return await self._func(*call_args)
+            return await self._func(*call_args, **call_kwargs)
         finally:
             release_task_tracking()
             _active_run_ctx.reset(token)
