@@ -1050,6 +1050,40 @@ class TestResponsesRunHelpers:
         assert deltas == ["Hello ", "world"]
         assert done["text"] == "Hello world"
 
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_responses_from_streaming_run_rejects_divergent_or_shrinking_text_snapshot(
+        self, replacement: str
+    ) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Hello world", merge_mode="append")],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(replacement, merge_mode="replace")],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        deltas = [
+            cast(str, _sse_payload(event)["delta"])
+            for event in events
+            if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.done"
+        )
+        failed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", failed["response"])
+        error = cast("dict[str, object]", response["error"])
+
+        assert deltas == ["Hello world"]
+        assert done["text"] == "Hello world"
+        assert failed["type"] == "response.failed"
+        assert "divergent replacement text snapshot" in cast(str, error["message"])
+
     async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
         marker = {"model_output_kind": "refusal"}
 

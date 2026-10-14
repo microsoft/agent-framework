@@ -172,6 +172,12 @@ All content types that core can aggregate get an explicit first-class
 - This is one field interpreted by the existing type-specific merge code. It does not introduce merge strategy
   objects, a registry, or provider callbacks.
 
+`ChatResponseUpdate` and `AgentResponseUpdate` carry the same optional field for whole-message snapshots. An incoming
+update with `merge_mode="replace"` clears the accumulated contents of the logical message selected by `message_id`
+and role before applying the incoming contents. This is required for protocol snapshots that can replace a
+heterogeneous message or artifact, because URI and binary content are not individually mergeable. `append` and
+`None` retain the existing message-content accumulation behavior.
+
 ### Metadata placement
 
 ```python

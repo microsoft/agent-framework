@@ -719,6 +719,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     role="assistant" if msg.role == A2ARole.ROLE_AGENT else "user",
                     response_id=msg.message_id or str(uuid.uuid4()),
                     message_id=msg.message_id,
+                    merge_mode="replace",
                     additional_properties=_a2a_metadata_properties(metadata),
                     raw_representation=msg,
                 )
@@ -1049,6 +1050,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 role="assistant",
                 response_id=update_event.task_id,
                 message_id=update_event.artifact.artifact_id,
+                merge_mode="append" if update_event.append else "replace",
                 additional_properties=_a2a_metadata_properties(merged_metadata),
                 raw_representation=update_event,
             )
@@ -1140,6 +1142,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                     response_id=update_event.task_id,
                     message_id=message.message_id,
+                    merge_mode="replace",
                     continuation_token=continuation_token,
                     additional_properties=_a2a_metadata_properties(merged_metadata),
                     raw_representation=update_event,

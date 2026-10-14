@@ -1808,6 +1808,46 @@ async def test_streaming_artifact_update_event_yields_content(
     assert updates[0].raw_representation == update_event
 
 
+@mark.parametrize(
+    ("replacement_part", "expected_type"),
+    [
+        (Part(url="https://example.com/replacement", media_type="text/plain"), "uri"),
+        (Part(raw=b"replacement", media_type="application/octet-stream"), "data"),
+    ],
+    ids=["uri", "raw"],
+)
+async def test_streaming_artifact_replacement_discards_previous_heterogeneous_snapshot(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+    replacement_part: Part,
+    expected_type: str,
+) -> None:
+    first = TaskArtifactUpdateEvent(
+        task_id="task-art-replace",
+        context_id="ctx-art-replace",
+        artifact=Artifact(artifact_id="artifact-replace", parts=[Part(text="stale")]),
+        append=False,
+    )
+    replacement = TaskArtifactUpdateEvent(
+        task_id="task-art-replace",
+        context_id="ctx-art-replace",
+        artifact=Artifact(artifact_id="artifact-replace", parts=[replacement_part]),
+        append=False,
+    )
+    mock_a2a_client.responses.extend([
+        StreamResponse(artifact_update=first),
+        StreamResponse(artifact_update=replacement),
+    ])
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert [update.merge_mode for update in updates] == ["replace", "replace"]
+    assert len(response.messages) == 1
+    assert [content.type for content in response.messages[0].contents] == [expected_type]
+
+
 async def test_streaming_status_update_event_yields_content(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:

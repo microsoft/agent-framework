@@ -2033,10 +2033,12 @@ class Content:
         if self_server_name and other_server_name and self_server_name != other_server_name:
             raise AdditionItemMismatch("Cannot merge function calls from different servers")
 
+        self_name = getattr(self, "name", None)
+        other_name = getattr(other, "name", None)
         return Content(
             "function_call",
             call_id=self_call_id or other_call_id,
-            name=getattr(self, "name", None) or getattr(other, "name", None),
+            name=other_name if other.merge_mode == "replace" else self_name or other_name,
             arguments=arguments,
             id=self.id or other.id,
             hosted=bool(self.hosted or other.hosted),
@@ -2462,6 +2464,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
         response.messages.append(message)
     else:
         message = response.messages[-1]
+    if getattr(update, "merge_mode", None) == "replace":
+        message.contents.clear()
     # Incorporate the update's properties into the message.
     if update.author_name is not None:
         message.author_name = update.author_name
@@ -3350,6 +3354,7 @@ class ChatResponseUpdate(SerializationMixin):
             to the resulting `Message` objects.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
+        merge_mode: Whether this update appends to or replaces the current logical message contents.
         conversation_id: An identifier for the state of the conversation of which this update is a part.
         model: The model associated with this response update.
         created_at: A timestamp for the chat response update.
@@ -3395,6 +3400,7 @@ class ChatResponseUpdate(SerializationMixin):
         author_name: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         conversation_id: str | None = None,
         model: str | None = None,
         created_at: CreatedAtT | None = None,
@@ -3411,6 +3417,7 @@ class ChatResponseUpdate(SerializationMixin):
             author_name: Optional name of the author of the response update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
+            merge_mode: Whether this update appends to or replaces the current logical message contents.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
             model: Optional model associated with this response update.
             created_at: Optional timestamp for the chat response update.
@@ -3422,6 +3429,9 @@ class ChatResponseUpdate(SerializationMixin):
                 from an underlying implementation.
 
         """
+        if merge_mode not in (None, "append", "replace"):
+            raise ValueError(f"Invalid merge mode: {merge_mode!r}")
+
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -3440,6 +3450,7 @@ class ChatResponseUpdate(SerializationMixin):
         self.author_name = author_name
         self.response_id = response_id
         self.message_id = message_id
+        self.merge_mode: Literal["append", "replace"] | None = merge_mode
         self.conversation_id = conversation_id
         self.model = model
         self.created_at = created_at
@@ -3829,6 +3840,7 @@ class AgentResponseUpdate(SerializationMixin):
             scenarios to track which agent generated specific parts of the response.
         response_id: The ID of the response of which this update is a part.
         message_id: The ID of the message of which this update is a part.
+        merge_mode: Whether this update appends to or replaces the current logical message contents.
         created_at: A timestamp for the response update.
         additional_properties: Any additional properties associated with the update.
         raw_representation: The raw representation from an underlying implementation.
@@ -3874,6 +3886,7 @@ class AgentResponseUpdate(SerializationMixin):
         agent_id: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
+        merge_mode: Literal["append", "replace"] | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         continuation_token: ContinuationToken | None = None,
@@ -3890,6 +3903,7 @@ class AgentResponseUpdate(SerializationMixin):
             agent_id: Optional identifier of the agent that produced this update.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
+            merge_mode: Whether this update appends to or replaces the current logical message contents.
             created_at: Optional timestamp for the chat response update.
             finish_reason: The reason the model stopped generating. Common values include
                 ``"stop"`` (natural completion), ``"length"`` (token limit), and
@@ -3900,6 +3914,9 @@ class AgentResponseUpdate(SerializationMixin):
             raw_representation: Optional raw representation of the chat response update.
 
         """
+        if merge_mode not in (None, "append", "replace"):
+            raise ValueError(f"Invalid merge mode: {merge_mode!r}")
+
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -3919,6 +3936,7 @@ class AgentResponseUpdate(SerializationMixin):
         self.agent_id = agent_id
         self.response_id = response_id
         self.message_id = message_id
+        self.merge_mode: Literal["append", "replace"] | None = merge_mode
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
@@ -3975,6 +3993,7 @@ def map_chat_to_agent_update(update: ChatResponseUpdate, agent_name: str | None)
         author_name=update.author_name or agent_name,
         response_id=update.response_id,
         message_id=update.message_id,
+        merge_mode=getattr(update, "merge_mode", None),
         created_at=update.created_at,
         finish_reason=update.finish_reason,  # type: ignore[arg-type]
         continuation_token=update.continuation_token,

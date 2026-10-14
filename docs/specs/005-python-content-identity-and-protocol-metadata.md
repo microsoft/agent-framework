@@ -53,6 +53,12 @@ does not manufacture one.
 Message- and update-level `additional_properties` follow the same namespace rules as content metadata. A protocol's
 message metadata belongs in that protocol owner's namespace; content item metadata remains on the relevant `Content`.
 
+`ChatResponseUpdate.merge_mode` and `AgentResponseUpdate.merge_mode` apply to the containing logical message. An
+incoming `replace` update clears the accumulated contents of the message selected by `message_id` and role before
+the update's contents are applied. `append` and `None` retain the existing accumulation behavior. Protocols must use
+update-level replacement for authoritative heterogeneous message or artifact snapshots whose prior URI, binary, or
+other non-mergeable content must be discarded.
+
 ### Hosted execution
 
 `function_call` content serializes:
@@ -104,9 +110,10 @@ that existed before `merge_mode`: text and reasoning text concatenate, function-
 incrementally, usage values add, and code-interpreter inputs and outputs use their existing field-wise list merge.
 This compatibility mode exists for older adapters; new provider updates must state `append` or `replace` explicitly.
 
-The field is serialized on individual updates. `ChatResponse.from_updates()`,
-`AgentResponse.from_updates()`, and `ResponseStream.get_final_response()` consume and recursively clear it from
-finalized content, including nested content items.
+Content-level modes are serialized on individual content items. Update-level modes are serialized on
+`ChatResponseUpdate` and `AgentResponseUpdate`. `ChatResponse.from_updates()`,
+`AgentResponse.from_updates()`, and `ResponseStream.get_final_response()` consume update-level modes and recursively
+clear content-level modes from finalized content, including nested content items.
 
 Providers must mark every mergeable streamed item they emit. Delta events use `append`; authoritative payload
 snapshots use `replace`. An event name such as `*.done` does not by itself imply replacement when the event carries

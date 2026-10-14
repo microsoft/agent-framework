@@ -1251,10 +1251,13 @@ async def responses_from_streaming_run(
             return text
 
         previous = content_text
-        content_text = text
         if text.startswith(previous):
+            content_text = text
             return text[len(previous) :]
-        return text if not previous else ""
+        if not previous:
+            content_text = text
+            return text
+        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
 
     def close_content_part() -> list[str]:
         nonlocal content_type, content_text

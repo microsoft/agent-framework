@@ -1034,6 +1034,25 @@ def test_function_call_content_add_merging_and_errors():
     assert c.arguments == '{"x": 1}'
     assert c.id == "occurrence"
 
+    # A complete snapshot replaces the semantic name while retaining fail-safe hosted routing.
+    a = Content.from_function_call(
+        call_id="1",
+        name="old_tool",
+        arguments="{}",
+        id="occurrence",
+        hosted=True,
+    )
+    b = Content.from_function_call(
+        call_id="1",
+        name="new_tool",
+        arguments="{}",
+        id="occurrence",
+        merge_mode="replace",
+    )
+    c = a + b
+    assert c.name == "new_tool"
+    assert c.hosted is True
+
 
 # region FunctionResultContent
 
@@ -1682,6 +1701,45 @@ def test_chat_response_updates_to_chat_response_two():
     assert chat_response.messages[0].message_id == "1"
     assert isinstance(chat_response.messages[1], Message)
     assert chat_response.messages[1].message_id == "2"
+
+
+@mark.parametrize(
+    ("response_type", "update_type"),
+    [(ChatResponse, ChatResponseUpdate), (AgentResponse, AgentResponseUpdate)],
+)
+def test_response_update_replace_replaces_logical_message_contents(response_type: Any, update_type: Any) -> None:
+    updates = [
+        update_type(
+            contents=[
+                Content.from_text("old"),
+                Content.from_uri("https://example.com/old"),
+            ],
+            role="assistant",
+            message_id="message-1",
+        ),
+        update_type(
+            contents=[
+                Content.from_uri("https://example.com/new"),
+                Content.from_data(b"new", media_type="application/octet-stream"),
+            ],
+            role="assistant",
+            message_id="message-1",
+            merge_mode="replace",
+        ),
+    ]
+
+    response = response_type.from_updates(updates)
+
+    assert len(response.messages) == 1
+    assert [content.type for content in response.messages[0].contents] == ["uri", "data"]
+    assert updates[1].to_dict()["merge_mode"] == "replace"
+    assert update_type.from_dict(updates[1].to_dict()).merge_mode == "replace"
+
+
+@mark.parametrize("update_type", [ChatResponseUpdate, AgentResponseUpdate])
+def test_response_update_rejects_invalid_merge_mode(update_type: Any) -> None:
+    with raises(ValueError, match="Invalid merge mode"):
+        update_type(merge_mode=cast(Any, "invalid"))
 
 
 def test_chat_response_updates_to_chat_response_multiple():
@@ -6971,11 +7029,13 @@ def test_map_chat_to_agent_update_forwards_finish_reason() -> None:
     chat_update = ChatResponseUpdate(
         contents=[Content.from_text("test")],
         finish_reason="length",
+        merge_mode="replace",
     )
     agent_update = map_chat_to_agent_update(chat_update, agent_name="test_agent")
 
     assert agent_update.finish_reason == "length"
     assert agent_update.author_name == "test_agent"
+    assert agent_update.merge_mode == "replace"
 
 
 def test_process_update_propagates_finish_reason_to_agent_response() -> None:

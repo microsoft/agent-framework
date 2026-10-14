@@ -2414,10 +2414,13 @@ class _OutputItemTracker:
             return text
 
         previous = "".join(self._accumulated)
-        self._accumulated[:] = [text]
         if text.startswith(previous):
+            self._accumulated[:] = [text]
             return text[len(previous) :]
-        return text if not previous else ""
+        if not previous:
+            self._accumulated[:] = [text]
+            return text
+        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
 
     async def handle_update(
         self,
