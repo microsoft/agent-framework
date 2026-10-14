@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
 from contextlib import nullcontext
@@ -1133,6 +1134,7 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
     conflicting_duplicate: bool,
 ) -> None:
     """Approval resume should return its terminal result without changing caller-owned messages."""
+    caplog.set_level(logging.WARNING)
     calls = 0
 
     @tool(name="guarded_tool", approval_mode="always_require")
@@ -1398,7 +1400,7 @@ async def test_approval_resume_filters_resolved_control_items_from_file_history(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        captured_types.extend([[content.type for content in message.contents] for message in messages])
+        captured_types.extend([[str(content.type) for content in message.contents] for message in messages])
         return await original_get_response(messages=messages, options=options, **kwargs)
 
     chat_client_base._get_non_streaming_response = capture_messages  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]

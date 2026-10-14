@@ -56,7 +56,7 @@ cu = ContentUnderstandingContextProvider(
 )
 
 client = FoundryChatClient(
-    project_endpoint="https://your-project.services.ai.azure.com",
+    project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
     model="gpt-4.1",
     credential=credential,
 )
@@ -114,8 +114,8 @@ Set these in your shell or in a `.env` file:
 
 ```bash
 AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
-AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
+FOUNDRY_PROJECT_ENDPOINT=https://your-account.services.ai.azure.com/api/projects/your-project
+FOUNDRY_MODEL=gpt-4.1
 ```
 
 You also need to be logged in with `az login` (for `AzureCliCredential`).

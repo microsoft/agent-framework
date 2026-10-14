@@ -1114,6 +1114,202 @@ async def test_subworkflow_resume_tools_preserve_child_invocation_kwargs() -> No
     ]
 
 
+@pytest.mark.parametrize(
+    "kwargs_shape", ["child-values", "wrapper-only", "legacy-wrapper-only", "empty-mapping", "empty-typed"]
+)
+@pytest.mark.parametrize(
+    ("replace_function_kwargs", "replace_client_kwargs", "nested", "restore_checkpoint"),
+    [
+        (True, True, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (True, True, True, False),
+        (True, False, True, False),
+        (False, True, True, False),
+        (True, True, False, True),
+        (True, False, False, True),
+        (False, True, False, True),
+        (False, False, False, False),
+        (False, False, True, False),
+        (False, False, False, True),
+    ],
+    ids=[
+        "both",
+        "function-only",
+        "client-only",
+        "two-level-both",
+        "two-level-function-only",
+        "two-level-client-only",
+        "checkpoint-both",
+        "checkpoint-function-only",
+        "checkpoint-client-only",
+        "omitted",
+        "two-level-omitted",
+        "checkpoint-omitted",
+    ],
+)
+async def test_subworkflow_cancellation_replaces_child_invocation_kwargs(
+    replace_function_kwargs: bool,
+    replace_client_kwargs: bool,
+    nested: bool,
+    restore_checkpoint: bool,
+    kwargs_shape: str,
+) -> None:
+    """Nested cancellation replaces supplied kwargs and clears a stale omitted peer channel."""
+    from agent_framework import (
+        Executor,
+        InMemoryCheckpointStorage,
+        Workflow,
+        WorkflowBuilder,
+        WorkflowContext,
+        handler,
+        response_handler,
+    )
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    captured_child_kwargs: list[dict[str, Any]] = []
+
+    class RequestingExecutor(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            await ctx.request_info("Continue?", str, request_id="child-request")
+
+        @response_handler
+        async def resume(self, request: str, response: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del request, response, ctx
+
+        async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
+            del request_id
+            captured_child_kwargs.append(ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {}))
+
+    storage = InMemoryCheckpointStorage()
+
+    def build_parent() -> Workflow:
+        child = WorkflowBuilder(start_executor=RequestingExecutor(id="child-requester")).build()
+        child_executor = WorkflowExecutor(child, id="child", propagate_request=True)
+        start_executor = (
+            WorkflowExecutor(
+                WorkflowBuilder(start_executor=child_executor).build(), id="middle", propagate_request=True
+            )
+            if nested
+            else child_executor
+        )
+        return WorkflowBuilder(
+            name="nested-cancellation", start_executor=start_executor, checkpoint_storage=storage
+        ).build()
+
+    parent = build_parent()
+    old_function_kwargs = {"phase": "old"}
+    old_client_kwargs = {"model": "old"}
+    new_function_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] = WorkflowInvocationKwargs(
+        global_kwargs={"phase": "new"},
+        executor_kwargs={"child": {"parent": "new"}, "child-requester": {"request": "new"}},
+    )
+    new_client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] = WorkflowInvocationKwargs(
+        global_kwargs={"model": "new"},
+        executor_kwargs={"child": {"parent": "new"}, "child-requester": {"timeout": 30}},
+    )
+    if kwargs_shape == "wrapper-only":
+        wrapper_id = "middle" if nested else "child"
+        new_function_kwargs = WorkflowInvocationKwargs(executor_kwargs={wrapper_id: {"parent": "new"}})
+        new_client_kwargs = WorkflowInvocationKwargs(executor_kwargs={wrapper_id: {"parent": "new"}})
+    elif kwargs_shape == "legacy-wrapper-only":
+        wrapper_id = "middle" if nested else "child"
+        new_function_kwargs = {wrapper_id: {"parent": "new"}}
+        new_client_kwargs = {wrapper_id: {"parent": "new"}}
+    elif kwargs_shape == "empty-mapping":
+        new_function_kwargs = {}
+        new_client_kwargs = {}
+    elif kwargs_shape == "empty-typed":
+        new_function_kwargs = WorkflowInvocationKwargs()
+        new_client_kwargs = WorkflowInvocationKwargs()
+
+    paused = await parent.run(
+        "start",
+        function_invocation_kwargs=old_function_kwargs,
+        client_kwargs=old_client_kwargs,
+    )
+    [request] = paused.get_request_info_events()
+    if restore_checkpoint:
+        checkpoints = await storage.list_checkpoints(workflow_name=parent.name)
+        pending_checkpoint = max(
+            (checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events),
+            key=lambda checkpoint: checkpoint.timestamp,
+        )
+        parent = build_parent()
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            checkpoint_id=pending_checkpoint.checkpoint_id,
+            checkpoint_storage=storage,
+            function_invocation_kwargs=new_function_kwargs if replace_function_kwargs else None,
+            client_kwargs=new_client_kwargs if replace_client_kwargs else None,
+        )
+    else:
+        _ = await parent.cancel_pending_requests(
+            [request.request_id],
+            function_invocation_kwargs=new_function_kwargs if replace_function_kwargs else None,
+            client_kwargs=new_client_kwargs if replace_client_kwargs else None,
+        )
+
+    expected_child_kwargs: dict[str, Any] = {}
+    if replace_function_kwargs:
+        expected_child_kwargs["function_invocation_kwargs"] = {
+            "global_kwargs": {"phase": "new"} if kwargs_shape == "child-values" else {},
+            "executor_kwargs": {"child-requester": {"request": "new"}} if kwargs_shape == "child-values" else {},
+        }
+    if replace_client_kwargs:
+        expected_child_kwargs["client_kwargs"] = {
+            "global_kwargs": {"model": "new"} if kwargs_shape == "child-values" else {},
+            "executor_kwargs": {"child-requester": {"timeout": 30}} if kwargs_shape == "child-values" else {},
+        }
+    if not replace_function_kwargs and not replace_client_kwargs:
+        expected_child_kwargs = {
+            "function_invocation_kwargs": {"global_kwargs": old_function_kwargs, "executor_kwargs": {}},
+            "client_kwargs": {"global_kwargs": old_client_kwargs, "executor_kwargs": {}},
+        }
+
+    assert captured_child_kwargs == [expected_child_kwargs]
+
+
+@pytest.mark.parametrize("kwargs_shape", ["typed", "legacy", "omitted"])
+async def test_subworkflow_cancellation_kwargs_reach_downstream_agent(kwargs_shape: str) -> None:
+    """Cancellation clears scoped-out kwargs before a real downstream AgentExecutor runs."""
+    from agent_framework import AgentExecutor, Executor, WorkflowBuilder, WorkflowContext, handler, response_handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    class RequestingExecutor(Executor):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del message
+            await ctx.request_info("Continue?", str, request_id="child-request")
+
+        @response_handler
+        async def resume(self, request: str, response: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del request, response, ctx
+
+        async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, list[Message]]) -> None:
+            del request_id
+            await ctx.send_message([Message("user", ["Continue after cancellation"])])
+
+    agent = _KwargsCapturingAgent(name="downstream")
+    requester = RequestingExecutor(id="child-requester")
+    child = WorkflowBuilder(start_executor=requester).add_edge(requester, AgentExecutor(agent)).build()
+    parent = WorkflowBuilder(start_executor=WorkflowExecutor(child, id="child", propagate_request=True)).build()
+    paused = await parent.run("start", function_invocation_kwargs={"phase": "old"}, client_kwargs={"model": "old"})
+    [request] = paused.get_request_info_events()
+    replacement_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+    if kwargs_shape == "typed":
+        replacement_kwargs = WorkflowInvocationKwargs(executor_kwargs={"child": {"parent": "new"}})
+    elif kwargs_shape == "legacy":
+        replacement_kwargs = {"child": {"parent": "new"}}
+    await parent.cancel_pending_requests([request.request_id], function_invocation_kwargs=replacement_kwargs)
+    assert agent.captured_kwargs[0].get("function_invocation_kwargs") == (
+        {"phase": "old"} if kwargs_shape == "omitted" else {}
+    )
+    assert agent.captured_kwargs[0].get("client_kwargs") == ({"model": "old"} if kwargs_shape == "omitted" else None)
+
+
 async def test_subworkflow_kwargs_accessible_via_state() -> None:
     """Test that kwargs are accessible via State within subworkflow.
 

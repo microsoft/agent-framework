@@ -13,8 +13,8 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-development` — coding standards, type annotations, docstrings, logging, performance
 - `python-testing` — test structure, fixtures, async mode, running tests
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
-- `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
-- `python-package-management` — monorepo structure, lazy loading, versioning, new packages
+- `python-feature-lifecycle` — package-stage meaning plus staged API decorators, enums, and feature promotion
+- `python-package-management` — package creation and promotion, meta-package membership, lazy loading, and versioning
 - `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
 - `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 

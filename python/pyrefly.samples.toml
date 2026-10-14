@@ -2,6 +2,8 @@
 # real mistakes (bad imports, wrong attribute/module access) without forcing readers to
 # wade through casts and overload gymnastics just to satisfy third-party SDK stubs.
 project-includes = ["samples"]
+# Standalone hosted scripts import siblings from their own deployment directory.
+enable-fallback-search-path = true
 project-excludes = [
     "**/autogen-migration/**",
     "**/semantic-kernel-migration/**",

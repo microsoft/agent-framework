@@ -256,3 +256,33 @@ class TestAgentApprovalExecutor:
         executor = AgentApprovalExecutor(cast(SupportsAgentRun, agent))
 
         assert executor._propagate_request is True  # type: ignore
+
+
+def _build_with_request_info(builder_name: str, agents: list[str]) -> Any:
+    from agent_framework.orchestrations import ConcurrentBuilder, GroupChatBuilder, SequentialBuilder
+
+    participants = [
+        cast(SupportsAgentRun, _TestAgent(id="drafter_id", name="drafter")),
+        cast(SupportsAgentRun, _TestAgent(id="publisher_id", name="publisher")),
+    ]
+    if builder_name == "sequential":
+        return SequentialBuilder(participants=participants).with_request_info(agents=agents).build()
+    if builder_name == "concurrent":
+        return ConcurrentBuilder(participants=participants).with_request_info(agents=agents).build()
+    return (
+        GroupChatBuilder(participants=participants, selection_func=lambda state: "drafter")
+        .with_request_info(agents=agents)
+        .build()
+    )
+
+
+@pytest.mark.parametrize("builder_name", ["sequential", "concurrent", "group_chat"])
+class TestRequestInfoFilterValidation:
+    """Names passed to with_request_info(agents=...) must match an agent participant."""
+
+    def test_unknown_agent_name_raises(self, builder_name: str) -> None:
+        with pytest.raises(ValueError, match="'Publisher'"):
+            _build_with_request_info(builder_name, ["Publisher"])
+
+    def test_known_agent_name_builds(self, builder_name: str) -> None:
+        assert _build_with_request_info(builder_name, ["publisher"]) is not None

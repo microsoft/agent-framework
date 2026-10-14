@@ -7,6 +7,7 @@
 #     "agent-framework-tools",
 #     "agent-framework-monty",
 #     "agent-framework-foundry-hosting",
+#     "azure-ai-agentserver-core>=2.1.0,<3",
 #     "mcp",
 #     "httpx",
 #     "azure-identity",
@@ -31,7 +32,7 @@ under the home directory.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT       — Microsoft Foundry project endpoint URL
-    AZURE_AI_MODEL_DEPLOYMENT_NAME — Model deployment name for the hosted agent
+    FOUNDRY_MODEL                  — Model deployment name for local runs
     TOOLBOX_MCP_SERVER_URL         — Optional Foundry Toolbox MCP endpoint URL
     PURVIEW_CLIENT_APP_ID          — Optional app/client ID; enables Purview
     ENABLE_SENSITIVE_DATA          — Enables sensitive telemetry capture (prompts/responses) when true
@@ -46,18 +47,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
+from types import TracebackType
 
-from agent import build_claw_agent
-from agent_framework import FileSystemAgentFileStore, InMemoryHistoryProvider
-from agent_framework_foundry_hosting import ResponsesHostServer
-from azure.identity import DefaultAzureCredential
+from agent import _build_purview_middleware, build_claw_agent
+from agent_framework import (
+    Agent,
+    AgentContext,
+    AgentResponseUpdate,
+    BackgroundAgentsProvider,
+    FileSystemAgentFileStore,
+    InMemoryHistoryProvider,
+    ResponseStream,
+    agent_middleware,
+)
+from agent_framework.foundry import FoundryChatClient
+from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer
+from azure.ai.agentserver.core import AgentConfig, get_request_context
+from azure.identity import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
-
-# File memory writes to disk, and the deployed code directory is read-only on Foundry hosted agents,
-# so the harness default of ``{cwd}/agent-file-memory`` cannot be created. The home directory is
-# writable, so root the store there.
-_FILE_MEMORY_DIR = Path.home() / ".claw" / "agent-file-memory"
 
 logger = logging.getLogger(__name__)
 
@@ -82,33 +92,52 @@ def _configure_logging() -> None:
 def _log_environment() -> None:
     """Log which platform variables are present, to make misconfiguration self-evident.
 
-    Only variable *names* are logged for the platform-injected ``FOUNDRY_*`` set: their values can
-    carry session and project details. ``FOUNDRY_AGENT_INSTANCE_CLIENT_ID`` is the exception. It is
-    the client id of the managed identity the container authenticates as, and that identity needs
-    the ``Foundry User`` role to read Toolbox skill content — so when a skill fails to load, this
-    line names the exact principal to grant the role to (see the README).
+    Log variable names only, never user/session/call IDs, tokens or identity values.
     """
     foundry_vars = sorted(name for name in os.environ if name.startswith("FOUNDRY_"))
     logger.info("Platform-injected FOUNDRY_* variables present: %s", ", ".join(foundry_vars) or "(none)")
     logger.info(
-        "Agent managed identity (grant it the Foundry User role): %s",
-        os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID") or "(not set)",
+        "Agent managed identity configured: %s",
+        bool(os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID")),
     )
 
 
-async def main() -> None:
-    """Build the claw and expose it with the Foundry Responses host server."""
-    _configure_logging()
-    load_dotenv()
-    _log_environment()
+async def create_agent() -> Agent:
+    """Build request-owned tools and scope file memory by trusted user and sandbox."""
+    config, context = AgentConfig.from_env(), get_request_context()
+    scope = FoundryRequestScope.from_context(config, context, local_session_id="local-development")
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    credential = (
+        ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
+        if config.is_hosted
+        else AzureCliCredential()
+    )
+    memory_dir = Path.home() / ".claw" / "agent-file-memory" / scope.storage_key
 
-    credential = DefaultAzureCredential()
-    logger.info("File memory enabled (local filesystem at %s).", _FILE_MEMORY_DIR)
+    class RequestClient(FoundryChatClient):
+        async def __aenter__(self) -> RequestClient:
+            return self
+
+        async def __aexit__(
+            self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        ) -> None:
+            async with AsyncExitStack() as cleanup:
+                cleanup.callback(credential.close)
+                cleanup.push_async_callback(self.project_client.close)
+                cleanup.push_async_callback(self.client.close)
+
+    client = RequestClient(
+        project_endpoint=endpoint,
+        model=model,
+        credential=credential,
+        default_headers=context.platform_headers(),
+        middleware=_build_purview_middleware(credential),
+    )
+    logger.info("File memory enabled (trusted user/sandbox-scoped filesystem).")
     agent = await build_claw_agent(
         credential=credential,
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        default_options={"store": False},
+        client=client,
         history_provider=InMemoryHistoryProvider(load_messages=False),
         # Disable filesystem and shell access on the hosted container. Arbitrary read/write or
         # command execution in a shared hosted environment is a serious security risk, and the
@@ -116,13 +145,94 @@ async def main() -> None:
         # external file_access_store (e.g. one backed by Azure Blob Storage) instead of the disk.
         enable_file_access=False,
         enable_shell=False,
-        # File memory is on by default; keep it, but on a writable path (see _FILE_MEMORY_DIR).
-        file_memory_store=FileSystemAgentFileStore(_FILE_MEMORY_DIR),
+        file_memory_store=FileSystemAgentFileStore(memory_dir),
         # Purview authenticates via the container's managed identity; InteractiveBrowserCredential
         # cannot run on a headless hosted container.
         purview_credential=credential,
     )
-    server = ResponsesHostServer(agent)
+    background_providers = [
+        provider for provider in agent.context_providers if isinstance(provider, BackgroundAgentsProvider)
+    ]
+
+    @agent_middleware
+    async def request_background_lifetime(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        if context.session is None:
+            raise RuntimeError("The hosted harness requires a request-owned AgentSession.")
+        session = context.session
+
+        @asynccontextmanager
+        async def release_background() -> AsyncIterator[None]:
+            run_failed = False
+            try:
+                yield
+            except BaseException:
+                run_failed = True
+                raise
+            finally:
+                try:
+                    for provider in background_providers:
+                        await provider.release_session(session)
+                except BaseException as cleanup_error:
+                    logger.error("Failed to release request-owned background tasks (%s).", type(cleanup_error).__name__)
+                    if not run_failed:
+                        raise
+
+        if context.stream:
+            # Streaming returns before iteration; teardown must wrap consumption, not construction.
+            try:
+                await call_next()
+            except BaseException:
+                async with release_background():
+                    raise
+            inner = context.result
+            if not isinstance(inner, ResponseStream):
+                async with release_background():
+                    raise RuntimeError("The streaming hosted harness must return a ResponseStream.")
+
+            cleaned_up = False
+
+            async def cleanup() -> None:
+                nonlocal cleaned_up
+                if cleaned_up:
+                    return
+                cleaned_up = True
+                async with release_background():
+                    await inner.close()
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                run_failed = False
+                try:
+                    async for update in inner:
+                        yield update
+                    await inner.get_final_response()
+                except BaseException:
+                    run_failed = True
+                    raise
+                finally:
+                    try:
+                        await cleanup()
+                    except BaseException as cleanup_error:
+                        logger.error("Failed to clean up the request stream (%s).", type(cleanup_error).__name__)
+                        if not run_failed:
+                            raise
+
+            context.result = ResponseStream(
+                updates(), finalizer=lambda _: inner.get_final_response(), cleanup_hooks=[cleanup]
+            )
+        else:
+            async with release_background():
+                await call_next()
+
+    agent.middleware = [request_background_lifetime, *(agent.middleware or [])]
+    return agent
+
+
+async def main() -> None:
+    """Expose the claw with a fresh agent and resource lifecycle for each request."""
+    _configure_logging()
+    load_dotenv()
+    _log_environment()
+    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
     await server.run_async()
 
 

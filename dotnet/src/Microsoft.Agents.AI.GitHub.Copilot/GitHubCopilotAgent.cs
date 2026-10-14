@@ -5,6 +5,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
@@ -25,6 +28,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 {
     private const string DefaultName = "GitHub Copilot Agent";
     private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
+    private const UnixFileMode OwnerOnlyDirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    private const UnixFileMode OwnerOnlyFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
@@ -253,7 +258,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 // Handle DataContent as attachments
                 (List<AttachmentFile>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
-                    cancellationToken).ConfigureAwait(false);
+                    tempRoot: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 // Send the message with attachments
                 MessageOptions messageOptions = new() { Prompt = prompt };
@@ -689,33 +695,103 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
+        string? tempRoot,
         CancellationToken cancellationToken)
     {
         List<AttachmentFile>? attachments = null;
         string? tempDir = null;
-        foreach (ChatMessage message in messages)
+        try
         {
-            foreach (AIContent content in message.Contents)
+            foreach (ChatMessage message in messages)
             {
-                if (content is DataContent dataContent)
+                foreach (AIContent content in message.Contents)
                 {
-                    tempDir ??= Directory.CreateDirectory(
-                        Path.Combine(Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}")).FullName;
-
-                    string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
-
-                    attachments ??= [];
-                    attachments.Add(new AttachmentFile
+                    if (content is DataContent dataContent)
                     {
-                        Path = tempFilePath,
-                        DisplayName = Path.GetFileName(tempFilePath)
-                    });
+                        tempDir ??= CreateAttachmentTempDirectory(tempRoot);
+
+                        string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
+                        ApplyOwnerOnlyFilePermissions(tempFilePath);
+
+                        attachments ??= [];
+                        attachments.Add(new AttachmentFile
+                        {
+                            Path = tempFilePath,
+                            DisplayName = Path.GetFileName(tempFilePath)
+                        });
+                    }
                 }
             }
+
+            return (attachments, tempDir);
+        }
+        catch
+        {
+            // The caller cannot receive tempDir when tuple construction fails, so cleanup must happen here.
+            CleanupTempDir(tempDir);
+            throw;
+        }
+    }
+
+    private static string CreateAttachmentTempDirectory(string? tempRoot)
+    {
+        string path = Path.Join(tempRoot ?? Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}");
+        return OperatingSystem.IsWindows()
+            ? CreateAttachmentTempDirectoryOnWindows(path)
+            : Directory.CreateDirectory(path, OwnerOnlyDirectoryMode).FullName;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string CreateAttachmentTempDirectoryOnWindows(string path)
+    {
+        SecurityIdentifier owner = GetCurrentWindowsUser();
+        DirectorySecurity security = CreateOwnerOnlyWindowsSecurity<DirectorySecurity>(owner);
+        security.AddAccessRule(new FileSystemAccessRule(
+            owner,
+            FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None,
+            AccessControlType.Allow));
+        var directory = new DirectoryInfo(path);
+        directory.Create(security);
+        return directory.FullName;
+    }
+
+    private static void ApplyOwnerOnlyFilePermissions(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ApplyOwnerOnlyFilePermissionsOnWindows(path);
+            return;
         }
 
-        return (attachments, tempDir);
+        // The owner-only directory prevents access while SaveToAsync creates the file.
+        File.SetUnixFileMode(path, OwnerOnlyFileMode);
     }
+
+    [SupportedOSPlatform("windows")]
+    private static void ApplyOwnerOnlyFilePermissionsOnWindows(string path)
+    {
+        SecurityIdentifier owner = GetCurrentWindowsUser();
+        FileSecurity security = CreateOwnerOnlyWindowsSecurity<FileSecurity>(owner);
+        security.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl, AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static T CreateOwnerOnlyWindowsSecurity<T>(SecurityIdentifier owner)
+        where T : FileSystemSecurity, new()
+    {
+        T security = new();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(owner);
+        return security;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static SecurityIdentifier GetCurrentWindowsUser()
+        => WindowsIdentity.GetCurrent().User
+            ?? throw new InvalidOperationException("The current Windows user does not have a security identifier.");
 
     private static void CleanupTempDir(string? tempDir)
     {

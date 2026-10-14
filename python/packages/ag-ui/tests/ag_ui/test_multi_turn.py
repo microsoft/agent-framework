@@ -28,6 +28,7 @@ from agent_framework_ag_ui import (
     add_agent_framework_fastapi_endpoint,
 )
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
+from agent_framework_ag_ui._approval_state import approval_state_thread_id
 
 
 def _build_app_with_agent(updates: list[AgentResponseUpdate], **kwargs: Any) -> FastAPI:
@@ -724,7 +725,7 @@ async def test_service_session_legacy_approval_validates_against_authoritative_s
     runner = AgentFrameworkAgent(agent=stub, use_service_session=True, snapshot_store=store)
     runner._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id="service-legacy-approval",
+        thread_id=approval_state_thread_id(scope=None, thread_id="service-legacy-approval"),
         interrupt_id="af-call-write",
         call_id="provider-call-write",
         name="guarded_write",

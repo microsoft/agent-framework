@@ -117,20 +117,34 @@ _SAFE_DUNDER_ATTRS: frozenset[str] = frozenset(
 _BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
     {
         "__builtins__",
+        "_eval_type",
+        "_evaluate",
         "_sys",
+        "ag_frame",
         "builtins",
         "connect_accepted_socket",
+        "cr_frame",
         "create_connection",
         "create_server",
         "create_subprocess_exec",
         "create_subprocess_shell",
         "create_unix_connection",
         "create_unix_server",
+        "evaluate",
+        "evaluate_forward_ref",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "get_annotations",
+        "get_type_hints",
         "getaddrinfo",
         "getnameinfo",
+        "gi_frame",
         "importlib",
         "open_connection",
         "open_unix_connection",
+        "singledispatch",
+        "singledispatchmethod",
         "socket",
         "sock_accept",
         "sock_connect",
@@ -149,6 +163,11 @@ _BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
         "sys",
     }
 )
+
+# str.format and str.format_map evaluate attribute and item traversal from string
+# contents at runtime, where the Python AST validator cannot inspect it. Receiver
+# types are not statically knowable, so access to either method name is blocked.
+_BLOCKED_RUNTIME_TRAVERSAL_ATTRS: frozenset[str] = frozenset({"format", "format_map"})
 
 _OS_ROOT_CHAIN: tuple[str, ...] = ("os",)
 _OS_PATH_CHAIN: tuple[str, ...] = ("os", "path")
@@ -208,9 +227,11 @@ ALLOWED_BUILTINS: set[str] = {
     "slice",
 }
 
-# Blocked builtin function names that expose dangerous capabilities.
+# Blocked builtin names that expose dangerous capabilities.
 BLOCKED_BUILTINS: set[str] = {
     "__builtins__",
+    "__loader__",
+    "__spec__",
     "eval",
     "exec",
     "compile",
@@ -783,6 +804,8 @@ class _CodeValidator(ast.NodeVisitor):
         """Validate attribute access."""
         if node.attr in _BLOCKED_CAPABILITY_ATTRS:
             self._errors.append(f"Access to capability attribute '{node.attr}' is not allowed")
+        if node.attr in _BLOCKED_RUNTIME_TRAVERSAL_ATTRS:
+            self._errors.append(f"Access to runtime traversal attribute '{node.attr}' is not allowed")
 
         direct, _ = self._get_os_provenance(node)
         _, base_contained = self._get_os_provenance(node.value)

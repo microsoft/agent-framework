@@ -253,6 +253,18 @@ class TestAgentState:
         assert all(session.session_id == "session-1" for session in sessions)
         assert len(agent.created_sessions) == 1
 
+    async def test_get_or_create_session_does_not_retain_locks_for_completed_sessions(self) -> None:
+        agent = _FakeAgent()
+        state = AgentState(agent)
+
+        for i in range(1000):
+            session_id = f"session-{i}"
+            await state.get_or_create_session(session_id)
+            await state.session_store.delete(session_id)
+
+        assert len(state.session_store._sessions) == 0  # pyright: ignore[reportPrivateUsage]
+        assert len(state._session_locks) == 0  # pyright: ignore[reportPrivateUsage]
+
     async def test_get_or_create_session_reuses_a_session_set_on_the_state(self) -> None:
         agent = _FakeAgent()
         state = AgentState(agent)

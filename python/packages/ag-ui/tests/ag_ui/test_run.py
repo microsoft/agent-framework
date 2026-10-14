@@ -21,7 +21,15 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    Annotation,
+    ChatResponse,
+    Content,
+    Message,
+    ResponseStream,
+)
 from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
@@ -45,6 +53,7 @@ from agent_framework_ag_ui._approval_lifecycle import (
     ResumeDecision,
 )
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
+from agent_framework_ag_ui._event_converters import AGUIEventConverter
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
@@ -514,10 +523,11 @@ class TestCreateStateContextMessage:
         result = _create_state_context_message(state, schema)
 
         assert result is not None
-        assert result.role == "system"
+        assert result.role == "user"
         assert len(result.contents) == 1
         assert "Hello world" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         assert "Current state" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+        assert "untrusted data" in result.contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestInjectStateContext:
@@ -562,8 +572,8 @@ class TestInjectStateContext:
         # System message first
         assert result[0].role == "system"
         assert "helpful" in result[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
-        # State context second
-        assert result[1].role == "system"
+        # State context second, without system-message authority
+        assert result[1].role == "user"
         assert "Current state" in result[1].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
         # User message last
         assert result[2].role == "user"
@@ -583,6 +593,39 @@ def test_emit_text_basic():
     assert len(events) == 2  # TextMessageStartEvent + TextMessageContentEvent
     assert flow.message_id is not None
     assert flow.accumulated_text == "Hello world"
+
+
+async def test_client_a2ui_flag_without_backend_opt_in_does_not_import_optional_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client metadata alone cannot import or activate optional A2UI support."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "agent_framework_ag_ui._a2ui":
+            raise AssertionError("optional A2UI support must not be imported")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text("Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-no-a2ui",
+                "threadId": "thread-no-a2ui",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "forwardedProps": {"injectA2UITool": True},
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    assert events[-1].type == "RUN_FINISHED"
 
 
 def test_emit_text_skip_empty():
@@ -629,6 +672,196 @@ def test_emit_text_skips_when_waiting_for_approval():
     events = _emit_text(content, flow)
 
     assert len(events) == 0
+
+
+def test_emit_text_annotations_are_json_safe_and_message_linked() -> None:
+    """Portable citations reach AG-UI without serializing provider raw objects."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        title="Document",
+        url="https://example.sharepoint.com/document.pdf",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+        raw_representation=object(),
+    )
+    content = Content.from_text("Answer", annotations=[annotation])
+
+    events = _emit_content(content, flow)
+
+    assert len(events) == 3
+    start, text, citations = events
+    assert isinstance(start, TextMessageStartEvent)
+    assert isinstance(text, TextMessageContentEvent)
+    assert isinstance(citations, CustomEvent)
+    assert citations.name == "annotations"
+    assert citations.value == {
+        "messageId": start.message_id,
+        "annotations": [{key: value for key, value in annotation.items() if key != "raw_representation"}],
+    }
+    assert text.message_id == start.message_id
+    assert "raw_representation" not in citations.model_dump_json(by_alias=True)
+    assert content.annotations is not None
+    assert annotation["raw_representation"] is content.annotations[0]["raw_representation"]
+
+
+def test_emit_text_rebases_delta_annotation_spans_and_deduplicates_full_replay() -> None:
+    """Chunk-relative spans become message-relative and match completed replay spans."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+    )
+    _emit_text(Content.from_text("Prefix "), flow)
+
+    events = _emit_text(Content.from_text("target", annotations=[annotation]), flow)
+    replay_events = _emit_text(
+        Content.from_text(
+            "Prefix target",
+            annotations=[
+                Annotation(
+                    type="citation",
+                    url="https://example.com/target",
+                    annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+                )
+            ],
+        ),
+        flow,
+    )
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == [
+        {"type": "text_span", "start_index": 7, "end_index": 13}
+    ]
+    assert annotation["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 6}]
+    assert replay_events == []
+
+
+def test_emit_text_preserves_annotation_only_spans() -> None:
+    """Annotation-only updates already use complete-message span indices."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/target",
+        annotated_regions=[{"type": "text_span", "start_index": 7, "end_index": 13}],
+    )
+    _emit_text(Content.from_text("Prefix target"), flow)
+
+    events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0]["annotated_regions"] == annotation["annotated_regions"]
+
+
+def test_emit_text_annotation_only_update_starts_a_message_without_an_empty_delta() -> None:
+    """Citations received before text still reference an announced message."""
+    flow = FlowState()
+    annotation = Annotation(type="citation", url="https://example.com/document")
+
+    events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    text_events = _emit_text(Content.from_text("Answer"), flow)
+
+    assert len(events) == 2
+    assert isinstance(events[0], TextMessageStartEvent)
+    assert isinstance(events[1], CustomEvent)
+    assert events[1].value == {"messageId": events[0].message_id, "annotations": [annotation]}
+    assert len(text_events) == 1
+    assert isinstance(text_events[0], TextMessageContentEvent)
+    assert text_events[0].message_id == events[0].message_id
+    assert text_events[0].delta == "Answer"
+
+
+def test_emit_text_replay_emits_only_new_annotations() -> None:
+    """Suppress repeated text and citations without dropping final-only citations."""
+    flow = FlowState()
+    first = Annotation(type="citation", url="https://example.com/first")
+    second = Annotation(type="citation", url="https://example.com/second")
+    _emit_text(Content.from_text("Answer", annotations=[first]), flow)
+
+    events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
+    replay_events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
+
+    assert len(events) == 1
+    assert isinstance(events[0], CustomEvent)
+    assert events[0].value == {"messageId": flow.message_id, "annotations": [second]}
+    assert replay_events == []
+    assert flow.accumulated_text == "Answer"
+
+
+def test_emit_text_preserves_identical_annotation_occurrences() -> None:
+    """Separate annotation-only updates can cite the same source at distinct occurrences."""
+    flow = FlowState()
+    annotation = Annotation(type="citation", file_id="file-123")
+    _emit_text(Content.from_text("Answer"), flow)
+
+    first_events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    second_events = _emit_text(Content.from_text("", annotations=[annotation]), flow)
+    replay_events = _emit_text(Content.from_text("Answer", annotations=[annotation, annotation]), flow)
+
+    assert len(first_events) == len(second_events) == 1
+    assert all(isinstance(event, CustomEvent) for event in [*first_events, *second_events])
+    assert replay_events == []
+
+
+@pytest.mark.parametrize("suppression", ["skip_text", "waiting_for_approval"])
+def test_emit_text_annotations_respect_suppression(suppression: str) -> None:
+    """Explicitly suppressed text must not leak an annotation message either."""
+    flow = FlowState(waiting_for_approval=suppression == "waiting_for_approval")
+    content = Content.from_text("Answer", annotations=[Annotation(type="citation", url="https://example.com")])
+
+    events = _emit_text(content, flow, skip_text=suppression == "skip_text")
+
+    assert events == []
+    assert flow.message_id is None
+
+
+async def test_run_agent_stream_delivers_annotations_before_run_finished() -> None:
+    """A grounded response roundtrips through live AG-UI events with its citations intact."""
+    annotation = Annotation(
+        type="citation",
+        title="Document",
+        url="https://example.sharepoint.com/document.pdf",
+        annotated_regions=[{"type": "text_span", "start_index": 0, "end_index": 6}],
+        raw_representation=object(),
+    )
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(role="assistant", contents=[Content.from_text("Answer")]),
+            AgentResponseUpdate(role="assistant", contents=[Content.from_text("", annotations=[annotation])]),
+        ]
+    )
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "run_id": "run-citations",
+                "thread_id": "thread-citations",
+                "messages": [{"role": "user", "content": "Find the document."}],
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
+
+    citation_events = [event for event in events if isinstance(event, CustomEvent) and event.name == "annotations"]
+    assert len(citation_events) == 1
+    text_event = next(event for event in events if isinstance(event, TextMessageContentEvent))
+    assert citation_events[0].value["messageId"] == text_event.message_id
+    assert events.index(citation_events[0]) < next(
+        index for index, event in enumerate(events) if event.type == "RUN_FINISHED"
+    )
+    converter = AGUIEventConverter()
+    updates = []
+    for event in events:
+        if update := converter.convert_event(event.model_dump(mode="json", by_alias=True, exclude_none=True)):
+            updates.append(update)
+    response = ChatResponse.from_updates(updates)
+    assert response.text == "Answer"
+    text_content = next(content for message in response.messages for content in message.contents if content.text)
+    assert text_content.annotations == [
+        {key: value for key, value in annotation.items() if key != "raw_representation"}
+    ]
 
 
 def _snapshot_kinds(event):
@@ -1396,8 +1629,9 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
         function_call=function_call,
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-server-rejection")
     store.set_tool_approval_state(
-        "thread-server-rejection",
+        approval_thread_id,
         {"collected_approval_responses": [response.to_dict()]},
     )
     agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
@@ -1418,12 +1652,12 @@ async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
 
     assert not [event for event in events if event.type == "RUN_ERROR"]
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-server-rejection",
+        thread_id=approval_thread_id,
         interrupt_id="approval_rejected",
     )
     assert occurrence is not None
     assert occurrence.status is ApprovalStatus.REJECTED
-    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
+    assert store.lifecycle.pending_interrupt_ids(thread_id=approval_thread_id) == set()
 
 
 def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
