@@ -8797,12 +8797,12 @@ async def test_owned_checkpoint_storage_accepts_generated_thread_alias_only_with
     writer = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", None), generated_thread_id="generated-1")
     checkpoint_id = await writer.save(WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="sig"))
 
-    for owner in (("scope-1", None), ("scope-1", "generated-1")):
-        loaded = await _OwnedWorkflowCheckpointStorage(storage, owner).load(checkpoint_id)
+    for accepted_owner in (("scope-1", None), ("scope-1", "generated-1")):
+        loaded = await _OwnedWorkflowCheckpointStorage(storage, accepted_owner).load(checkpoint_id)
         assert loaded.checkpoint_id == checkpoint_id
-    for owner in (("scope-1", "other-thread"), ("scope-2", "generated-1"), (None, "generated-1")):
+    for rejected_owner in (("scope-1", "other-thread"), ("scope-2", "generated-1"), (None, "generated-1")):
         with pytest.raises(PermissionError):
-            await _OwnedWorkflowCheckpointStorage(storage, owner).load(checkpoint_id)
+            await _OwnedWorkflowCheckpointStorage(storage, rejected_owner).load(checkpoint_id)
 
     supplied = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", "supplied-1"), generated_thread_id=None)
     supplied_id = await supplied.save(WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="sig"))
