@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Generic;
 using System.Linq;
@@ -184,7 +185,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
             throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{uri}'.");
         }
 
-        return content;
+        return content is BlobResourceContents binary ? this.DecodeBinaryContent(binary, uri) : content;
     }
 
     private void VerifyResourceIntegrity(McpListedSkillResourceEntry resource, ResourceContents content)
@@ -200,14 +201,15 @@ internal sealed class AgentMcpListedSkill : AgentSkill
 
                 byteSize = Encoding.UTF8.GetByteCount(text.Text);
 
+                this.ValidateResourceSize(resource.Uri, byteSize);
+
                 break;
             }
             case BlobResourceContents blob:
             {
-                if (!Base64.IsValid(blob.Blob.Span, out byteSize))
-                {
-                    throw new InvalidOperationException($"Resource '{resource.Uri}' contains invalid base64 content.");
-                }
+                // Base64 validity and the decoded size limit were already checked by DecodeBinaryContent
+                // when ReadResourceContentAsync loaded the binary content.
+                byteSize = blob.DecodedData.Length;
 
                 break;
             }
@@ -216,9 +218,7 @@ internal sealed class AgentMcpListedSkill : AgentSkill
                 throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{resource.Uri}'.");
         }
 
-        this.ValidateResourceSize(resource.Uri, byteSize);
-
-        // Reject a size mismatch before encoding text or decoding binary content for hashing.
+        // Reject a size mismatch before encoding text or hashing decoded binary content.
         if (byteSize != resource.Size)
         {
             throw new InvalidOperationException($"Resource '{resource.Uri}' has a byte size that differs from the skills/list entry.");
@@ -237,6 +237,60 @@ internal sealed class AgentMcpListedSkill : AgentSkill
         {
             throw new InvalidOperationException($"Resource '{resource.Uri}' has a SHA-256 digest that differs from the skills/list entry.");
         }
+    }
+
+    /// <summary>
+    /// Validates Base64 and the decoded size limit, then decodes into an exact-size buffer
+    /// without allocating based on Base64 formatting whitespace.
+    /// </summary>
+    /// <param name="content">The Base64-encoded resource content.</param>
+    /// <param name="uri">The requested resource URI used in validation errors.</param>
+    /// <returns>Content backed by the decoded bytes, preserving the resource URI, MIME type, and metadata.</returns>
+    /// <exception cref="InvalidOperationException">The Base64 content is invalid or its decoded size exceeds the configured limit.</exception>
+    private BlobResourceContents DecodeBinaryContent(BlobResourceContents content, string uri)
+    {
+        ReadOnlySpan<byte> encoded = content.Blob.Span;
+
+        if (!Base64.IsValid(encoded, out int byteSize))
+        {
+            throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+        }
+
+        this.ValidateResourceSize(uri, byteSize);
+
+        byte[] bytes = new byte[byteSize];
+        Span<byte> block = stackalloc byte[256];
+        int bytesWritten = 0;
+
+        // Decode whitespace-free blocks of complete Base64 quartets so capacity checks use only Base64 data.
+        for (int offset = 0; offset < encoded.Length;)
+        {
+            int blockLength = 0;
+            while (offset < encoded.Length && blockLength < block.Length)
+            {
+                byte value = encoded[offset++];
+                if (value is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+                {
+                    block[blockLength++] = value;
+                }
+            }
+
+            if (Base64.DecodeFromUtf8(block[..blockLength], bytes.AsSpan(bytesWritten), out _, out int written) != OperationStatus.Done)
+            {
+                throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+            }
+
+            bytesWritten += written;
+        }
+
+        if (bytesWritten != byteSize)
+        {
+            throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+        }
+
+        BlobResourceContents decodedContent = BlobResourceContents.FromBytes(bytes, content.Uri, content.MimeType);
+        decodedContent.Meta = content.Meta;
+        return decodedContent;
     }
 
     private void ValidateResourceSize(string uri, long size)

@@ -3,8 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -738,6 +740,42 @@ public sealed class AgentMcpListedSkillTests
     }
 
     [Fact]
+    public async Task GetResourceAsync_BinaryContent_PreservesMetadataAsync()
+    {
+        // Arrange
+        const string Uri = SkillRootUri + "assets/icon.bin";
+        const string ContentUri = "skill://other/icon.bin";
+        byte[] bytes = [1, 2, 3, 4];
+        var metadata = new JsonObject { ["source"] = "server" };
+        await using var server = CreateServer((_, _) => ValueTask.FromResult(new ReadResourceResult
+        {
+            Contents =
+            [
+                new BlobResourceContents
+                {
+                    Uri = ContentUri,
+                    MimeType = "image/png",
+                    Meta = metadata,
+                    Blob = Encoding.UTF8.GetBytes(Convert.ToBase64String(bytes)),
+                },
+            ],
+        }));
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateSkill(client, resources: [Resource(Uri, bytes)]);
+
+        // Act
+        var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var content = Assert.IsType<DataContent>(await resource.ReadAsync());
+
+        // Assert
+        var binary = Assert.IsType<BlobResourceContents>(content.RawRepresentation);
+        Assert.Equal(ContentUri, binary.Uri);
+        Assert.Equal("image/png", content.MediaType);
+        Assert.True(JsonNode.DeepEquals(metadata, binary.Meta));
+        Assert.Equal(bytes, content.Data.ToArray());
+    }
+
+    [Fact]
     public async Task GetResourceAsync_EmptyBlob_ReturnsBinaryContentAsync()
     {
         // Arrange
@@ -1000,24 +1038,41 @@ public sealed class AgentMcpListedSkillTests
         Assert.Equal(length, Assert.IsType<DataContent>(await resource.ReadAsync()).Data.Length);
     }
 
-    [Fact]
-    public async Task GetResourceAsync_BinaryLimit_AllowsBase64WhitespaceAsync()
+    [Theory]
+    [InlineData(0, " ")]
+    [InlineData(1, " ")]
+    [InlineData(2, " ")]
+    [InlineData(3, " ")]
+    [InlineData(4, " ")]
+    [InlineData(191, " ")]
+    [InlineData(192, " ")]
+    [InlineData(193, " ")]
+    [InlineData(4, " \t\r\n")]
+    public async Task GetResourceAsync_BinaryLimit_DoesNotRetainEncodedSizeBufferAsync(int length, string whitespace)
     {
         // Arrange
         const string Uri = SkillRootUri + "assets/icon.bin";
-        byte[] bytes = [1, 2, 3, 4];
+        byte[] bytes = new byte[length];
+        Array.Fill(bytes, (byte)' ');
+        byte[] encoded = Encoding.UTF8.GetBytes(whitespace + string.Join(whitespace, Convert.ToBase64String(bytes).ToCharArray()) + new string(' ', 1024 * 1024));
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(new ReadResourceResult
         {
-            Contents = [new BlobResourceContents { Uri = uri, Blob = Encoding.UTF8.GetBytes(" AQID\nBA== \t") }],
+            Contents = [new BlobResourceContents { Uri = uri, Blob = encoded }],
         }));
         await using var client = await server.CreateClientAsync();
-        var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: bytes.Length);
+        var skill = CreateSkill(client, resources: [Resource(Uri, bytes)], maxResourceSizeBytes: Math.Max(1, bytes.Length));
 
         // Act
         var resource = Assert.IsType<AgentMcpListedSkillResource>(await skill.GetResourceAsync("assets/icon.bin"));
+        var content = Assert.IsType<DataContent>(await resource.ReadAsync());
 
         // Assert
-        Assert.Equal(bytes, Assert.IsType<DataContent>(await resource.ReadAsync()).Data.ToArray());
+        Assert.Equal(bytes, content.Data.ToArray());
+        Assert.True(MemoryMarshal.TryGetArray(content.Data, out ArraySegment<byte> data));
+        Assert.Equal(bytes.Length, data.Array!.Length);
+        var repeatedContent = Assert.IsType<DataContent>(await resource.ReadAsync());
+        Assert.True(MemoryMarshal.TryGetArray(repeatedContent.Data, out ArraySegment<byte> repeatedData));
+        Assert.Same(data.Array, repeatedData.Array);
     }
 
     [Theory]
