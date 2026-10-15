@@ -626,8 +626,11 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
         ((Content.from_uri("data:image/png;base64,iVBORw0KGgo="),), "iVBORw0KGgo="),
         ([Content.from_text("caption"), Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
         (["caption", Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
-        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), "https://example.com/cat.png"),
         ("iVBORw0KGgo=", "iVBORw0KGgo="),
+        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), ""),
+        (Content.from_uri("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"), ""),
+        (Content.from_hosted_file("file_1"), ""),
+        ("https://example.com/cat.png", ""),
     ],
     ids=[
         "data-uri-content",
@@ -635,8 +638,11 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
         "content-tuple",
         "image-after-text",
         "image-after-string",
-        "https-uri",
         "base64-string",
+        "https-uri-is-not-base64",
+        "data-uri-without-base64",
+        "hosted-file",
+        "url-string-is-not-base64",
     ],
 )
 async def test_output_item_tracker_emits_image_generation_result_as_base64(outputs: Any, expected: str) -> None:
