@@ -548,6 +548,11 @@ jobs:
       id-token: "write"
     runs-on: ubuntu-latest
     environment: integration
+    # Scenario agents share @latest endpoints across PRs and branch runs.
+    concurrency:
+      group: dotnet-foundry-hosted-integration
+      cancel-in-progress: false
+      queue: max
     env:
       configuration: Release
     steps:
