@@ -1238,6 +1238,39 @@ def _completed_function_calls(
     ]
 
 
+def _contains_agent_triggered_compaction_strategy(
+    strategy: object | None,
+    *,
+    _seen: set[int] | None = None,
+) -> bool:
+    if strategy is None:
+        return False
+    seen: set[int] = _seen if _seen is not None else set()
+    strategy_id = id(strategy)
+    if strategy_id in seen:
+        return False
+    seen.add(strategy_id)
+
+    if isinstance(strategy, AgentTriggeredCompactionStrategy):
+        return True
+
+    nested_strategy: object | None = getattr(strategy, "strategy", None)
+    if (
+        nested_strategy is not None
+        and nested_strategy is not strategy
+        and _contains_agent_triggered_compaction_strategy(nested_strategy, _seen=seen)
+    ):
+        return True
+
+    nested_strategies: object = getattr(strategy, "strategies", None)
+    if isinstance(nested_strategies, Sequence) and not isinstance(nested_strategies, (str, bytes, bytearray)):
+        return any(
+            _contains_agent_triggered_compaction_strategy(nested, _seen=seen)
+            for nested in cast("Sequence[object]", nested_strategies)
+        )
+    return False
+
+
 @experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
 class AgentTriggeredCompactionStrategy:
     """Run an existing compaction strategy after an agent invokes a trigger tool.
@@ -1251,6 +1284,11 @@ class AgentTriggeredCompactionStrategy:
     The consumed marker is stored on each trigger-group message rather than on
     this strategy instance, so one strategy can be shared safely by concurrent
     runs.
+
+    This strategy requires client-managed history (for example ``store=False``).
+    Chat clients reject it when service-side storage or a service-managed
+    conversation ID is active because local compaction cannot remove remote
+    conversation context.
     """
 
     DEFAULT_TOOL_NAME: Final[str] = "compact_context"
