@@ -533,6 +533,10 @@ class Executor(RequestInfoMixin, DictConvertible):
         """Release executor-owned state for a cancelled workflow request."""
         del request_id, ctx
 
+    def _validate_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Validate a checkpoint snapshot without changing live executor state."""
+        del state
+
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.
 

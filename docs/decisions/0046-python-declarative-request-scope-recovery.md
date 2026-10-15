@@ -47,6 +47,10 @@ Choose explicit host opt-in through
 - Checkpoint restores validate queued response origins before restoring shared or
   executor state, including embedded child checkpoints. Submitted and already
   queued responses share the same batch validation before pending requests are consumed.
+- Nested restoration preflights a detached copy of the complete embedded tree
+  with each child's own policy before applying live state or queues. Migration
+  metadata is confined to that candidate; a rejected child leaves earlier
+  siblings, parent executors, and the supplied checkpoint unchanged.
 - Without opt-in, a missing origin produces an actionable recovery error.
 - With opt-in, a missing origin becomes
   `legacy-request:<framework request ID>`. The distinct namespace never selects

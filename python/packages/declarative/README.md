@@ -125,8 +125,12 @@ emitted requests carry the migrated scope, so subsequent restores no longer
 require the opt-in for those requests. Any remaining unmigrated requests still do.
 The same policy applies when a checkpoint already contains queued responses:
 restore validates and migrates their original requests before restoring workflow
-state or replaying the continuation. Responses submitted alongside queued responses
-must belong to the same scope; mixed batches leave pending requests unconsumed.
+state or replaying the continuation. Nested workflows preflight the entire embedded
+checkpoint tree using each child's own policy before replacing any live state,
+executor state, or queues. Preflight rejection leaves the running workflows and supplied
+checkpoint unchanged, including staged migration metadata.
+Responses submitted alongside queued responses must belong to the same scope;
+mixed batches leave pending requests unconsumed.
 Invalid stored scopes are rejected even with migration enabled. Header verification
 and any required MCP reapproval remain unchanged. Hosts that require the old
 server-side session must restart the workflow instead of migrating it.

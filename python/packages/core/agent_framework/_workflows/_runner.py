@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import copy
 import logging
 import warnings
 from collections import defaultdict
@@ -321,14 +322,8 @@ class RunnerImpl:
                 logger.error(f"Checkpoint {checkpoint_id} not found")
                 raise WorkflowCheckpointException(f"Checkpoint {checkpoint_id} not found")
 
-            # Validate the loaded checkpoint against the workflow
-            if self._graph_signature_hash != checkpoint.graph_signature_hash:
-                raise WorkflowCheckpointException(
-                    "Workflow graph has changed since the checkpoint was created. "
-                    "Please rebuild the original workflow before resuming."
-                )
-
-            self._validate_checkpoint_responses(checkpoint)
+            checkpoint = copy.deepcopy(checkpoint)
+            self._validate_checkpoint_tree(checkpoint)
 
             # Restore state. Clear first so import_state (which merges) does
             # not leak stale keys from a prior run on this Workflow instance.
@@ -386,14 +381,9 @@ class RunnerImpl:
             WorkflowCheckpointException: If the checkpoint's graph signature does not
                 match this runner's workflow, or if restoration otherwise fails.
         """
-        if self._graph_signature_hash != checkpoint.graph_signature_hash:
-            raise WorkflowCheckpointException(
-                "Workflow graph has changed since the checkpoint was created. "
-                "Please rebuild the original workflow before resuming."
-            )
-
         try:
-            self._validate_checkpoint_responses(checkpoint)
+            checkpoint = copy.deepcopy(checkpoint)
+            self._validate_checkpoint_tree(checkpoint)
 
             # Clear first so import_state (which merges) does not leak stale keys from a
             # prior run on this Workflow instance.
@@ -403,14 +393,24 @@ class RunnerImpl:
             self._restore_edge_runner_states()
             await self._ctx.apply_checkpoint(checkpoint)
             self._mark_resumed(checkpoint)
+        except WorkflowCheckpointException:
+            raise
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
 
-    def _validate_checkpoint_responses(self, checkpoint: WorkflowCheckpoint) -> None:
+    def _validate_checkpoint_tree(self, checkpoint: WorkflowCheckpoint) -> None:
+        if self._graph_signature_hash != checkpoint.graph_signature_hash:
+            raise WorkflowCheckpointException(
+                "Workflow graph has changed since the checkpoint was created. "
+                "Please rebuild the original workflow before resuming."
+            )
         requests = _get_queued_response_info_events(checkpoint.messages)
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
+        if EXECUTOR_STATE_KEY in checkpoint.state:
+            for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
+                executor._validate_checkpoint_restore(state)  # pyright: ignore[reportPrivateUsage]
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""
@@ -431,14 +431,20 @@ class RunnerImpl:
 
     async def _restore_executor_states(self) -> None:
         """Restore executor state by calling restore hooks on executors."""
-        has_executor_states = self._state.has(EXECUTOR_STATE_KEY)
-        if not has_executor_states:
+        if not self._state.has(EXECUTOR_STATE_KEY):
             return
 
-        executor_states = self._state.get(EXECUTOR_STATE_KEY)
+        for executor_id, executor, state in self._get_executor_states(self._state.get(EXECUTOR_STATE_KEY)):
+            try:
+                await executor.on_checkpoint_restore(state)
+            except Exception as ex:  # pragma: no cover - defensive
+                raise WorkflowCheckpointException(f"Executor {executor_id} on_checkpoint_restore failed") from ex
+
+    def _get_executor_states(self, executor_states: Any) -> list[tuple[str, Executor, dict[str, Any]]]:
         if not isinstance(executor_states, dict):
             raise WorkflowCheckpointException("Executor states in shared state is not a dictionary. Unable to restore.")
 
+        snapshots: list[tuple[str, Executor, dict[str, Any]]] = []
         for executor_id, state in executor_states.items():  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(executor_id, str):
                 raise WorkflowCheckpointException("Executor ID in executor states is not a string. Unable to restore.")
@@ -450,12 +456,8 @@ class RunnerImpl:
             executor = self._executors.get(executor_id)
             if not executor:
                 raise WorkflowCheckpointException(f"Executor {executor_id} not found during state restoration.")
-
-            # Try the updated behavior only if backward compatibility did not restore
-            try:
-                await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
-            except Exception as ex:  # pragma: no cover - defensive
-                raise WorkflowCheckpointException(f"Executor {executor_id} on_checkpoint_restore failed") from ex
+            snapshots.append((executor_id, executor, cast(dict[str, Any], state)))
+        return snapshots
 
     def _save_edge_runner_states(self) -> None:
         """Store edge runner delivery state, such as partially filled fan-in buffers, in state.

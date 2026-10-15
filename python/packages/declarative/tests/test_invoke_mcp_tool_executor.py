@@ -1424,6 +1424,154 @@ class TestRequestScopeContinuations:
         assert workflow._runner.state.get("preexisting") == "keep"
         assert handler.call_count == 0
 
+    @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
+    @pytest.mark.parametrize("depth", [1, 2])
+    @pytest.mark.parametrize("mode", ["missing", "mixed", "valid", "pending"])
+    async def test_nested_checkpoint_preflight_preserves_live_state(
+        self, tmp_path: Path, restore_kind: str, depth: int, mode: str
+    ) -> None:
+        from copy import deepcopy
+
+        from agent_framework import (
+            Executor,
+            Workflow,
+            WorkflowBuilder,
+            WorkflowCheckpoint,
+            WorkflowContext,
+            WorkflowExecutor,
+            handler,
+        )
+        from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
+        from agent_framework._workflows._runner_context import WorkflowMessage
+        from agent_framework.exceptions import WorkflowCheckpointException
+
+        class RestoreRecorder(Executor):
+            def __init__(self, executor_id: str) -> None:
+                super().__init__(id=executor_id)
+                self.value = "snapshot"
+                self.restore_calls = 0
+
+            @handler
+            async def forward(self, message: str, ctx: WorkflowContext[str]) -> None:
+                await ctx.send_message(message)
+
+            async def on_checkpoint_save(self) -> dict[str, Any]:
+                return {"value": self.value}
+
+            async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+                self.restore_calls += 1
+                self.value = state["value"]
+
+        storage = _scope_checkpoint_storage(tmp_path)
+        mcp_handler = StubMcpHandler(_ok())
+        leaves: list[Workflow] = []
+        for index in range(2):
+            factory = WorkflowFactory(
+                mcp_tool_handler=mcp_handler,
+                migrate_legacy_request_scopes=index == 0 or mode in {"mixed", "valid"},
+            )
+            leaf = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+            await leaf.run({})
+            if index == 1 and mode == "mixed":
+                await leaf.run({})
+            requests = await leaf._runner_context.get_pending_request_info_events()
+            for request in requests.values():
+                if mode != "mixed" or index == 0:
+                    request.data.workflow_session_id = None
+                if index != 1 or mode != "pending":
+                    await leaf._runner_context.send_request_info_response(
+                        request.request_id, _scope_pause_response("InvokeMcpTool")
+                    )
+            leaves.append(leaf)
+
+        workflows = list(leaves)
+        recorders: list[RestoreRecorder] = []
+        root = leaves[1]
+        for level in range(depth):
+            recorder = RestoreRecorder(f"recorder_{level}")
+            builder = WorkflowBuilder(start_executor=recorder, checkpoint_storage=storage)
+            nested = WorkflowExecutor(root, id=f"nested_{level}")
+            if level == 0:
+                good = WorkflowExecutor(leaves[0], id="good")
+                builder.add_fan_out_edges(recorder, [good, nested])
+            else:
+                builder.add_edge(recorder, nested)
+            root = builder.build()
+            workflows.append(root)
+            recorders.append(recorder)
+        for workflow in workflows:
+            workflow._runner.state.set("restore_marker", "snapshot")
+            workflow._runner.state.commit()
+        checkpoint = await root._runner.build_checkpoint()
+        checkpoint_before = encode_checkpoint_value(checkpoint.to_dict())
+        await storage.save(checkpoint)
+
+        for workflow in workflows:
+            workflow._runner.state.set("restore_marker", "live")
+            workflow._runner.state.commit()
+            workflow._runner.state.set("uncommitted", "keep")
+            await workflow._runner_context.send_message(
+                WorkflowMessage(data="live", source_id="live", target_id=next(iter(workflow.executors)))
+            )
+        for recorder in recorders:
+            recorder.value = "live"
+
+        async def snapshots() -> list[WorkflowCheckpoint]:
+            return [
+                deepcopy(
+                    await workflow._runner_context.build_checkpoint(
+                        workflow.name, workflow.graph_signature_hash, workflow._runner.state, None, 0
+                    )
+                )
+                for workflow in workflows
+            ]
+
+        before = await snapshots()
+
+        async def restore() -> None:
+            if restore_kind == "embedded":
+                await root._runner.restore_checkpoint(checkpoint)
+            else:
+                await root._runner.restore_from_checkpoint(checkpoint.checkpoint_id)
+
+        if mode in {"missing", "mixed"}:
+            with pytest.raises(WorkflowCheckpointException) as exc:
+                await restore()
+            cause: BaseException = exc.value
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            assert isinstance(cause, DeclarativeWorkflowError)
+            expected = "migrate_legacy_request_scopes" if mode == "missing" else "different workflow sessions"
+            assert expected in str(cause)
+            after = await snapshots()
+            for old, current in zip(before, after, strict=True):
+                assert encode_checkpoint_value(current.state) == encode_checkpoint_value(old.state)
+                assert encode_checkpoint_value(current.messages) == encode_checkpoint_value(old.messages)
+                assert encode_checkpoint_value(current.pending_request_info_events) == encode_checkpoint_value(
+                    old.pending_request_info_events
+                )
+            assert all(workflow._runner.state.get("uncommitted") == "keep" for workflow in workflows)
+            assert all(recorder.value == "live" and recorder.restore_calls == 0 for recorder in recorders)
+        else:
+            await restore()
+            assert all(workflow._runner.state.get("restore_marker") == "snapshot" for workflow in workflows)
+            assert all(recorder.value == "snapshot" and recorder.restore_calls == 1 for recorder in recorders)
+            assert mcp_handler.call_count == 0
+            for index, leaf in enumerate(leaves):
+                queued = await leaf._runner_context.get_queued_response_info_events()
+                if mode == "pending" and index == 1:
+                    [pending] = (await leaf._runner_context.get_pending_request_info_events()).values()
+                    assert pending.data.workflow_session_id is None
+                    assert not queued
+                    continue
+                [request] = queued
+                scope = f"legacy-request:{request.request_id}"
+                assert request.data.workflow_session_id == scope
+                _ = [event async for event in leaf._runner.run_until_convergence()]
+                assert mcp_handler.invocations[-1].workflow_session_id == scope
+        assert encode_checkpoint_value(checkpoint.to_dict()) == checkpoint_before
+        assert mcp_handler.call_count == (2 if mode == "valid" else 1 if mode == "pending" else 0)
+
 
 # ---------- Output handling ------------------------------------------------
 
