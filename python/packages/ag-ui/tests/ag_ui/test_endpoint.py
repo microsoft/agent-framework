@@ -86,11 +86,14 @@ from agent_framework_ag_ui._approval_lifecycle import (
     ResumeDecision,
 )
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
+from agent_framework_ag_ui._snapshots import _session_id_for_thread
 from agent_framework_ag_ui._workflow import (
     _CHECKPOINT_REQUEST_OWNER_KEY,
     AgentFrameworkWorkflow,
     _OwnedWorkflowCheckpointStorage,
 )
+
+_DEFAULT_AUTHORIZATION_SCOPE = "test-single-user"
 
 
 def add_agent_framework_fastapi_endpoint(*args: Any, **kwargs: Any) -> None:
@@ -100,7 +103,7 @@ def add_agent_framework_fastapi_endpoint(*args: Any, **kwargs: Any) -> None:
         and kwargs.get("snapshot_scope_resolver") is None
         and not kwargs.get("single_user", False)
     ):
-        kwargs["single_user"] = True
+        kwargs["snapshot_scope_resolver"] = lambda _request: _DEFAULT_AUTHORIZATION_SCOPE
     _add_agent_framework_fastapi_endpoint(*args, **kwargs)
 
 
@@ -109,8 +112,12 @@ def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
     return [json.loads(line[6:]) for line in content.splitlines() if line.startswith("data: ")]
 
 
-def _unscoped_approval_thread_id(thread_id: str) -> str:
-    return approval_state_thread_id(scope=None, thread_id=thread_id)
+def _default_approval_thread_id(thread_id: str) -> str:
+    return approval_state_thread_id(scope=_DEFAULT_AUTHORIZATION_SCOPE, thread_id=thread_id)
+
+
+def _default_session_id(thread_id: str) -> str:
+    return _session_id_for_thread(scope=_DEFAULT_AUTHORIZATION_SCOPE, thread_id=thread_id)
 
 
 async def _post_until_sse_event_then_disconnect(
@@ -3330,7 +3337,12 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
         keepalive_seconds=None,
     )
     add_agent_framework_fastapi_endpoint(
-        app, agent, path="/unscoped-memory", dependencies=[Depends(authorize)], keepalive_seconds=None
+        app,
+        agent,
+        path="/unscoped-memory",
+        dependencies=[Depends(authorize)],
+        keepalive_seconds=None,
+        single_user=True,
     )
     client = TestClient(app)
     request_number = 0
@@ -3522,7 +3534,8 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
     assert all(victim_description not in context for context in model_contexts[collision_start:])
     assert {path: path.read_bytes() for path in victim_files} == victim_files
 
-    # No resolver is intentionally unscoped, unlike a configured resolver returning None.
+    # Explicit single-user mode gets one registration-local scope and retains continuity within that registration.
+    single_user_session_id: str | None = None
     for tool_name, arguments in [
         ("file_memory_write", {"file_name": "unscoped.md", "content": "unscoped continuity"}),
         ("file_memory_read", {"file_name": "unscoped.md"}),
@@ -3536,7 +3549,11 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
             public_thread_id="ordinary-unscoped-thread",
         )
         assert response.status_code == 200
-        assert chat_client.last_session.session_id == "ordinary-unscoped-thread"
+        assert chat_client.last_session.session_id != "ordinary-unscoped-thread"
+        if single_user_session_id is None:
+            single_user_session_id = chat_client.last_session.session_id
+        else:
+            assert chat_client.last_session.session_id == single_user_session_id
         if tool_name == "file_memory_read":
             result = next(
                 event["content"] for event in _decode_sse_events(response) if event["type"] == "TOOL_CALL_RESULT"
@@ -4074,7 +4091,7 @@ async def test_endpoint_agent_approval_resume_preserves_agent_function_policy(
     assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == ["MiddlewareFailure"]
     assert not [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert executed == []
-    assert policy_observations == [(f"thread-policy-{a2ui_mode}", None)]
+    assert policy_observations == [(_default_session_id(f"thread-policy-{a2ui_mode}"), None)]
 
     state["phase"] = "pause"
     direct_session = AgentSession(session_id=f"direct-policy-{a2ui_mode}")
@@ -4221,7 +4238,7 @@ async def test_endpoint_a2ui_mixed_batch_preserves_agent_function_policy(
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
     assert executed == []
     assert render_calls == []
-    assert policy_sessions == [f"thread-mixed-policy-{a2ui_mode}"]
+    assert policy_sessions == [_default_session_id(f"thread-mixed-policy-{a2ui_mode}")]
 
     state["direct"] = True
     with pytest.raises(MiddlewareFailure):
@@ -4598,7 +4615,7 @@ async def test_endpoint_agent_approval_batch_keeps_distinct_occurrences_for_reus
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-shared-call")
+    approval_thread_id = _default_approval_thread_id("thread-shared-call")
     first = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -4651,7 +4668,7 @@ async def test_endpoint_agent_unavailable_local_executor_releases_every_unstarte
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-unavailable-batch")
+    approval_thread_id = _default_approval_thread_id("thread-unavailable-batch")
     local = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -5658,7 +5675,7 @@ async def test_endpoint_agent_legacy_tool_message_reuses_historical_confirm_chan
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-reused-confirm-id"),
+        thread_id=_default_approval_thread_id("thread-reused-confirm-id"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="guarded_tool",
@@ -5729,7 +5746,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-legacy-reused")
+    approval_thread_id = _default_approval_thread_id("thread-legacy-reused")
     lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -5798,7 +5815,7 @@ async def test_endpoint_agent_legacy_tool_message_cannot_collide_with_interrupt_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-legacy-collision"),
+        thread_id=_default_approval_thread_id("thread-legacy-collision"),
         interrupt_id="af-call-secret",
         call_id="provider-real",
         name="guarded_tool",
@@ -5855,7 +5872,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_duplicate_decisions() 
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-legacy-duplicate"),
+        thread_id=_default_approval_thread_id("thread-legacy-duplicate"),
         interrupt_id="af-call-current",
         call_id="provider-call",
         name="guarded_tool",
@@ -5909,7 +5926,7 @@ async def test_endpoint_agent_historical_legacy_approval_cannot_authorize_newer_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-historical-legacy"),
+        thread_id=_default_approval_thread_id("thread-historical-legacy"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="dangerous_tool",
@@ -6668,7 +6685,7 @@ async def test_endpoint_agent_mixed_retry_reprojects_completed_sibling_without_r
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-completed-sibling")
+    approval_thread_id = _default_approval_thread_id("thread-completed-sibling")
     completed = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -6925,7 +6942,7 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {event["toolCallId"] for event in tool_results} == {"provider-shared"}
 
     occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(
-        thread_id=_unscoped_approval_thread_id(thread_id)
+        thread_id=_default_approval_thread_id(thread_id)
     )
     assert {occurrence.identity.interrupt_id for occurrence in occurrences} == {
         "guarded-occurrence",
@@ -7943,7 +7960,7 @@ async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_e
     approval_id = interrupts[0]["id"]
     assert approval_id.startswith("af-call-")
     assert interrupts[0]["toolCallId"] == "call_first"
-    approval_thread_id = _unscoped_approval_thread_id("thread-queued-cancel-evicted")
+    approval_thread_id = _default_approval_thread_id("thread-queued-cancel-evicted")
     stored_state = wrapped_agent._approval_state_store.get_tool_approval_state(approval_thread_id)
     assert stored_state is not None
     assert "call_second" in json.dumps(stored_state)
@@ -10168,7 +10185,7 @@ async def test_endpoint_builder_checkpoint_storage_rejects_different_thread_afte
     assert pending_checkpoints
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": "victim-thread",
     }
 
@@ -10228,7 +10245,7 @@ async def test_endpoint_builder_checkpoint_storage_ignores_stale_runtime_owner()
     assert pending_checkpoints
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": "current-thread",
     }
 
@@ -10253,7 +10270,7 @@ async def test_endpoint_workflow_checkpoint_resume_with_reported_thread_id():
     pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": None,
         "generated_thread_id": thread_id,
     }
@@ -10971,6 +10988,33 @@ async def test_endpoint_authorization_scope_resolver_uses_fastapi_dependencies(b
     assert authenticated == ["principal-a"]
 
 
+async def test_endpoint_authorization_scope_resolver_awaits_sync_dependency_result(build_chat_client):
+    """A synchronous FastAPI dependency may return an awaitable scope."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    completed: list[str] = []
+
+    async def resolve_later() -> str:
+        completed.append("tenant-a")
+        return "tenant-a"
+
+    def resolve_authorization_scope() -> Awaitable[str]:
+        return resolve_later()
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/awaitable-scope",
+        authorization_scope_resolver=resolve_authorization_scope,
+    )
+    client = TestClient(app)
+
+    response = client.post("/awaitable-scope", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert completed == ["tenant-a"]
+
+
 async def test_endpoint_invalid_authorization_scope_fails_before_runner(build_chat_client):
     """A configured resolver cannot fall back to unscoped operation."""
     app = FastAPI()
@@ -11021,27 +11065,52 @@ async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_cl
 
 
 async def test_endpoint_accepts_snapshot_store_in_single_user_mode(build_chat_client):
-    """A single-user endpoint gets a stable internal scope when snapshot persistence needs one."""
-    app = FastAPI()
-    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
-    store = InMemoryAGUIThreadSnapshotStore()
+    """Single-user scopes remain stable per registration and distinct across equal route paths."""
+    observed_scopes: list[str] = []
 
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(
+            self,
+            *,
+            scope: str,
+            thread_id: str,
+            snapshot: AGUIThreadSnapshot,
+        ) -> None:
+            observed_scopes.append(scope)
+            await super().save(scope=scope, thread_id=thread_id, snapshot=snapshot)
+
+    store = RecordingStore()
+    app_a = FastAPI()
+    app_b = FastAPI()
     add_agent_framework_fastapi_endpoint(
-        app,
-        agent,
-        path="/single-user-snapshots",
+        app_a,
+        Agent(name="agent-a", instructions="Test agent", client=build_chat_client("A")),
+        path="/",
         snapshot_store=store,
         single_user=True,
     )
-    client = TestClient(app)
-
-    response = client.post(
-        "/single-user-snapshots",
-        json={"messages": [{"role": "user", "content": "Hello"}], "thread_id": "thread-1"},
+    add_agent_framework_fastapi_endpoint(
+        app_b,
+        Agent(name="agent-b", instructions="Test agent", client=build_chat_client("B")),
+        path="/",
+        snapshot_store=store,
+        single_user=True,
     )
+    client_a = TestClient(app_a)
+    client_b = TestClient(app_b)
+    payload = {
+        "messages": [{"role": "user", "content": "Hello"}],
+        "thread_id": "shared-thread",
+    }
 
-    assert response.status_code == 200
-    assert await store.get(scope="ag-ui:single-user:/single-user-snapshots", thread_id="thread-1") is not None
+    assert client_a.post("/", json=payload).status_code == 200
+    scope_a = observed_scopes[-1]
+    assert client_b.post("/", json=payload).status_code == 200
+    scope_b = observed_scopes[-1]
+    assert client_a.post("/", json=payload).status_code == 200
+
+    assert scope_a != scope_b
+    assert observed_scopes[-1] == scope_a
 
 
 @pytest.mark.parametrize("async_resolver", [False, True], ids=["sync", "async"])
@@ -13737,7 +13806,7 @@ async def test_endpoint_canonical_resume_preserves_hosted_approval_for_provider(
     assert not [event for event in _decode_sse_events(resume_response) if event.get("type") == "RUN_ERROR"]
     assert local_executions == []
     assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
-        thread_id=_unscoped_approval_thread_id("thread-hosted-approval")
+        thread_id=_default_approval_thread_id("thread-hosted-approval")
     )
     approval_responses = [
         content
@@ -13965,7 +14034,7 @@ async def test_endpoint_does_not_forward_resolved_local_approval_control_to_chat
     assert resume_response.status_code == 200
     assert local_executions == ["Approved draft"]
     assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
-        thread_id=_unscoped_approval_thread_id("thread-local-approval")
+        thread_id=_default_approval_thread_id("thread-local-approval")
     )
     state_snapshots = [
         event["snapshot"] for event in _decode_sse_events(resume_response) if event.get("type") == "STATE_SNAPSHOT"

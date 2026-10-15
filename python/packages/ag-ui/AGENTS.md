@@ -125,8 +125,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `snapshot_scope_resolver`, or declare `single_user=True`. The authorization resolver is a FastAPI dependency and
   must return a non-empty string derived from authenticated request context. Reject invalid results before accessing
   state or invoking the runner; never fall back to single-user or unscoped operation after a configured resolver fails.
-  `single_user=True` intentionally preserves unscoped operation without snapshot persistence and must not be used for
-  callers with distinct authorization.
+  `single_user=True` assigns one opaque authorization scope for the lifetime of that endpoint registration and must not
+  be used for callers with distinct authorization. Use an explicit resolver when snapshots, checkpoints, or provider
+  state must retain the same scope across process restarts.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

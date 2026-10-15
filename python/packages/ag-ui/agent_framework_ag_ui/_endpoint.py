@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from inspect import isawaitable
@@ -40,7 +41,7 @@ _DETACHED_READER_START_TIMEOUT_SECONDS = 1.0
 _DETACHED_STREAM_QUEUE_SIZE = 16
 _KEEPALIVE_COMMENT = "keepalive"
 _AUTHORIZATION_SCOPE_STATE_KEY = "_agent_framework_ag_ui_authorization_scope"
-_SINGLE_USER_SNAPSHOT_SCOPE_PREFIX = "ag-ui:single-user:"
+_SINGLE_USER_SCOPE_PREFIX = "ag-ui:single-user:"
 
 
 def _get_snapshot_store(
@@ -114,9 +115,9 @@ def _validate_authorization_scope_configuration(
         )
 
 
-def _single_user_snapshot_scope(path: str) -> str:
-    """Return a stable endpoint-local scope for single-user snapshot persistence."""
-    return f"{_SINGLE_USER_SNAPSHOT_SCOPE_PREFIX}{path}"
+def _single_user_scope() -> str:
+    """Return one opaque scope that stays stable for an endpoint registration."""
+    return f"{_SINGLE_USER_SCOPE_PREFIX}{uuid.uuid4().hex}"
 
 
 def add_agent_framework_fastapi_endpoint(
@@ -189,8 +190,10 @@ def add_agent_framework_fastapi_endpoint(
             headers, security schemes, or the current Request. Its result scopes snapshots, internal Agent Sessions,
             workflow instances and checkpoints, detached-run admission, and server-side approval state.
         single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
-            This preserves intentionally unscoped behavior for local development and single-user applications.
-            Never enable it on an endpoint shared by callers with distinct authorization.
+            The endpoint receives one opaque scope that remains stable for that registration and separates equal route
+            paths registered by other applications. Use an explicit resolver when scope continuity must survive process
+            restarts or when storage is shared beyond one registration. Never enable this mode for callers with
+            distinct authorization.
     """
     _validate_keepalive_seconds(keepalive_seconds)
     _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)
@@ -240,6 +243,7 @@ def add_agent_framework_fastapi_endpoint(
     producer_tasks: set[asyncio.Task[None]] = set()
     active_runs: dict[tuple[str | None, str], asyncio.Task[None]] = {}
     route_dependencies = list(dependencies or ())
+    single_user_scope = _single_user_scope() if single_user else None
 
     if authorization_scope_resolver is not None:
 
@@ -247,6 +251,8 @@ def add_agent_framework_fastapi_endpoint(
             request: Request,
             resolved_scope: Any = Depends(authorization_scope_resolver),
         ) -> None:
+            if isawaitable(resolved_scope):
+                resolved_scope = await resolved_scope
             if not isinstance(resolved_scope, str) or not resolved_scope:
                 logger.error("authorization_scope_resolver must return a non-empty string.")
                 raise HTTPException(status_code=500, detail="An internal error has occurred.")
@@ -291,8 +297,8 @@ def add_agent_framework_fastapi_endpoint(
                 if not isinstance(resolved_scope, str) or not resolved_scope:
                     raise ValueError("snapshot_scope_resolver must return a non-empty string.")
                 snapshot_scope = resolved_scope
-            elif single_user and snapshot_persistence_active:
-                snapshot_scope = _single_user_snapshot_scope(path)
+            elif single_user:
+                snapshot_scope = single_user_scope
 
             if snapshot_scope is not None:
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope

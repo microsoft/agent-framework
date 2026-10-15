@@ -341,7 +341,8 @@ Every AG-UI endpoint must choose an authorization mode:
   it can declare `Depends`, `Security`, header, cookie, or `Request` parameters. It must return a stable, non-empty
   scope for the authenticated principal or collaboration boundary that may access the same server-side AG-UI state.
 - **Local or genuinely single-user applications:** set `single_user=True`. This deliberately treats every caller as
-  one authorization principal. Do not use it on a shared service.
+  one authorization principal and assigns an opaque scope for the lifetime of that endpoint registration. Do not use
+  it on a shared service or where durable state must retain the same scope across process restarts.
 - **Compatibility:** existing `snapshot_scope_resolver` integrations remain supported and provide the same trusted
   scope to snapshots, internal sessions, workflows, detached-run admission, and approvals.
 
@@ -504,8 +505,9 @@ explicit `single_user=True` declaration. The authenticated resolver returns the 
 the AG-UI Thread id for snapshot storage, internal `AgentSession.session_id` derivation, workflow ownership,
 detached-run admission, and approval state. Context providers and workflow instances therefore cannot merge
 server-side state for equal Thread ids in different scopes. The raw Thread id remains unchanged in AG-UI events and
-snapshot operations. `single_user=True` intentionally preserves unscoped behavior when no snapshot store is present;
-when snapshot persistence is configured, the endpoint supplies a stable endpoint-local scope for the single user.
+snapshot operations. `single_user=True` assigns one opaque scope per endpoint registration, including endpoints that
+share the same route path or backing objects in one process. That scope changes when the endpoint is registered again;
+use an explicit resolver for durable snapshots, checkpoints, or provider state that must survive process restarts.
 
 A workflow request that omits `threadId` is assigned a generated Thread id. It is reported in `RUN_STARTED`, keys the
 `workflow_factory` instance and Thread Snapshot, and owns that run's pending `request_info` interrupts. Send it back as
