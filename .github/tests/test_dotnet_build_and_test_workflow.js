@@ -95,6 +95,41 @@ describe('.NET build and test workflow', () => {
     }
   });
 
+  it('keeps emulators available for branch unit checks and path-selected PR checks', () => {
+    const unitJob = jobs.find(job => job.name === 'dotnet-test');
+    assert.ok(unitJob);
+    for (const [name, os, changedOutput] of [
+      ['Start Azure Cosmos DB Emulator', 'Windows', 'cosmosDbChanges'],
+      ['Start Azurite Blob service', 'Linux', 'azureStorageChanges'],
+    ]) {
+      const step = unitJob.source.split(`      - name: ${name}\n`)[1]?.split('\n      - ')[0];
+      assert.ok(step, `Missing step: ${name}`);
+      const condition = step.match(/^        if: (.+)$/m);
+      assert.ok(condition);
+      const expression = condition[1]
+        .replace(/^\$\{\{|\}\}$/g, '')
+        .replaceAll('matrix.integration-tests', 'matrix.integrationTests')
+        .replaceAll('needs.paths-filter', 'needs.pathsFilter');
+      for (const eventName of ['push', 'schedule', 'workflow_dispatch', 'pull_request', 'merge_group']) {
+        for (const changes of ['false', 'true']) {
+          for (const integrationTests of [false, true]) {
+            for (const runnerOs of ['Windows', 'Linux']) {
+              const result = runInNewContext(expression, {
+                github: { event_name: eventName },
+                matrix: { integrationTests },
+                runner: { os: runnerOs },
+                needs: { pathsFilter: { outputs: { [changedOutput]: changes } } },
+              }, { timeout: 1000 });
+              const branchRun = ['push', 'schedule', 'workflow_dispatch'].includes(eventName);
+              assert.equal(result, runnerOs === os && (changes === 'true' || integrationTests || branchRun),
+                `${name}: ${eventName}, changes=${changes}, integration=${integrationTests}, os=${runnerOs}`);
+            }
+          }
+        }
+      }
+    }
+  });
+
   it('includes the integration job in the final status and result report', () => {
     const statusJob = jobs.find(job => job.name === 'dotnet-build-and-test-check');
     const reportJob = jobs.find(job => job.name === 'dotnet-integration-test-report');

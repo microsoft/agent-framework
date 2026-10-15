@@ -200,9 +200,9 @@ jobs:
       - name: Free runner disk space
         uses: ./.github/actions/free-runner-disk-space
 
-      # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
+      # Branch unit checks and integration checks always use the emulator; PR checks are path-selected.
       - name: Start Azure Cosmos DB Emulator
-        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || matrix.integration-tests) }}
+        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -328,7 +328,7 @@ jobs:
           }
 
       - name: Start Azurite Blob service
-        if: ${{ runner.os == 'Linux' && (needs.paths-filter.outputs.azureStorageChanges == 'true' || matrix.integration-tests) }}
+        if: ${{ runner.os == 'Linux' && (needs.paths-filter.outputs.azureStorageChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         shell: bash
         run: |
           docker run --detach --rm \
