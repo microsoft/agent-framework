@@ -49,11 +49,11 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         // Snapshot prior-execution state before we mutate it below so the SkipQuestionMode
         // evaluation reflects whether this is the first time the action has run.
         bool hasExecutedPreviously = await this._hasExecuted.ReadAsync(context).ConfigureAwait(false);
-        bool proceed = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
+        bool proceed = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.AlwaysPrompt), "always prompt");
 
         if (!proceed)
         {
-            SkipQuestionMode mode = this.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
+            SkipQuestionMode mode = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.SkipQuestionMode), "skip question mode");
             proceed =
                 mode switch
                 {
@@ -159,7 +159,7 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
     private async ValueTask PromptAsync(IWorkflowContext context, int actualCount, CancellationToken cancellationToken)
     {
-        long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
+        long repeatCount = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.RepeatCount), "repeat count");
         if (actualCount >= repeatCount)
         {
             EvaluationResult<DataValue> defaultValue = new(DataValue.Blank(), SensitivityLevel.None);
