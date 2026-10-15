@@ -25,6 +25,109 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NoProvider_ActiveClientCapacity_RejectsNewScopesAndRecoversAsync(bool cancelActive)
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim started = new(0);
+        using SemaphoreSlim release = new(0);
+        int operations = 0;
+        stub.BeforeOperationAsync = async token =>
+        {
+            if (Interlocked.Increment(ref operations) == 1)
+            {
+                started.Release();
+                await release.WaitAsync(token);
+            }
+        };
+        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CancellationTokenSource firstCancellation = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        Task<McpServerToolResultContent> first = InvokeScopedAsync(handler, "workflow-a", "ping", firstCancellation.Token);
+        await started.WaitAsync(timeout.Token);
+
+        try
+        {
+            // Act
+            await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token));
+
+            // Assert
+            Assert.Contains("capacity", exception.Message);
+            Assert.Equal(1, stub.Initializations);
+            Assert.Equal(0, stub.Terminations);
+        }
+        finally
+        {
+            if (cancelActive)
+            {
+                firstCancellation.Cancel();
+            }
+
+            release.Release();
+            try
+            {
+                await first;
+            }
+            catch (OperationCanceledException) when (cancelActive)
+            {
+            }
+        }
+
+        await InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task NoProvider_Replacement_WaitsForIdleClientCleanupBeforeConnectingAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        using SemaphoreSlim closeStarted = new(0);
+        using SemaphoreSlim releaseClose = new(0);
+        int disposals = 0;
+        await using DefaultMcpToolHandler handler = new(
+            null, stub.CreateMessageHandler, clientCacheMaxSize: 1,
+            clientConnectionDisposer: async connection =>
+            {
+                if (Interlocked.Increment(ref disposals) == 1)
+                {
+                    closeStarted.Release();
+                    await releaseClose.WaitAsync();
+                }
+
+                await connection.DisposeAsync();
+            });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        Task<McpServerToolResultContent> replacement = InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await closeStarted.WaitAsync(timeout.Token);
+
+        try
+        {
+            // Act
+            Assert.Equal(1, stub.Initializations);
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token));
+
+            // Assert
+            Assert.Contains("capacity", exception.Message);
+        }
+        finally
+        {
+            releaseClose.Release();
+            await replacement;
+        }
+
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Theory]
     [InlineData("ping")]
     [InlineData(DefaultMcpToolHandler.ListToolsToolName)]
     public async Task Provider_SequentialInvocations_CreateAndDisposeSeparateSessionsAsync(string toolName)
@@ -201,7 +304,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Fact]
-    public async Task NoProvider_CacheEviction_DefersDisposalUntilActiveInvocationCompletesAsync()
+    public async Task NoProvider_CacheEviction_SkipsActiveClientUntilInvocationCompletesAsync()
     {
         // Arrange
         ProtocolStub stub = new();
@@ -216,22 +319,23 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 await releaseFirst.WaitAsync(token);
             }
         };
-        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 2);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
         Task<McpServerToolResultContent> first = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
         await firstStarted.WaitAsync(timeout.Token);
         await InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token);
 
         // Assert
-        Assert.Equal(0, stub.Terminations);
+        Assert.Equal(1, stub.Terminations);
         Task disposal = handler.DisposeAsync().AsTask();
         Assert.False(disposal.IsCompleted);
         releaseFirst.Release();
         await first;
         await disposal;
-        Assert.Equal(2, stub.Terminations);
+        Assert.Equal(3, stub.Terminations);
     }
 
     [Theory]
@@ -239,8 +343,8 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task NoProvider_EvictedHttpClientCleanupFailure_PreservesInvocationOutcomeAsync(
-        bool activeEviction, bool failOperation)
+    public async Task NoProvider_HttpClientCleanupFailure_PreservesInvocationOutcomeAsync(
+        bool activeDisposal, bool failOperation)
     {
         // Arrange
         ProtocolStub stub = new() { FailTransportDisposal = true };
@@ -249,15 +353,16 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         int operations = 0;
         stub.BeforeOperationAsync = async token =>
         {
-            if (activeEviction && Interlocked.Increment(ref operations) == 1)
+            if (activeDisposal && Interlocked.Increment(ref operations) == 1)
             {
                 firstStarted.Release();
                 await releaseFirst.WaitAsync(token);
             }
         };
-        await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
+        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 1);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         using CleanupTraceListener listener = new();
+        Task? disposal = null;
         Trace.Listeners.Add(listener);
         try
         {
@@ -265,11 +370,10 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             Task<McpServerToolResultContent> first = handler.InvokeToolInWorkflowSessionAsync(
                 "https://first.example/api", null, "ping", null, null, null, "workflow-a", timeout.Token);
             Task<McpServerToolResultContent> outcome;
-            if (activeEviction)
+            if (activeDisposal)
             {
                 await firstStarted.WaitAsync(timeout.Token);
-                await handler.InvokeToolInWorkflowSessionAsync(
-                    "https://second.example/api", null, "ping", null, null, null, "workflow-b", timeout.Token);
+                disposal = handler.DisposeAsync().AsTask();
                 stub.FailOperation = failOperation;
                 releaseFirst.Release();
                 outcome = first;
@@ -294,12 +398,18 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
             }
 
+            if (disposal is not null)
+            {
+                await disposal;
+            }
+
             Assert.Contains("Failed to dispose MCP HTTP client", listener.Output);
             Assert.Contains("transport cleanup failed", listener.Output);
         }
         finally
         {
             releaseFirst.Release();
+            await (disposal ?? handler.DisposeAsync().AsTask());
             Trace.Listeners.Remove(listener);
         }
     }
@@ -354,18 +464,24 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         };
         await using DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler, clientCacheMaxSize: 2);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-        using CancellationTokenSource concurrencyTimeout = new(TimeSpan.FromSeconds(2));
 
         // Act
         Task<McpServerToolResultContent> first = InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
         await initializationsStarted.WaitAsync(timeout.Token);
         Task<McpServerToolResultContent> second = InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
-        await initializationsStarted.WaitAsync(concurrencyTimeout.Token);
+        await initializationsStarted.WaitAsync(timeout.Token);
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token));
+        }
+        finally
+        {
+            releaseInitializations.Release(2);
+            await Task.WhenAll(first, second);
+        }
+
         Task<McpServerToolResultContent> third = InvokeScopedAsync(handler, "workflow-c", "ping", timeout.Token);
-        using CancellationTokenSource gateTimeout = new(TimeSpan.FromMilliseconds(250));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initializationsStarted.WaitAsync(gateTimeout.Token));
-        releaseInitializations.Release(2);
-        await Task.WhenAll(first, second);
         await initializationsStarted.WaitAsync(timeout.Token);
         releaseInitializations.Release();
         await third;

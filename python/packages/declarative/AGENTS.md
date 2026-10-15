@@ -2,6 +2,8 @@
 
 YAML/JSON-based declarative agent and workflow definitions.
 
+Requires Core 1.22.1 or later for workflow run initialization and continuation hooks.
+
 ## Main Classes
 
 - **`AgentFactory`** - Creates agents from declarative definitions
@@ -40,6 +42,12 @@ Shutdown waits for active provider-backed invocations to clean up. Calling `aclo
 from an active invocation's context (including inherited child tasks and cleanup)
 raises `RuntimeError` before changing handler state; shutdown must run outside that
 context or after invocation completion.
+
+Without a provider, `cache_max_size` bounds live sessions including connecting and
+closing clients, not only idle cache entries. At capacity, the least-recently-used
+idle client is fully closed before its replacement connects. If every slot is
+busy, new scopes receive an explicit capacity error; same-scope cache reuse
+remains available.
 
 Per-invocation sessions intentionally add connection overhead and lose server
 session continuity between invocations;

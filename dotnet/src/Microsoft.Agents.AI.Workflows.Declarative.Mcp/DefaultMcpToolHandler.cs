@@ -30,8 +30,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// Provider-backed invocations create and dispose a separate MCP session for every call, including
 /// <c>tools/list</c>, because provider authentication is not represented in the session cache key.
 /// Without a provider, workflow invocations are cached by workflow session, server URL, label,
-/// connection name, and explicit headers in a bounded least-recently-used cache. Evicted sessions
-/// are disposed after their active invocations finish.
+/// connection name, and explicit headers in a bounded least-recently-used cache. The bound includes
+/// connecting and closing sessions. At capacity, an idle session is disposed before its replacement
+/// connects. If every slot is busy, new scopes fail with <see cref="InvalidOperationException"/>;
+/// existing scopes can still reuse their cached session.
 /// Non-cancellation cleanup failures are reported through <see cref="Trace"/> warnings without replacing
 /// the invocation result or error.
 /// </remarks>
@@ -420,6 +422,28 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
 
             if (!this._clientCreations.TryGetValue(clientCacheKey, out clientCreation))
             {
+                if (this._clients.Count + this._retiredClients.Count + this._clientCreations.Count >= this._clientCacheMaxSize)
+                {
+                    LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)>? idleNode =
+                        this._clientLru.First;
+                    while (idleNode is not null && this._clients[idleNode.Value].ActiveInvocations != 0)
+                    {
+                        idleNode = idleNode.Next;
+                    }
+
+                    if (idleNode is null)
+                    {
+                        throw new InvalidOperationException("MCP client capacity is exhausted; retry when an active invocation completes.");
+                    }
+
+                    clientToDispose = this._clients[idleNode.Value];
+                    this._clients.Remove(idleNode.Value);
+                    this._clientLru.Remove(idleNode);
+                    clientToDispose.Evicted = true;
+                    clientToDispose.DisposalClaimed = true;
+                    this._retiredClients.Add(clientToDispose);
+                }
+
                 clientCreation = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 this._clientCreations[clientCacheKey] = clientCreation;
                 clientCreationLifetime = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -456,6 +480,11 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         Exception? clientCreationCleanupException = null;
         try
         {
+            if (clientToDispose is not null)
+            {
+                await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+            }
+
             await this._clientCreationSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             creationSemaphoreEntered = true;
             await this._clientLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -516,22 +545,6 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
                 connection = null;
                 this._clients[clientCacheKey] = newClient;
 
-                if (this._clients.Count > this._clientCacheMaxSize)
-                {
-                    LinkedListNode<(string WorkflowSession, string Url, string Label, string Connection, string HeadersHash)> evictedNode =
-                        this._clientLru.First!;
-                    this._clientLru.RemoveFirst();
-                    CachedClient evictedClient = this._clients[evictedNode.Value];
-                    this._clients.Remove(evictedNode.Value);
-                    evictedClient.Evicted = true;
-                    this._retiredClients.Add(evictedClient);
-                    if (evictedClient.ActiveInvocations == 0)
-                    {
-                        evictedClient.DisposalClaimed = true;
-                        clientToDispose = evictedClient;
-                    }
-                }
-
                 result = newClient;
                 clientCreation.TrySetResult(newClient);
             }
@@ -552,11 +565,6 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
             {
                 clientCreation.TrySetException(disposedException);
                 throw disposedException;
-            }
-
-            if (clientToDispose is not null)
-            {
-                await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
             }
         }
         catch (Exception exception)

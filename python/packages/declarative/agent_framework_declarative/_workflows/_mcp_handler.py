@@ -246,9 +246,10 @@ class DefaultMCPToolHandler:
     different header sets (auth tokens) cannot share a session — matches the
     .NET design intent while bounding cardinality. ``server_label`` and
     ``connection_name`` also participate in the key to distinguish logical
-    connections. Active invocations lease their cache entry, so eviction waits
-    for the final user before closing it. Concurrent entry creation is also
-    capped at ``cache_max_size``.
+    connections. Active invocations lease their cache entry. Admission counts
+    cached clients, connections in progress, and clients still closing. At
+    capacity, an idle entry is closed before its replacement connects; if no
+    idle entry is available, a new scope receives a capacity error.
     Header *names* are lower-cased inside the hash payload only — the
     headers passed on the wire keep the caller's original casing — so two
     YAML actions that spell ``Authorization`` differently still share a
@@ -280,11 +281,12 @@ class DefaultMCPToolHandler:
 
     Args:
         client_provider: Optional per-invocation ``httpx.AsyncClient`` provider.
-        cache_max_size: Maximum number of cached MCP clients in no-provider mode.
-            When exceeded, the least-recently-used entry is evicted and its
-            owned client closed after any active invocation finishes. This also
-            limits simultaneous connection attempts. Defaults to ``32``. Does
-            not enable session caching when a provider is configured.
+        cache_max_size: Maximum number of live MCP clients in no-provider mode,
+            including connecting and closing clients. At capacity, the
+            least-recently-used idle entry is closed before connecting a new
+            client. If every slot is busy, new scopes receive a capacity error;
+            existing scopes can still reuse their cached client. Defaults to
+            ``32``. Does not limit provider-backed invocations.
     """
 
     LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
@@ -646,6 +648,7 @@ class DefaultMCPToolHandler:
         # Phase 1: check the cache and either claim creation or wait for an
         # already in-flight creation.
         creating = False
+        evicted: _CacheEntry | None = None
         async with self._cache_lock:
             if self._closed:
                 raise RuntimeError("DefaultMCPToolHandler is closed")
@@ -656,6 +659,20 @@ class DefaultMCPToolHandler:
                 return existing
             inflight = self._inflight.get(key)
             if inflight is None:
+                if len(self._cache) + len(self._retired) + len(self._inflight) >= self._cache_max_size:
+                    idle = next(
+                        ((cached_key, entry) for cached_key, entry in self._cache.items() if entry.active_users == 0),
+                        None,
+                    )
+                    if idle is None:
+                        raise RuntimeError(
+                            "MCP client capacity is exhausted; retry when an active invocation completes"
+                        )
+                    evicted_key, evicted = idle
+                    del self._cache[evicted_key]
+                    evicted.evicted = True
+                    evicted.disposal_claimed = True
+                    self._retired[id(evicted)] = evicted
                 inflight = asyncio.get_running_loop().create_future()
                 self._inflight[key] = inflight
                 self._inflight_cleanup[key] = asyncio.get_running_loop().create_future()
@@ -668,6 +685,8 @@ class DefaultMCPToolHandler:
 
         # Phase 2: we own creation. Build the entry outside the lock.
         try:
+            if evicted is not None:
+                await self._close_claimed_entry(evicted)
             async with self._creation_semaphore:
                 async with self._cache_lock:
                     if self._closed:
@@ -679,12 +698,11 @@ class DefaultMCPToolHandler:
                 raise exc.cleanup_exception from exc.creation_exception
             raise
 
-        # Phase 3: insert with LRU eviction; resolve the in-flight future.
+        # Phase 3: insert and resolve the in-flight future.
         # If ``aclose`` ran while we were connecting, ``_closed`` is now
         # True; don't insert into the cache (it has been drained), close
         # the just-built entry, and surface the closed-handler error to
         # all awaiters of the future.
-        evicted: _CacheEntry | None = None
         duplicate: _CacheEntry | None = None
         handler_closed = False
         try:
@@ -705,12 +723,6 @@ class DefaultMCPToolHandler:
                         entry.active_users = 1
                         self._cache[key] = entry
                         self._cache.move_to_end(key)
-                        if len(self._cache) > self._cache_max_size:
-                            _evicted_key, evicted = self._cache.popitem(last=False)
-                            evicted.evicted = True
-                            self._retired[id(evicted)] = evicted
-                            if evicted.active_users == 0:
-                                evicted.disposal_claimed = True
                     if not inflight.done():
                         inflight.set_result(entry)
         except BaseException as exc:
@@ -736,8 +748,6 @@ class DefaultMCPToolHandler:
         try:
             if duplicate is not None:
                 await self._close_entry(duplicate)
-            if evicted is not None and evicted.disposal_claimed:
-                await self._close_claimed_entry(evicted)
         except BaseException:
             await self._release_entry(entry)
             raise

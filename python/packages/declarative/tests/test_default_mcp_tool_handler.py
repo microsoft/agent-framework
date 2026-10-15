@@ -960,6 +960,74 @@ class TestToolKwargs:
 
 
 class TestCache:
+    @pytest.mark.parametrize("cancel_active", [False, True])
+    async def test_active_clients_reject_new_scopes_at_capacity(self, cancel_active: bool) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def gated_call(_tool: FakeTool, tool_name: str, **arguments: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                await release.wait()
+            return [Content.from_text("ok")]
+
+        with _patch_tool(), patch.object(FakeTool, "call_tool", gated_call):
+            first = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
+            await started.wait()
+            try:
+                reused = await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+                assert not reused.is_error
+                rejected = await handler.invoke_tool(_invocation(workflow_session_id="workflow-b"))
+                assert rejected.is_error
+                assert rejected.error_message is not None
+                assert "capacity" in rejected.error_message
+                assert len(FakeTool.instances) == 1
+                assert FakeTool.instances[0].close_count == 0
+            finally:
+                if cancel_active:
+                    first.cancel()
+                release.set()
+                await asyncio.gather(first, return_exceptions=True)
+
+            recovered = await handler.invoke_tool(_invocation(workflow_session_id="workflow-b"))
+            assert not recovered.is_error
+            await handler.aclose()
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
+    async def test_replacement_waits_for_idle_client_cleanup_before_connecting(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        original_close = FakeTool.close
+
+        async def gated_close(tool: FakeTool) -> None:
+            if tool is FakeTool.instances[0]:
+                close_started.set()
+                await release_close.wait()
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", gated_close):
+            await handler.invoke_tool(_invocation(workflow_session_id="workflow-a"))
+            replacement = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-b")))
+            await close_started.wait()
+            try:
+                assert len(FakeTool.instances) == 1
+                rejected = await handler.invoke_tool(_invocation(workflow_session_id="workflow-c"))
+                assert rejected.is_error
+                assert rejected.error_message is not None
+                assert "capacity" in rejected.error_message
+            finally:
+                release_close.set()
+                await replacement
+                await handler.aclose()
+        assert len(FakeTool.instances) == 2
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
+
     @pytest.mark.parametrize("explicit_session", [False, True])
     async def test_sessionless_scope_reuses_its_own_cached_client(self, explicit_session: bool) -> None:
         state = State()
@@ -1038,8 +1106,8 @@ class TestCache:
         assert FakeTool.instances[2].close_count == 0
 
     @pytest.mark.asyncio
-    async def test_lru_eviction_defers_close_until_active_invocation_finishes(self) -> None:
-        handler = DefaultMCPToolHandler(cache_max_size=1)
+    async def test_lru_eviction_skips_active_client_until_invocation_finishes(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=2)
         first_started = asyncio.Event()
         release_first = asyncio.Event()
 
@@ -1053,9 +1121,12 @@ class TestCache:
             first = asyncio.create_task(handler.invoke_tool(_invocation(server_url="https://a/")))
             await first_started.wait()
             second = await handler.invoke_tool(_invocation(server_url="https://b/"))
+            third = await handler.invoke_tool(_invocation(server_url="https://c/"))
 
             assert not second.is_error
+            assert not third.is_error
             assert FakeTool.instances[0].close_count == 0
+            assert FakeTool.instances[1].close_count == 1
             close_task = asyncio.create_task(handler.aclose())
             await asyncio.sleep(0)
             assert not close_task.done()
@@ -1067,6 +1138,7 @@ class TestCache:
         assert not first_result.is_error
         assert FakeTool.instances[0].close_count == 1
         assert FakeTool.instances[1].close_count == 1
+        assert FakeTool.instances[2].close_count == 1
 
     @pytest.mark.asyncio
     async def test_lru_eviction_cleanup_cancellation_releases_new_entry(self) -> None:
@@ -1163,7 +1235,7 @@ class TestCache:
         assert all(entry.active_users == 0 for entry in handler._cache.values())
 
     @pytest.mark.asyncio
-    async def test_entry_creation_is_bounded_and_cancelled_waiter_is_cleaned_up(self) -> None:
+    async def test_entry_creation_rejects_new_scopes_at_capacity(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=2)
         connecting = 0
         max_connecting = 0
@@ -1187,17 +1259,16 @@ class TestCache:
             first = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-a")))
             second = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-b")))
             await capacity_reached.wait()
-            cancelled = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="workflow-c")))
-            await asyncio.sleep(0)
-
-            assert len(FakeTool.instances) == 2
-            cancelled.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                cancelled_result = await cancelled
-                assert cancelled_result is None
-
-            release.set()
-            results = await asyncio.gather(first, second)
+            try:
+                rejected = await handler.invoke_tool(_invocation(workflow_session_id="workflow-c"))
+                assert rejected.is_error
+                assert rejected.error_message is not None
+                assert "capacity" in rejected.error_message
+                assert len(FakeTool.instances) == 2
+            finally:
+                release.set()
+                results = await asyncio.gather(first, second)
+                await handler.aclose()
 
         assert all(not result.is_error for result in results)
         assert max_connecting == 2
