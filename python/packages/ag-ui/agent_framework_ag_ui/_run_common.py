@@ -581,33 +581,6 @@ def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None
     return None
 
 
-def _annotations_replay_recorded_occurrences(flow: FlowState, annotations: Any) -> bool:
-    """Whether an equal-text duplicate's annotations re-send every recorded occurrence.
-
-    A cumulative replay re-sends the annotations the message already carries; a genuine
-    repeated delta brings new annotations. Comparing against the segment's recorded
-    annotations separates the two without guessing from the delta alone.
-    """
-    if not annotations:
-        return False
-    segment = _text_segment_for(flow, flow.message_id) if flow.message_id else None
-    if segment is None:
-        return False
-    recorded = list(segment.get("annotations", []))
-    if not recorded:
-        return False
-    incoming = cast(
-        "list[dict[str, Any]]",
-        make_json_safe(
-            [
-                {key: value for key, value in annotation.items() if key != "raw_representation"}
-                for annotation in annotations
-            ]
-        ),
-    )
-    return all(annotation in incoming for annotation in recorded)
-
-
 def _new_tool_call_segment_id(flow: FlowState) -> str:
     """Allocate a snapshot ID, reusing a tool-only opening ID at most once."""
     segment_ids = {segment.get("id") for segment in flow.snapshot_segments if segment.get("id")}
@@ -676,14 +649,14 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
     elif flow.accumulated_text and content.text == flow.accumulated_text and (
-        flow.text_delta_count > 1 or _annotations_replay_recorded_occurrences(flow, content.annotations)
+        flow.text_delta_count > 1
     ):
         # Guard against full-message replay chunks that can appear after streaming deltas.
         # A duplicate equal to the whole accumulated text is only a safe replay signal when
-        # the text already streamed in more than one chunk, or when its annotations are
-        # cumulative: a replay re-sends the annotations already recorded for the message,
-        # while a genuine repeated delta carries new ones. Otherwise a single prior chunk
-        # leaves the two indistinguishable and dropping it would lose text (issue #9336).
+        # the text already streamed in more than one chunk. With a single prior chunk the
+        # duplicate is indistinguishable from a genuine repeated token, annotated or not,
+        # so the one-chunk policy stays the same as the unannotated path: keep the text
+        # (issue #9336) and let the annotation emission reconcile occurrences.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         if not content.annotations:
             return []
