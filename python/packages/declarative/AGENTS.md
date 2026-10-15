@@ -95,6 +95,9 @@ instructions. Hosts can opt in through
 receives a stable `legacy-request:<framework request ID>` scope. Migration never
 infers an origin from current state or recovers the old MCP session. Resume requests
 separately, preserve their framework IDs, and checkpoint the migrated continuation.
+The same validation and migration run before restoring queued checkpoint responses,
+including embedded child checkpoints. Newly submitted responses are validated
+together with already queued responses before any pending request is consumed.
 Rejected mixed batches do not mutate request origins. Malformed stored origins
 are rejected even with migration enabled. Legacy agent loop configuration is read
 from the old checkpoint slot; newly emitted requests retain their own snapshot.

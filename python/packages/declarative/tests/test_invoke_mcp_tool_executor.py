@@ -1226,6 +1226,204 @@ class TestRequestScopeContinuations:
         assert handler.call_count == 0
         assert set(await workflow._runner_context.get_pending_request_info_events()) == {request.request_id}
 
+    @pytest.mark.parametrize(
+        "pause_kind", ["Question", "RequestExternalInput", "InvokeFunctionTool", "InvokeAzureAgent", "InvokeMcpTool"]
+    )
+    @pytest.mark.parametrize(
+        ("restore_kind", "streaming"),
+        [("memory", False), ("memory", True), ("file", False), ("file", True), ("embedded", False)],
+    )
+    async def test_legacy_queued_response_migration_precedes_replay(
+        self, tmp_path: Path, pause_kind: str, restore_kind: str, streaming: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+        from agent_framework._workflows._runner_context import MessageType
+
+        storage = _scope_checkpoint_storage(tmp_path) if restore_kind == "file" else InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        agent = MagicMock(run=AsyncMock(return_value="Need input"))
+        function = MagicMock(return_value="done")
+        factory = WorkflowFactory(
+            checkpoint_storage=storage, mcp_tool_handler=handler, agents={"TestAgent": agent}
+        ).register_tool("echo", function)
+        definition = {
+            "name": "queued_legacy_response",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {"kind": "SetValue", "path": "Local.userInput", "value": ""},
+                {**_scope_pause_action(pause_kind), "id": "pause"},
+                {**_action(tool_name="after"), "id": "after"},
+                {**_scope_pause_action("Question"), "id": "followup"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({})
+        [request] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        await workflow.run(responses={request.request_id: _scope_pause_response(pause_kind)})
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        [checkpoint] = [
+            item
+            for item in checkpoints
+            if any(message.type == MessageType.RESPONSE for batch in item.messages.values() for message in batch)
+        ]
+        [queued_response] = [message for batch in checkpoint.messages.values() for message in batch]
+        original = queued_response.original_request_info_event
+        assert original is not None
+        assert original.request_id == request.request_id
+        assert not checkpoint.pending_request_info_events
+        original_scope = original.data.workflow_session_id
+        original.data.workflow_session_id = None
+        await storage.save(checkpoint)
+        before = handler.call_count
+        function.reset_mock()
+
+        factory = WorkflowFactory(
+            checkpoint_storage=storage,
+            mcp_tool_handler=handler,
+            agents={"TestAgent": agent},
+            migrate_legacy_request_scopes=True,
+        ).register_tool("echo", function)
+        workflow = factory.create_workflow_from_definition(definition)
+        if restore_kind == "embedded":
+            await workflow._runner.restore_checkpoint(await storage.load(checkpoint.checkpoint_id))
+            _ = [event async for event in workflow._runner.run_until_convergence()]
+        elif streaming:
+            await workflow.run(checkpoint_id=checkpoint.checkpoint_id, stream=True).get_final_response()
+        else:
+            await workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        replayed = handler.invocations[before:]
+        assert replayed
+        assert replayed[-1].tool_name == "after"
+        scope = replayed[-1].workflow_session_id
+        assert scope == f"legacy-request:{request.request_id}"
+        assert scope != original_scope
+        assert all(invocation.workflow_session_id == scope for invocation in replayed)
+        assert function.call_count == (1 if pause_kind == "InvokeFunctionTool" else 0)
+        [followup] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        assert followup.data.workflow_session_id == scope
+        saved_id = workflow.get_last_checkpoint_id()
+        assert saved_id is not None
+        saved = await storage.load(saved_id)
+        assert saved.pending_request_info_events[followup.request_id].data.workflow_session_id == scope
+
+    @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
+    @pytest.mark.parametrize("legacy", [False, True])
+    async def test_queued_response_batch_is_validated_before_restoring_state(
+        self, tmp_path: Path, restore_kind: str, legacy: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+        from agent_framework.exceptions import WorkflowCheckpointException
+
+        storage = _scope_checkpoint_storage(tmp_path) if restore_kind == "file" else InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(
+            checkpoint_storage=storage, mcp_tool_handler=handler, migrate_legacy_request_scopes=True
+        )
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+        await workflow.run({})
+        await workflow.run({})
+        requests = await workflow._runner_context.get_pending_request_info_events()
+        assert len(requests) == 2
+        for request in requests.values():
+            if legacy:
+                request.data.workflow_session_id = None
+            await workflow._runner_context.send_request_info_response(
+                request.request_id, _scope_pause_response("InvokeMcpTool")
+            )
+        await workflow._runner.create_checkpoint_if_enabled()
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        checkpoint = await storage.load(checkpoint_id)
+        assert not checkpoint.pending_request_info_events
+
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+        workflow._runner.state.set("preexisting", "keep")
+        workflow._runner.state.commit()
+        with pytest.raises(WorkflowCheckpointException) as exc:
+            if restore_kind == "embedded":
+                await workflow._runner.restore_checkpoint(checkpoint)
+            else:
+                await workflow.run(checkpoint_id=checkpoint_id)
+
+        assert isinstance(exc.value.__cause__, DeclarativeWorkflowError)
+        assert "different workflow sessions" in str(exc.value.__cause__)
+        assert workflow._runner.state.get("preexisting") == "keep"
+        assert handler.call_count == 0
+        if legacy:
+            for batch in checkpoint.messages.values():
+                for message in batch:
+                    original = message.original_request_info_event
+                    assert original is not None
+                    assert original.data.workflow_session_id is None
+
+    @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
+    async def test_queued_and_new_responses_share_batch_validation(self, tmp_path: Path, restore_kind: str) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        storage = _scope_checkpoint_storage(tmp_path) if restore_kind == "file" else InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(checkpoint_storage=storage, mcp_tool_handler=handler)
+        definition = _yaml(_action(require_approval=True))
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({})
+        await workflow.run({})
+        first_id, second_id = (await workflow._runner_context.get_pending_request_info_events()).keys()
+        await workflow._runner_context.send_request_info_response(first_id, _scope_pause_response("InvokeMcpTool"))
+        await workflow._runner.create_checkpoint_if_enabled()
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+
+        workflow = factory.create_workflow_from_definition(definition)
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            if restore_kind == "embedded":
+                await workflow._runner.restore_checkpoint(await storage.load(checkpoint_id))
+                await workflow.run(responses={second_id: _scope_pause_response("InvokeMcpTool")})
+            else:
+                await workflow.run(
+                    checkpoint_id=checkpoint_id, responses={second_id: _scope_pause_response("InvokeMcpTool")}
+                )
+
+        assert handler.call_count == 0
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == {second_id}
+
+    @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
+    async def test_legacy_queued_response_requires_opt_in_before_restore(
+        self, tmp_path: Path, restore_kind: str
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+        from agent_framework.exceptions import WorkflowCheckpointException
+
+        storage = _scope_checkpoint_storage(tmp_path) if restore_kind == "file" else InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(checkpoint_storage=storage, mcp_tool_handler=handler)
+        definition = _yaml(_action(require_approval=True))
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({})
+        [request] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        request.data.workflow_session_id = None
+        await workflow._runner_context.send_request_info_response(
+            request.request_id, _scope_pause_response("InvokeMcpTool")
+        )
+        await workflow._runner.create_checkpoint_if_enabled()
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        checkpoint = await storage.load(checkpoint_id)
+
+        workflow = factory.create_workflow_from_definition(definition)
+        workflow._runner.state.set("preexisting", "keep")
+        workflow._runner.state.commit()
+        with pytest.raises(WorkflowCheckpointException) as exc:
+            if restore_kind == "embedded":
+                await workflow._runner.restore_checkpoint(checkpoint)
+            else:
+                await workflow.run(checkpoint_id=checkpoint_id)
+
+        assert isinstance(exc.value.__cause__, DeclarativeWorkflowError)
+        assert "migrate_legacy_request_scopes" in str(exc.value.__cause__)
+        assert workflow._runner.state.get("preexisting") == "keep"
+        assert handler.call_count == 0
+
 
 # ---------- Output handling ------------------------------------------------
 

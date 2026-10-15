@@ -44,6 +44,9 @@ Choose explicit host opt-in through
   it before continuing. Agent requests also retain their own loop configuration.
 - Factory-built workflows validate all submitted request origins before consuming
   responses. Mixed-scope batches are rejected without changing request metadata.
+- Checkpoint restores validate queued response origins before restoring shared or
+  executor state, including embedded child checkpoints. Submitted and already
+  queued responses share the same batch validation before pending requests are consumed.
 - Without opt-in, a missing origin produces an actionable recovery error.
 - With opt-in, a missing origin becomes
   `legacy-request:<framework request ID>`. The distinct namespace never selects

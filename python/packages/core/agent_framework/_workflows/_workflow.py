@@ -414,6 +414,7 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
         self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
+        self._runner._response_batch_validator = self._validate_response_batch  # pyright: ignore[reportPrivateUsage]
         self._initial_state_initializer: Callable[[State], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
@@ -1145,6 +1146,10 @@ class Workflow(DictConvertible):
         await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
         await self._send_responses_internal(responses)
 
+    def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
+        if self._response_batch_validator is not None:
+            self._response_batch_validator(requests)
+
     async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
         """Validate responses before a run can consume pending requests."""
         from ._agent_executor import _validate_computer_tool_result  # pyright: ignore[reportPrivateUsage]
@@ -1164,7 +1169,11 @@ class Workflow(DictConvertible):
                 _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
         if self._response_batch_validator is not None:
-            self._response_batch_validator([pending_requests[request_id] for request_id in coerced_responses])
+            queued_requests = await self._runner.context.get_queued_response_info_events()
+            self._response_batch_validator([
+                *queued_requests,
+                *(pending_requests[request_id] for request_id in coerced_responses),
+            ])
         return coerced_responses
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:

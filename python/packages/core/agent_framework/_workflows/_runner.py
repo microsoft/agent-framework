@@ -4,7 +4,7 @@ import asyncio
 import logging
 import warnings
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..exceptions import (
@@ -20,6 +20,7 @@ from ._executor import Executor
 from ._runner_context import (
     RunnerContext,
     WorkflowMessage,
+    _get_queued_response_info_events,  # pyright: ignore[reportPrivateUsage]
 )
 from ._state import State
 
@@ -83,6 +84,7 @@ class RunnerImpl:
 
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
+        self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
 
     @property
     def context(self) -> RunnerContext:
@@ -326,6 +328,8 @@ class RunnerImpl:
                     "Please rebuild the original workflow before resuming."
                 )
 
+            self._validate_checkpoint_responses(checkpoint)
+
             # Restore state. Clear first so import_state (which merges) does
             # not leak stale keys from a prior run on this Workflow instance.
             # This matters more now that Workflow.run() no longer wipes state
@@ -389,6 +393,8 @@ class RunnerImpl:
             )
 
         try:
+            self._validate_checkpoint_responses(checkpoint)
+
             # Clear first so import_state (which merges) does not leak stale keys from a
             # prior run on this Workflow instance.
             self._state.clear()
@@ -400,6 +406,11 @@ class RunnerImpl:
         except Exception as e:
             logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
+
+    def _validate_checkpoint_responses(self, checkpoint: WorkflowCheckpoint) -> None:
+        requests = _get_queued_response_info_events(checkpoint.messages)
+        if requests and self._response_batch_validator is not None:
+            self._response_batch_validator(requests)
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""
