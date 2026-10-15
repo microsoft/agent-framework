@@ -1,50 +1,24 @@
 # Observability
 
-Use observability to diagnose and monitor agent runs, model calls, tool calls, workflow execution, latency, errors, and
-token use. Observability provides runtime evidence; it does not define whether an output is correct.
+Use observability to diagnose agent runs, model calls, tools, workflows, latency, errors, and token use. It provides
+runtime evidence; it does not determine whether output is correct.
 
-## OpenTelemetry configuration
+## Stable setup rules
 
-Agent Framework instrumentation is enabled by default, but the application must configure OpenTelemetry providers and
-exporters. Narrow Agent Framework installations include `opentelemetry-api` but not the SDK. Install
-`opentelemetry-sdk` and the exporter package required by the application's telemetry backend before using the helper:
+- Agent Framework instrumentation is enabled by default, but applications must configure OpenTelemetry providers and
+  exporters.
+- Narrow installations include `opentelemetry-api`, not the SDK. Install `opentelemetry-sdk` and the exporter required
+  by the chosen backend.
+- Configure providers once during startup, or use application-owned OpenTelemetry setup and enable Agent Framework
+  instrumentation against it.
+- Keep sensitive payload capture disabled unless the application explicitly accepts the exposure.
+- Built-in redaction does not replace sanitization in custom telemetry, exporters, middleware, or exception messages.
 
-```bash
-python -m pip install opentelemetry-sdk opentelemetry-exporter-otlp
-```
+Inspect run boundaries, model calls, tool and MCP calls, workflow transitions, checkpoints, approvals, retries, usage,
+and hosted-service continuations. Use stable agent, workflow, and service identifiers.
 
-The helper configures providers from arguments and standard environment variables:
+## Learn more
 
-```python
-from agent_framework.observability import configure_otel_providers
-
-
-configure_otel_providers(enable_sensitive_data=False)
-```
-
-- Call `configure_otel_providers(...)` once during application startup.
-- Keep sensitive prompts, tool arguments, tool results, and model responses disabled by default.
-- Use `enable_instrumentation(...)` only to control instrumentation when providers are configured elsewhere.
-- Use traces to correlate agent runs, model calls, tools, MCP calls, and workflow executors.
-- Give agents, harnesses, workflows, and services stable identifiers.
-- When sensitive data is disabled, built-in Agent Framework telemetry redacts exception details from spans, events,
-  workflow telemetry, and failure logs, and does not attach serialized tool arguments to invocation metrics.
-- Apply equivalent redaction and cardinality controls to application-defined telemetry and custom exporters.
-
-## What to inspect
-
-- Agent and workflow run boundaries.
-- Model requests, responses, latency, and token usage.
-- Function and MCP tool calls, including failures and approval pauses.
-- Workflow executor transitions, checkpoint activity, and suspended runs.
-- Provider errors, retries, and hosted-service continuations.
-
-Avoid using telemetry as a storage mechanism for application state or sensitive conversation history.
-
-See [agent observability](https://learn.microsoft.com/agent-framework/agents/observability) and
-[workflow observability](https://learn.microsoft.com/agent-framework/workflows/observability).
-
-Current examples:
-
-- [Agent observability](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/observability/agent_observability.py)
-- [Workflow observability](https://github.com/microsoft/agent-framework/blob/main/python/samples/02-agents/observability/workflow_observability.py)
+- [Agent observability](https://learn.microsoft.com/agent-framework/agents/observability)
+- [Workflow observability](https://learn.microsoft.com/agent-framework/workflows/observability)
+- [Observability samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/observability)
