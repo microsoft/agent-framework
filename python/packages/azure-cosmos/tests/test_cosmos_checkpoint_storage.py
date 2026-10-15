@@ -81,6 +81,12 @@ def _checkpoint_to_cosmos_document(checkpoint: WorkflowCheckpoint) -> dict[str, 
     return doc
 
 
+def _mock_get_latest_queries(container: MagicMock, newest_docs: list[dict[str, Any]]) -> None:
+    """Answer get_latest's newest-timestamp query, then its query for the rows at that timestamp."""
+    newest_timestamps = [max(doc["timestamp"] for doc in newest_docs)] if newest_docs else []
+    container.query_items.side_effect = [_to_async_iter(newest_timestamps), _to_async_iter(newest_docs)]
+
+
 @pytest.fixture
 def mock_container() -> MagicMock:
     container = MagicMock()
@@ -351,9 +357,7 @@ async def test_delete_cosmos_not_found_returns_false(mock_container: MagicMock) 
 
 async def test_get_latest_returns_latest_checkpoint(mock_container: MagicMock) -> None:
     cp = _make_checkpoint(checkpoint_id="cp-latest", timestamp="2025-06-01T00:00:00+00:00")
-    mock_container.query_items.return_value = _to_async_iter([
-        _checkpoint_to_cosmos_document(cp),
-    ])
+    _mock_get_latest_queries(mock_container, [_checkpoint_to_cosmos_document(cp)])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
     result = await storage.get_latest(workflow_name="test-workflow")
@@ -371,15 +375,56 @@ async def test_get_latest_returns_none_when_empty(mock_container: MagicMock) -> 
     assert result is None
 
 
-async def test_get_latest_uses_order_by_desc_with_limit(mock_container: MagicMock) -> None:
-    mock_container.query_items.return_value = _to_async_iter([])
+async def test_get_latest_fetches_every_checkpoint_at_the_newest_timestamp(mock_container: MagicMock) -> None:
+    cp = _make_checkpoint(checkpoint_id="cp-latest", timestamp="2025-06-01T00:00:00+00:00")
+    _mock_get_latest_queries(mock_container, [_checkpoint_to_cosmos_document(cp)])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
     await storage.get_latest(workflow_name="test-workflow")
 
-    kwargs = mock_container.query_items.call_args.kwargs
-    assert "ORDER BY c.timestamp DESC" in kwargs["query"]
-    assert "OFFSET 0 LIMIT 1" in kwargs["query"]
+    max_call, candidates_call = mock_container.query_items.call_args_list
+    assert "MAX(c.timestamp)" in max_call.kwargs["query"]
+    assert max_call.kwargs["parameters"] == [{"name": "@workflow_name", "value": "test-workflow"}]
+    assert max_call.kwargs["partition_key"] == "test-workflow"
+    assert "c.timestamp = @timestamp" in candidates_call.kwargs["query"]
+    assert "LIMIT" not in candidates_call.kwargs["query"]
+    assert candidates_call.kwargs["parameters"] == [
+        {"name": "@workflow_name", "value": "test-workflow"},
+        {"name": "@timestamp", "value": "2025-06-01T00:00:00+00:00"},
+    ]
+    assert candidates_call.kwargs["partition_key"] == "test-workflow"
+
+
+async def test_get_latest_returns_none_when_newest_rows_disappear(mock_container: MagicMock) -> None:
+    mock_container.query_items.side_effect = [
+        _to_async_iter(["2025-06-01T00:00:00+00:00"]),
+        _to_async_iter([]),
+    ]
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    assert await storage.get_latest(workflow_name="test-workflow") is None
+
+
+@pytest.mark.parametrize("row_order", [("parent", "child", "grandchild"), ("grandchild", "child", "parent")])
+async def test_get_latest_resolves_timestamp_ties_through_lineage(
+    mock_container: MagicMock, row_order: tuple[str, ...]
+) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    checkpoints = {
+        "parent": _make_checkpoint(checkpoint_id="parent", timestamp=timestamp),
+        "child": _make_checkpoint(checkpoint_id="child", previous_checkpoint_id="parent", timestamp=timestamp),
+        "grandchild": _make_checkpoint(checkpoint_id="grandchild", previous_checkpoint_id="child", timestamp=timestamp),
+    }
+    _mock_get_latest_queries(
+        mock_container, [_checkpoint_to_cosmos_document(checkpoints[checkpoint_id]) for checkpoint_id in row_order]
+    )
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert result.checkpoint_id == "grandchild"
 
 
 # --- Tests for list_checkpoint_ids ---
@@ -740,7 +785,7 @@ async def test_get_latest_blocks_unlisted_app_type(mock_container: MagicMock) ->
     """get_latest raises when the checkpoint contains an unlisted application type."""
     checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
     doc = _checkpoint_to_cosmos_document(checkpoint)
-    mock_container.query_items.return_value = _to_async_iter([doc])
+    _mock_get_latest_queries(mock_container, [doc])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
 
@@ -752,7 +797,7 @@ async def test_get_latest_allows_listed_app_type(mock_container: MagicMock) -> N
     """get_latest decodes checkpoints with listed application types."""
     checkpoint = _make_checkpoint_with_state({"data": _AppState(label="latest", count=9)})
     doc = _checkpoint_to_cosmos_document(checkpoint)
-    mock_container.query_items.return_value = _to_async_iter([doc])
+    _mock_get_latest_queries(mock_container, [doc])
 
     storage = CosmosCheckpointStorage(
         container_client=mock_container,
