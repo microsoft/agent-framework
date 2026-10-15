@@ -5,11 +5,15 @@ on:
   pull_request:
     paths:
       - "skills/**"
+      - ".github/scripts/validate_agent_skill_links.py"
+      - ".github/tests/test_validate_agent_skill_links.py"
       - ".github/workflows/agent-skills.yml"
   push:
     branches: ["main"]
     paths:
       - "skills/**"
+      - ".github/scripts/validate_agent_skill_links.py"
+      - ".github/tests/test_validate_agent_skill_links.py"
       - ".github/workflows/agent-skills.yml"
 
 permissions:
@@ -49,22 +53,8 @@ jobs:
 
       - name: Validate relative resource links
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          missing: list[str] = []
-          for path in Path("skills").rglob("*.md"):
-              for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", path.read_text(encoding="utf-8")):
-                  if "://" in target or target.startswith(("#", "mailto:")):
-                      continue
-                  relative_path = target.split("#", 1)[0]
-                  if relative_path and not (path.parent / relative_path).resolve().exists():
-                      missing.append(f"{path}: {target}")
-
-          if missing:
-              raise SystemExit("\n".join(missing))
-          PY
+          python .github/tests/test_validate_agent_skill_links.py
+          python .github/scripts/validate_agent_skill_links.py skills
 
       - name: Validate GitHub skill publishing
         env:
