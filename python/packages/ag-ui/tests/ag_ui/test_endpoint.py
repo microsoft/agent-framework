@@ -62,7 +62,7 @@ from agent_framework.security import (
     SecureAgentConfig,
 )
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
@@ -74,7 +74,9 @@ from agent_framework_ag_ui import (
     AGUIRequest,
     AGUIThreadSnapshot,
     InMemoryAGUIThreadSnapshotStore,
-    add_agent_framework_fastapi_endpoint,
+)
+from agent_framework_ag_ui import (
+    add_agent_framework_fastapi_endpoint as _add_agent_framework_fastapi_endpoint,
 )
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -89,6 +91,17 @@ from agent_framework_ag_ui._workflow import (
     AgentFrameworkWorkflow,
     _OwnedWorkflowCheckpointStorage,
 )
+
+
+def add_agent_framework_fastapi_endpoint(*args: Any, **kwargs: Any) -> None:
+    """Register a test endpoint as intentionally single-user unless the test supplies a scope."""
+    if (
+        kwargs.get("authorization_scope_resolver") is None
+        and kwargs.get("snapshot_scope_resolver") is None
+        and not kwargs.get("single_user", False)
+    ):
+        kwargs["single_user"] = True
+    _add_agent_framework_fastapi_endpoint(*args, **kwargs)
 
 
 def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
@@ -1331,21 +1344,21 @@ async def test_add_endpoint_accepts_transport_options_for_supported_runners(buil
 
 def test_add_endpoint_keepalive_default_is_enabled() -> None:
     """Keepalive defaults to the endpoint-owned enabled interval."""
-    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
+    parameter = signature(_add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
 
     assert parameter.default == 15
 
 
 def test_add_endpoint_detached_runs_default_is_disabled() -> None:
     """Detached execution is opt-in so current disconnect cancellation semantics remain the default."""
-    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
+    parameter = signature(_add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
 
     assert parameter.default is False
 
 
 def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
     """Detached producers have finite admission and post-disconnect lifetime defaults."""
-    parameters = signature(add_agent_framework_fastapi_endpoint).parameters
+    parameters = signature(_add_agent_framework_fastapi_endpoint).parameters
 
     assert parameters["max_detached_runs"].default == 32
     assert parameters["detached_run_timeout_seconds"].default == 3600
@@ -1353,14 +1366,16 @@ def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
 
 def test_add_endpoint_detached_runs_preserves_existing_positional_parameter_order() -> None:
     """The new option is appended after existing parameters so positional a2ui_config callers do not shift."""
-    parameters = list(signature(add_agent_framework_fastapi_endpoint).parameters)
+    parameters = list(signature(_add_agent_framework_fastapi_endpoint).parameters)
 
     assert parameters.index("detached_runs") > parameters.index("a2ui_config")
+    assert parameters.index("authorization_scope_resolver") > parameters.index("detached_run_timeout_seconds")
+    assert parameters.index("single_user") > parameters.index("authorization_scope_resolver")
 
 
 def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
     """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
-    docstring = add_agent_framework_fastapi_endpoint.__doc__
+    docstring = _add_agent_framework_fastapi_endpoint.__doc__
 
     assert docstring is not None
     normalized_docstring = " ".join(docstring.split())
@@ -1373,7 +1388,7 @@ def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None
 
 def test_add_endpoint_docstring_describes_detached_run_behavior() -> None:
     """The public endpoint docs distinguish detached completion from resumable replay."""
-    docstring = add_agent_framework_fastapi_endpoint.__doc__
+    docstring = _add_agent_framework_fastapi_endpoint.__doc__
 
     assert docstring is not None
     normalized_docstring = " ".join(docstring.split())
@@ -1652,7 +1667,8 @@ async def test_endpoint_detached_run_completes_when_response_stream_never_starts
                 "threadId": "unstarted-thread",
                 "messages": [{"role": "user", "content": "Start"}],
             }
-        )
+        ),
+        Request({"type": "http", "method": "POST", "path": "/unstarted-reader", "headers": []}),
     )
     assert isinstance(response, StreamingResponse)
 
@@ -1714,7 +1730,8 @@ async def test_endpoint_exactly_full_unstarted_stream_releases_detached_capacity
                 "threadId": "unstarted-thread",
                 "messages": [{"role": "user", "content": "Start"}],
             }
-        )
+        ),
+        Request({"type": "http", "method": "POST", "path": "/exact-capacity", "headers": []}),
     )
     assert isinstance(response, StreamingResponse)
     await asyncio.wait_for(first_completed.wait(), timeout=5)
@@ -8211,9 +8228,8 @@ async def test_endpoint_agent_approval_resume_wrong_thread_emits_run_error():
 
 
 async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_without_snapshot_store():
-    """Approval State is scoped independently of AG-UI Thread Snapshots."""
+    """Authenticated callers with the same Thread id cannot consume each other's pending approval."""
     executed_cities: list[str] = []
-    scope = {"value": "tenant-a"}
 
     def get_weather(city: str) -> str:
         executed_cities.append(city)
@@ -8237,17 +8253,24 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
         updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")],
         default_options={"tools": [weather_tool]},
     )
+
+    async def resolve_authorization_scope(x_principal: str = Header()) -> str:
+        if x_principal not in {"tenant-a", "tenant-b"}:
+            raise HTTPException(status_code=403, detail="Unknown principal.")
+        return x_principal
+
     app = FastAPI()
     add_agent_framework_fastapi_endpoint(
         app,
         AgentFrameworkAgent(agent=agent, require_confirmation=False),
         path="/approval-scoped",
-        snapshot_scope_resolver=lambda _request: scope["value"],
+        authorization_scope_resolver=resolve_authorization_scope,
     )
     client = TestClient(app)
 
     pause_response = client.post(
         "/approval-scoped",
+        headers={"x-principal": "tenant-a"},
         json={
             "runId": "run-pause",
             "threadId": "thread-weather",
@@ -8258,10 +8281,10 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
     assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
 
-    scope["value"] = "tenant-b"
     agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run.")], role="assistant")]
     response = client.post(
         "/approval-scoped",
+        headers={"x-principal": "tenant-b"},
         json={
             "runId": "run-wrong-scope",
             "threadId": "thread-weather",
@@ -8277,6 +8300,21 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
     assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
     assert executed_cities == []
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+    owner_response = client.post(
+        "/approval-scoped",
+        headers={"x-principal": "tenant-a"},
+        json={
+            "runId": "run-owner-resume",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert owner_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+    assert not [event for event in _decode_sse_events(owner_response) if event.get("type") == "RUN_ERROR"]
 
 
 async def test_endpoint_agent_approval_function_name_mismatch_message_does_not_execute_tool():
@@ -10817,12 +10855,11 @@ async def test_endpoint_with_multiple_dependencies(build_chat_client):
 
 
 async def test_endpoint_without_dependencies_is_accessible(build_chat_client):
-    """Test that endpoint without dependencies remains accessible (backward compatibility)."""
+    """An explicitly single-user endpoint remains accessible without authentication dependencies."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
-    # No dependencies parameter - should be accessible without auth
-    add_agent_framework_fastapi_endpoint(app, agent, path="/open")
+    add_agent_framework_fastapi_endpoint(app, agent, path="/open", single_user=True)
 
     client = TestClient(app)
     response = client.post("/open", json={"messages": [{"role": "user", "content": "Hello"}]})
@@ -10839,24 +10876,124 @@ async def test_endpoint_invalid_agent_type_raises_typeerror():
         add_agent_framework_fastapi_endpoint(app, agent="not_an_agent")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
-async def test_endpoint_requires_snapshot_scope_resolver_when_store_configured(build_chat_client):
-    """Snapshot persistence setup must require an explicit Snapshot Scope resolver."""
+async def test_endpoint_requires_explicit_authorization_mode(build_chat_client):
+    """Endpoint registration must choose authenticated scoping or explicit single-user operation."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, agent, path="/unconfigured")
+
+
+async def test_endpoint_snapshot_store_requires_explicit_authorization_mode(build_chat_client):
+    """Snapshot persistence cannot bypass the endpoint's explicit authorization-mode requirement."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     store = InMemoryAGUIThreadSnapshotStore()
 
-    with pytest.raises(ValueError, match="snapshot_scope_resolver is required"):
-        add_agent_framework_fastapi_endpoint(app, agent, path="/snapshots", snapshot_store=store)
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, agent, path="/snapshots", snapshot_store=store)
 
 
-async def test_endpoint_requires_snapshot_scope_resolver_when_wrapped_runner_has_store(build_chat_client):
-    """Pre-wrapped runners with snapshot stores must also provide a Snapshot Scope resolver."""
+async def test_endpoint_wrapped_snapshot_store_requires_explicit_authorization_mode(build_chat_client):
+    """A pre-wrapped snapshot store cannot bypass the explicit authorization-mode requirement."""
+    app = FastAPI()
+    runner = AgentFrameworkAgent(
+        agent=Agent(name="test", instructions="Test agent", client=build_chat_client()),
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, runner, path="/wrapped-snapshots")
+
+
+async def test_endpoint_rejects_conflicting_authorization_modes(build_chat_client):
+    """An endpoint cannot silently choose between authenticated and single-user ownership."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
-    wrapped_agent = AgentFrameworkAgent(agent=agent, snapshot_store=InMemoryAGUIThreadSnapshotStore())
 
-    with pytest.raises(ValueError, match="snapshot_scope_resolver is required"):
-        add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/snapshots")
+    with pytest.raises(ValueError, match="exactly one AG-UI authorization mode"):
+        _add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/conflicting",
+            authorization_scope_resolver=lambda: "tenant-a",
+            single_user=True,
+        )
+
+
+async def test_endpoint_rejects_non_boolean_single_user_mode(build_chat_client):
+    """The explicit single-user escape hatch cannot be enabled by a truthy non-boolean value."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(TypeError, match="single_user must be a bool"):
+        _add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/invalid-single-user",
+            single_user="yes",  # type: ignore[arg-type]
+        )
+
+
+async def test_endpoint_authorization_scope_resolver_uses_fastapi_dependencies(build_chat_client):
+    """The authorization resolver can consume normal FastAPI authentication dependencies."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    authenticated: list[str] = []
+
+    async def authenticate(x_api_key: str | None = Header(None)) -> str:
+        if x_api_key != "secret-key":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        authenticated.append("principal-a")
+        return "principal-a"
+
+    async def resolve_authorization_scope(principal: str = Depends(authenticate)) -> str:
+        return principal
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/scoped",
+        authorization_scope_resolver=resolve_authorization_scope,
+    )
+    client = TestClient(app)
+
+    unauthorized = client.post("/scoped", json={"messages": [{"role": "user", "content": "Hello"}]})
+    authorized = client.post(
+        "/scoped",
+        headers={"x-api-key": "secret-key"},
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert authenticated == ["principal-a"]
+
+
+async def test_endpoint_invalid_authorization_scope_fails_before_runner(build_chat_client):
+    """A configured resolver cannot fall back to unscoped operation."""
+    app = FastAPI()
+    runner = AgentFrameworkAgent(agent=Agent(name="test", instructions="Test agent", client=build_chat_client()))
+    run_spy = AsyncMock(wraps=runner.run)
+
+    async def invalid_scope() -> str:
+        return ""
+
+    runner.run = run_spy  # type: ignore[method-assign]
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        path="/invalid-scope",
+        authorization_scope_resolver=invalid_scope,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/invalid-scope", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "An internal error has occurred."}
+    run_spy.assert_not_called()
 
 
 async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_client):
@@ -10881,6 +11018,30 @@ async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_cl
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+async def test_endpoint_accepts_snapshot_store_in_single_user_mode(build_chat_client):
+    """A single-user endpoint gets a stable internal scope when snapshot persistence needs one."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    store = InMemoryAGUIThreadSnapshotStore()
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/single-user-snapshots",
+        snapshot_store=store,
+        single_user=True,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/single-user-snapshots",
+        json={"messages": [{"role": "user", "content": "Hello"}], "thread_id": "thread-1"},
+    )
+
+    assert response.status_code == 200
+    assert await store.get(scope="ag-ui:single-user:/single-user-snapshots", thread_id="thread-1") is not None
 
 
 @pytest.mark.parametrize("async_resolver", [False, True], ids=["sync", "async"])

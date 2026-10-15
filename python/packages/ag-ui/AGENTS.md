@@ -17,6 +17,7 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 ## Types
 
 - **`AGUIRequest`** / **`AGUIChatOptions`** - Request types
+- **`AuthorizationScopeResolver`** - FastAPI dependency callable that resolves authenticated endpoint ownership
 - **`AGUIThreadSnapshot`** / **`AGUIThreadSnapshotStore`** - Thread snapshot model with client-replayable data,
   private Session Continuation State, and a scoped async store protocol
 - **`availableInterrupts` / `resume`** - Optional canonical AG-UI `Interrupt` and `ResumeEntry` protocol data
@@ -120,8 +121,12 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   in different trusted scopes cannot collide in context-provider state. The deprecated
   `legacy_session_id_from_thread_id=True` compatibility option preserves raw provider keys only for explicit
   migrations and must warn because it disables that isolation; it is unsafe for shared multi-tenant deployments.
-  A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
-  invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
+  Endpoint registration must explicitly provide `authorization_scope_resolver`, retain the compatible
+  `snapshot_scope_resolver`, or declare `single_user=True`. The authorization resolver is a FastAPI dependency and
+  must return a non-empty string derived from authenticated request context. Reject invalid results before accessing
+  state or invoking the runner; never fall back to single-user or unscoped operation after a configured resolver fails.
+  `single_user=True` intentionally preserves unscoped operation without snapshot persistence and must not be used for
+  callers with distinct authorization.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.
@@ -192,7 +197,7 @@ from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from fastapi import FastAPI
 
 app = FastAPI()
-add_agent_framework_fastapi_endpoint(app, agent)
+add_agent_framework_fastapi_endpoint(app, agent, single_user=True)
 ```
 
 ## Import Path
