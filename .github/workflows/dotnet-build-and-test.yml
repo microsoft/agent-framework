@@ -200,9 +200,9 @@ jobs:
       - name: Free runner disk space
         uses: ./.github/actions/free-runner-disk-space
 
-      # Branch unit checks and integration checks always use the emulator; PR checks are path-selected.
+      # Branch and merge-queue unit checks always use the emulator; direct PR checks are path-selected.
       - name: Start Azure Cosmos DB Emulator
-        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -328,7 +328,7 @@ jobs:
           }
 
       - name: Start Azurite Blob service
-        if: ${{ runner.os == 'Linux' && (needs.paths-filter.outputs.azureStorageChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ runner.os == 'Linux' && (needs.paths-filter.outputs.azureStorageChanges == 'true' || matrix.integration-tests || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
         shell: bash
         run: |
           docker run --detach --rm \
@@ -494,9 +494,10 @@ jobs:
             IntegrationTestResults/**/*.junit.xml
           if-no-files-found: ignore
 
+  # Repository PRs and reviewer-approved merge groups can run integration checks before merging.
   dotnet-integration-test:
     needs: paths-filter
-    if: needs.paths-filter.outputs.dotnetChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/feature'))
+    if: needs.paths-filter.outputs.dotnetChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
     permissions:
       contents: read
       id-token: "write"
@@ -541,7 +542,7 @@ jobs:
   # gated on paths-filter.outputs.foundryHostingChanges so unrelated edits skip the work.
   dotnet-foundry-hosted-it:
     needs: paths-filter
-    if: needs.paths-filter.outputs.foundryHostingChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/feature'))
+    if: needs.paths-filter.outputs.foundryHostingChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
     permissions:
       contents: read
       id-token: "write"
