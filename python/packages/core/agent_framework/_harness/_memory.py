@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import threading
+import uuid
 import weakref
 from abc import ABC, abstractmethod
 from base64 import b32decode
@@ -236,7 +237,10 @@ def _coerce_summary(summary: str, memories: Sequence[str]) -> str:
 
 
 def _default_state() -> dict[str, Any]:
-    return {"last_consolidated_at": None, "sessions_since_consolidation": []}
+    # ``sessions_since_consolidation`` lists the distinct sessions with turns not yet covered by a
+    # consolidation pass. ``pending_turn_ids`` maps each of them to a unique id of its latest finished
+    # turn, so a pass only retires a session whose latest turn finished before the pass took its snapshot.
+    return {"last_consolidated_at": None, "sessions_since_consolidation": [], "pending_turn_ids": {}}
 
 
 def _format_search_results(results: Sequence[Mapping[str, Any]]) -> str:
@@ -906,6 +910,8 @@ class MemoryFileStore(MemoryStore):
         state = {**_default_state(), **cast(dict[str, Any], raw_state)}
         if not isinstance(state.get("sessions_since_consolidation"), list):
             state["sessions_since_consolidation"] = []
+        if not isinstance(state.get("pending_turn_ids"), dict):
+            state["pending_turn_ids"] = {}
         if not isinstance(state.get("last_consolidated_at"), (str, type(None))):
             state["last_consolidated_at"] = None
         return state
@@ -1429,12 +1435,15 @@ class MemoryContextProvider(HistoryProvider):
             # Register the session only once its extraction is over, so a consolidation pass that sees
             # this session as pending has also seen the memories it extracted. Registering in `finally`
             # keeps topics already written by a run that then failed or was cancelled pending too.
+            # A fresh turn id is recorded even when the session is already pending: runs on the same
+            # session can overlap, and a pass that snapshotted an earlier turn must not retire this one.
             async with self._state_async_lock(session):
                 maintenance_state = self.store.read_state(session, source_id=self.source_id)
                 session_ids_since_consolidation = cast(list[str], maintenance_state["sessions_since_consolidation"])
                 if session.session_id not in session_ids_since_consolidation:
                     session_ids_since_consolidation.append(session.session_id)
                 maintenance_state["sessions_since_consolidation"] = session_ids_since_consolidation
+                cast(dict[str, str], maintenance_state["pending_turn_ids"])[session.session_id] = uuid.uuid4().hex
                 self.store.write_state(session, maintenance_state, source_id=self.source_id)
 
         await self._run_consolidation(
@@ -1570,10 +1579,16 @@ class MemoryContextProvider(HistoryProvider):
             if not topic_records:
                 maintenance_state["last_consolidated_at"] = _timestamp(now)
                 maintenance_state["sessions_since_consolidation"] = []
+                maintenance_state["pending_turn_ids"] = {}
                 self.store.write_state(session, maintenance_state, source_id=self.source_id)
                 return 0
-            # Sessions registered after this snapshot are not covered by this pass and stay pending.
-            covered_session_ids = set(cast(list[str], maintenance_state["sessions_since_consolidation"]))
+            # Turns registered after this snapshot are not covered by this pass and stay pending, even
+            # when their session was already pending at snapshot time.
+            pending_turn_ids = cast(dict[str, str], maintenance_state["pending_turn_ids"])
+            covered_turn_ids = {
+                session_id: pending_turn_ids.get(session_id)
+                for session_id in cast(list[str], maintenance_state["sessions_since_consolidation"])
+            }
 
         success_count = 0
         for record in topic_records:
@@ -1596,11 +1611,19 @@ class MemoryContextProvider(HistoryProvider):
             async with self._state_async_lock(session):
                 maintenance_state = self.store.read_state(session, source_id=self.source_id)
                 maintenance_state["last_consolidated_at"] = _timestamp(now)
-                maintenance_state["sessions_since_consolidation"] = [
+                pending_turn_ids = cast(dict[str, str], maintenance_state["pending_turn_ids"])
+                remaining_session_ids = [
                     session_id
                     for session_id in cast(list[str], maintenance_state["sessions_since_consolidation"])
-                    if session_id not in covered_session_ids
+                    if session_id not in covered_turn_ids
+                    or pending_turn_ids.get(session_id) != covered_turn_ids[session_id]
                 ]
+                maintenance_state["sessions_since_consolidation"] = remaining_session_ids
+                maintenance_state["pending_turn_ids"] = {
+                    session_id: pending_turn_ids[session_id]
+                    for session_id in remaining_session_ids
+                    if session_id in pending_turn_ids
+                }
                 self.store.write_state(session, maintenance_state, source_id=self.source_id)
                 self.store.rebuild_index(
                     session,

@@ -183,6 +183,7 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
         "sessions_since_consolidation": [],
+        "pending_turn_ids": {},
     }
     store.write_state(
         session,
@@ -858,8 +859,97 @@ async def test_automatic_consolidation_keeps_session_extracting_before_snapshot(
     assert any("B turn fact" in topic for topic in client.consolidated_topics[1:])
 
 
+class _OrderedConsolidationClient:
+    """Chat client that holds each consolidation call until the test releases it."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self, *, extraction_marker: str) -> None:
+        self.additional_properties = {}
+        self.extraction_marker = extraction_marker
+        self.consolidated_topics: list[str] = []
+        self.consolidation_gates: list[asyncio.Event] = []
+        self.consolidation_call_started = asyncio.Event()
+
+    async def wait_for_consolidation_calls(self, count: int) -> None:
+        while len(self.consolidation_gates) < count:
+            self.consolidation_call_started.clear()
+            await self.consolidation_call_started.wait()
+
+    async def get_response(self, messages: Sequence[Message], **kwargs: object) -> ChatResponse[Any]:
+        del kwargs
+        system_text = messages[0].text.lower() if messages and messages[0].role == "system" else ""
+        if "extract durable memory candidates" in system_text:
+            memories: list[dict[str, str]] = []
+            if self.extraction_marker in messages[1].text:
+                memories = [{"topic": "New", "memory": f"{self.extraction_marker} fact"}]
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps({"memories": memories})])])
+        if "consolidate one topic memory file" in system_text:
+            self.consolidated_topics.append(messages[1].text)
+            gate = asyncio.Event()
+            self.consolidation_gates.append(gate)
+            self.consolidation_call_started.set()
+            await gate.wait()
+            topic = "New" if self.extraction_marker in messages[1].text else "Old"
+            payload = {"summary": f"{topic} summary.", "memories": [f"{topic} fact"]}
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps(payload)])])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
+
+
+async def test_automatic_consolidation_keeps_overlapping_turn_of_covered_session_pending(tmp_path: Path) -> None:
+    """A later turn of a session that a running pass already covers stays pending after that pass.
+
+    ``Agent.run`` does not serialize runs per session, so a second ``session-1`` turn can write a new
+    topic and register itself while a pass that snapshotted ``session-1`` as pending is still running.
+    """
+    client = _OrderedConsolidationClient(extraction_marker="Later turn")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    seed_session = _owned_session("session-a")
+    store.write_topic(
+        seed_session,
+        MemoryTopicRecord(
+            topic="Old",
+            summary="Old summary.",
+            memories=["Old fact"],
+            updated_at="2026-10-01T00:00:00+00:00",
+            session_ids=["session-a"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    store.write_state(
+        seed_session,
+        {"last_consolidated_at": None, "sessions_since_consolidation": ["session-a"]},
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    agent = Agent(client=client, context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    # The first turn registers session-1 and starts a pass whose snapshot covers it and the Old topic.
+    first_run = asyncio.create_task(_run_turn(agent, "First turn.", "session-1"))
+    await client.wait_for_consolidation_calls(1)
+
+    # The overlapping second turn writes the New topic, registers session-1 again and starts its own
+    # pass, which holds on the New topic.
+    second_run = asyncio.create_task(_run_turn(agent, "Later turn.", "session-1"))
+    await client.wait_for_consolidation_calls(2)
+    assert "Later turn fact" in client.consolidated_topics[1]
+    assert _pending_sessions(store) == ["session-a", "session-1"]
+
+    # The first pass finishes: its snapshot did not include the second turn, so session-1 stays pending.
+    client.consolidation_gates[0].set()
+    await first_run
+    assert _pending_sessions(store) == ["session-1"]
+
+    # The second pass covered the second turn and retires it.
+    client.consolidation_gates[1].set()
+    await client.wait_for_consolidation_calls(3)
+    client.consolidation_gates[2].set()
+    await second_run
+    assert _pending_sessions(store) == []
+
+
 class _RegisteringConsolidationClient:
-    """Consolidation client that registers another finished session while the pass is running."""
+    """Consolidation client that registers another finished turn while the pass is running."""
 
     additional_properties: dict[str, Any]
 
@@ -872,21 +962,38 @@ class _RegisteringConsolidationClient:
     async def get_response(self, *args: object, **kwargs: object) -> ChatResponse[Any]:
         del args, kwargs
         state = self.store.read_state(self.session, source_id=DEFAULT_MEMORY_SOURCE_ID)
-        state["sessions_since_consolidation"].append(self.session_id)
+        if self.session_id not in state["sessions_since_consolidation"]:
+            state["sessions_since_consolidation"].append(self.session_id)
+        state["pending_turn_ids"][self.session_id] = "later-turn"
         self.store.write_state(self.session, state, source_id=DEFAULT_MEMORY_SOURCE_ID)
         payload = {"summary": "Old summary.", "memories": ["Old fact"]}
         return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps(payload)])])
 
 
-async def test_memory_consolidation_retires_only_sessions_in_its_snapshot(tmp_path: Path) -> None:
-    """Completing a pass clears the sessions it covered and keeps sessions registered after its snapshot."""
+@pytest.mark.parametrize(
+    "later_session_id",
+    [
+        pytest.param("session-b", id="new_session"),
+        pytest.param("session-a", id="pending_session_without_turn_id"),
+        pytest.param("session-2", id="pending_session_with_turn_id"),
+    ],
+)
+async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path: Path, later_session_id: str) -> None:
+    """Completing a pass clears the turns it covered and keeps turns registered after its snapshot.
+
+    ``session-a`` is pending without a turn id, like state written before turn ids were recorded.
+    """
     session = _owned_session("session-2")
     store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    client = _RegisteringConsolidationClient(store, session, "session-b")
+    client = _RegisteringConsolidationClient(store, session, later_session_id)
     provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
     store.write_state(
         session,
-        {"last_consolidated_at": None, "sessions_since_consolidation": ["session-a", "session-2"]},
+        {
+            "last_consolidated_at": None,
+            "sessions_since_consolidation": ["session-a", "session-2"],
+            "pending_turn_ids": {"session-2": "earlier-turn"},
+        },
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )
     store.write_topic(
@@ -911,7 +1018,8 @@ async def test_memory_consolidation_retires_only_sessions_in_its_snapshot(tmp_pa
     assert consolidated_count == 1
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": "2026-10-08T00:00:00+00:00",
-        "sessions_since_consolidation": ["session-b"],
+        "sessions_since_consolidation": [later_session_id],
+        "pending_turn_ids": {later_session_id: "later-turn"},
     }
 
 
@@ -1088,6 +1196,7 @@ async def test_memory_file_store_does_not_mkdir_on_pure_read_paths(tmp_path) -> 
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
         "sessions_since_consolidation": [],
+        "pending_turn_ids": {},
     }
     assert store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="anything") == []
 
@@ -1147,6 +1256,7 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     pre_state = {
         "last_consolidated_at": "2026-04-20T09:00:00+00:00",
         "sessions_since_consolidation": ["queued-session"],
+        "pending_turn_ids": {"queued-session": "turn-1"},
     }
     store.write_state(session, pre_state, source_id=DEFAULT_MEMORY_SOURCE_ID)
     store.write_topic(
