@@ -499,6 +499,10 @@ _ToolParameterFormat: TypeAlias = Literal["compact", "json"]
 _ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
 _NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
 _TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+# model_dump's fallback (str for values JSON mode doesn't know) only exists on newer Pydantic 2 versions.
+_MODEL_DUMP_JSON_FALLBACK: dict[str, Any] = (
+    {"fallback": str} if "fallback" in inspect.signature(BaseModel.model_dump).parameters else {}
+)
 
 
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
@@ -1366,12 +1370,40 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            return FunctionTool._dump_model(value)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
+
+    @staticmethod
+    def _dump_model(model: BaseModel) -> Any:
+        """Dump a Pydantic model in JSON mode, falling back to python mode only for the fields that need it.
+
+        JSON mode applies enum, datetime and UUID encoding and JSON-only field serializers. A field
+        JSON mode cannot encode (bytes that aren't valid UTF-8, or an arbitrary type on Pydantic
+        versions without ``fallback``) is dumped in python mode on its own, so the other fields keep
+        their JSON serializers. Excluded fields stay out either way, unlike the str(result) fallback
+        in invoke.
+        """
+        try:
+            return model.model_dump(mode="json", **_MODEL_DUMP_JSON_FALLBACK)
+        except ValueError:
+            pass
+        model_type = type(model)
+        names = [*model_type.model_fields, *model_type.model_computed_fields, *(model.model_extra or {})]
+        dumped: dict[str, Any] = {}
+        for name in names:
+            try:
+                dumped.update(model.model_dump(mode="json", include={name}, **_MODEL_DUMP_JSON_FALLBACK))
+            except ValueError:
+                field_dump = model.model_dump(include={name})
+                field_value = getattr(model, name, None)
+                if isinstance(field_value, BaseModel):
+                    field_dump = {key: FunctionTool._dump_model(field_value) for key in field_dump}
+                dumped.update(field_dump)
+        return dumped
 
     @staticmethod
     def parse_result(result: Any) -> list[Content]:
