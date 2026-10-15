@@ -13,6 +13,12 @@ the Agent Framework .NET SDK. Entries are reviewed against the
 > repository and issue tracker.
 > For security concerns, follow the maintainer's security reporting guidance.
 
+## Tools
+
+| Name | Brief description | Scenarios | Project | Issues |
+| --- | --- | --- | --- | --- |
+| Cohesivity | Backend services built for AI agents, available over MCP with an anonymous account: hosting, Postgres, email, storage, containers, LLMs, voice and external APIs. | Provisioning a database or cache from an agent over MCP with no token; a temporary tenant the user can claim later | [Cohesivity with Agent Framework](https://github.com/cohesivity-org/cohesivity-mcp#microsoft-agent-framework) | [Open an issue](https://github.com/cohesivity-org/cohesivity-mcp/issues/new/choose) |
+
 ## Vector stores
 
 | Name | Brief description | Scenarios | Project | Issues |
