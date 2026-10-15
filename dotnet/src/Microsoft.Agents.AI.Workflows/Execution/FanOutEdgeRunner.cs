@@ -29,6 +29,10 @@ internal sealed class FanOutEdgeRunner(IRunnerContext runContext, FanOutEdgeData
                     : this.EdgeData.EdgeAssigner(message, this.EdgeData.SinkIds.Count)
                                 .Select(i => this.EdgeData.SinkIds[i]);
 
+            // The assigner, or the target list itself, can name a target more than once, for example when two
+            // tags on a message route to the same executor. Deliver to each target once, in the order first named.
+            targetIds = targetIds.Distinct(StringComparer.Ordinal);
+
             Executor[] result = await Task.WhenAll(targetIds.Where(IsValidTarget)
                                                             .Select(tid => this.RunContext.EnsureExecutorAsync(tid, stepTracer)
                                                             .AsTask()))
