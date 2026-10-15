@@ -42,8 +42,8 @@ async def approve_sampling(params: types.CreateMessageRequestParams) -> bool:
     approve or deny. Returning ``False`` rejects the request.
     """
     print("\n--- MCP server requested a sampling/createMessage ---")
-    if params.systemPrompt:
-        print(f"System prompt: {params.systemPrompt}")
+    if params.system_prompt:
+        print(f"System prompt: {params.system_prompt}")
     for message in params.messages:
         text = getattr(message.content, "text", message.content)
         print(f"{message.role}: {text}")

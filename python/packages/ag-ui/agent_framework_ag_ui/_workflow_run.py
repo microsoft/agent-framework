@@ -1149,6 +1149,7 @@ async def run_workflow_stream(
     checkpoint_id: str | None = None,
     pending_request_events: dict[str, Any] | None = None,
     on_conversational_responses: Callable[[list[Any]], None] | None = None,
+    resolved_thread_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events.
 
@@ -1168,9 +1169,11 @@ async def run_workflow_stream(
             start-executor message, so resume stays consistent with the core API.
         pending_request_events: Optional effective pending requests already resolved by the wrapper.
         on_conversational_responses: Optional callback for validated non-control responses.
+        resolved_thread_id: Optional thread id already resolved by the caller, reported in protocol events instead of
+            generating a new one when the request omits it.
     """
     supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
-    thread_id = supplied_thread_id or str(uuid.uuid4())
+    thread_id = resolved_thread_id or supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
