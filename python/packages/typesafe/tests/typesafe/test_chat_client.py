@@ -404,8 +404,29 @@ async def test_non_text_content_is_rejected() -> None:
 
 _PNG_1X1 = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    b"\x00\x00\x00\x0bIDATx\x9cc`\x00\x02\x00\x00\x05\x00\x01z^\xab?\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+
+def test_png_fixture_is_a_decodable_image() -> None:
+    import struct
+    import zlib
+
+    assert _PNG_1X1.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    chunk_types: list[bytes] = []
+    while offset < len(_PNG_1X1):
+        (length,) = struct.unpack(">I", _PNG_1X1[offset : offset + 4])
+        chunk_type = _PNG_1X1[offset + 4 : offset + 8]
+        data = _PNG_1X1[offset + 8 : offset + 8 + length]
+        (crc,) = struct.unpack(">I", _PNG_1X1[offset + 8 + length : offset + 12 + length])
+        assert zlib.crc32(chunk_type + data) & 0xFFFFFFFF == crc
+        if chunk_type == b"IDAT":
+            assert zlib.decompress(data) == b"\x00\x00\x00\x00\x00"
+        chunk_types.append(chunk_type)
+        offset += 12 + length
+    assert offset == len(_PNG_1X1)
+    assert chunk_types == [b"IHDR", b"IDAT", b"IEND"]
 
 
 async def test_inline_image_content_is_sent_as_image_asset_with_opt_in_header() -> None:
@@ -422,6 +443,39 @@ async def test_inline_image_content_is_sent_as_image_asset_with_opt_in_header() 
     assert contents[0] == {"type": "text", "text": "Is the form signed?"}
     assert contents[1]["type"] == "image"
     assert isinstance(contents[1]["image"], Image)
+    assert stub.calls[0]["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
+
+
+@pytest.mark.parametrize(
+    ("box_question", "with_image"),
+    [
+        (Box(instructions="the signature"), False),
+        ({"type": "box", "instructions": "the signature"}, False),
+        (Box(instructions="the signature"), True),
+        ({"type": "box", "instructions": "the signature"}, True),
+    ],
+    ids=["sdk-object-text-only", "mapping-text-only", "sdk-object-with-image", "mapping-with-image"],
+)
+async def test_box_question_alone_triggers_opt_in_header(box_question: Any, with_image: bool) -> None:
+    stub = StubTypeSafeClient(
+        response=make_response({
+            "signature": {
+                "type": "box",
+                "box": {"top": 0.1, "bottom": 0.2, "left": 0.3, "right": 0.4},
+                "confidence": 0.5,
+            }
+        })
+    )
+    client = make_client(stub)
+    contents: list[Any] = ["Locate the signature."]
+    if with_image:
+        contents.append(Content.from_data(data=_PNG_1X1, media_type="image/png"))
+
+    await client.get_response(
+        [Message("user", contents)],
+        options={"response_format": {"signature": box_question}},
+    )
+
     assert stub.calls[0]["extra_headers"] == {"TypeSafe-Danger-Zone-Images": "true"}
 
 
