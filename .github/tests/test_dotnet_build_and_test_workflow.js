@@ -102,5 +102,14 @@ describe('.NET build and test workflow', () => {
     assert.ok(reportJob);
     assert.match(statusJob.source, /needs: \[[^\]\n]*dotnet-integration-test[,\]]/);
     assert.match(reportJob.source, /needs: \[dotnet-integration-test\]/);
+    const condition = reportJob.source.match(/^    if: >\n((?:      .+\n)+)/m);
+    assert.ok(condition);
+    const expression = condition[1].replaceAll('needs.dotnet-integration-test', 'needs.integrationJob');
+    for (const result of ['success', 'failure', 'skipped', 'cancelled']) {
+      assert.equal(runInNewContext(expression, {
+        needs: { integrationJob: { result } },
+        always: () => true,
+      }, { timeout: 1000 }), ['success', 'failure'].includes(result), result);
+    }
   });
 });

@@ -671,8 +671,8 @@ jobs:
     name: Integration Test Report
     if: >
       always() &&
-      (contains(join(needs.*.result, ','), 'success') ||
-       contains(join(needs.*.result, ','), 'failure'))
+      (needs.dotnet-integration-test.result == 'success' ||
+       needs.dotnet-integration-test.result == 'failure')
     needs: [dotnet-integration-test]
     runs-on: ubuntu-latest
     defaults:
