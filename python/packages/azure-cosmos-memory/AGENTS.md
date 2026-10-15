@@ -17,7 +17,7 @@ from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 provider = CosmosMemoryContextProvider(
     cosmos_endpoint="https://<account>.documents.azure.com:443/",
     cosmos_database="ai_memory",
-    foundry_endpoint="https://<project>.services.ai.azure.com",
+    foundry_endpoint="https://<account>.services.ai.azure.com/api/projects/<project>",
     credential=DefaultAzureCredential(),
 )
 ```
@@ -32,6 +32,9 @@ from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 - Requires the `azure-cosmos-agent-memory` toolkit and an AI Foundry endpoint (used for both
   embeddings and fact extraction).
+- Documentation and examples that show a literal Foundry project endpoint must use the full project-scoped form
+  `https://your-account.services.ai.azure.com/api/projects/your-project`, including the `/api/projects/your-project`
+  path.
 - Set a stable `user_id` in `state["user_id"]` or `session.state["user_id"]` for long-term,
   cross-session memory. Without it, memory scopes to the ephemeral session id and the provider
   logs a one-time warning.

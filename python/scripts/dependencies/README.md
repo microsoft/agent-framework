@@ -19,12 +19,13 @@ Run the commands below from the `python/` directory.
 
 - `_dependency_bounds_release_impl.py`
   - Discovers package metadata changed from the selected release base.
+  - Verifies that every Agent Framework integration in `agent-framework-core[all]` has lower and upper bounds, and
+    that workspace integrations use their current release version as the lower bound.
   - Resolves published runtime dependencies and non-development extras independently of `uv.lock` with both
     `lowest-direct` and `highest` strategies.
   - Derives the minimum supported Python minor from each changed package's internal editable dependency closure.
-  - Re-declares any pre-release-bounded external requirement found in that closure as a direct probe requirement so
-    `prerelease = "if-necessary-or-explicit"` keeps allowing it (uv only enables pre-releases for direct requirements
-    that carry a pre-release specifier).
+  - Re-declares any pre-release-bounded external requirement found in that closure as a direct probe requirement and
+    runs isolated probes with `prerelease = "if-necessary"`.
   - Imports each changed package and records resolved dependency versions in a JSON report.
   - Runs probes concurrently under one five-minute deadline.
 
@@ -51,7 +52,7 @@ Run the commands below from the `python/` directory.
     package probes.
   - Uses a package-defined `dependency-pyright` task when present, allowing dependency probes to type-check the
     package implementation without requiring optional lazy namespace packages. Normal repository Pyright tasks are
-    unchanged. These tasks reuse the root workspace `test` dependency requirements inside their isolated environment.
+    unchanged. These tasks reuse the root workspace development requirements inside their isolated environment.
 
 
 ## Common entrypoints
@@ -69,8 +70,11 @@ uv run poe validate-dependency-bounds-test --package core
 uv run poe validate-dependency-bounds-project --mode both --package core --dependency "<dependency-name>"
 ```
 
-- `upgrade-dev-dependency-pins` only refreshes exact dev pins in `pyproject.toml` files.
-- `upgrade-dev-dependencies` refreshes dev pins (using task above), runs `uv lock --upgrade`, reinstalls from the frozen lockfile, then runs `check`, `typing`, and `test`.
+- `upgrade-dev-dependency-pins` refreshes exact development pins in
+  `pyproject.toml` files and on-demand tool pins under
+  `tooling/`.
+- `upgrade-dev-dependencies` refreshes those pins, runs `uv lock --upgrade`,
+  reinstalls from the frozen lockfile, then runs `check` and `typing`.
 - `validate-python-release` is the bounded release gate: it refreshes `uv.lock`, finds changed package metadata,
   and probes both dependency-bound extremes without reusing the lockfile.
 - `validate-dependency-bounds-test` runs the exhaustive package test+typing matrix and is intentionally not part of
@@ -97,12 +101,12 @@ These workflows call the Poe tasks:
 These are useful for debugging or targeted manual runs:
 
 ```bash
-python -m scripts.dependencies.upgrade_dev_dependencies --dry-run --version-source lock
-python -m scripts.dependencies.validate_dependency_bounds --mode release --base-ref upstream/main --dry-run
-python -m scripts.dependencies.validate_dependency_bounds --mode test --package core --dry-run
-python -m scripts.dependencies.validate_dependency_bounds --mode both --package core --dependencies openai --dry-run
-python -m scripts.dependencies._dependency_bounds_lower_impl --packages core --dependencies openai --dry-run
-python -m scripts.dependencies._dependency_bounds_upper_impl --packages core --dependencies openai --dry-run
+uv run --locked --group tool-runtime python -m scripts.dependencies.upgrade_dev_dependencies --dry-run --version-source lock
+uv run --locked --group tool-runtime python -m scripts.dependencies.validate_dependency_bounds --mode release --base-ref upstream/main --dry-run
+uv run --locked --group tool-runtime python -m scripts.dependencies.validate_dependency_bounds --mode test --package core --dry-run
+uv run --locked --group tool-runtime python -m scripts.dependencies.validate_dependency_bounds --mode both --package core --dependencies openai --dry-run
+uv run --locked --group tool-runtime python -m scripts.dependencies._dependency_bounds_lower_impl --packages core --dependencies openai --dry-run
+uv run --locked --group tool-runtime python -m scripts.dependencies._dependency_bounds_upper_impl --packages core --dependencies openai --dry-run
 ```
 
 Use the direct lower/upper implementation modules mainly for debugging or development of the optimizers themselves. For normal usage, prefer the Poe tasks or `validate_dependency_bounds.py`.

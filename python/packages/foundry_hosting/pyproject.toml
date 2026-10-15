@@ -4,7 +4,7 @@ description = "Foundry Hosting integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260918"
+version = "1.0.0b261008"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -20,10 +20,11 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.19.0,<2",
+    "agent-framework-core>=1.20.0,<2",
     "azure-ai-agentserver-core>=2.1.0,<3",
     "azure-ai-agentserver-responses>=2.2.0b1,<3",
     "azure-ai-agentserver-invocations>=1.1.0,<2",
@@ -97,5 +98,5 @@ help = "Run the default unit test suite for this package."
 cmd = 'pytest -m "not integration" --cov=agent_framework_foundry_hosting --cov-report=term-missing:skip-covered tests'
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

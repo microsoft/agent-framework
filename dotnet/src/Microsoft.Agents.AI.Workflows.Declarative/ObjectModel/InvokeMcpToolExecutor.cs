@@ -90,6 +90,7 @@ internal sealed class InvokeMcpToolExecutor(
         bool requireApproval = this.GetRequireApproval();
         Dictionary<string, object?>? arguments = this.GetArguments();
         Dictionary<string, string>? headers = this.GetHeaders();
+        string? conversationId = this.GetConversationId();
         string? connectionName = this.GetConnectionName();
 
         if (requireApproval)
@@ -116,7 +117,7 @@ internal sealed class InvokeMcpToolExecutor(
             connectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
 
         // Signal completion so the workflow routes via RequiresNothing
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -166,6 +167,13 @@ internal sealed class InvokeMcpToolExecutor(
             return;
         }
 
+        if (snapshot.ConnectionName is not null && !snapshot.ConnectionNameValidated)
+        {
+            this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
+            await this.RequestApprovalAsync(context, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         Dictionary<string, string>? headers;
         if (this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out HeaderSnapshot? headerSnapshot))
         {
@@ -181,6 +189,7 @@ internal sealed class InvokeMcpToolExecutor(
             headers = null;
         }
 
+        string? conversationId = this.GetConversationId();
         McpServerToolResultContent resultContent = await mcpToolHandler.InvokeToolAsync(
             snapshot.ServerUrl,
             snapshot.ServerLabel,
@@ -190,7 +199,7 @@ internal sealed class InvokeMcpToolExecutor(
             snapshot.ConnectionName,
             cancellationToken).ConfigureAwait(false);
 
-        await this.ProcessResultAsync(context, resultContent, cancellationToken).ConfigureAwait(false);
+        await this.ProcessResultAsync(context, resultContent, conversationId, cancellationToken).ConfigureAwait(false);
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -281,6 +290,7 @@ internal sealed class InvokeMcpToolExecutor(
 
         this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName)
         {
+            ConnectionNameValidated = true,
             RequiresHeaderReapprovalAfterRestore = this.Model.Headers is { Count: > 0 }
         };
         this._approvalHeaderSnapshots[requestId] = new HeaderSnapshot(headers);
@@ -296,10 +306,13 @@ internal sealed class InvokeMcpToolExecutor(
         await context.SendMessageAsync(new ExternalInputRequest(new AgentResponse([requestMessage])), cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask ProcessResultAsync(IWorkflowContext context, McpServerToolResultContent resultContent, CancellationToken cancellationToken)
+    private async ValueTask ProcessResultAsync(
+        IWorkflowContext context,
+        McpServerToolResultContent resultContent,
+        string? conversationId,
+        CancellationToken cancellationToken)
     {
         bool autoSend = this.GetAutoSendValue();
-        string? conversationId = this.GetConversationId();
 
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
         ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
@@ -416,7 +429,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -451,7 +466,9 @@ internal sealed class InvokeMcpToolExecutor(
             return null;
         }
 
-        string value = this.Evaluator.GetValue(this.Model.Connection.Name).Value;
+        string value = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.Connection.Name),
+            ConnectionNameLocation);
         return value.Length == 0 ? null : value;
     }
 
@@ -516,6 +533,8 @@ internal sealed class InvokeMcpToolExecutor(
         Dictionary<string, object?>? Arguments,
         string? ConnectionName)
     {
+        public bool ConnectionNameValidated { get; init; }
+
         public bool RequiresHeaderReapprovalAfterRestore { get; init; }
     }
 

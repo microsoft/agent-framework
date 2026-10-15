@@ -47,12 +47,13 @@ import inspect
 import json
 import logging
 import math
+import sys
 import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextvars import Context, ContextVar
 from copy import deepcopy
 from types import CodeType
-from typing import Any, Generic, Literal, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from .._agents import BaseAgent
 from .._feature_stage import ExperimentalFeature, experimental
@@ -101,15 +102,33 @@ class _WorkflowTaskFactoryState:
         coro: Any,
         **kwargs: Any,
     ) -> asyncio.Future[Any]:
-        if self.original_factory is None:
-            task = asyncio.Task(coro, loop=loop, **kwargs)
-        else:
-            task = self.original_factory(loop, coro, **kwargs)
-
+        parent_task = asyncio.current_task(loop=loop)
         task_context = kwargs.get("context")
         ctx = task_context.get(_active_run_ctx) if isinstance(task_context, Context) else _active_run_ctx.get()
-        if ctx is not None:
+        if ctx is None:
+            if self.original_factory is None:
+                return asyncio.Task(coro, loop=loop, **kwargs)
+            return self.original_factory(loop, coro, **kwargs)
+
+        def _register(task: asyncio.Future[Any]) -> None:
             ctx._workflow_tasks.add(task)
+            ctx._workflow_task_parents[task] = parent_task
+            if parent_task in ctx._pause_owned_tasks:
+                ctx._pause_owned_tasks.add(task)
+            if ctx._workflow_interruption is not None and parent_task in ctx._active_step_tasks:
+                ctx._pause_step_entry_tasks.add(task)
+
+        async def _tracked_coro() -> Any:
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                _register(current_task)
+            return await coro
+
+        if self.original_factory is None:
+            task = asyncio.Task(_tracked_coro(), loop=loop, **kwargs)
+        else:
+            task = self.original_factory(loop, _tracked_coro(), **kwargs)
+        _register(task)
         return task
 
 
@@ -410,6 +429,105 @@ def _snapshot_replayed_step_cache_value(value: Any) -> Any:
     raise ValueError("@step result cannot be safely copied for replay.")
 
 
+def _prepare_workflow_state_snapshot(
+    value: Any,
+    memo: dict[int, Any],
+    seen: dict[int, bool],
+    *,
+    hash_required: bool = False,
+) -> None:
+    """Pre-register non-copyable leaves before standard deepcopy."""
+    value_id = id(value)
+    if value_id in memo:
+        if hash_required:
+            try:
+                hash(memo[value_id])
+            except Exception:
+                memo[value_id] = value
+        return
+    previous_requirement = seen.get(value_id)
+    if previous_requirement is True or (previous_requirement is False and not hash_required):
+        return
+    seen[value_id] = hash_required or bool(previous_requirement)
+
+    if isinstance(value, dict):
+        for key, item in cast(dict[Any, Any], value).items():
+            _prepare_workflow_state_snapshot(key, memo, seen, hash_required=True)
+            _prepare_workflow_state_snapshot(item, memo, seen)
+        if type(cast(Any, value)) is dict:
+            return
+
+    if isinstance(value, list):
+        for item in cast(list[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen)
+        if type(cast(Any, value)) is list:
+            return
+
+    if isinstance(value, tuple):
+        for item in cast(tuple[Any, ...], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=hash_required)
+        if type(cast(Any, value)) is tuple:
+            return
+    if isinstance(value, set):
+        for item in cast(set[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=True)
+        if type(cast(Any, value)) is set:
+            return
+    if isinstance(value, frozenset):
+        for item in cast(frozenset[Any], value):
+            _prepare_workflow_state_snapshot(item, memo, seen, hash_required=True)
+        if type(cast(Any, value)) is frozenset:
+            return
+
+    value_any = cast(Any, value)
+    if getattr(value_any.__class__, "__deepcopy__", None) is None:
+        has_object_state = False
+        object_dict = getattr(cast(Any, value), "__dict__", None)
+        if isinstance(object_dict, dict):
+            has_object_state = True
+            for item in cast(dict[str, Any], object_dict).values():
+                _prepare_workflow_state_snapshot(item, memo, seen)
+
+        for cls in value_any.__class__.__mro__:
+            raw_slots = cls.__dict__.get("__slots__", ())
+            slots = (raw_slots,) if isinstance(raw_slots, str) else raw_slots
+            for raw_slot in slots:
+                if raw_slot in ("__dict__", "__weakref__"):
+                    continue
+                slot = (
+                    f"_{cls.__name__.lstrip('_')}{raw_slot}"
+                    if raw_slot.startswith("__") and not raw_slot.endswith("__")
+                    else raw_slot
+                )
+                try:
+                    item = getattr(cast(Any, value), slot)
+                except AttributeError:
+                    continue
+                has_object_state = True
+                _prepare_workflow_state_snapshot(item, memo, seen)
+
+        if has_object_state:
+            return
+
+    candidate_memo = dict(memo)
+    try:
+        snapshot: Any = deepcopy(value_any, candidate_memo)
+        if hash_required:
+            hash(snapshot)
+    except Exception:
+        memo[value_id] = value
+    else:
+        memo.update(candidate_memo)
+
+
+def _snapshot_workflow_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Snapshot state while retaining only specific non-copyable leaves."""
+    state_dict = dict(state)
+    memo: dict[int, Any] = {}
+    _prepare_workflow_state_snapshot(state_dict, memo, {})
+    return deepcopy(state_dict, memo)
+
+
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
 def get_run_context() -> RunContext | None:
     """Return the active :class:`RunContext`, or ``None`` if not inside a ``@workflow``.
@@ -426,12 +544,24 @@ def get_run_context() -> RunContext | None:
 # ---------------------------------------------------------------------------
 
 
-class WorkflowInterrupted(BaseException):
+if sys.version_info >= (3, 11):
+
+    class _WorkflowInterruptedBase(asyncio.CancelledError):
+        pass
+
+else:
+
+    class _WorkflowInterruptedBase(BaseException):
+        pass
+
+
+class WorkflowInterrupted(_WorkflowInterruptedBase):
     """Internal: raised when request_info() is called during initial execution.
 
-    Inherits from ``BaseException`` (not ``Exception``) so that user code
-    with ``except Exception:`` handlers inside a ``@workflow`` function does
-    not accidentally intercept the HITL interruption signal.
+    On Python 3.11+, the signal is cancellation-shaped so ``TaskGroup`` does
+    not cancel sibling tasks. Python 3.10 retains the original ``BaseException``
+    behavior because ``gather`` normalizes cancellation subclasses there.
+    User code with ``except Exception:`` handlers does not intercept either form.
     """
 
     def __init__(self, request_id: str, request_data: Any, response_type: type) -> None:
@@ -439,6 +569,45 @@ class WorkflowInterrupted(BaseException):
         self.request_data = request_data
         self.response_type = response_type
         super().__init__(f"Workflow interrupted by request_info (request_id={request_id})")
+
+
+def _get_workflow_interruption(exc: BaseException) -> WorkflowInterrupted | None:
+    """Return an interruption when every leaf in *exc* is an internal interruption."""
+    if isinstance(exc, WorkflowInterrupted):
+        return exc
+    if type(exc).__name__ not in ("ExceptionGroup", "BaseExceptionGroup"):
+        return None
+
+    nested = getattr(exc, "exceptions", ())
+    if not nested:
+        return None
+
+    first: WorkflowInterrupted | None = None
+    for child in nested:
+        interruption = _get_workflow_interruption(child)
+        if interruption is None:
+            return None
+        if first is None:
+            first = interruption
+    return first
+
+
+def _split_workflow_interruption(
+    exc: BaseException,
+) -> tuple[WorkflowInterrupted | None, BaseException | None]:
+    """Separate internal workflow interruptions from any real failures."""
+    if isinstance(exc, WorkflowInterrupted):
+        return exc, None
+    if type(exc).__name__ not in ("ExceptionGroup", "BaseExceptionGroup"):
+        return None, exc
+
+    split = getattr(exc, "split", None)
+    if split is None:
+        return None, exc
+    interruptions, remaining = split(WorkflowInterrupted)
+    if interruptions is None:
+        return None, exc
+    return _get_workflow_interruption(interruptions), remaining
 
 
 # ---------------------------------------------------------------------------
@@ -525,8 +694,35 @@ class RunContext:
         self._used_explicit_step_cache_keys: set[str] = set()
         # Tasks created while this workflow context is active.
         self._workflow_tasks: set[asyncio.Future[Any]] = set()
+        # Tasks explicitly cancelled by framework cleanup.
+        self._framework_cancelled_tasks: set[asyncio.Future[Any]] = set()
+        # Parent task for each tracked workflow task.
+        self._workflow_task_parents: dict[asyncio.Future[Any], asyncio.Task[Any] | None] = {}
+        # Tasks that have entered at least one @step wrapper.
+        self._step_tasks: set[asyncio.Task[Any]] = set()
+        # Newly spawned pause-owned tasks allowed to enter their first @step.
+        self._pause_step_entry_tasks: set[asyncio.Future[Any]] = set()
+        # Reference counts for tasks currently executing one or more nested @steps.
+        self._active_step_tasks: dict[asyncio.Task[Any], int] = {}
+        # Task ownership tree rooted at steps active when request_info interrupted.
+        self._pause_owned_tasks: set[asyncio.Future[Any]] = set()
+        # Pause-owned tasks whose errors can be masked by the internal interruption.
+        self._pause_failure_boundaries: set[asyncio.Future[Any]] = set()
+        # Concurrency waiter responsible for each pause failure boundary.
+        self._pause_boundary_waiters: dict[asyncio.Future[Any], asyncio.Future[Any]] = {}
+        # Adapter future to task whose interruption caused its cancellation.
+        self._pause_adapter_sources: dict[asyncio.Future[Any], asyncio.Task[Any]] = {}
+        # Waiter the root workflow task was blocked on when request_info interrupted.
+        self._pause_root_waiter: asyncio.Future[Any] | None = None
+        # First internal interruption raised during this run, even if user concurrency swallows it.
+        self._workflow_interruption: WorkflowInterrupted | None = None
+        # First internal interruption raised in each task.
+        self._task_interruptions: dict[asyncio.Task[Any], WorkflowInterrupted] = {}
         # The task executing the workflow body; gather/task-group children differ from this task.
         self._root_task: asyncio.Task[Any] | None = None
+        # Exact source location suspended when request_info interrupted.
+        self._pause_origin_code: CodeType | None = None
+        self._pause_origin_lineno: int | None = None
         # Deterministic call counter for auto-generated request_info IDs
         self._auto_request_info_index: int = 0
 
@@ -581,6 +777,7 @@ class RunContext:
             WorkflowInterrupted: Raised internally on initial execution
                 (not visible to workflow authors).
         """
+        self._raise_if_current_task_interrupted()
         if request_id is None:
             # Deterministic id; same determinism contract as @step caching.
             rid = f"auto::{self._auto_request_info_index}"
@@ -596,6 +793,8 @@ class RunContext:
                 value = _coerce_request_info_response(value, response_type, rid)
             return value
 
+        self._state = _snapshot_workflow_state(self._state)
+
         # No response — emit event and interrupt
         event = WorkflowEvent.request_info(
             request_id=rid,
@@ -605,7 +804,18 @@ class RunContext:
         )
         await self.add_event(event)
         self._pending_requests[rid] = event
-        raise WorkflowInterrupted(rid, request_data, response_type)
+        self._pause_owned_tasks.update(self._active_step_tasks)
+        self._pause_failure_boundaries.update(self._active_step_tasks)
+        self._capture_pause_waiter_tasks()
+        self._capture_root_pause_location()
+        self._expand_pause_owned_tasks()
+        interruption = WorkflowInterrupted(rid, request_data, response_type)
+        if self._workflow_interruption is None:
+            self._workflow_interruption = interruption
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._task_interruptions[current_task] = interruption
+        raise interruption
 
     async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add a custom event to the workflow event stream.
@@ -616,6 +826,7 @@ class RunContext:
         Args:
             event: The workflow event to append.
         """
+        self._raise_if_current_task_interrupted()
         self._events.append(event)
 
     def get_state(self, key: str, default: Any = None) -> Any:
@@ -631,6 +842,7 @@ class RunContext:
         Returns:
             The stored value, or *default* if the key does not exist.
         """
+        self._raise_if_current_task_interrupted()
         return self._state.get(key, default)
 
     def set_state(self, key: str, value: Any) -> None:
@@ -650,6 +862,7 @@ class RunContext:
             ValueError: If *key* begins with ``_`` (reserved for framework
                 bookkeeping).
         """
+        self._raise_if_current_task_interrupted()
         if key.startswith("_"):
             raise ValueError(
                 f"State key {key!r} starts with '_', which is reserved for "
@@ -673,6 +886,305 @@ class RunContext:
 
     def _get_events(self) -> list[WorkflowEvent[Any]]:
         return list(self._events)
+
+    def _raise_if_current_task_interrupted(self, *, entering_step: bool = False) -> None:
+        """Stop framework work after the current task has requested a pause."""
+        current_task = asyncio.current_task()
+        if current_task is not None and (interruption := self._task_interruptions.get(current_task)) is not None:
+            raise interruption
+        if self._workflow_interruption is not None and (
+            current_task not in self._pause_owned_tasks
+            or (entering_step and current_task in self._step_tasks)
+            or (entering_step and current_task not in self._pause_step_entry_tasks)
+            or (not entering_step and current_task not in self._active_step_tasks)
+        ):
+            raise self._workflow_interruption
+
+    def _expand_pause_owned_tasks(self) -> None:
+        """Include tracked descendants of tasks already owned by pause settlement."""
+        while True:
+            owned_count = len(self._pause_owned_tasks)
+            self._pause_owned_tasks.update(
+                task for task, parent in self._workflow_task_parents.items() if parent in self._pause_owned_tasks
+            )
+            if len(self._pause_owned_tasks) == owned_count:
+                return
+
+    def _capture_waiter_tree(self, waiter: Any, seen: set[asyncio.Future[Any]]) -> None:
+        """Include gather children reachable through awaited task wrappers."""
+        if not isinstance(waiter, asyncio.Future):
+            return
+        typed_waiter = cast(asyncio.Future[Any], waiter)
+        if typed_waiter in seen:
+            return
+        seen.add(typed_waiter)
+        children = cast(Iterable[Any], getattr(cast(Any, waiter), "_children", ()))
+        for task in children:
+            if isinstance(task, asyncio.Future):
+                child = cast(asyncio.Future[Any], task)
+                self._pause_owned_tasks.add(child)
+                self._pause_failure_boundaries.add(child)
+                self._pause_boundary_waiters[child] = typed_waiter
+        self._capture_waiter_tree(getattr(cast(Any, waiter), "_fut_waiter", None), seen)
+
+    def _capture_waiter_children(self, owner: asyncio.Future[Any] | None) -> None:
+        """Include concurrency children reachable from the waiter awaited by *owner*."""
+        self._capture_waiter_tree(getattr(owner, "_fut_waiter", None), set())
+
+    def _capture_gather_callback_children(self, task: asyncio.Task[Any] | None) -> None:
+        """Include gather siblings exposed by a child task's done callback."""
+        callbacks = cast(list[Any], getattr(cast(Any, task), "_callbacks", ()) or ())
+        for entry in callbacks:
+            raw_callback = cast(Any, entry[0] if isinstance(entry, tuple) else entry)
+            if not callable(raw_callback):
+                continue
+            callback = cast(Callable[..., Any], raw_callback)
+            if getattr(callback, "__qualname__", "") != "gather.<locals>._done_callback":
+                continue
+            try:
+                closure = inspect.getclosurevars(callback).nonlocals
+            except (TypeError, ValueError):
+                continue
+            outer = closure.get("outer")
+            children = closure.get("children", ())
+            if not isinstance(outer, asyncio.Future):
+                continue
+            typed_outer = cast(asyncio.Future[Any], outer)
+            for child in cast(Iterable[Any], children):
+                if isinstance(child, asyncio.Future):
+                    typed_child = cast(asyncio.Future[Any], child)
+                    self._pause_owned_tasks.add(typed_child)
+                    self._pause_failure_boundaries.add(typed_child)
+                    self._pause_boundary_waiters[typed_child] = typed_outer
+
+    def _capture_shield_adapters(self, task: asyncio.Task[Any] | None) -> None:
+        """Record shield futures linked to the currently interrupting task."""
+        if task is None:
+            return
+        source: asyncio.Future[Any] = task
+        seen: set[int] = set()
+        while id(source) not in seen:
+            seen.add(id(source))
+            callbacks = cast(list[Any], getattr(cast(Any, source), "_callbacks", ()) or ())
+            outer: asyncio.Future[Any] | None = None
+            for entry in callbacks:
+                raw_callback = cast(Any, entry[0] if isinstance(entry, tuple) else entry)
+                if not callable(raw_callback):
+                    continue
+                callback = cast(Callable[..., Any], raw_callback)
+                if getattr(callback, "__qualname__", "") != "shield.<locals>._inner_done_callback":
+                    continue
+                try:
+                    closure = inspect.getclosurevars(callback).nonlocals
+                except (TypeError, ValueError):
+                    continue
+                candidate = closure.get("outer")
+                if isinstance(candidate, asyncio.Future):
+                    outer = cast(asyncio.Future[Any], candidate)
+                    break
+            if outer is None:
+                return
+            self._pause_owned_tasks.add(outer)
+            self._pause_failure_boundaries.add(outer)
+            self._pause_adapter_sources[outer] = task
+            source = outer
+
+    def _capture_pause_waiter_tasks(self) -> None:
+        """Capture root and active-step concurrency children at the pause boundary."""
+        root_waiter = getattr(self._root_task, "_fut_waiter", None)
+        if isinstance(root_waiter, asyncio.Future):
+            self._pause_root_waiter = cast(asyncio.Future[Any], root_waiter)
+        current_task = asyncio.current_task()
+        self._capture_shield_adapters(current_task)
+        self._capture_gather_callback_children(current_task)
+        self._capture_waiter_children(self._root_task)
+        for task in tuple(self._active_step_tasks):
+            self._capture_waiter_children(task)
+
+    def _pause_boundary_was_handled(self, task: asyncio.Future[Any]) -> bool:
+        """Return whether the boundary's concurrency waiter handled child exceptions."""
+        waiter = self._pause_boundary_waiters.get(task)
+        if waiter is None or not waiter.done() or waiter.cancelled():
+            return False
+        return waiter.exception() is None
+
+    def _pause_root_waiter_was_handled(self) -> bool:
+        waiter = self._pause_root_waiter
+        if waiter is None or not waiter.done() or waiter.cancelled():
+            return False
+        return waiter.exception() is None
+
+    def _capture_root_pause_location(self) -> None:
+        if asyncio.current_task() is self._root_task:
+            frame = inspect.currentframe()
+            while frame is not None:
+                if frame.f_code.co_filename != __file__:
+                    self._pause_origin_code = frame.f_code
+                    self._pause_origin_lineno = frame.f_lineno
+                    return
+                frame = frame.f_back
+            return
+
+        awaited: Any = self._root_task.get_coro() if self._root_task is not None else None
+        seen: set[int] = set()
+        candidate: tuple[CodeType, int] | None = None
+        while awaited is not None and id(awaited) not in seen:
+            seen.add(id(awaited))
+            awaited_frame = getattr(awaited, "cr_frame", None) or getattr(awaited, "gi_frame", None)
+            if awaited_frame is not None and awaited_frame.f_code.co_filename != __file__:
+                candidate = (awaited_frame.f_code, awaited_frame.f_lineno)
+            awaited = getattr(awaited, "cr_await", None) or getattr(awaited, "gi_yieldfrom", None)
+        if candidate is not None:
+            self._pause_origin_code, self._pause_origin_lineno = candidate
+
+    def _cancelled_at_root_pause_location(self, exc: BaseException) -> bool:
+        code = self._pause_origin_code
+        lineno = self._pause_origin_lineno
+        traceback = exc.__traceback__
+        while code is not None and lineno is not None and traceback is not None:
+            if traceback.tb_frame.f_code is code and traceback.tb_lineno == lineno:
+                return True
+            traceback = traceback.tb_next
+        return False
+
+    def _get_new_descendant_interruption(
+        self,
+        ancestor: asyncio.Task[Any] | None,
+        previous: Mapping[asyncio.Task[Any], WorkflowInterrupted],
+    ) -> WorkflowInterrupted | None:
+        """Return a newly raised interruption from *ancestor* or one of its descendants."""
+        if ancestor is None:
+            return None
+        for task, interruption in self._task_interruptions.items():
+            if previous.get(task) is interruption:
+                continue
+            current: asyncio.Future[Any] | None = task
+            while current is not None:
+                if current is ancestor:
+                    return interruption
+                current = self._workflow_task_parents.get(current)
+        return None
+
+    async def _cancel_workflow_tasks(self) -> None:
+        """Cancel and drain all tracked workflow tasks."""
+        current_task = asyncio.current_task()
+        while pending := [task for task in self._workflow_tasks if task is not current_task and not task.done()]:
+            waiting_for_existing_cancellation = False
+            for task in pending:
+                if task in self._framework_cancelled_tasks:
+                    continue
+                if self._has_pending_cancellation(task):
+                    waiting_for_existing_cancellation = True
+                    continue
+                self._cancel_workflow_task(task)
+            if waiting_for_existing_cancellation:
+                await asyncio.sleep(0)
+                continue
+            await asyncio.gather(*pending, return_exceptions=True)
+        tasks = [task for task in self._workflow_tasks if task is not current_task]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @staticmethod
+    def _has_pending_cancellation(task: asyncio.Future[Any]) -> bool:
+        waiter = getattr(task, "_fut_waiter", None)
+        return (isinstance(waiter, asyncio.Future) and waiter.cancelled()) or bool(getattr(task, "_must_cancel", False))
+
+    def _cancel_workflow_task(self, task: asyncio.Future[Any]) -> None:
+        """Record and request framework-owned task cancellation."""
+        if task.done() or task in self._framework_cancelled_tasks or self._has_pending_cancellation(task):
+            return
+        self._framework_cancelled_tasks.add(task)
+        task.cancel()
+
+    async def _settle_workflow_tasks(
+        self,
+        *,
+        propagate_failures: bool,
+        interruption: WorkflowInterrupted,
+    ) -> None:
+        """Wait for pause-associated steps, then cancel and drain detached tasks."""
+        current_task = asyncio.current_task()
+        settled_tasks = self._pause_owned_tasks
+        inspected_tasks: set[asyncio.Future[Any]] = set()
+
+        def _pending_owned_tasks() -> list[asyncio.Future[Any]]:
+            self._expand_pause_owned_tasks()
+            pending: list[asyncio.Future[Any]] = []
+            for task in settled_tasks:
+                if task is current_task or task is self._root_task or task.done():
+                    continue
+                parent = self._workflow_task_parents.get(task)
+                if task in self._pause_failure_boundaries or (parent is not None and not parent.done()):
+                    pending.append(task)
+            return pending
+
+        def _raise_completed_failure() -> None:
+            for task in settled_tasks:
+                if task in inspected_tasks or not task.done():
+                    continue
+                if task is current_task or task is self._root_task:
+                    inspected_tasks.add(task)
+                    continue
+                if task.cancelled():
+                    inspected_tasks.add(task)
+                    if task in self._framework_cancelled_tasks:
+                        continue
+                    adapter_source = self._pause_adapter_sources.get(task)
+                    if (
+                        adapter_source is not None
+                        and self._get_new_descendant_interruption(adapter_source, {}) is interruption
+                    ):
+                        continue
+                    try:
+                        task.result()
+                    except WorkflowInterrupted:
+                        continue
+                    except asyncio.CancelledError as exc:
+                        cancelling = getattr(task, "cancelling", None)
+                        cancelling_count = cast(Callable[[], int], cancelling)() if callable(cancelling) else 0
+                        if (
+                            sys.version_info >= (3, 11)
+                            and cancelling_count == 0
+                            and not exc.args
+                            and self._get_new_descendant_interruption(cast(asyncio.Task[Any], task), {}) is interruption
+                        ):
+                            continue
+                        raise
+                if task in self._pause_failure_boundaries:
+                    if self._pause_boundary_was_handled(task):
+                        inspected_tasks.add(task)
+                        continue
+                else:
+                    if not getattr(task, "_log_traceback", False):
+                        inspected_tasks.add(task)
+                        continue
+                    parent = self._workflow_task_parents.get(task)
+                    if parent is not None and not parent.done():
+                        continue
+                inspected_tasks.add(task)
+                error = task.exception()
+                if error is not None:
+                    _, remaining = _split_workflow_interruption(error)
+                    if remaining is not None:
+                        raise remaining from None
+
+        try:
+            while True:
+                if propagate_failures:
+                    _raise_completed_failure()
+                pending = _pending_owned_tasks()
+                if not pending:
+                    break
+                await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if propagate_failures:
+                _raise_completed_failure()
+            await self._cancel_workflow_tasks()
+            if propagate_failures:
+                _raise_completed_failure()
+        except BaseException:
+            await self._cancel_workflow_tasks()
+            raise
 
     def _get_legacy_step_cache_key(self, step_name: str) -> str:
         idx = self._step_call_counters.get(step_name, 0)
@@ -999,6 +1511,11 @@ class StepWrapper(Generic[R]):
         if ctx is None:
             # Outside a workflow — pass through directly
             return await self._func(*args, **kwargs)
+        step_task = asyncio.current_task()
+        ctx._raise_if_current_task_interrupted(entering_step=True)
+        if step_task is not None:
+            ctx._step_tasks.add(step_task)
+            ctx._pause_step_entry_tasks.discard(step_task)
 
         legacy_cache_key = ctx._get_legacy_step_cache_key(self.name)
         cache_key = legacy_cache_key
@@ -1035,41 +1552,61 @@ class StepWrapper(Generic[R]):
                 "Use @step(replay_key=...) to identify each logical invocation."
             )
 
-        # Inject RunContext if the step function declares it
-        call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
-
-        # Defensive deepcopy for the event log only; fall back to the live
-        # reference so non-deepcopyable args (locks, sockets) don't fail.
-        if args or kwargs:
-            try:
-                invocation_data: Any = deepcopy({"args": args, "kwargs": kwargs})
-            except Exception:
-                invocation_data = {"args": args, "kwargs": kwargs}
-        else:
-            invocation_data = None
-        await ctx.add_event(WorkflowEvent.executor_invoked(self.name, invocation_data))
-        auto_request_info_index_before = ctx._auto_request_info_index
+        task_interruptions_before = dict(ctx._task_interruptions)
+        if step_task is not None:
+            ctx._active_step_tasks[step_task] = ctx._active_step_tasks.get(step_task, 0) + 1
         try:
-            result = await self._func(*call_args, **call_kwargs)
-        except Exception as exc:
-            # NOTE: WorkflowInterrupted (from request_info inside a step) inherits
-            # from BaseException, NOT Exception, so it propagates past this handler
-            # without emitting a spurious executor_failed event.  This is intentional
-            # — request_info is fully supported inside @step functions.
-            await ctx.add_event(WorkflowEvent.executor_failed(self.name, WorkflowErrorDetails.from_exception(exc)))
-            raise
-        ctx._set_cached_step_auto_request_info_count(
-            cache_key,
-            ctx._auto_request_info_index - auto_request_info_index_before,
-        )
-        copied, cached_result = _try_snapshot_step_cache_value(result)
-        identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
-        ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
-        _, event_data = _try_snapshot_step_cache_value(result)
-        await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
-        if ctx._on_step_completed is not None:
-            await ctx._on_step_completed()
-        return result
+            # Inject RunContext if the step function declares it
+            call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
+
+            # Defensive deepcopy for the event log only; fall back to the live
+            # reference so non-deepcopyable args (locks, sockets) don't fail.
+            if args or kwargs:
+                try:
+                    invocation_data: Any = deepcopy({"args": args, "kwargs": kwargs})
+                except Exception:
+                    invocation_data = {"args": args, "kwargs": kwargs}
+            else:
+                invocation_data = None
+            await ctx.add_event(WorkflowEvent.executor_invoked(self.name, invocation_data))
+            auto_request_info_index_before = ctx._auto_request_info_index
+            try:
+                result = await self._func(*call_args, **call_kwargs)
+            except Exception as exc:
+                # NOTE: WorkflowInterrupted (from request_info inside a step) inherits
+                # from BaseException, NOT Exception, so it propagates past this handler
+                # without emitting a spurious executor_failed event.  This is intentional
+                # — request_info is fully supported inside @step functions.
+                from ..observability import OBSERVABILITY_SETTINGS
+
+                details = WorkflowErrorDetails.from_exception(
+                    exc,
+                    include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                )
+                await ctx.add_event(WorkflowEvent.executor_failed(self.name, details))
+                raise
+            task_interruption = ctx._get_new_descendant_interruption(step_task, task_interruptions_before)
+            if task_interruption is not None:
+                raise task_interruption
+            ctx._set_cached_step_auto_request_info_count(
+                cache_key,
+                ctx._auto_request_info_index - auto_request_info_index_before,
+            )
+            copied, cached_result = _try_snapshot_step_cache_value(result)
+            identity_is_replayable = self._replay_key is not None or self._wrapper_identity_is_durable
+            ctx._set_cached_result(cache_key, cached_result, replayable=copied and identity_is_replayable)
+            _, event_data = _try_snapshot_step_cache_value(result)
+            await ctx.add_event(WorkflowEvent.executor_completed(self.name, event_data))
+            if ctx._on_step_completed is not None:
+                await ctx._on_step_completed()
+            return result
+        finally:
+            if step_task is not None:
+                remaining_depth = ctx._active_step_tasks[step_task] - 1
+                if remaining_depth:
+                    ctx._active_step_tasks[step_task] = remaining_depth
+                else:
+                    del ctx._active_step_tasks[step_task]
 
 
 # ---------------------------------------------------------------------------
@@ -1696,16 +2233,23 @@ class FunctionalWorkflow:
             for event in ctx._get_events():
                 yield event
 
-            details = WorkflowErrorDetails.from_exception(exc)
+            from ..observability import OBSERVABILITY_SETTINGS
+
+            details = WorkflowErrorDetails.from_exception(
+                exc,
+                include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+            )
             yield _framework_event(WorkflowEvent.failed, details)
             yield _framework_event(WorkflowEvent.status, WorkflowRunState.FAILED)
 
+            error_attributes = {
+                "error.type": type(exc).__name__,
+            }
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                error_attributes["error.message"] = str(exc)
             span.add_event(
                 name=OtelAttr.WORKFLOW_ERROR,
-                attributes={
-                    "error.message": str(exc),
-                    "error.type": type(exc).__name__,
-                },
+                attributes=error_attributes,
             )
             capture_exception(span, exception=exc)
             raise
@@ -1727,7 +2271,6 @@ class FunctionalWorkflow:
             )
 
         token = _active_run_ctx.set(ctx)
-        ctx._root_task = asyncio.current_task()
         release_task_tracking = _track_workflow_tasks()
         try:
             sig = inspect.signature(self._func)
@@ -1762,7 +2305,62 @@ class FunctionalWorkflow:
                     call_args.append(message)
                     message_injected = True
 
-            return await self._func(*call_args)
+            root_task_ready = asyncio.Event()
+
+            async def _invoke_workflow() -> Any:
+                await root_task_ready.wait()
+                return await self._func(*call_args)
+
+            workflow_task = asyncio.create_task(_invoke_workflow())
+            ctx._root_task = workflow_task
+            root_task_ready.set()
+            try:
+                await asyncio.wait({workflow_task})
+            except BaseException:
+                ctx._cancel_workflow_task(workflow_task)
+                await asyncio.gather(workflow_task, return_exceptions=True)
+                await ctx._cancel_workflow_tasks()
+                raise
+
+            try:
+                result = workflow_task.result()
+            except BaseException as exc:
+                interruption, remaining = _split_workflow_interruption(exc)
+                if (
+                    interruption is None
+                    and isinstance(exc, asyncio.CancelledError)
+                    and not exc.args
+                    and ctx._workflow_interruption is not None
+                    and not ctx._pause_root_waiter_was_handled()
+                    and ctx._cancelled_at_root_pause_location(exc)
+                    and sys.version_info >= (3, 11)
+                    and workflow_task.cancelling() == 0
+                ):
+                    await ctx._settle_workflow_tasks(
+                        propagate_failures=True,
+                        interruption=ctx._workflow_interruption,
+                    )
+                    raise ctx._workflow_interruption from None
+                if interruption is None:
+                    await ctx._cancel_workflow_tasks()
+                    raise
+                if remaining is not None:
+                    await ctx._cancel_workflow_tasks()
+                    raise remaining from None
+                await ctx._settle_workflow_tasks(
+                    propagate_failures=True,
+                    interruption=interruption,
+                )
+                if isinstance(exc, WorkflowInterrupted):
+                    raise
+                raise interruption from None
+            if ctx._workflow_interruption is not None:
+                await ctx._settle_workflow_tasks(
+                    propagate_failures=True,
+                    interruption=ctx._workflow_interruption,
+                )
+                raise ctx._workflow_interruption
+            return result
         finally:
             release_task_tracking()
             _active_run_ctx.reset(token)

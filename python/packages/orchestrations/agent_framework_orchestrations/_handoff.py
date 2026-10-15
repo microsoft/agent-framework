@@ -32,6 +32,7 @@ Key properties:
 import inspect
 import json
 import logging
+import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
@@ -122,9 +123,17 @@ class HandoffConfiguration:
         return hash(self.target_id)
 
 
+_INVALID_TOOL_NAME_CHARACTERS = re.compile(r"[^a-zA-Z0-9_-]")
+_MAX_TOOL_NAME_LENGTH = 64
+
+
 def get_handoff_tool_name(target_id: str) -> str:
-    """Get the standardized handoff tool name for a given target agent ID."""
-    return f"handoff_to_{target_id}"
+    """Get the standardized handoff tool name for a given target agent ID.
+
+    Characters that model providers reject in tool names, such as spaces, are replaced with underscores,
+    and the name is cut to the 64 characters that providers allow.
+    """
+    return f"handoff_to_{_INVALID_TOOL_NAME_CHARACTERS.sub('_', target_id)}"[:_MAX_TOOL_NAME_LENGTH]
 
 
 HANDOFF_FUNCTION_RESULT_KEY = "handoff_to"
@@ -266,6 +275,9 @@ class HandoffAgentExecutor(AgentExecutor):
             autonomous_mode_prompt: Prompt to provide to the agent when continuing in autonomous mode.
                                     This will guide the agent in the absence of user input.
             autonomous_mode_turn_limit: Maximum number of autonomous turns before requesting user input.
+                                        ``0`` returns control to the user as soon as the agent responds
+                                        without a handoff; the default limit is only used when this is
+                                        left as ``None``.
         """
         self._auto_handoff_middleware = _AutoHandoffMiddleware(handoffs)
         cloned_agent = self._prepare_agent_with_handoffs(agent, handoffs, self._auto_handoff_middleware)
@@ -279,7 +291,9 @@ class HandoffAgentExecutor(AgentExecutor):
         # Autonomous mode members
         self._autonomous_mode = autonomous_mode
         self._autonomous_mode_prompt = autonomous_mode_prompt or _AUTONOMOUS_MODE_DEFAULT_PROMPT
-        self._autonomous_mode_turn_limit = autonomous_mode_turn_limit or _DEFAULT_AUTONOMOUS_TURN_LIMIT
+        self._autonomous_mode_turn_limit = (
+            _DEFAULT_AUTONOMOUS_TURN_LIMIT if autonomous_mode_turn_limit is None else autonomous_mode_turn_limit
+        )
         self._autonomous_mode_turns = 0
 
     def _prepare_agent_with_handoffs(
@@ -372,6 +386,7 @@ class HandoffAgentExecutor(AgentExecutor):
                     f"Handoff tool name '{handoff_tool.name}' conflicts with existing tool."
                     "Please rename the existing tool or modify the target agent ID to avoid conflicts."
                 )
+            existing_names.add(handoff_tool.name)
             new_tools.append(handoff_tool)
 
         if new_tools:
@@ -928,6 +943,8 @@ class HandoffBuilder:
                      in autonomous mode. If not provided, a default prompt will be used.
             turn_limits: Optional mapping of agent identifiers/factory names to maximum number of autonomous turns
                          before returning control to the user. If not provided, a default turn limit will be used.
+                         A limit of ``0`` disables autonomous continuation for that agent instead of falling back
+                         to the default.
         """
         self._autonomous_mode = True
         self._autonomous_mode_prompts = prompts or {}

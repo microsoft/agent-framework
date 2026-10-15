@@ -52,6 +52,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
   remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
   Collected server-side grants do not require the client to submit the same approval again.
+- `AGUIChatClient` follows the shared function-loop completion contract rather than requiring provider-specific
+  finish markers. Complete arguments may execute without `TOOL_CALL_END`; when `RUN_ERROR` invalidates a response
+  after a local client-tool call has been exposed, raise `ResponseInvalidatedException` so the function loop and
+  direct stream consumers discard that call.
 - A2UI continuation retains the inner response's original model-turn and reasoning/call/result groups. UI
   rendering and its accounting remain adapter-owned while server tools use the existing function loop.
   Streaming uses an executable adapter handoff tool that returns a private control request through the existing
@@ -66,6 +70,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   control outcomes and the original middleware's relative order.
   Adapter-side compatibility execution is limited to non-core agents without context providers; unsupported
   provider preparation fails explicitly instead of executing with a partial policy.
+  Client `forwardedProps.injectA2UITool` is only a per-request request to use a capability the backend has already
+  enabled with `a2ui_config["inject_a2ui_tool"]`; request metadata alone must never activate a server tool or sub-agent.
+  Resolve that backend opt-in before importing optional A2UI support so a client flag cannot make an otherwise
+  non-A2UI deployment fail on a missing optional dependency.
 - Local approval resume checks the current function-invocation configuration before any approved side effect begins.
   When invocation is disabled, grants remain pending under their original retention deadline and the endpoint emits
   `APPROVAL_INVOCATION_DISABLED`; only a later explicit retry after re-enablement can execute them. Rejections and
@@ -91,12 +99,22 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   remains the provider/service `call_id`. Hosted approvals preserve the provider-issued approval request id. The
   lifecycle stores these identities separately so resume responses carry the authoritative approval occurrence id
   without rewriting tool-result correlation ids.
+- Hosted/local execution ownership comes from `function_call.hosted`; `server_name` supplies the hosted-server
+  boundary persisted as `ApprovalOccurrence.server_label`. Legacy `additional_properties["server_label"]` remains a
+  compatibility input, not the primary routing signal.
 - Default stateless conversation history is client-controlled, including historical tool calls and results. Never
   document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
   server-validated approvals, or scoped authoritative snapshots.
 - AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
   or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
   when the application intentionally uses a provider continuation id as its AG-UI Thread id.
+- A workflow run resolves its Thread id once. A generated id for an omitted `threadId` is the id reported in
+  `RUN_STARTED`, keys the `workflow_factory` cache and Thread Snapshot, and owns the run's live `request_info`
+  interrupts, so a continuation must send it back. A `workflow_factory` request without `threadId` that carries a
+  `resume` entry or a tool or approval-response message (as `_extract_responses_from_messages` defines them) is
+  rejected with `WORKFLOW_RESUME_NOT_FOUND` before a workflow instance is built. Checkpoint ownership binds only
+  client-supplied Thread ids; a checkpoint of a run without one also records the generated id as an alias, so both
+  the reported id and legacy id-less restores resume it.
 - A configured Snapshot Scope and the client-owned Thread id are combined into a deterministic internal
   `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
   in different trusted scopes cannot collide in context-provider state. The deprecated
@@ -105,15 +123,36 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
   invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
-  tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
+  state, and provider-owned keys.
+  When state is exposed to the model, keep it in an explicitly untrusted user-data message; never promote request
+  state values into system/developer instruction authority.
   Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
   object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
   `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
   it names a remote resource that the server's own credentialed call addresses.
+- `ToolApprovalMiddleware` names its session state with an application-chosen `source_id`, which a wrapper can hide
+  from the agent AG-UI is handed. Tool approval authority is therefore also protected by shape, not only by name: a
+  client Shared State value holding a non-empty `rules`, `queued_approval_requests` or `collected_approval_responses`
+  list is never merged into `AgentSession.state`, whatever its item encoding (`ToolApprovalState` loads more than
+  JSON objects), and a key that already holds that state in restored server state, as a mapping or a
+  `ToolApprovalState` object, cannot be replaced by client values. An ignored key stays in Shared State and the
+  model context; it is only not mirrored into the session.
+  Wrapper agents should still forward `middleware`, `context_providers` and `service_session_state_keys`, and
+  `_TOOL_APPROVAL_STATE_FIELDS` must stay in sync with `ToolApprovalState`.
 - Provider-owned keys identify remote resources that the server's own credentialed call addresses — for example
   the Foundry hosted-agent session ID, which selects a VM-isolated sandbox with a persistent filesystem. Never let
   request state choose one. `AgentSession.service_session_id` is deliberately a separate attribute rather than a
   `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
+- Standalone FIDES security middleware (`LabelTrackingFunctionMiddleware`, `PolicyEnforcementFunctionMiddleware`)
+  keeps its context label, hidden variables, and pending policy approvals in `AgentSession.state` under
+  `_FIDES_SESSION_STATE_KEY` or the `session_state_key` it was configured with. Request and stored Shared State must
+  never supply that state. The default key is always protected; a configured key is discovered from middleware visible
+  on the agent or its client before the run, so middleware injected later or hidden behind a wrapper that does not
+  expose its key is not covered. Use `SecureAgentConfig`, whose state lives under its provider `source_id`. These keys
+  are protected from request state only: never add them to `_RESERVED_SERVICE_SESSION_STATE_KEYS` or
+  `service_session_state_keys`, which also drop them from private Session Continuation State and would discard the
+  server's own context label.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - Configured stateless agent Thread Snapshot stores persist after function/MCP tool-result and approval safe points,
@@ -140,6 +179,11 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.
+- AG-UI multimodal request content accepts only web/data URLs and inline payloads. Do not pass file, FTP,
+  application-defined URI schemes, or unresolved client-owned `id`/`file` references into provider clients; broader
+  outbound access and binary-reference resolution require an application-owned policy. Backend-loaded legacy Thread
+  Snapshots replace previously accepted unsupported media parts with inert placeholder text before hydration or
+  provider replay, so strict current-request validation does not brick an existing thread.
 
 ## Usage
 

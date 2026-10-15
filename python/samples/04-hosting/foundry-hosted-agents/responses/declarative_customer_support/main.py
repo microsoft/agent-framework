@@ -58,7 +58,7 @@ class SupportAgent(Agent):
         try:
             client = FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
                 credential=self.credential,
             )
         except BaseException:

@@ -349,6 +349,8 @@ class RedisContextProvider(ContextProvider):
                 field_name: str = self.vector_field_name
                 d[field_name] = vec
 
+        # Redis hashes cannot encode None, including with non-validating borrowed indexes.
+        prepared = [{key: value for key, value in doc.items() if value is not None} for doc in prepared]
         await self.redis_index.load(prepared)
 
     async def _redis_search(
