@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -16,40 +15,32 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 internal sealed class AgentMcpListedSkillResource : AgentSkillResource
 {
-    private readonly ReadResourceResult _result;
+    private readonly ResourceContents _content;
 
     /// <summary>
-    /// Initializes a supporting resource with content fetched from the MCP server.
+    /// Initializes a supporting resource with verified content fetched from the MCP server.
     /// </summary>
     /// <param name="name">The resource's relative name.</param>
-    /// <param name="result">The resource content returned by the MCP server.</param>
+    /// <param name="content">The resource content that has passed size and digest verification.</param>
     /// <param name="description">An optional description of the resource.</param>
-    public AgentMcpListedSkillResource(string name, ReadResourceResult result, string? description = null)
+    public AgentMcpListedSkillResource(string name, ResourceContents content, string? description = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
-        this._result = Throw.IfNull(result);
+        this._content = Throw.IfNull(content);
     }
 
     /// <inheritdoc/>
     /// <returns>
     /// Binary content as <see cref="DataContent"/>, text as a <see cref="string"/>,
-    /// or <see langword="null"/> when neither is available.
+    /// or <see langword="null"/> for empty text.
     /// </returns>
     public override Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
-        BlobResourceContents? blob = this._result.Contents.OfType<BlobResourceContents>().FirstOrDefault();
-        if (blob is not null)
+        return Task.FromResult<object?>(this._content switch
         {
-            return Task.FromResult<object?>(blob.ToAIContent());
-        }
-
-        string text = string.Join("\n", this._result.Contents.OfType<TextResourceContents>().Select(c => c.Text));
-
-        if (text.Length == 0)
-        {
-            return Task.FromResult<object?>(null);
-        }
-
-        return Task.FromResult<object?>(text);
+            TextResourceContents text => text.Text.Length == 0 ? null : text.Text,
+            BlobResourceContents binary => binary.ToAIContent(),
+            _ => throw new InvalidOperationException("Unsupported listed skill content."),
+        });
     }
 }

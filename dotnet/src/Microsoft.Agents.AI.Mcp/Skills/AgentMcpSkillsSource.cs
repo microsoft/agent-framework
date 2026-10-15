@@ -33,7 +33,10 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// Listed skills provide a name, description, and list of resources. Instructions and supporting resources
 /// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
+/// Each listed resource read must return exactly one text or binary content block; <c>SKILL.md</c> must contain text.
 /// Discovery through <c>skills/list</c> leaves existing archive directories untouched.
+/// Listed resource sizes are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
+/// These checks do not limit incoming messages before the supplied client receives and parses them.
 /// </para>
 /// <para>
 /// <c>skill://index.json</c> is used only when the server does not declare the Skills extension.
@@ -112,14 +115,14 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c> or <c>skill://index.json</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional options that control archive-distributed skill handling.</param>
+    /// <param name="options">Optional options that control skill loading.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
-        this._listedSkillsLoader = new McpListedSkillsLoader(this._client, this._logger);
+        this._listedSkillsLoader = new McpListedSkillsLoader(this._client, this._logger, options);
 
         IMcpSkillEntryLoader[] loaders =
         [
