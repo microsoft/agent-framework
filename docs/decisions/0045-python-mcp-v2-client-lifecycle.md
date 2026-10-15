@@ -1,7 +1,7 @@
 ---
-status: proposed
-date: 2026-10-06
-deciders: jpalvarezl, eavanvalkenburg
+status: approved
+date: 2026-10-15
+deciders: jpalvarezl
 ---
 
 # Use the MCP SDK Client as the primary Python MCP client
@@ -43,21 +43,23 @@ This ADR covers the outbound Python MCP client. Hosting/server code continues to
 
 ## Decision Outcome
 
-Chosen option: use the high-level SDK `Client` for framework-owned connections and retain `ClientSession` only as
-the explicit caller-owned low-level path.
+Chosen option: use the high-level SDK `Client` for both framework-owned and caller-owned high-level connections.
+The caller-owned `ClientSession` path is retained for backward compatibility but is considered deprecated for new
+usage; callers should prefer supplying a high-level `Client`.
 
 The private `_MCPConnection` protocol is the operation seam. Its implementations deliberately do not expose both
 SDK levels:
 
-- `_ClientMCPConnection` owns and uses an entered high-level `mcp.Client`. Its `client` property references that
-  Client and its `session` property remains `None`. Tool, prompt, resource, catalog, logging, and liveness operations
-  route through `Client`; they never bypass the seam by calling `client.session` as the operation provider.
-- `_SessionMCPConnection` wraps a caller-supplied `ClientSession`. Its `session` property references that session and
-  its `client` property remains `None`. Operations call the session directly and do not gain high-level caching or
-  automatic MRTR behavior.
+- `_ClientMCPConnection` uses an entered high-level `mcp.Client`. Its `is_framework_owned` flag records whether
+  Agent Framework created and manages the Client or the caller supplied and manages it. Its `client` property
+  references that Client and its `session` property remains `None`. Tool, prompt, resource, catalog, logging, and
+  liveness operations route through `Client`; they never use `client.session` as the operation provider.
+- `_SessionMCPConnection` wraps a caller-supplied `ClientSession`. This is a deprecated low-level compatibility
+  path retained for existing applications. Its `session` property references that session and its `client` property
+  remains `None`. Operations call the session directly and do not gain high-level caching or automatic MRTR behavior.
 
-`MCPTool.session` is therefore meaningful only for the caller-supplied low-level path. A framework-created Client
-connection does not publish the SDK Client's internal compatibility session through that property.
+`MCPTool.session` is therefore meaningful only for the deprecated caller-supplied low-level path. High-level Client
+connections do not publish the SDK Client's internal compatibility session through that property.
 
 ### Ownership model
 
