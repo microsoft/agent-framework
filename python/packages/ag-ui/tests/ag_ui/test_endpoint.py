@@ -13,7 +13,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -10932,7 +10932,7 @@ async def test_endpoint_rejects_non_boolean_single_user_mode(build_chat_client):
             app,
             agent,
             path="/invalid-single-user",
-            single_user="yes",  # type: ignore[arg-type]
+            single_user="yes",  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         )
 
 
@@ -10948,7 +10948,7 @@ async def test_endpoint_authorization_scope_resolver_uses_fastapi_dependencies(b
         authenticated.append("principal-a")
         return "principal-a"
 
-    async def resolve_authorization_scope(principal: str = Depends(authenticate)) -> str:
+    async def resolve_authorization_scope(principal: Annotated[str, Depends(authenticate)]) -> str:
         return principal
 
     add_agent_framework_fastapi_endpoint(
