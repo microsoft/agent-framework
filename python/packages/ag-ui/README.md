@@ -350,6 +350,29 @@ Authentication in the separate `dependencies` list can allow or reject a request
 server-side state. Do not combine authentication-only dependencies with `single_user=True` when different authenticated
 callers can reach the endpoint.
 
+### Stable Single-User Scope
+
+`single_user=True` creates an opaque scope for one endpoint registration, which is appropriate for local and
+process-local examples. A single-user application that uses durable snapshots, checkpoints, or provider state can
+instead provide an application-owned constant through the normal resolver:
+
+```python
+def resolve_single_user_scope() -> str:
+    # Keep this stable for the lifetime of the persisted state and unique to this application boundary.
+    return "my-app:single-user:v1"
+
+
+add_agent_framework_fastapi_endpoint(
+    app,
+    agent,
+    "/",
+    authorization_scope_resolver=resolve_single_user_scope,
+)
+```
+
+The value is a server-owned namespace, not a credential. Do not read it from AG-UI request state or other
+client-controlled input.
+
 ### API Key Authentication Example
 
 ```python

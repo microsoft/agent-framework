@@ -192,8 +192,9 @@ def add_agent_framework_fastapi_endpoint(
         single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
             The endpoint receives one opaque scope that remains stable for that registration and separates equal route
             paths registered by other applications. Use an explicit resolver when scope continuity must survive process
-            restarts or when storage is shared beyond one registration. Never enable this mode for callers with
-            distinct authorization.
+            restarts or when storage is shared beyond one registration. A single-user application can return its own
+            stable application scope from authorization_scope_resolver. Never enable this mode for callers with distinct
+            authorization.
     """
     _validate_keepalive_seconds(keepalive_seconds)
     _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)
