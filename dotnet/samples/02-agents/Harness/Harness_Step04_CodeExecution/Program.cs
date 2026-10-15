@@ -22,7 +22,6 @@ using System.ClientModel.Primitives;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Harness.Shared.Console;
-using HyperlightSandbox.Guest.Python;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
@@ -37,10 +36,9 @@ const string TracingSourceName = "Harness.CodeExecution";
 // Set up OpenTelemetry tracing that writes spans to a text file.
 using var tracerProvider = HarnessTracing.CreateFileTracerProvider(TracingSourceName);
 
-// Create the HyperlightCodeActProvider with the Python/Wasm backend.
-// The guest module path is resolved automatically from the Hyperlight.HyperlightSandbox.Guest.Python NuGet package.
+// Create the HyperlightCodeActProvider with the bundled Python guest module.
 using var codeAct = new HyperlightCodeActProvider(
-    HyperlightCodeActProviderOptions.CreateForWasm(PythonGuestModule.GetModulePath()));
+    HyperlightCodeActProviderOptions.CreateForPython());
 
 var instructions =
     """
