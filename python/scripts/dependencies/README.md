@@ -8,6 +8,13 @@ This folder contains the Python workspace tooling for dependency maintenance:
 
 Run the commands below from the `python/` directory.
 
+The meta-package install CI constrains workspace distributions to the wheels it
+has just built. `--find-links` alone can prefer a registry wheel with the same
+version but different dependency metadata. Both the resolution probe and actual
+installation use the generated constraints; third-party dependencies still
+resolve from the package index. `tests/test_meta_package_install.py` exercises
+both paths against an isolated local index.
+
 ## Files in this folder
 
 - `validate_dependency_bounds.py`

@@ -1023,8 +1023,11 @@ class TestCache:
                 assert "capacity" in rejected.error_message
             finally:
                 release_close.set()
-                await replacement
-                await handler.aclose()
+                try:
+                    replacement_result = await replacement
+                finally:
+                    await handler.aclose()
+        assert not replacement_result.is_error
         assert len(FakeTool.instances) == 2
         assert all(tool.close_count == 1 for tool in FakeTool.instances)
 
