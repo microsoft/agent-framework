@@ -173,7 +173,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   is temporarily excluded while the inner strategy runs, so it does not consume retention counts, then restored by
   default; set `exclude_trigger=True` to remove a trigger-only group from the next model call. Mixed groups that
   contain unrelated tool calls are always restored atomically. The agent-triggered compaction APIs are experimental
-  under the shared `AGENT_TRIGGERED_COMPACTION` feature ID.
+  under the shared `AGENT_TRIGGERED_COMPACTION` feature ID and require client-managed history (`store=False` with no
+  service-managed conversation ID).
 - **`UnloadSkillsCompactionStrategy`** - Intended as an inner agent-triggered strategy. It supplies an
   `unload_skill` trigger-tool factory that `AgentTriggeredCompactionStrategy` adopts automatically, then removes
   complete `load_skill` and `read_skill_resource` groups for one named skill, or all skills when no name is

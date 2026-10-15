@@ -38,6 +38,7 @@ from ._types import (
     ResponseStream,
     validate_chat_options,
 )
+from .exceptions import ChatClientInvalidRequestException
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -373,8 +374,27 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         *,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        options: Mapping[str, Any] | None = None,
     ) -> list[Message]:
         prepared_messages = list(messages)
+        if compaction_strategy is not None:
+            from ._compaction import _contains_agent_triggered_compaction_strategy  # pyright: ignore[reportPrivateUsage]
+            from ._sessions import is_local_history_conversation_id
+
+            if _contains_agent_triggered_compaction_strategy(compaction_strategy):
+                store = options.get("store") if options is not None else None
+                service_stores_history = (
+                    getattr(self, "STORES_BY_DEFAULT", False) if store is None else store is not False
+                )
+                conversation_id = options.get("conversation_id") if options is not None else None
+                has_service_conversation = conversation_id is not None and (
+                    not isinstance(conversation_id, str) or not is_local_history_conversation_id(conversation_id)
+                )
+                if service_stores_history or has_service_conversation:
+                    raise ChatClientInvalidRequestException(
+                        "Agent-triggered compaction requires client-managed history. "
+                        "Set store=False and do not use a service-managed conversation_id."
+                    )
         if compaction_strategy is None:
             if tokenizer is None:
                 return prepared_messages
@@ -531,6 +551,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 prepared_messages = await self._prepare_messages_for_model_call(
                     messages,
                     **compaction_overrides,
+                    options=options,
                 )
                 stream_response = self._inner_get_response(
                     messages=prepared_messages,
@@ -551,6 +572,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             prepared_messages = await self._prepare_messages_for_model_call(
                 messages,
                 **compaction_overrides,
+                options=options,
             )
             return await self._inner_get_response(
                 messages=prepared_messages,
