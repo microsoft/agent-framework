@@ -17,6 +17,7 @@ from agent_framework import (
     AgentTriggeredCompactionStrategy,
     BaseChatClient,
     ChatMiddleware,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -259,17 +260,22 @@ async def test_agent_triggered_compaction_rejects_default_service_storage(
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
 
-    response = chat_client_base.get_response(
-        [Message(role="user", contents=["Hello"])],
-        stream=stream,
-        compaction_strategy=strategy,
-    )
     with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
         if stream:
-            async for _ in response:  # type: ignore[union-attr]  # ty: ignore[union-attr]
+            response_stream = chat_client_base.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=True,
+                compaction_strategy=strategy,
+            )
+            async for _ in response_stream:
                 pass
         else:
-            await response  # type: ignore[misc]  # ty: ignore[not-awaitable]
+            response = chat_client_base.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=False,
+                compaction_strategy=strategy,
+            )
+            _ = await response
 
 
 async def test_agent_triggered_compaction_rejects_explicit_store_true(
@@ -281,7 +287,7 @@ async def test_agent_triggered_compaction_rejects_explicit_store_true(
     with pytest.raises(ChatClientInvalidRequestException, match="store=False"):
         await chat_client_base.get_response(
             [Message(role="user", contents=["Hello"])],
-            options={"store": True},
+            options=ChatOptions(store=True),
             compaction_strategy=strategy,
         )
 
@@ -316,7 +322,7 @@ async def test_agent_triggered_compaction_rejects_service_conversation_id(
     with pytest.raises(ChatClientInvalidRequestException, match="service-managed conversation_id"):
         await chat_client_base.get_response(
             [Message(role="user", contents=["Hello"])],
-            options={"store": False, "conversation_id": "service-conversation"},
+            options=ChatOptions(store=False, conversation_id="service-conversation"),
             compaction_strategy=strategy,
         )
 
@@ -329,7 +335,7 @@ async def test_agent_triggered_compaction_allows_client_managed_history(
     chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
-    options: dict[str, Any] = {"store": False}
+    options = ChatOptions(store=False)
     if conversation_id is not None:
         options["conversation_id"] = conversation_id
 
