@@ -8164,9 +8164,11 @@ async def test_mcp_tool_reset_preserves_supplied_client() -> None:
 
         await wrapper.connect(reset=True)
 
-        assert wrapper._connection is connection
-        assert wrapper._connection.client is client
-        assert wrapper._connection.is_framework_owned is False
+        reset_connection = wrapper._connection
+        assert reset_connection is not None
+        assert reset_connection is connection
+        assert reset_connection.client is client
+        assert reset_connection.is_framework_owned is False
         assert wrapper._server_capabilities == client.server_capabilities
 
         await wrapper.close()
