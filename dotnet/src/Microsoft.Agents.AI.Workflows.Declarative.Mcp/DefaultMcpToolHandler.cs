@@ -482,7 +482,15 @@ public sealed class DefaultMcpToolHandler : IWorkflowScopedMcpToolHandler, IAsyn
         {
             if (clientToDispose is not null)
             {
-                await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+                try
+                {
+                    await this.DisposeCachedClientAsync(clientToDispose).ConfigureAwait(false);
+                }
+                catch (Exception cleanupException)
+                {
+                    clientCreationCleanupException = cleanupException;
+                    throw;
+                }
             }
 
             await this._clientCreationSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);

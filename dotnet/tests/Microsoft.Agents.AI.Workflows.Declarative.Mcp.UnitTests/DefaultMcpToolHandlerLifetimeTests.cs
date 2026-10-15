@@ -68,12 +68,13 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             }
 
             release.Release();
-            try
+            if (cancelActive)
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+            }
+            else
             {
                 await first;
-            }
-            catch (OperationCanceledException) when (cancelActive)
-            {
             }
         }
 
@@ -124,6 +125,46 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
 
         Assert.Equal(2, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task NoProvider_DisposalDuringIdleEviction_ReportsCleanupCancellationAsync()
+    {
+        // Arrange
+        OperationCanceledException cleanupException = new("session cleanup cancelled");
+        ProtocolStub stub = new();
+        using SemaphoreSlim closeStarted = new(0);
+        using SemaphoreSlim releaseClose = new(0);
+        DefaultMcpToolHandler handler = new(
+            null, stub.CreateMessageHandler, clientCacheMaxSize: 1,
+            clientConnectionDisposer: async connection =>
+            {
+                closeStarted.Release();
+                await releaseClose.WaitAsync();
+                await connection.DisposeAsync();
+                throw cleanupException;
+            });
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        await InvokeScopedAsync(handler, "workflow-a", "ping", timeout.Token);
+        Task<McpServerToolResultContent> replacement = InvokeScopedAsync(handler, "workflow-b", "ping", timeout.Token);
+        await closeStarted.WaitAsync(timeout.Token);
+
+        // Act
+        Task disposal = handler.DisposeAsync().AsTask();
+        try
+        {
+            Assert.False(disposal.IsCompleted);
+        }
+        finally
+        {
+            releaseClose.Release();
+        }
+
+        // Assert
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => replacement));
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal.WaitAsync(timeout.Token)));
+        Assert.Equal(1, stub.Initializations);
         Assert.Equal(1, stub.Terminations);
     }
 

@@ -1164,6 +1164,51 @@ class TestCache:
             cancel_first_close = False
             await asyncio.wait_for(handler.aclose(), timeout=1)
 
+    @pytest.mark.parametrize("cancellation_count", [1, 2])
+    async def test_cancellation_during_failed_creation_bookkeeping_propagates(self, cancellation_count: int) -> None:
+        handler = DefaultMCPToolHandler()
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        bookkeeping_waiting = asyncio.Event()
+
+        class ObservedLock(asyncio.Lock):
+            async def acquire(self) -> Literal[True]:
+                if self.locked():
+                    bookkeeping_waiting.set()
+                return await super().acquire()
+
+        handler._cache_lock = ObservedLock()
+
+        async def failed_connect(_tool: FakeTool) -> None:
+            connect_started.set()
+            await release_connect.wait()
+            raise RuntimeError("connection failed")
+
+        with _patch_tool(), patch.object(FakeTool, "connect", failed_connect):
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation()))
+            try:
+                await asyncio.wait_for(connect_started.wait(), timeout=1)
+                await handler._cache_lock.acquire()
+                try:
+                    release_connect.set()
+                    await asyncio.wait_for(bookkeeping_waiting.wait(), timeout=1)
+                    for _ in range(cancellation_count):
+                        invocation.cancel()
+                        await asyncio.sleep(0)
+                    assert not invocation.done()
+                finally:
+                    handler._cache_lock.release()
+
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(invocation, timeout=1)
+                assert not handler._inflight
+                assert not handler._inflight_cleanup
+            finally:
+                release_connect.set()
+                await asyncio.wait_for(handler.aclose(), timeout=1)
+
+        assert FakeTool.instances[0].close_count == 1
+
     async def test_repeated_cancellation_during_eviction_finalization_completes_shutdown(self) -> None:
         handler = DefaultMCPToolHandler(cache_max_size=1)
         close_started = asyncio.Event()

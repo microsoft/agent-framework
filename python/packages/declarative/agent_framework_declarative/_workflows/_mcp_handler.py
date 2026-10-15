@@ -808,13 +808,7 @@ class DefaultMCPToolHandler:
                 inflight.set_exception(self._entry_creation_exception(creation_exception))
             inflight.exception()
 
-        cleanup_task = asyncio.create_task(cleanup())
-        while not cleanup_task.done():
-            try:
-                await asyncio.shield(cleanup_task)
-            except asyncio.CancelledError:
-                continue
-        cleanup_task.result()
+        await self._await_cleanup_task(asyncio.create_task(cleanup()))
 
     @staticmethod
     def _entry_creation_exception(exc: BaseException) -> BaseException:
