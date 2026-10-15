@@ -105,7 +105,9 @@ For custom providers, ContextProviders, and middleware, read
 ## Validation
 
 1. Import and construct the client and agent without invoking the model where practical.
-2. Validate required environment variables with clear errors.
+2. Check the selected client or provider documentation for its environment keys and tell the user to set them. Let the
+   framework classes resolve and validate those settings. If values come from a `.env` file, pass the documented
+   environment-file option or call `load_dotenv()` before construction; do not manually resolve each setting.
 3. Unit-test deterministic tools, schemas, context providers, and middleware.
 4. Add an opt-in live smoke test only when provider access is available.
 5. Exercise a second turn when session behavior is required.
