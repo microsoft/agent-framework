@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -29,17 +30,22 @@ internal sealed partial class McpListedSkillsLoader
 
     private readonly McpClient _client;
     private readonly ILogger _logger;
+    private readonly long _maxResourceSizeBytes;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
     /// </summary>
     /// <param name="client">The MCP client used to discover skills and fetch their content.</param>
     /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
+    /// <param name="options">Optional size limit for listed resources.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
-    public McpListedSkillsLoader(McpClient client, ILogger? logger = null)
+    /// <exception cref="ArgumentOutOfRangeException">A configured size limit is not positive.</exception>
+    public McpListedSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
+        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpListedSkill.DefaultMaxResourceSizeBytes;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
     }
 
     /// <summary>
@@ -48,7 +54,8 @@ internal sealed partial class McpListedSkillsLoader
     /// <param name="cancellationToken">The token used to cancel discovery.</param>
     /// <returns>The skills discovered through <c>skills/list</c>.</returns>
     /// <exception cref="JsonException">The response cannot be deserialized into a skill list.</exception>
-    /// <exception cref="InvalidOperationException">The response is missing or contains an unsupported result type or invalid skill metadata or resource manifests.</exception>
+    /// <exception cref="InvalidOperationException">The response is missing or contains an unsupported result type,
+    /// invalid skill metadata or resource manifests, or a resource exceeding the configured size limit.</exception>
     /// <exception cref="McpException">The MCP request fails.</exception>
     /// <exception cref="OperationCanceledException">Discovery is canceled.</exception>
     public async Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
@@ -83,9 +90,9 @@ internal sealed partial class McpListedSkillsLoader
 
             AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
 
-            List<McpListedSkillResourceEntry> resources = CreateSupportingResources(entry);
+            List<McpListedSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
-            skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger));
+            skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
         return skills;
@@ -135,7 +142,7 @@ internal sealed partial class McpListedSkillsLoader
     /// Validates and returns all resources listed for the skill, including <c>SKILL.md</c>, which contains
     /// the skill's instructions.
     /// </summary>
-    private static List<McpListedSkillResourceEntry> CreateSupportingResources(McpListedSkillEntry entry)
+    private List<McpListedSkillResourceEntry> CreateSupportingResources(McpListedSkillEntry entry)
     {
         string skillUri = entry.Uri;
 
@@ -147,29 +154,7 @@ internal sealed partial class McpListedSkillsLoader
 
         foreach (McpListedSkillResourceEntry? resource in entry.Resources)
         {
-            // Reject null entries, e.g. "resources": [null], which deserialization can accept.
-            if (resource is null)
-            {
-                throw new InvalidOperationException($"Skill '{skillUri}' contains a null manifest entry.");
-            }
-
-            // Resources must stay under the skill root, e.g. skill://unit-converter/references/rates.md.
-            if (!resource.Uri.StartsWith(skillRootUri, StringComparison.Ordinal) ||
-                resource.Uri.Length == skillRootUri.Length ||
-                !AgentMcpListedSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
-            {
-                throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
-            }
-
-            if (!ResourceDigestRegex().IsMatch(resource.Digest))
-            {
-                throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a digest as 'sha256:' followed by 64 lowercase hexadecimal characters.");
-            }
-
-            if (resource.Size < 0)
-            {
-                throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a nonnegative size in bytes.");
-            }
+            this.ValidateResourceManifestEntry(resource, skillUri, skillRootUri);
 
             // Each resource URI must appear only once in the skill's resource list.
             if (!resourceUris.Add(resource.Uri))
@@ -186,6 +171,38 @@ internal sealed partial class McpListedSkillsLoader
         }
 
         return resources;
+    }
+
+    private void ValidateResourceManifestEntry([NotNull] McpListedSkillResourceEntry? resource, string skillUri, string skillRootUri)
+    {
+        // Reject null entries, e.g. "resources": [null], which deserialization can accept.
+        if (resource is null)
+        {
+            throw new InvalidOperationException($"Skill '{skillUri}' contains a null manifest entry.");
+        }
+
+        // Resources must stay under the skill root, e.g. skill://unit-converter/references/rates.md.
+        if (!resource.Uri.StartsWith(skillRootUri, StringComparison.Ordinal) ||
+            resource.Uri.Length == skillRootUri.Length ||
+            !AgentMcpListedSkill.IsResourceNameSafe(resource.Uri[skillRootUri.Length..]))
+        {
+            throw new InvalidOperationException($"Skill '{skillUri}' contains an invalid resource manifest entry.");
+        }
+
+        if (!ResourceDigestRegex().IsMatch(resource.Digest))
+        {
+            throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a digest as 'sha256:' followed by 64 lowercase hexadecimal characters.");
+        }
+
+        if (resource.Size < 0)
+        {
+            throw new InvalidOperationException($"Resource '{resource.Uri}' must specify a nonnegative size in bytes.");
+        }
+
+        if (resource.Size > this._maxResourceSizeBytes)
+        {
+            throw new InvalidOperationException($"Resource '{resource.Uri}' exceeds the maximum allowed size ({this._maxResourceSizeBytes} bytes).");
+        }
     }
 
     [GeneratedRegex(@"\Asha256:[0-9a-f]{64}\z", RegexOptions.CultureInvariant)]

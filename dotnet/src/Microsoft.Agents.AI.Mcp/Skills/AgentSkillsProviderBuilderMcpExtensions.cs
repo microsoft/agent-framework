@@ -15,7 +15,7 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// </summary>
     /// <param name="builder">The builder to extend.</param>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c> or <c>skill://index.json</c>.</param>
-    /// <param name="options">Optional options that control archive-distributed skill handling.</param>
+    /// <param name="options">Optional options that control skill loading.</param>
     /// <returns>The builder instance for chaining.</returns>
     /// <remarks>
     /// <para>
@@ -23,6 +23,8 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// <c>io.modelcontextprotocol/skills</c> extension. Otherwise, discovers skills through
     /// <c>skill://index.json</c>.
     /// Listed skills fetch instructions and supporting resources when requested.
+    /// Their resource sizes are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
+    /// These checks do not limit incoming messages before the supplied client receives and parses them.
     /// </para>
     /// <para>
     /// Listed skill discovery is based on the Skills extension specification incorporating the

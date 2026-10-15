@@ -8,6 +8,8 @@ namespace Microsoft.Agents.AI;
 /// Configuration options for <see cref="AgentMcpSkillsSource"/>.
 /// </summary>
 /// <remarks>
+/// The listed resource size limit bounds resource content processed by this source.
+/// These checks do not limit incoming messages before the supplied client receives and parses them.
 /// <strong>Security consideration:</strong> The archive limits (<see cref="ArchiveMaxFileCount"/>,
 /// <see cref="ArchiveMaxSizeBytes"/>, <see cref="ArchiveMaxUncompressedSizeBytes"/>) bound how much a
 /// single MCP server response can extract to local disk. Since the server supplying these archives is
@@ -16,6 +18,19 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed class AgentMcpSkillsSourceOptions
 {
+    /// <summary>
+    /// Gets or sets the maximum size, in bytes, of a resource discovered through <c>skills/list</c>,
+    /// including <c>SKILL.md</c>.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, defaults to <c>1 MiB</c> (<c>1,048,576</c> bytes).
+    /// Must be positive. Discovery rejects resources whose advertised sizes exceed the limit.
+    /// Reads also check actual UTF-8 text and decoded binary sizes before encoding text or decoding
+    /// blobs for integrity verification.
+    /// There is no combined resource-size limit per skill.
+    /// </remarks>
+    public long? ListedResourceMaxSizeBytes { get; set; }
+
     /// <summary>
     /// Gets or sets the base directory that archive-type skills are extracted to and served from.
     /// </summary>
