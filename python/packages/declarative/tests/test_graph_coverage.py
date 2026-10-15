@@ -2780,6 +2780,7 @@ class TestAgentExecutorExternalLoop:
             agent_name="TestAgent",
             agent_response="Hello",
             iteration=1,
+            workflow_session_id="workflow-a",
         )
         response = AgentExternalInputResponse(user_input="hi there")
 
@@ -2828,6 +2829,7 @@ class TestAgentExecutorExternalLoop:
             agent_name="NonExistentAgent",
             agent_response="Hello",
             iteration=1,
+            workflow_session_id="workflow-a",
         )
         response = AgentExternalInputResponse(user_input="continue")
 

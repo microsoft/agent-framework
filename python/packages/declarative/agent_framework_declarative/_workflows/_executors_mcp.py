@@ -53,6 +53,7 @@ from ._mcp_handler import (
     MCPToolInvocation,
     MCPToolResult,
     get_or_create_workflow_session_id,
+    get_request_workflow_session_id,
     restore_workflow_session_id,
 )
 
@@ -324,6 +325,8 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete, str],
     ) -> None:
         """Resume the pinned operation only with the reviewed header context."""
+        workflow_session_id = get_request_workflow_session_id(original_request.workflow_session_id)
+        restore_workflow_session_id(ctx.state, workflow_session_id)
         state = self._get_state(ctx.state)
 
         tool_name = original_request.tool_name
@@ -334,11 +337,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         auto_send = self._get_auto_send(state)
         output_messages_path = _get_output_path(self._action_def, "messages")
         output_result_path = _get_output_path(self._action_def, "result")
-
-        workflow_session_id = getattr(original_request, "workflow_session_id", None)
-        if workflow_session_id is None:
-            workflow_session_id = get_or_create_workflow_session_id(ctx.state)
-        restore_workflow_session_id(ctx.state, workflow_session_id)
 
         if response.approved is not True:
             logger.info(

@@ -81,12 +81,23 @@ arguments. Explicit caller tool arguments in options are preserved.
 - **`ExternalInputRequest`** / **`ExternalInputResponse`** - Human-in-the-loop support
 - **`AgentExternalInputRequest`** / **`AgentExternalInputResponse`** - Agent-level input requests
 
-`Question` and `RequestExternalInput` requests retain their originating workflow
-scope across fresh runs and checkpoint restores. Responses restore that scope
-before updating state or continuing execution. Factory-built workflows reject
-response batches spanning different scopes, including mixed MCP approvals and
-external input. Legacy external-input requests without a valid originating scope
-are rejected before consumption rather than inheriting the current scope.
+`Question`, `RequestExternalInput`, function approvals, MCP approvals, and agent
+external-input requests retain their originating workflow scope across fresh runs
+and checkpoint restores. Responses restore that scope before updating state or
+continuing execution. Agent external-input requests also retain their own
+`ExternalLoopState` rather than overwriting another pending request's configuration.
+Factory-built workflows reject response batches spanning different scopes across
+all four request families before consuming any responses.
+
+Legacy requests without an originating scope are rejected by default with recovery
+instructions. Hosts can opt in through
+`WorkflowFactory(migrate_legacy_request_scopes=True)`: each submitted legacy request
+receives a stable `legacy-request:<framework request ID>` scope. Migration never
+infers an origin from current state or recovers the old MCP session. Resume requests
+separately, preserve their framework IDs, and checkpoint the migrated continuation.
+Rejected mixed batches do not mutate request origins. Malformed stored origins
+are rejected even with migration enabled. Legacy agent loop configuration is read
+from the old checkpoint slot; newly emitted requests retain their own snapshot.
 
 ## Usage
 

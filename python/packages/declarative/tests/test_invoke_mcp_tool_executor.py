@@ -9,7 +9,9 @@ No real MCP server or network is exercised. See
 """
 
 import sys
+from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx2 as httpx
 import pytest
@@ -799,7 +801,7 @@ class TestFieldForwarding:
         from agent_framework import WorkflowBuilder
 
         from agent_framework_declarative._workflows import InvokeMcpToolActionExecutor, ToolApprovalResponse
-        from agent_framework_declarative._workflows._declarative_builder import _validate_mcp_response_batch
+        from agent_framework_declarative._workflows._declarative_builder import _validate_response_batch
         from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
 
         handler = StubMcpHandler(_ok())
@@ -809,7 +811,7 @@ class TestFieldForwarding:
             for name in ("first", "second")
         ]
         workflow = WorkflowBuilder(start_executor=entry).add_fan_out_edges(entry, actions).build()
-        workflow._response_batch_validator = _validate_mcp_response_batch
+        workflow._response_batch_validator = _validate_response_batch
         paused = await workflow.run({})
         approvals = paused.get_request_info_events()
         assert len(approvals) == 2
@@ -894,6 +896,335 @@ class TestFieldForwarding:
         assert inv is not None
         assert inv.server_label == "docs-mcp"
         assert inv.connection_name == "azure-conn"
+
+
+def _scope_pause_action(kind: str) -> dict[str, Any]:
+    actions: dict[str, dict[str, Any]] = {
+        "Question": {"kind": "Question", "question": "Continue?", "variable": "Local.answer"},
+        "RequestExternalInput": {
+            "kind": "RequestExternalInput",
+            "prompt": "Continue?",
+            "variable": "Local.answer",
+        },
+        "InvokeFunctionTool": {"kind": "InvokeFunctionTool", "functionName": "echo", "requireApproval": True},
+        "InvokeAzureAgent": {
+            "kind": "InvokeAzureAgent",
+            "agent": "TestAgent",
+            "input": {"externalLoop": {"when": '=Local.userInput <> "stop"'}},
+        },
+        "InvokeMcpTool": _action(require_approval=True),
+    }
+    return actions[kind]
+
+
+def _scope_pause_response(kind: str, user_input: str = "stop") -> Any:
+    from agent_framework_declarative._workflows import (
+        AgentExternalInputResponse,
+        ExternalInputResponse,
+        ToolApprovalResponse,
+    )
+
+    if kind == "InvokeAzureAgent":
+        return AgentExternalInputResponse(user_input=user_input)
+    if kind in ("InvokeFunctionTool", "InvokeMcpTool"):
+        return ToolApprovalResponse(approved=True)
+    return ExternalInputResponse(user_input=user_input)
+
+
+def _scope_checkpoint_storage(path: Path) -> Any:
+    from agent_framework import FileCheckpointStorage
+
+    return FileCheckpointStorage(
+        path,
+        allowed_checkpoint_types=[
+            "agent_framework_declarative._workflows._declarative_base:ActionComplete",
+            "agent_framework_declarative._workflows._declarative_base:ActionTrigger",
+            "agent_framework_declarative._workflows._executors_tools:ToolApprovalRequest",
+            "agent_framework_declarative._workflows._executors_tools:ToolApprovalResponse",
+            "agent_framework_declarative._workflows._executors_mcp:MCPToolApprovalRequest",
+            "agent_framework_declarative._workflows._executors_agents:AgentExternalInputRequest",
+            "agent_framework_declarative._workflows._executors_agents:AgentExternalInputResponse",
+            "agent_framework_declarative._workflows._executors_agents:ExternalLoopState",
+            "agent_framework_declarative._workflows._executors_external_input:ExternalInputRequest",
+            "agent_framework_declarative._workflows._executors_external_input:ExternalInputResponse",
+        ],
+    )
+
+
+class TestRequestScopeContinuations:
+    @pytest.mark.parametrize("pause_kind", ["InvokeFunctionTool", "InvokeAzureAgent"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_remaining_request_types_restore_originating_scope(
+        self, tmp_path: Path, pause_kind: str, streaming: bool, restore: bool
+    ) -> None:
+        storage = _scope_checkpoint_storage(tmp_path)
+        handler = StubMcpHandler(_ok())
+        function = MagicMock(return_value="done")
+        agent = MagicMock(run=AsyncMock(return_value="Need input"))
+        factory = WorkflowFactory(mcp_tool_handler=handler, agents={"TestAgent": agent}).register_tool("echo", function)
+        definition = {
+            "name": "request_continuations",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {"kind": "SetValue", "path": "Local.userInput", "value": ""},
+                {**_scope_pause_action(pause_kind), "id": "pause"},
+                {**_action(tool_name="after"), "id": "after"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        requests: list[Any] = []
+        for _ in range(2):
+            await workflow.run({}, checkpoint_storage=storage)
+            [request] = [
+                event
+                for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+                if event.request_id not in {previous.request_id for previous in requests}
+            ]
+            requests.append(request)
+        scopes = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert scopes[0] and scopes[1] and scopes[0] != scopes[1]
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+            assert set(await workflow._runner_context.get_pending_request_info_events()) == {
+                request.request_id for request in requests
+            }
+
+        for request, scope in zip(requests, scopes, strict=True):
+            responses = {request.request_id: _scope_pause_response(pause_kind)}
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+            assert handler.invocations[-1].tool_name == "after"
+            assert handler.invocations[-1].workflow_session_id == scope
+        assert handler.call_count == 4
+        assert function.call_count == (2 if pause_kind == "InvokeFunctionTool" else 0)
+        assert not await workflow._runner_context.get_pending_request_info_events()
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_repeated_agent_input_retains_its_own_loop_state(self, tmp_path: Path, streaming: bool) -> None:
+        from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
+
+        storage = _scope_checkpoint_storage(tmp_path)
+        handler = StubMcpHandler(_ok())
+        agent = MagicMock(run=AsyncMock(return_value="Need input"))
+        factory = WorkflowFactory(mcp_tool_handler=handler, agents={"TestAgent": agent})
+        definition = {
+            "name": "repeated_agent_input",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {"kind": "SetValue", "path": "Local.userInput", "value": ""},
+                {**_scope_pause_action("InvokeAzureAgent"), "id": "pause"},
+                {**_action(tool_name="after"), "id": "after"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({})
+        [first] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        await workflow.run({})
+        [second] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != first.request_id
+        ]
+        first_scope, second_scope = [invocation.workflow_session_id for invocation in handler.invocations]
+        await workflow.run(
+            responses={first.request_id: _scope_pause_response("InvokeAzureAgent", "continue")},
+            checkpoint_storage=storage,
+        )
+        assert get_or_create_workflow_session_id(workflow._runner.state) == first_scope
+        [repeated] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != second.request_id
+        ]
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        for request, scope in ((second, second_scope), (repeated, first_scope)):
+            responses = {request.request_id: _scope_pause_response("InvokeAzureAgent")}
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+            assert handler.invocations[-1].tool_name == "after"
+            assert handler.invocations[-1].workflow_session_id == scope
+        assert handler.call_count == 4
+        assert agent.run.await_count == 3
+        assert not await workflow._runner_context.get_pending_request_info_events()
+
+    @pytest.mark.parametrize("pause_kind", ["InvokeFunctionTool", "InvokeAzureAgent"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_mixed_request_families_reject_different_scopes(self, pause_kind: str, streaming: bool) -> None:
+        handler = StubMcpHandler(_ok())
+        function = MagicMock(return_value="done")
+        agent = MagicMock(run=AsyncMock(return_value="Need input"))
+        factory = WorkflowFactory(mcp_tool_handler=handler, agents={"TestAgent": agent}).register_tool("echo", function)
+        workflow = factory.create_workflow_from_definition({
+            "name": "mixed_request_scopes",
+            "actions": [
+                {"kind": "Question", "question": "Continue?", "variable": "Local.answer"},
+                {"kind": "SetValue", "path": "Local.userInput", "value": ""},
+                {**_scope_pause_action(pause_kind), "id": "pause"},
+                _action(),
+            ],
+        })
+        await workflow.run({})
+        [first] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        await workflow.run({})
+        [second] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != first.request_id
+        ]
+        await workflow.run(responses={second.request_id: _scope_pause_response("Question")})
+        [second] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != first.request_id
+        ]
+        responses = {
+            first.request_id: _scope_pause_response("Question"),
+            second.request_id: _scope_pause_response(pause_kind),
+        }
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+        assert handler.call_count == 0
+        function.assert_not_called()
+        assert agent.run.await_count == (1 if pause_kind == "InvokeAzureAgent" else 0)
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == set(responses)
+
+    async def test_legacy_mcp_origin_is_rejected_before_consumption(self) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+        await workflow.run({})
+        [legacy] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        legacy.data.workflow_session_id = None
+        await workflow.run({})
+
+        with pytest.raises(DeclarativeWorkflowError, match="migrate_legacy_request_scopes"):
+            await workflow.run(responses={legacy.request_id: _scope_pause_response("InvokeMcpTool")})
+
+        assert handler.call_count == 0
+        assert legacy.request_id in await workflow._runner_context.get_pending_request_info_events()
+
+    @pytest.mark.parametrize(
+        "pause_kind", ["Question", "RequestExternalInput", "InvokeFunctionTool", "InvokeAzureAgent", "InvokeMcpTool"]
+    )
+    async def test_opt_in_legacy_migration_survives_file_checkpoints(self, tmp_path: Path, pause_kind: str) -> None:
+        storage = _scope_checkpoint_storage(tmp_path)
+        handler = StubMcpHandler(_ok())
+        agent = MagicMock(run=AsyncMock(return_value="Need input"))
+        function = MagicMock(return_value="done")
+        factory = WorkflowFactory(mcp_tool_handler=handler, agents={"TestAgent": agent}).register_tool("echo", function)
+        definition = {
+            "name": "legacy_request_migration",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {"kind": "SetValue", "path": "Local.userInput", "value": ""},
+                {**_scope_pause_action(pause_kind), "id": "pause"},
+                {**_action(tool_name="after"), "id": "after"},
+                {**_scope_pause_action("Question"), "id": "followup"},
+                {**_action(tool_name="done"), "id": "done"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({}, checkpoint_storage=storage)
+        await workflow.run({}, checkpoint_storage=storage)
+        original_scopes = {invocation.workflow_session_id for invocation in handler.invocations}
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        checkpoint = await storage.load(checkpoint_id)
+        assert len(checkpoint.pending_request_info_events) == 2
+        for event in checkpoint.pending_request_info_events.values():
+            event.data.workflow_session_id = None
+            if pause_kind == "InvokeAzureAgent":
+                from agent_framework_declarative._workflows._executors_agents import EXTERNAL_LOOP_STATE_KEY
+
+                checkpoint.state[EXTERNAL_LOOP_STATE_KEY] = event.data.loop_state
+                del event.data.loop_state
+        await storage.save(checkpoint)
+        first_id, second_id = checkpoint.pending_request_info_events
+
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        with pytest.raises(DeclarativeWorkflowError, match="migrate_legacy_request_scopes"):
+            await workflow.run(responses={first_id: _scope_pause_response(pause_kind)})
+        assert handler.call_count == 2
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == {first_id, second_id}
+
+        migration_factory = WorkflowFactory(
+            mcp_tool_handler=handler, agents={"TestAgent": agent}, migrate_legacy_request_scopes=True
+        ).register_tool("echo", function)
+        workflow = migration_factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            await workflow.run(
+                responses={
+                    first_id: _scope_pause_response(pause_kind),
+                    second_id: _scope_pause_response(pause_kind),
+                }
+            )
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        assert all(event.data.workflow_session_id is None for event in pending.values())
+        assert handler.call_count == 2
+        function.assert_not_called()
+
+        migrated_scopes: list[str] = []
+        for _ in range(2):
+            workflow = migration_factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+            before = handler.call_count
+            await workflow.run(responses={first_id: _scope_pause_response(pause_kind)}, checkpoint_storage=storage)
+            scope = handler.invocations[-1].workflow_session_id
+            assert scope and scope not in original_scopes
+            assert all(invocation.workflow_session_id == scope for invocation in handler.invocations[before:])
+            migrated_scopes.append(scope)
+        assert migrated_scopes[0] == migrated_scopes[1]
+
+        migrated_checkpoint_id = workflow.get_last_checkpoint_id()
+        assert migrated_checkpoint_id is not None
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=migrated_checkpoint_id, checkpoint_storage=storage)
+        pending = await workflow._runner_context.get_pending_request_info_events()
+        [followup] = [event for event in pending.values() if event.request_id != second_id]
+        assert followup.data.workflow_session_id == migrated_scopes[0]
+        await workflow.run(responses={followup.request_id: _scope_pause_response("Question")})
+        assert handler.invocations[-1].tool_name == "done"
+        assert handler.invocations[-1].workflow_session_id == migrated_scopes[0]
+
+        migrated_checkpoint = await storage.load(migrated_checkpoint_id)
+        workflow = migration_factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=migrated_checkpoint.checkpoint_id, checkpoint_storage=storage)
+        await workflow.run(responses={second_id: _scope_pause_response(pause_kind)})
+        assert handler.invocations[-1].tool_name == "after"
+        assert handler.invocations[-1].workflow_session_id not in original_scopes | set(migrated_scopes)
+
+    @pytest.mark.parametrize("invalid_scope", ["", 42])
+    @pytest.mark.parametrize("migrate", [False, True])
+    async def test_migration_does_not_replace_invalid_scopes(self, invalid_scope: Any, migrate: bool) -> None:
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler, migrate_legacy_request_scopes=migrate)
+        workflow = factory.create_workflow_from_definition(_yaml(_action(require_approval=True)))
+        await workflow.run({})
+        [request] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        request.data.workflow_session_id = invalid_scope
+
+        with pytest.raises(DeclarativeWorkflowError, match="Invalid originating workflow session"):
+            await workflow.run(responses={request.request_id: _scope_pause_response("InvokeMcpTool")})
+
+        assert handler.call_count == 0
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == {request.request_id}
 
 
 # ---------- Output handling ------------------------------------------------
@@ -1251,6 +1582,7 @@ class TestApprovalFlow:
                 server_url="https://mcp.example/api",
                 server_label=None,
                 arguments={},
+                workflow_session_id="workflow-a",
             ),
             ToolApprovalResponse(approved=False, reason="not authorized"),
             mock_context,

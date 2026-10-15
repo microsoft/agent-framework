@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkab
 
 import httpx2 as httpx
 
+from ._errors import DeclarativeWorkflowError
+
 if TYPE_CHECKING:
     from agent_framework import Content
     from agent_framework._workflows._state import State
@@ -111,6 +113,19 @@ def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
     # A response resumes its originating scope, not the latest agent turn's scope.
     state.set(_WORKFLOW_AGENT_SESSION_ID_KEY, None)
     state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
+
+
+def get_request_workflow_session_id(workflow_session_id: str | None) -> str:
+    """Validate a pending request's scope without inferring it from the active run."""
+    if workflow_session_id is None:
+        raise DeclarativeWorkflowError(
+            "Request is missing a valid originating workflow session. "
+            "Restore the checkpoint with WorkflowFactory(migrate_legacy_request_scopes=True) "
+            "to resume legacy requests in isolated scopes, or restart the workflow."
+        )
+    if not isinstance(workflow_session_id, str) or not workflow_session_id:
+        raise DeclarativeWorkflowError("Invalid originating workflow session state.")
+    return workflow_session_id
 
 
 @dataclass
