@@ -1,6 +1,6 @@
 # Get Started with Microsoft Agent Framework Foundry Local
 
-Requires Python 3.11-3.14 and Foundry Local SDK 2.1 or newer (below 3.0).
+Requires Python 3.11-3.14 and Foundry Local SDK 2.1 or newer.
 Install the integration:
 
 ```bash
@@ -163,8 +163,6 @@ configuration before relying on it.
 ## Migration from SDK 0.5.1
 
 This is a breaking SDK migration: Python 3.10 and SDK 0.5.1/1.x are no longer supported.
-Python 3.15 is excluded because SDK 2.1 pins ONNX Runtime 1.30.0, which does not yet
-publish Python 3.15 wheels.
 Update SDK imports from `foundry_local` to `foundry_local_sdk`. Use
 `client.manager.catalog.list_models()` instead of `list_catalog_models()`, inspect
 metadata through `model.info`, and call `download()`/`load()` on catalog model objects
