@@ -30,9 +30,9 @@ relying on remembered preview-era syntax.
   with instructions, tools, middleware, context providers, and session handling behind one `run(...)` interface.
 - A **harness agent** is a regular `Agent` assembled by `create_harness_agent`. It adds an opinionated set of context
   providers and middleware; it does not introduce a separate agent abstraction.
-- A **workflow** coordinates explicit execution paths. Graph workflows and orchestration builders can use multiple
-  `SupportsAgentRun` implementations as participants or executors and combine them sequentially, concurrently, through
-  handoffs, group chat, Magentic coordination, or custom routing.
+- A **workflow** coordinates explicit execution paths. Graph workflows and most orchestration builders can use multiple
+  `SupportsAgentRun` implementations or executors. `HandoffBuilder` is the exception: its participants must be concrete
+  `Agent` instances.
 
 ## User interface options
 
@@ -86,13 +86,16 @@ configuration. The endpoint is for MCP clients and returns an error when opened 
 1. Search Microsoft Learn with `microsoft_docs_search`.
 2. Fetch the relevant page with `microsoft_docs_fetch`.
 3. Use `microsoft_code_sample_search` when a current implementation example is needed.
-4. If Learn MCP is unavailable, use the equivalent `mslearn` command:
+4. If Learn MCP is unavailable and a trusted `mslearn` CLI is already installed, use the equivalent command:
 
-| MCP tool | CLI fallback |
+| MCP tool | Preinstalled CLI |
 | --- | --- |
-| `microsoft_docs_search(query="...")` | `npx @microsoft/learn-cli search "..."` |
-| `microsoft_docs_fetch(url="...")` | `npx @microsoft/learn-cli fetch "..."` |
-| `microsoft_code_sample_search(query="...", language="python")` | `npx @microsoft/learn-cli code-search "..." --language python` |
+| `microsoft_docs_search(query="...")` | `mslearn search "..."` |
+| `microsoft_docs_fetch(url="...")` | `mslearn fetch "..."` |
+| `microsoft_code_sample_search(query="...", language="python")` | `mslearn code-search "..." --language python` |
+
+Do not fetch and execute an unpinned CLI package during a coding session. Use the
+[official Microsoft Learn MCP/CLI setup](https://github.com/MicrosoftDocs/mcp) to install or update it intentionally.
 
 Canonical starting points:
 

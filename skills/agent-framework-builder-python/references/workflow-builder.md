@@ -20,7 +20,8 @@ docstrings for signatures and execution options.
 
 - A functional workflow definition must be built before running; each built workflow owns mutable execution state.
 - Build fresh workflows when executors or wrapped agents hold run-specific state.
-- Any `SupportsAgentRun` implementation can participate where an agent executor is accepted.
+- Builders that accept `SupportsAgentRun` can use custom or remote agent implementations. `HandoffBuilder` accepts
+  concrete `Agent` participants only.
 - Use standard sequential, concurrent, handoff, group-chat, or Magentic builders before recreating those patterns.
 - Select caller-facing output separately from intermediate progress.
 - Wrap a workflow as an agent only when callers require the agent contract. Prefer native workflow hosting when the
