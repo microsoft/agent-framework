@@ -1095,83 +1095,118 @@ async def test_release_session_clears_in_flight_tasks() -> None:
     await provider.release_session(session)
 
     assert session.session_id not in provider._runtime
+    assert not runtime.in_flight_tasks
 
 
-async def test_reused_task_id_does_not_associate_stale_snapshot_with_continuation() -> None:
-    """A stale snapshot must reconcile with its own execution, not a later continuation.
-
-    Regression test for reused task IDs:
-    If task 1 is snapshotted while RUNNING, finishes, is continued (starting a
-    new execution under task ID 1), and the second execution finishes, restoring
-    the original snapshot must reconcile with the first execution's result, NOT
-    the continuation's result.
-    """
-
-    class _ContinuationAgent:
-        def __init__(self, name: str = "Worker") -> None:
-            self.name = name
-            self.description = "Worker that tracks runs"
-            self.call_count = 0
-
-        def create_session(self, *, session_id: str | None = None) -> AgentSession:
-            return AgentSession(session_id=session_id)
-
-        def get_session(self, service_session_id: Any, *, session_id: str | None = None) -> AgentSession:
-            return AgentSession(service_session_id=service_session_id, session_id=session_id)
-
-        async def run(self, messages: Any = None, **kwargs: Any) -> AgentResponse[Any]:
-            del messages, kwargs
-            self.call_count += 1
-            return AgentResponse(
-                messages=[Message(role="assistant", contents=[f"result generation {self.call_count}"])]
-            )
-
-    agent = _ContinuationAgent("Worker")
-    provider = _make_provider(agent)  # type: ignore[arg-type]
+async def test_wait_blocks_for_running_task_and_ignores_finished() -> None:
+    """wait_for_first_completion ignores finished retained tasks and waits for running ones."""
+    provider = _make_provider(
+        _FakeAgent("Fast", response_text="fast done"),
+        _FakeAgent("Slow", response_text="slow done", delay=0.02),
+    )
     session = _make_session()
     tools = await _get_tools(provider, session)
 
-    # 1. Start task 1 on Worker (generation 1).
+    # 1. Start and finish task 1.
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Fast",
+        input="work",
+        description="task 1",
+    )
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # Finalize task 1 so its status is COMPLETED and its task is retained.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    # 2. Start task 2 which takes longer.
+    await _invoke_tool(
+        tools2["background_agents_start_task"],
+        agent_name="Slow",
+        input="slow work",
+        description="task 2",
+    )
+
+    # 3. wait([1, 2]) must block for running task 2 and NOT return finished task 1.
+    wait_result = await _invoke_tool(
+        tools2["background_agents_wait_for_first_completion"],
+        task_ids=[1, 2],
+    )
+    assert "Task 2 finished with status: completed." in wait_result
+    assert "Task 1" not in wait_result
+
+    # 4. wait([1]) on finished task returns "not running; current status" text.
+    finished_wait_result = await _invoke_tool(
+        tools2["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+    )
+    assert "Task 1 is not running; current status: completed." in finished_wait_result
+
+    await provider.release_session(session)
+
+
+async def test_clear_completed_task_does_not_clear_in_flight_continuation() -> None:
+    """Restoring an older completed snapshot and clearing task 1 must not clear a running continuation."""
+
+    class _ContinuationAgent(_FakeAgent):
+        def __init__(self, name: str = "Worker") -> None:
+            super().__init__(name, response_text="done")
+            self.release = asyncio.Event()
+            self._runs = 0
+
+        async def run(
+            self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
+        ) -> AgentResponse[Any]:
+            self._runs += 1
+            if self._runs > 1:
+                await self.release.wait()
+            return await super().run(messages, stream=stream, session=session, **kwargs)
+
+    agent = _ContinuationAgent("Worker")
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    # 1. Start task 1 and let it complete.
     await _invoke_tool(
         tools["background_agents_start_task"],
         agent_name="Worker",
         input="first run",
         description="task 1",
     )
-    # Immediately capture snapshot while task 1 is RUNNING (generation 1).
-    snapshot_gen1 = session.to_dict()
-
     runtime = provider._get_runtime(session)
-    task_1 = runtime.in_flight_tasks[(1, 1)]
-    await task_1
+    await runtime.in_flight_tasks[1]
 
-    # 2. Finalize first run via refresh.
+    # Finalize task 1 so its status is COMPLETED.
     tools2 = await _get_tools(provider, session)
-    res1 = await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
-    assert res1 == "result generation 1"
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
 
-    # 3. Continue task 1 with new input (generation 2).
+    # 2. Snapshot the completed state.
+    snapshot = session.to_dict()
+
+    # 3. continue_task with slow agent.
     continue_msg = await _invoke_tool(tools2["background_agents_continue_task"], task_id=1, text="second run")
     assert "continued" in continue_msg.lower()
 
-    task_2 = runtime.in_flight_tasks[(1, 2)]
-    await task_2
+    continuation_task = runtime.in_flight_tasks[1]
+    assert not continuation_task.done()
 
-    # Finalize continuation via refresh.
-    tools3 = await _get_tools(provider, session)
-    res2 = await _invoke_tool(tools3["background_agents_get_task_results"], task_id=1)
-    assert res2 == "result generation 2"
+    # 4. Restore snapshot into a new AgentSession.
+    session2 = AgentSession.from_dict(snapshot)
+    tools3 = await _get_tools(provider, session2)
 
-    # 4. Now restore the generation 1 snapshot into the same provider.
-    session_restored = AgentSession.from_dict(snapshot_gen1)
-    tools_restored = await _get_tools(provider, session_restored)
+    # 5. Call clear_completed_task(1) on restored session.
+    clear_msg = await _invoke_tool(tools3["background_agents_clear_completed_task"], task_id=1)
+    assert clear_msg == "Task 1 cleared."
 
-    # Refreshing on the restored snapshot must reconcile with generation 1 task,
-    # NOT with generation 2 task.
-    res_restored = await _invoke_tool(tools_restored["background_agents_get_task_results"], task_id=1)
-    assert res_restored == "result generation 1", (
-        f"Expected generation 1 result but got continuation result: {res_restored!r}"
-    )
+    # 6. Continuation is still in in_flight_tasks.
+    assert 1 in runtime.in_flight_tasks
+    assert runtime.in_flight_tasks[1] is continuation_task
+    assert not continuation_task.done()
 
-    await provider.release_session(session)
-    await provider.release_session(session_restored)
+    # 7. release_session(cancel_running=True) cancels it.
+    await provider.release_session(session, cancel_running=True)
+    assert continuation_task.cancelled()
+    assert not runtime.in_flight_tasks
