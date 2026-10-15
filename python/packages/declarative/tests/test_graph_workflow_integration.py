@@ -10,6 +10,7 @@ These tests verify:
 """
 
 import sys
+from typing import Any
 
 import pytest
 
@@ -25,11 +26,156 @@ pytestmark = pytest.mark.skipif(
     reason="PowerFx engine not available (requires dotnet runtime)",
 )
 
+from agent_framework import InMemoryCheckpointStorage  # noqa: E402
+
 from agent_framework_declarative._workflows import (  # noqa: E402
     ActionTrigger,
     DeclarativeWorkflowBuilder,
 )
+from agent_framework_declarative._workflows._declarative_base import LoopControl  # noqa: E402
 from agent_framework_declarative._workflows._factory import WorkflowFactory  # noqa: E402
+
+
+class TestGraphWorkflowLoopControl:
+    """Exercise loop-control messages through the public workflow factory."""
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("stop_item", [1, 2, 3])
+    async def test_break_loop_stops_at_selected_item(self, stream: bool, stop_item: int) -> None:
+        definition = {
+            "kind": "Workflow",
+            "name": "break_selected_item",
+            "actions": [
+                {
+                    "kind": "Foreach",
+                    "source": [1, 2, 3],
+                    "actions": [
+                        {"kind": "SendActivity", "activity": "before"},
+                        {"kind": "If", "condition": f"=Local.item = {stop_item}", "then": [{"kind": "BreakLoop"}]},
+                        {"kind": "SendActivity", "activity": "after"},
+                    ],
+                },
+                {"kind": "SendActivity", "activity": "done"},
+            ],
+        }
+        workflow = WorkflowFactory().create_workflow_from_definition(definition)
+        if stream:
+            response = workflow.run({}, stream=True)
+            events = [event async for event in response]
+            result = await response.get_final_response()
+            assert [event.data for event in events if event.type == "output"] == result.get_outputs()
+        else:
+            result = await workflow.run({})
+        assert result.get_outputs() == ["before", "after"] * (stop_item - 1) + ["before", "done"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("continue_item", [1, 2, 3])
+    async def test_continue_loop_preserves_remaining_iterations(self, stream: bool, continue_item: int) -> None:
+        definition = {
+            "kind": "Workflow",
+            "name": "continue_selected_item",
+            "actions": [
+                {
+                    "kind": "Foreach",
+                    "source": [1, 2, 3],
+                    "actions": [
+                        {"kind": "SendActivity", "activity": "before"},
+                        {
+                            "kind": "If",
+                            "condition": f"=Local.item = {continue_item}",
+                            "then": [{"kind": "ContinueLoop"}],
+                        },
+                        {"kind": "SendActivity", "activity": "after"},
+                    ],
+                },
+                {"kind": "SendActivity", "activity": "done"},
+            ],
+        }
+        workflow = WorkflowFactory().create_workflow_from_definition(definition)
+        result = await workflow.run({}, stream=True).get_final_response() if stream else await workflow.run({})
+        expected = [
+            text for item in [1, 2, 3] for text in (["before"] if item == continue_item else ["before", "after"])
+        ]
+        assert result.get_outputs() == expected + ["done"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("source", [[], [1, 2, 3]])
+    async def test_break_loop_as_first_body_action(self, stream: bool, source: list[int]) -> None:
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "kind": "Workflow",
+            "name": "break_first_action",
+            "actions": [
+                {"kind": "Foreach", "source": source, "actions": [{"kind": "BreakLoop", "id": "stop"}]},
+                {"kind": "SendActivity", "activity": "done"},
+            ],
+        })
+        result = await workflow.run({}, stream=True).get_final_response() if stream else await workflow.run({})
+        assert result.get_outputs() == ["done"]
+        assert sum(event.type == "executor_completed" and event.executor_id == "stop" for event in result) == bool(
+            source
+        )
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_nested_break_exits_only_inner_loop(self, stream: bool) -> None:
+        workflow = WorkflowFactory().create_workflow_from_definition({
+            "kind": "Workflow",
+            "name": "nested_break",
+            "actions": [
+                {
+                    "kind": "Foreach",
+                    "source": [1, 2],
+                    "itemName": "outer",
+                    "actions": [
+                        {"kind": "SendActivity", "activity": "outer-before"},
+                        {
+                            "kind": "Foreach",
+                            "source": [10, 20, 30],
+                            "itemName": "inner",
+                            "actions": [
+                                {"kind": "SendActivity", "activity": "inner"},
+                                {"kind": "BreakLoop"},
+                            ],
+                        },
+                        {"kind": "SendActivity", "activity": "outer-after"},
+                    ],
+                },
+                {"kind": "SendActivity", "activity": "done"},
+            ],
+        })
+        result = await workflow.run({}, stream=True).get_final_response() if stream else await workflow.run({})
+        assert result.get_outputs() == ["outer-before", "inner", "outer-after"] * 2 + ["done"]
+
+    @pytest.mark.parametrize(
+        "control_kind,expected", [("BreakLoop", ["done"]), ("ContinueLoop", ["body", "body", "done"])]
+    )
+    async def test_loop_control_restored_into_fresh_workflow(self, control_kind: str, expected: list[str]) -> None:
+        storage = InMemoryCheckpointStorage()
+        definition: dict[str, Any] = {
+            "kind": "Workflow",
+            "name": "restored_loop_control",
+            "actions": [
+                {
+                    "kind": "Foreach",
+                    "id": "loop",
+                    "source": [1, 2, 3],
+                    "actions": [
+                        {"kind": "SendActivity", "activity": "body"},
+                        {"kind": control_kind, "id": "control"},
+                    ],
+                },
+                {"kind": "SendActivity", "activity": "done"},
+            ],
+        }
+        workflow = WorkflowFactory(checkpoint_storage=storage).create_workflow_from_definition(definition)
+        await workflow.run({})
+        checkpoint = next(
+            checkpoint
+            for checkpoint in await storage.list_checkpoints(workflow_name=workflow.name)
+            if any(isinstance(message.data, LoopControl) for message in checkpoint.messages.get("control", []))
+        )
+        restored = WorkflowFactory(checkpoint_storage=storage).create_workflow_from_definition(definition)
+        result = await restored.run(checkpoint_id=checkpoint.checkpoint_id)
+        assert result.get_outputs() == expected
 
 
 class TestGraphBasedWorkflowExecution:

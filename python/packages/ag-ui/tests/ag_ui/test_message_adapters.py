@@ -962,7 +962,7 @@ def test_tool_approval_accepted_requires_real_boolean(accepted: Any, expected: b
     assert response.approved is expected
 
 
-def test_agui_tool_approval_updates_tool_call_arguments():
+def test_agui_tool_approval_updates_tool_call_arguments(caplog: pytest.LogCaptureFixture):
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
     The LLM context (Message) should contain only enabled steps, so the LLM
@@ -985,7 +985,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
                             "steps": [
                                 {"description": "Boil water", "status": "enabled"},
                                 {"description": "Brew coffee", "status": "enabled"},
-                                {"description": "Serve coffee", "status": "enabled"},
+                                {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
                             ]
                         },
                     },
@@ -1000,7 +1000,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
                     "accepted": True,
                     "steps": [
                         {"description": "Boil water", "status": "enabled"},
-                        {"description": "Serve coffee", "status": "enabled"},
+                        {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
                     ],
                 }
             ),
@@ -1009,7 +1009,8 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         },
     ]
 
-    messages = agui_messages_to_agent_framework(messages_input)
+    with caplog.at_level(logging.INFO, logger="agent_framework_ag_ui._message_adapters"):
+        messages = agui_messages_to_agent_framework(messages_input)
 
     assert len(messages) == 2
     assistant_msg = messages[0]
@@ -1018,7 +1019,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     assert func_call.arguments == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
     # Raw messages (for MESSAGES_SNAPSHOT) should have all steps with status
@@ -1026,7 +1027,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
         "steps": [
             {"description": "Boil water", "status": "enabled"},
             {"description": "Brew coffee", "status": "disabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
 
@@ -1038,15 +1039,16 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     assert approval_content.function_call.parse_arguments() == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
+    assert "SECRET-ARGUMENT" not in caplog.text
     assert approval_content.additional_properties is not None
     assert approval_content.additional_properties.get("ag_ui_state_args") == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
             {"description": "Brew coffee", "status": "disabled"},
-            {"description": "Serve coffee", "status": "enabled"},
+            {"description": "Serve coffee SECRET-ARGUMENT", "status": "enabled"},
         ]
     }
 
@@ -2610,6 +2612,21 @@ def test_convert_agui_content_unknown_source_type_fallback():
     assert result.uri == "https://example.com/img.png"
 
 
+@pytest.mark.parametrize("uri", ["file:///etc/passwd", "ftp://example.com/file", "custom://resource", "/relative"])
+def test_convert_agui_content_rejects_unsafe_uri_schemes(uri: str) -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Unsupported AG-UI multimodal URI scheme"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": uri}})
+
+
+def test_convert_agui_content_rejects_malformed_uri() -> None:
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    with pytest.raises(ValueError, match="Invalid AG-UI multimodal URI"):
+        _parse_multimodal_media_part({"type": "image", "source": {"type": "url", "url": "http://[::1"}})
+
+
 def test_convert_agui_content_data_uri_prefix():
     """base64 data starting with 'data:' is treated as data URI."""
     from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
@@ -2623,17 +2640,18 @@ def test_convert_agui_content_data_uri_prefix():
     assert result.uri == "data:image/png;base64,abc"
 
 
-def test_convert_agui_content_binary_id():
-    """Source with 'id' field creates ag-ui:// URI."""
-    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
-
-    part = {
-        "type": "image",
-        "source": {"type": "id", "id": "file123"},
-    }
-    result = _parse_multimodal_media_part(part)
-    assert result is not None
-    assert result.uri == "ag-ui://binary/file123"
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "image", "source": {"type": "id", "id": "file123"}},
+        {"type": "image", "source": {"type": "file", "id": "file123"}},
+        {"type": "image", "id": "file123"},
+    ],
+)
+def test_convert_agui_content_rejects_unresolved_binary_id(part: dict[str, Any]) -> None:
+    """Client-owned binary references require application resolution."""
+    with pytest.raises(ValueError, match="Unresolved AG-UI multimodal binary references"):
+        agui_messages_to_agent_framework([{"role": "user", "content": [part]}])
 
 
 def test_convert_agui_content_string_items_in_list():

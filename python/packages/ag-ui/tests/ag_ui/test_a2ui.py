@@ -174,13 +174,14 @@ def test_to_history_messages_extracts_tool_result_payload():
 # --------------------------------------------------------------------------- #
 
 
-def test_a2ui_agent_prepends_catalog_system_message():
+def test_a2ui_agent_adds_catalog_as_untrusted_user_data():
     slice_ = build_ag_ui_context_slice(
         [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
     )
     agent = A2UIAgent(_GenerateOnceInner(), _RenderSub(), context_slice=slice_)
     msgs = agent._with_context_prompt("hi", slice_)
-    assert _role(msgs[0]) == "system"
+    assert _role(msgs[0]) == "user"
+    assert "untrusted data" in msgs[0].text
     assert "Available Components" in msgs[0].text and "Card" in msgs[0].text
     assert _role(msgs[-1]) == "user"
 
@@ -404,6 +405,14 @@ def test_plan_injection_off_without_flag():
     assert plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props=None, existing_tool_names=[]) is None
     assert plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props={}, existing_tool_names=[]) is None
     assert (
+        plan_a2ui_injection(
+            agent=_AgentWithClient(),
+            forwarded_props={"injectA2UITool": True},
+            existing_tool_names=[],
+        )
+        is None
+    )
+    assert (
         plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props={"injectA2UITool": False}, existing_tool_names=[])
         is None
     )
@@ -414,6 +423,7 @@ def test_plan_injection_wraps_and_drops_render_tool():
         agent=_AgentWithClient(),
         forwarded_props={"injectA2UITool": True},
         existing_tool_names=["some_other_tool"],
+        config={"inject_a2ui_tool": True},
     )
     assert plan is not None
     assert is_a2ui_runner(plan)
@@ -425,6 +435,7 @@ def test_plan_injection_string_flag_names_render_tool_to_drop():
         agent=_AgentWithClient(),
         forwarded_props={"injectA2UITool": "render_custom"},
         existing_tool_names=[],
+        config={"inject_a2ui_tool": True},
     )
     assert plan is not None and plan.drop_tool_names == ["render_custom"]
 
@@ -434,18 +445,35 @@ def test_plan_injection_user_prevails_when_generate_already_wired():
         agent=_AgentWithClient(),
         forwarded_props={"injectA2UITool": True},
         existing_tool_names=["generate_a2ui"],
+        config={"inject_a2ui_tool": True},
     )
     assert plan is None
 
 
 def test_plan_injection_skips_already_wrapped_agent():
     wrapped = enable_a2ui(_AgentWithClient(), object())
-    assert plan_a2ui_injection(agent=wrapped, forwarded_props={"injectA2UITool": True}, existing_tool_names=[]) is None
+    assert (
+        plan_a2ui_injection(
+            agent=wrapped,
+            forwarded_props={"injectA2UITool": True},
+            existing_tool_names=[],
+            config={"inject_a2ui_tool": True},
+        )
+        is None
+    )
 
 
 def test_plan_injection_skips_when_no_client_inferable():
     agent = type("NoClient", (), {"id": "i", "name": "n", "description": "d"})()
-    assert plan_a2ui_injection(agent=agent, forwarded_props={"injectA2UITool": True}, existing_tool_names=[]) is None
+    assert (
+        plan_a2ui_injection(
+            agent=agent,
+            forwarded_props={"injectA2UITool": True},
+            existing_tool_names=[],
+            config={"inject_a2ui_tool": True},
+        )
+        is None
+    )
 
 
 def test_plan_injection_runtime_false_beats_backend_opt_in():
@@ -496,7 +524,11 @@ def test_run_agent_stream_auto_wraps_and_drops_render_tool(stub_agent):
     }
 
     async def _consume():
-        async for _ in run_agent_stream(input_data, agent, AgentConfig()):
+        async for _ in run_agent_stream(
+            input_data,
+            agent,
+            AgentConfig(a2ui_config={"inject_a2ui_tool": True}),
+        ):
             pass
 
     asyncio.run(_consume())
@@ -650,7 +682,7 @@ def test_forwarded_catalog_id_binds_surface_when_unconfigured():
 def test_planner_options_do_not_carry_context_slice():
     # The forwarded context slice must never reach the planner's chat client as a run
     # option: additional_properties is sent to the provider SDK, which rejects unknown
-    # keys. The slice rides in as a system message (A2UIAgent context prepend), and the
+    # keys. The slice rides in as untrusted user data (A2UIAgent context insertion), and the
     # A2UIAgent passes the caller's options through untouched.
     class _RecordInner:
         id = name = description = "planner"
@@ -2211,8 +2243,10 @@ def test_a2ui_agent_uses_per_request_context_over_constructor_and_honors_empty_o
             pass
 
     asyncio.run(go())
-    sys_text = inner.seen[0].text  # prepended system message
-    assert "NewCard" in sys_text and "OldCard" not in sys_text
+    context_text = inner.seen[0].text
+    assert _role(inner.seen[0]) == "user"
+    assert "untrusted data" in context_text
+    assert "NewCard" in context_text and "OldCard" not in context_text
 
     async def go_without_context():
         async for _ in runner.run("hi", stream=True, a2ui_context={}):

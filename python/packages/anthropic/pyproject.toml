@@ -20,11 +20,22 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
     "anthropic>=1.11.0,<2",
+]
+
+[dependency-groups]
+# boto3 is an ImportError-fallback optional import in _bedrock_client.py and
+# google-auth only appears in _vertex_client.py type annotations, so neither is
+# a runtime dependency. They are declared here so isolated source checks (the
+# dependency-bounds pyright probes) can resolve their APIs.
+dev = [
+    "boto3>=1.35.0,<2.0.0",
+    "google-auth>=2.0.0,<3.0.0",
 ]
 
 [tool.uv]
