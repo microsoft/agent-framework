@@ -77,7 +77,7 @@ internal sealed class InvokeFunctionToolExecutor(
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string functionName = this.GetFunctionName();
-        bool requireApproval = this.GetRequireApproval();
+        bool requireApproval = this.GetRequireApproval(functionName);
         Dictionary<string, object?>? arguments = this.GetArguments();
 
         // Per-invocation request id stamped on the outbound content.
@@ -522,14 +522,15 @@ internal sealed class InvokeFunctionToolExecutor(
         return new FunctionResultContent(callId, serialized);
     }
 
-    private bool GetRequireApproval()
+    private bool GetRequireApproval(string functionName)
     {
-        if (this.Model.RequireApproval is null)
-        {
-            return false;
-        }
+        bool requireApproval = this.Model.RequireApproval is not null
+            && this.Evaluator.GetValue(this.Model.RequireApproval).Value;
 
-        return this.Evaluator.GetValue(this.Model.RequireApproval).Value;
+        return requireApproval
+            || agentProvider.Functions?.FirstOrDefault(
+                f => string.Equals(f.Name, functionName, StringComparison.Ordinal))
+                ?.GetService<ApprovalRequiredAIFunction>() is not null;
     }
 
     private bool GetAutoSendValue()

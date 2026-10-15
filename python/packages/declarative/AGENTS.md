@@ -14,6 +14,13 @@ YAML/JSON-based declarative agent and workflow definitions.
 
 Both state classes validate object attribute names but leave dictionary keys unchanged.
 
+`DefaultHttpRequestHandler(max_response_body_bytes=...)` defaults to a 10 MiB
+wire and decoded-stage body limit, including redirect and authentication responses.
+It supports identity, gzip, and deflate, rejects unsupported or incomplete encodings,
+and closes response streams without closing caller-owned clients.
+HTTPX is constrained to the 0.27 and 0.28 series; focused CI checks both
+series because response caching and default-header integration use its internals.
+
 ## MCP Handler Lifetimes
 
 `DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.

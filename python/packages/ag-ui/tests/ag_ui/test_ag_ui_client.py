@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     tool,
 )
@@ -1238,8 +1239,8 @@ class TestAGUIChatClient:
 
         assert response is not None
 
-    async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch: MonkeyPatch) -> None:
-        """Ensure server-side tool calls are exposed as FunctionCallContent after processing."""
+    async def test_server_tool_calls_are_marked_hosted(self, monkeypatch: MonkeyPatch) -> None:
+        """Ensure server-side tool calls remain function calls and are not locally actionable."""
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -1266,6 +1267,7 @@ class TestAGUIChatClient:
         ]
         assert function_calls
         assert function_calls[0].name == "get_time_zone"
+        assert function_calls[0].hosted is True
 
         assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
 
@@ -1344,15 +1346,6 @@ class TestAGUIChatClient:
         assert result_messages == []
         assert state is None
 
-    async def test_register_server_tool_non_dict_config(self) -> None:
-        """Non-dict function_invocation_configuration is a no-op."""
-        client = StubAGUIChatClient(
-            endpoint="http://localhost:8888/",
-            function_invocation_configuration=None,  # type: ignore[arg-type]
-        )
-        # Should not raise
-        client._register_server_tool_placeholder("some_tool")
-
     async def test_non_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
         """Non-streaming path collects updates into ChatResponse."""
         mock_events = [
@@ -1386,6 +1379,7 @@ class TestAGUIChatClient:
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
             {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "my_tool"},
             {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"param": "test"}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
@@ -1413,6 +1407,180 @@ class TestAGUIChatClient:
                     found = True
                     break
         assert found, "Expected to find function_call content for my_tool"
+
+    async def test_run_error_invalidates_partial_client_tool_call(self, monkeypatch: MonkeyPatch) -> None:
+        """RUN_ERROR invalidates exposed local client-tool fragments."""
+        executed: list[str] = []
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            events = [
+                {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "unsafe"}'},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+            ]
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        with pytest.raises(ResponseInvalidatedException, match="invalidated partial output"):
+            await client.get_response(
+                [Message(role="user", contents=["Test"])],
+                options={"tools": [write_value]},
+            )
+
+        assert executed == []
+
+    async def test_streaming_run_error_invalidates_partial_client_tool_call(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Streaming exposes partial deltas but invalidates iteration and finalization."""
+        executed: list[str] = []
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            for event in [
+                {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "unsafe"}'},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+            ]:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.get_response(
+            [Message(role="user", contents=["Test"])],
+            stream=True,
+            options={"tools": [write_value]},
+        )
+        assert isinstance(stream, ResponseStream)
+        updates: list[ChatResponseUpdate] = []
+        with pytest.raises(ResponseInvalidatedException, match="invalidated partial output") as iteration_error:
+            async for update in stream:
+                updates.append(update)
+
+        assert any(content.type == "function_call" for update in updates for content in update.contents)
+        with pytest.raises(ResponseInvalidatedException) as finalization_error:
+            await stream.get_final_response()
+        assert finalization_error.value is iteration_error.value
+        assert executed == []
+
+    async def test_complete_client_tool_call_does_not_require_tool_call_end(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Complete provider arguments remain executable without TOOL_CALL_END."""
+        executed: list[str] = []
+        call_count = 0
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            del args, kwargs
+            call_count += 1
+            events = (
+                [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "safe"}'},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+                if call_count == 1
+                else [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            )
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [write_value]},
+        )
+
+        assert response.text == "done"
+        assert executed == ["safe"]
+        assert call_count == 2
+
+    async def test_streaming_complete_client_tool_call_does_not_require_tool_call_end(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Streaming finalization executes a complete call once without TOOL_CALL_END."""
+        executed: list[str] = []
+        call_count = 0
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            del args, kwargs
+            call_count += 1
+            events = (
+                [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "safe"}'},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+                if call_count == 1
+                else [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            )
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.get_response(
+            [Message(role="user", contents=["Test"])],
+            stream=True,
+            options={"tools": [write_value]},
+        )
+        assert isinstance(stream, ResponseStream)
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+
+        assert any(update.text == "done" for update in updates)
+        assert response.text == "done"
+        assert executed == ["safe"]
+        assert call_count == 2
 
     async def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(
         self, monkeypatch: MonkeyPatch

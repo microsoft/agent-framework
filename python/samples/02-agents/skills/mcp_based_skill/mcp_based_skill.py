@@ -43,7 +43,7 @@ async def main() -> None:
     print("-" * 60)
 
     # 1. Connect to the MCP server over streamable HTTP.
-    async with streamable_http_client(url=mcp_url) as (read, write, _), ClientSession(read, write) as session:
+    async with streamable_http_client(url=mcp_url) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
 
         # 2. Build a SkillsProvider that discovers skills over MCP.

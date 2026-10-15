@@ -45,7 +45,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 - **Follow `python-package-management` for package lifecycle and versioning rules** — do not duplicate those
   rules in this release workflow.
 - **No `Co-Authored-By` trailer** on any commit.
-- **Use `uv run`** for all Python/poe commands (`uv run poe ...`, `uv run pytest ...`).
+- **Use `uv run`** for cross-version Python/Poe commands and add the relevant
+  `tooling/requirements-*.txt` bundle only for single-version tools.
 - **Never rename an existing CHANGELOG section header** during a new release cut. Only INSERT a new section above existing ones.
 - **Footer reference links are part of the CHANGELOG edit**, not optional.
 
@@ -85,8 +86,8 @@ Use the LATEST released tag as the compare base:
 
 ```bash
 LAST_RELEASED_TAG=$(
-  git tag -l 'python-[0-9]*.[0-9]*.[0-9]*' \
-    | uv run --directory python python -c 'import sys; tags=[t.strip() for t in sys.stdin if t.strip()]; print(max(tags, key=lambda t: tuple(map(int, t[7:].split(".")))))'
+  git tag -l 'python-*' \
+    | uv run --directory python python -c 'import re, sys; tags=[t.strip() for t in sys.stdin if re.fullmatch(r"python-\d+\.\d+\.\d+", t.strip())]; print(max(tags, key=lambda t: tuple(map(int, t[7:].split(".")))))'
 )
 echo "Compare base: $LAST_RELEASED_TAG"
 ```
@@ -321,7 +322,7 @@ If `core` did not bump this cycle, do not touch floors.
 ### 7. Validate
 
 ```bash
-cd python && uv run poe validate-python-release --base-ref "$RELEASE_BASE"
+cd python && uv run --group tool-runtime poe validate-python-release --base-ref "$RELEASE_BASE"
 ```
 
 Use the same freshly fetched main ref that the release branch was based on (`upstream/main` above; use `origin/main`

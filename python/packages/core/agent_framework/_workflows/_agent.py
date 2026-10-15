@@ -29,7 +29,9 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     add_usage_details,
+    merge_additional_properties,
 )
 from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
@@ -672,25 +674,25 @@ class WorkflowAgent(BaseAgent):
             if isinstance(data, AgentResponseUpdate):
                 # Construct a fresh AgentResponseUpdate so we don't mutate a payload
                 # that AgentExecutor still holds a reference to in its `updates` list.
-                return [
-                    AgentResponseUpdate(
-                        contents=list(data.contents),
-                        role=data.role,
-                        author_name=data.author_name or executor_id,
-                        agent_id=data.agent_id,
-                        response_id=data.response_id,
-                        message_id=data.message_id,
-                        created_at=data.created_at,
-                        # The attribute is typed wider than the constructor accepts (custom
-                        # connectors may set any string); forward the value unchanged.
-                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
-                        continuation_token=data.continuation_token,
-                        additional_properties=dict(data.additional_properties)
-                        if data.additional_properties is not None
-                        else None,
-                        raw_representation=data.raw_representation,
-                    )
-                ]
+                update = AgentResponseUpdate(
+                    contents=list(data.contents),
+                    role=data.role,
+                    author_name=data.author_name or executor_id,
+                    agent_id=data.agent_id,
+                    response_id=data.response_id,
+                    message_id=data.message_id,
+                    created_at=data.created_at,
+                    # The attribute is typed wider than the constructor accepts (custom
+                    # connectors may set any string); forward the value unchanged.
+                    finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                    continuation_token=data.continuation_token,
+                    additional_properties=dict(data.additional_properties)
+                    if data.additional_properties is not None
+                    else None,
+                    raw_representation=data.raw_representation,
+                )
+                _copy_operation_state(data, update)
+                return [update]
             if isinstance(data, AgentResponse):
                 # Convert each message in AgentResponse to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
@@ -711,6 +713,7 @@ class WorkflowAgent(BaseAgent):
                     updates[-1].agent_id = data.agent_id
                     updates[-1].finish_reason = data.finish_reason
                     updates[-1].continuation_token = data.continuation_token
+                    _copy_operation_state(cast(AgentResponse[Any], data), updates[-1])
                     updates[-1].additional_properties = dict(data.additional_properties)
                 return updates
             if isinstance(data, Message):
@@ -970,7 +973,10 @@ class WorkflowAgent(BaseAgent):
                 created_at=incoming.created_at or current.created_at,
                 usage_details=add_usage_details(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
-                additional_properties=incoming.additional_properties or current.additional_properties,
+                additional_properties=merge_additional_properties(
+                    current.additional_properties,
+                    incoming.additional_properties,
+                ),
             )
 
         # PHASE 2: CONVERT GROUPED UPDATES TO RESPONSES AND MERGE
@@ -1009,9 +1015,10 @@ class WorkflowAgent(BaseAgent):
                 ):
                     latest_created_at = aggregated.created_at
                 if aggregated.additional_properties:
-                    if merged_additional_properties is None:
-                        merged_additional_properties = {}
-                    merged_additional_properties.update(aggregated.additional_properties)
+                    merged_additional_properties = merge_additional_properties(
+                        merged_additional_properties,
+                        aggregated.additional_properties,
+                    )
                 raw_value = aggregated.raw_representation
                 if raw_value:
                     cast_value = cast(object | list[object], raw_value)
@@ -1033,9 +1040,10 @@ class WorkflowAgent(BaseAgent):
             ):
                 latest_created_at = flattened.created_at
             if flattened.additional_properties:
-                if merged_additional_properties is None:
-                    merged_additional_properties = {}
-                merged_additional_properties.update(flattened.additional_properties)
+                merged_additional_properties = merge_additional_properties(
+                    merged_additional_properties,
+                    flattened.additional_properties,
+                )
             flat_raw = flattened.raw_representation
             if flat_raw:
                 cast_flat = cast(object | list[object], flat_raw)

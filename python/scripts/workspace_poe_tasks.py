@@ -11,22 +11,25 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomli
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from rich import print
-from task_runner import (
+from scripts._toml import tomllib
+
+from scripts.task_runner import (
     build_work_items,
     discover_projects,
     project_filter_matches,
     run_command_items,
     run_tasks,
 )
+from scripts.tool_requirements import requirement_file
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_PYPROJECT = WORKSPACE_ROOT / "pyproject.toml"
@@ -92,13 +95,9 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     add_samples_option(syntax)
     add_syntax_mode_options(syntax)
 
-    for command_name in ("fmt", "build", "clean-dist", "check-packages"):
+    for command_name in ("build", "clean-dist", "check-packages"):
         command = subparsers.add_parser(command_name)
         add_project_option(command)
-
-    lint = subparsers.add_parser("lint")
-    add_project_option(lint)
-    add_samples_option(lint)
 
     pyright = subparsers.add_parser("pyright")
     add_project_option(pyright)
@@ -139,7 +138,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 def load_toml(file_path: Path) -> dict:
     """Load a TOML file."""
     with file_path.open("rb") as file:
-        return tomli.load(file)
+        return tomllib.load(file)
 
 
 def discover_workspace_projects() -> list[WorkspaceProject]:
@@ -227,11 +226,47 @@ def collect_test_dirs(projects: list[WorkspaceProject]) -> list[Path]:
     return sorted(test_dirs)
 
 
+def collect_dependency_group_requirements(projects: list[WorkspaceProject], group_name: str) -> list[str]:
+    """Collect one dependency group's requirements from selected projects."""
+    requirements: set[str] = set()
+    for project in projects:
+        pyproject = load_toml(WORKSPACE_ROOT / project.path / "pyproject.toml")
+        group = (pyproject.get("dependency-groups", {}) or {}).get(group_name, []) or []
+        requirements.update(requirement for requirement in group if isinstance(requirement, str))
+    return sorted(requirements)
+
+
 def run_command(command: list[str]) -> None:
     """Run a subprocess from the workspace root and stream its output."""
-    result = subprocess.run(command, cwd=WORKSPACE_ROOT, check=False)
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    result = subprocess.run(command, cwd=WORKSPACE_ROOT, check=False, env=env)
     if result.returncode:
         raise SystemExit(result.returncode)
+
+
+def uv_run_command(bundle: str, *command: str) -> list[str]:
+    """Build a project-aware uv command with one on-demand tool bundle."""
+    uv_command = [
+        "uv",
+        "run",
+        "--locked",
+    ]
+    uv_command.extend(["--with-requirements", str(requirement_file(bundle)), *command])
+    return uv_command
+
+
+def standalone_tool_command(bundle: str, executable: str, *args: str) -> list[str]:
+    """Build a no-project command for one pinned standalone tool."""
+    return [
+        "uv",
+        "run",
+        "--no-project",
+        "--with-requirements",
+        str(requirement_file(bundle)),
+        executable,
+        *args,
+    ]
 
 
 def run_fan_out(task_names: list[str], project_pattern: str, task_args: list[str]) -> None:
@@ -254,9 +289,8 @@ def sample_pyright_config() -> str:
 
 def run_sample_lint(extra_args: list[str]) -> None:
     """Run linting against samples/."""
-    command = [
-        "uv",
-        "run",
+    command = standalone_tool_command(
+        "quality",
         "ruff",
         "check",
         "samples",
@@ -266,38 +300,36 @@ def run_sample_lint(extra_args: list[str]) -> None:
         "--ignore",
         SAMPLE_RUFF_IGNORE,
         *extra_args,
-    ]
+    )
     run_command(command)
 
 
 def run_sample_format(extra_args: list[str]) -> None:
     """Run formatting against samples/."""
-    command = [
-        "uv",
-        "run",
+    command = standalone_tool_command(
+        "quality",
         "ruff",
         "format",
         "samples",
         "--exclude",
         SAMPLE_EXCLUDES,
         *extra_args,
-    ]
+    )
     run_command(command)
 
 
 def run_sample_pyright(extra_args: list[str]) -> None:
     """Run sample syntax/import validation."""
-    command = ["uv", "run", "pyright", "-p", sample_pyright_config(), "--warnings", *extra_args]
+    command = uv_run_command("typing", "pyright", "-p", sample_pyright_config(), "--warnings", *extra_args)
     run_command(command)
 
 
 def run_markdown_code_lint(files: list[str] | None = None) -> None:
     """Run markdown code-block linting globally or for the changed markdown files only."""
     command = [
-        "uv",
-        "run",
-        "python",
-        "scripts/check_md_code_blocks.py",
+        sys.executable,
+        "-m",
+        "scripts.check_md_code_blocks",
     ]
     if files is None:
         command.extend([
@@ -325,7 +357,7 @@ def run_aggregate_pyright(project_pattern: str, extra_args: list[str]) -> None:
         return
 
     project_paths = [relative_path(WORKSPACE_ROOT / project.path) for project in projects]
-    run_command(["uv", "run", "pyright", *extra_args, *project_paths])
+    run_command(uv_run_command("typing", "pyright", *extra_args, *project_paths))
 
 
 # Type checkers that run over tests (and, where supported, samples). Pyright is the strict
@@ -366,9 +398,8 @@ def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
     # keyed by its target paths so incremental caching still works per package without races.
     cache_key = hashlib.sha256("\0".join(sorted(paths)).encode()).hexdigest()[:16]
     cache_dir = Path(".mypy_cache") / ("samples" if samples else "tests") / cache_key
-    command = [
-        "uv",
-        "run",
+    command = uv_run_command(
+        "typing",
         "mypy",
         "--config-file",
         "pyproject.toml",
@@ -376,7 +407,7 @@ def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
         str(cache_dir),
         "--explicit-package-bases",
         "--namespace-packages",
-    ]
+    )
     if samples:
         for excluded in SAMPLE_TYPING_EXCLUDES:
             command.extend(["--exclude", excluded])
@@ -385,7 +416,7 @@ def _mypy_command(paths: list[str], *, samples: bool) -> list[str]:
 
 
 def _zuban_command(paths: list[str], *, samples: bool) -> list[str]:
-    command = ["uv", "run", "zuban", "mypy", "--config-file", "pyproject.toml"]
+    command = uv_run_command("typing", "zuban", "mypy", "--config-file", "pyproject.toml")
     if samples:
         for excluded in SAMPLE_TYPING_EXCLUDES:
             command.extend(["--exclude", excluded])
@@ -395,7 +426,7 @@ def _zuban_command(paths: list[str], *, samples: bool) -> list[str]:
 
 def _pyrefly_command(paths: list[str], *, samples: bool) -> list[str]:
     config = "pyrefly.samples.toml" if samples else "pyrefly.toml"
-    command = ["uv", "run", "pyrefly", "check", "-c", config]
+    command = uv_run_command("typing", "pyrefly", "check", "-c", config)
     if samples:
         for excluded in SAMPLE_TYPING_EXCLUDES:
             command.extend(["--project-excludes", f"**/{excluded}/**"])
@@ -404,7 +435,7 @@ def _pyrefly_command(paths: list[str], *, samples: bool) -> list[str]:
 
 
 def _ty_command(paths: list[str], *, samples: bool) -> list[str]:
-    command = ["uv", "run", "ty", "check"]
+    command = uv_run_command("typing", "ty", "check")
     if samples:
         command.extend(["--config-file", "ty.samples.toml"])
         for excluded in SAMPLE_TYPING_EXCLUDES:
@@ -419,7 +450,7 @@ def _pyright_command(paths: list[str], *, samples: bool) -> list[str]:
     # pyrightconfig.samples.json). CLI paths override the config ``include``; the sample
     # excludes live in the config itself (Pyright has no ``--exclude`` CLI flag).
     config = sample_pyright_config() if samples else "pyrightconfig.tests.json"
-    return ["uv", "run", "pyright", "-p", config, *paths]
+    return uv_run_command("typing", "pyright", "-p", config, *paths)
 
 
 CHECKER_COMMANDS = {
@@ -512,9 +543,9 @@ def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -
         return
 
     if project_pattern == "*":
-        # Preserve the legacy ``all-tests`` contract when ``test --all`` runs with
-        # the default selector: experimental packages stay opt-in instead of
-        # suddenly joining every PR unit-test sweep.
+        # Preserve the established ``test --all`` contract with the default
+        # selector: experimental packages stay opt-in instead of suddenly
+        # joining every PR unit-test sweep.
         projects = [project for project in projects if project.name not in DEFAULT_AGGREGATE_TEST_EXCLUDES]
         if not projects:
             print("[yellow]No aggregate-test projects remain after applying default exclusions.[/yellow]")
@@ -528,6 +559,13 @@ def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -
     command = [
         "uv",
         "run",
+        "--locked",
+        "--group",
+        "dev",
+    ]
+    for requirement in collect_dependency_group_requirements(projects, "test"):
+        command.extend(["--with", requirement])
+    command.extend([
         "pytest",
         "--import-mode=importlib",
         "-m",
@@ -537,7 +575,7 @@ def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -
         "logical",
         "--dist",
         "worksteal",
-    ]
+    ])
     if cov:
         for source_dir in collect_source_dirs(projects):
             command.append(f"--cov={source_dir.name}")
@@ -570,10 +608,9 @@ def changed_markdown_files(files: list[str]) -> list[str]:
 def run_changed_package_tasks(task_names: list[str], files: list[str]) -> None:
     """Run package-local tasks only in packages affected by the provided file list."""
     command = [
-        "uv",
-        "run",
-        "python",
-        "scripts/run_tasks_in_changed_packages.py",
+        sys.executable,
+        "-m",
+        "scripts.run_tasks_in_changed_packages",
         *task_names,
         "--files",
         *files,
@@ -584,7 +621,7 @@ def run_changed_package_tasks(task_names: list[str], files: list[str]) -> None:
 def run_prek_check(files: list[str]) -> None:
     """Run the lightweight pre-commit task surface."""
     normalized_files = [normalize_changed_file(file_path) for file_path in files] or ["."]
-    run_changed_package_tasks(["fmt", "lint"], normalized_files)
+    run_changed_package_tasks(["syntax-format", "syntax-check"], normalized_files)
     run_markdown_code_lint(changed_markdown_files(normalized_files))
     if has_changed_sample_files(normalized_files):
         print("[cyan]Sample files changed, running sample checks.[/cyan]")
@@ -625,8 +662,9 @@ def run_syntax(
 ) -> None:
     """Run formatting and/or lint checking for packages or samples.
 
-    Combined package mode deliberately dispatches ``fmt`` and ``lint`` together
-    so the shared task runner can start both legs in parallel.
+    Combined package mode deliberately dispatches the internal formatting and
+    checking tasks together so the shared task runner can start both legs in
+    parallel.
     """
     run_format, run_check = resolve_syntax_modes(
         format_selected=format_selected,
@@ -657,13 +695,13 @@ def run_syntax(
     if run_format and run_check:
         # Fan out both legs in one call so task_runner can parallelize format
         # and lint work across the same selected package set.
-        run_fan_out(["fmt", "lint"], project_pattern, [])
+        run_fan_out(["syntax-format", "syntax-check"], project_pattern, [])
         return
 
     if run_format:
-        run_fan_out(["fmt"], project_pattern, format_args)
+        run_fan_out(["syntax-format"], project_pattern, format_args)
     if run_check:
-        run_fan_out(["lint"], project_pattern, check_args)
+        run_fan_out(["syntax-check"], project_pattern, check_args)
 
 
 def main() -> None:
@@ -676,35 +714,6 @@ def main() -> None:
             samples=args.samples,
             format_selected=args.format,
             check_selected=args.check,
-            extra_args=extra_args,
-        )
-        return
-
-    if args.command == "fmt":
-        run_syntax(
-            project_pattern=args.project,
-            samples=False,
-            format_selected=True,
-            check_selected=False,
-            extra_args=extra_args,
-        )
-        return
-
-    if args.command == "lint":
-        if args.samples:
-            run_syntax(
-                project_pattern=args.project,
-                samples=True,
-                format_selected=False,
-                check_selected=True,
-                extra_args=extra_args,
-            )
-            return
-        run_syntax(
-            project_pattern=args.project,
-            samples=False,
-            format_selected=False,
-            check_selected=True,
             extra_args=extra_args,
         )
         return

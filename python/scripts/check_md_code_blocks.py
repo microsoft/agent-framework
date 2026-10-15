@@ -3,12 +3,13 @@
 """Check code blocks in Markdown files for syntax errors."""
 
 import argparse
-from enum import Enum
 import glob
 import logging
 import os
-import tempfile
 import subprocess  # nosec
+import tempfile
+from enum import Enum
+from pathlib import Path
 
 from pygments import highlight  # type: ignore
 from pygments.formatters import TerminalFormatter
@@ -17,6 +18,7 @@ from pygments.lexers import PythonLexer
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.INFO)
+WORKSPACE_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Colors(str, Enum):
@@ -41,7 +43,7 @@ def expand_file_patterns(patterns: list[str], skip_glob: bool = False) -> list[s
         if skip_glob:
             # When skip_glob is True, treat patterns as literal file paths
             # Only include if it's a markdown file
-            if pattern.endswith('.md'):
+            if pattern.endswith(".md"):
                 matches = glob.glob(pattern, recursive=False)
                 all_files.extend(matches)
         else:
@@ -90,11 +92,14 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
             logger.info("Checking a code block in %s...", markdown_file_path_with_line_no)
 
             # Skip blocks that don't import agent_framework modules or import lab modules
-            if (all(
-                all(import_code not in code_block for import_code in [f"import {module}", f"from {module}"])
-                for module in ["agent_framework"]
-            ) or "agent_framework.lab" in code_block):
-                logger.info(f' {with_color("OK[ignored]", Colors.CGREENBG)}')
+            if (
+                all(
+                    all(import_code not in code_block for import_code in [f"import {module}", f"from {module}"])
+                    for module in ["agent_framework"]
+                )
+                or "agent_framework.lab" in code_block
+            ):
+                logger.info(f" {with_color('OK[ignored]', Colors.CGREENBG)}")
                 continue
 
             with tempfile.TemporaryDirectory() as tmp_dir:
@@ -110,12 +115,36 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
                 with open(tmp_file, "w", encoding="utf-8") as f:
                     f.write(code_block)
 
-                result = subprocess.run(["uv", "run", "pyright", "-p", tmp_dir], capture_output=True, text=True, cwd=".")  # nosec
+                env = os.environ.copy()
+                env.pop("VIRTUAL_ENV", None)
+                result = subprocess.run(  # nosec
+                    [
+                        "uv",
+                        "run",
+                        "--locked",
+                        "--group",
+                        "dev",
+                        "--with-requirements",
+                        str(WORKSPACE_ROOT / "tooling" / "requirements-typing.txt"),
+                        "pyright",
+                        "-p",
+                        tmp_dir,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    cwd=WORKSPACE_ROOT,
+                    env=env,
+                )
+                if result.returncode not in (0, 1):
+                    raise RuntimeError(
+                        f"Unable to run Pyright for Markdown code blocks:\n{result.stderr or result.stdout}"
+                    )
                 # Filter to only errors from our config rules; syntax-level errors
                 # (top-level await, etc.) are expected in README documentation snippets.
                 # Only flag reportMissingImports for agent_framework modules, not third-party packages.
                 relevant_errors = [
-                    line for line in result.stdout.splitlines()
+                    line
+                    for line in result.stdout.splitlines()
                     if ("reportMissingImports" in line and "agent_framework" in line)
                     or "reportAttributeAccessIssue" in line
                 ]
@@ -149,7 +178,9 @@ if __name__ == "__main__":
     # Argument is a list of markdown files containing glob patterns
     parser.add_argument("markdown_files", nargs="+", help="Markdown files to check (supports glob patterns).")
     parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
-    parser.add_argument("--no-glob", action="store_true", help="Treat file arguments as literal paths (no glob expansion).")
+    parser.add_argument(
+        "--no-glob", action="store_true", help="Treat file arguments as literal paths (no glob expansion)."
+    )
     args = parser.parse_args()
 
     # Expand glob patterns to actual file paths (or skip if --no-glob)

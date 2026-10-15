@@ -36,6 +36,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._types import _get_operation_state, _set_operation_state
 from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY, WORKFLOW_AGENT_SESSION_ID_KEY
 from agent_framework._workflows._typing_utils import deserialize_type
 
@@ -975,7 +976,7 @@ class TestWorkflowAgent:
         assert "second output" in texts
 
     async def test_workflow_as_agent_stream_preserves_response_update_metadata(self) -> None:
-        """Test that streaming forwards finish_reason, continuation_token and additional_properties.
+        """Test that streaming forwards finish_reason, continuation_token, terminality, and additional properties.
 
         This validates the fix for issue #7952: AgentResponseUpdate metadata should be
         forwarded as-is when the workflow is wrapped via .as_agent().
@@ -983,18 +984,18 @@ class TestWorkflowAgent:
 
         @executor
         async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
-            await ctx.yield_output(
-                AgentResponseUpdate(
-                    contents=[Content.from_text(text="payload")],
-                    role="assistant",
-                    agent_id="source-agent",
-                    response_id="source-response",
-                    message_id="source-message",
-                    finish_reason="stop",
-                    continuation_token=cast(Any, {"token": "resume-token"}),
-                    additional_properties={"provider_marker": "preserve-me"},
-                )
+            response_update = AgentResponseUpdate(
+                contents=[Content.from_text(text="payload")],
+                role="assistant",
+                agent_id="source-agent",
+                response_id="source-response",
+                message_id="source-message",
+                finish_reason="stop",
+                continuation_token=cast(Any, {"token": "resume-token"}),
+                additional_properties={"provider_marker": "preserve-me"},
             )
+            _set_operation_state(response_update, "in_progress")
+            await ctx.yield_output(response_update)
 
         workflow = WorkflowBuilder(start_executor=metadata_executor).build()
         agent = workflow.as_agent("metadata-test-agent")
@@ -1010,6 +1011,7 @@ class TestWorkflowAgent:
         assert update.agent_id == "source-agent"
         assert update.finish_reason == "stop"
         assert update.continuation_token == {"token": "resume-token"}
+        assert _get_operation_state(update) == "in_progress"
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
     async def test_workflow_as_agent_stream_preserves_response_metadata(self) -> None:
@@ -1017,19 +1019,19 @@ class TestWorkflowAgent:
 
         @executor
         async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
-            await ctx.yield_output(
-                AgentResponse(
-                    messages=[
-                        Message(role="assistant", contents=["first"]),
-                        Message(role="assistant", contents=["second"]),
-                    ],
-                    agent_id="source-agent",
-                    response_id="source-response",
-                    finish_reason="length",
-                    continuation_token=cast(Any, {"token": "response-resume-token"}),
-                    additional_properties={"provider_marker": "preserve-response"},
-                )
+            response = AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=["first"]),
+                    Message(role="assistant", contents=["second"]),
+                ],
+                agent_id="source-agent",
+                response_id="source-response",
+                finish_reason="length",
+                continuation_token=cast(Any, {"token": "response-resume-token"}),
+                additional_properties={"provider_marker": "preserve-response"},
             )
+            _set_operation_state(response, "in_progress")
+            await ctx.yield_output(response)
 
         workflow = WorkflowBuilder(start_executor=metadata_executor).build()
         agent = workflow.as_agent("response-metadata-test-agent")
@@ -1046,6 +1048,7 @@ class TestWorkflowAgent:
         assert updates[-1].agent_id == "source-agent"
         assert updates[-1].finish_reason == "length"
         assert updates[-1].continuation_token == {"token": "response-resume-token"}
+        assert _get_operation_state(updates[-1]) == "in_progress"
         assert updates[-1].additional_properties == {"provider_marker": "preserve-response"}
         assert final_response.agent_id == "source-agent"
         assert final_response.finish_reason == "length"
@@ -2041,8 +2044,7 @@ class TestWorkflowAgentMergeUpdates:
             "source": "executor2",  # From resp-2 (latest source value)
             "priority": "high",  # From resp-1 first update (resp-1 processed before resp-2)
             "category": "analysis",  # From resp-2 (only place this appears)
-            # "details": "merged" is NOT in final result because resp-1's aggregated
-            # properties only include final merged result from its own updates
+            "details": "merged",  # Preserved from the later resp-1 update
         }
         assert result.additional_properties == expected_properties
 

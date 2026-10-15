@@ -440,6 +440,70 @@ class TestWorkflowStateEvalSimple:
         assert state._eval_simple("Workflow.Inputs.name") == "test"
 
 
+class TestWorkflowStateEvalSimpleCallExtent:
+    """The fallback dispatcher must only claim a formula that is one whole call.
+
+    ``_eval_simple`` previously matched ``formula.startswith(f"{name}(")`` with
+    ``formula.endswith(")")``, so a call followed by any operator had the
+    remainder of the formula absorbed into its arguments.
+    """
+
+    def test_trailing_operator_is_not_absorbed_into_arguments(self):
+        """The formula is left unclaimed instead of yielding a corrupted fragment.
+
+        ``_eval_simple`` echoes a formula it cannot evaluate, and ``eval``
+        reaches it only after PowerFx has already had its turn.
+        """
+        state = WorkflowState()
+        formula = 'Concat("a") & Lower("B")'
+        assert state._eval_simple(formula) == formula
+
+    def test_not_with_trailing_operator_is_not_absorbed(self):
+        """The Not() special case is bounded the same way.
+
+        Previously the handler claimed this formula and returned a bool built
+        from the mis-parsed fragment ``false) & Upper("x"``.
+        """
+        state = WorkflowState()
+        formula = 'Not(false) & Upper("x")'
+        assert state._eval_simple(formula) == formula
+
+    def test_whole_not_call_still_dispatches(self):
+        """A complete Not() call keeps negating its argument."""
+        assert WorkflowState()._eval_simple("Not(false)") is True
+
+    def test_whole_call_still_dispatches(self):
+        """A complete call keeps resolving through CUSTOM_FUNCTIONS."""
+        state = WorkflowState()
+        assert state._eval_simple('Concat("a", "b")') == "ab"
+        assert state._eval_simple('Upper("ab")') == "AB"
+
+    def test_argument_less_call_still_dispatches(self):
+        """A zero-argument call is a call, not an unmatched formula.
+
+        ``Or()`` is false in PowerFx. Echoing the formula instead would hand a
+        truthy string back to a condition and invert it.
+        """
+        state = WorkflowState()
+        assert state._eval_simple("Or()") is False
+        assert state._eval_simple("And()") is True
+        assert state._eval_simple("Not()") is True
+
+    def test_commented_paren_does_not_truncate_the_call(self):
+        """A ``)`` inside a comment is text, so the call is still claimed.
+
+        What the argument heuristic then makes of the comment text is issue
+        #9072's business; the point here is that the formula is dispatched
+        rather than echoed back unevaluated.
+        """
+        formula = 'Upper("ab" /* ) */)'
+        assert WorkflowState()._eval_simple(formula) != formula
+
+    def test_trailing_comment_does_not_disqualify_the_call(self):
+        """A comment after the call is trivia, not a larger expression."""
+        assert WorkflowState()._eval_simple('Upper("ab") // done') == "AB"
+
+
 class TestWorkflowStateParseFunctionArgs:
     """Tests for _parse_function_args helper."""
 
