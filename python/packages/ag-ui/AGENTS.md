@@ -116,7 +116,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
   invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
-  tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
+  state, and provider-owned keys.
   When state is exposed to the model, keep it in an explicitly untrusted user-data message; never promote request
   state values into system/developer instruction authority.
   Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
@@ -136,6 +137,15 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   the Foundry hosted-agent session ID, which selects a VM-isolated sandbox with a persistent filesystem. Never let
   request state choose one. `AgentSession.service_session_id` is deliberately a separate attribute rather than a
   `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
+- Standalone FIDES security middleware (`LabelTrackingFunctionMiddleware`, `PolicyEnforcementFunctionMiddleware`)
+  keeps its context label, hidden variables, and pending policy approvals in `AgentSession.state` under
+  `_FIDES_SESSION_STATE_KEY` or the `session_state_key` it was configured with. Request and stored Shared State must
+  never supply that state. The default key is always protected; a configured key is discovered from middleware visible
+  on the agent or its client before the run, so middleware injected later or hidden behind a wrapper that does not
+  expose its key is not covered. Use `SecureAgentConfig`, whose state lives under its provider `source_id`. These keys
+  are protected from request state only: never add them to `_RESERVED_SERVICE_SESSION_STATE_KEYS` or
+  `service_session_state_keys`, which also drop them from private Session Continuation State and would discard the
+  server's own context label.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - Configured stateless agent Thread Snapshot stores persist after function/MCP tool-result and approval safe points,

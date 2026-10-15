@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import stat
+import subprocess
 import sys
 import types
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -984,6 +987,8 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
 
     existing = writable / "existing.txt"
     existing.write_text("before", encoding="utf-8")
+    unchanged = writable / "unchanged.txt"
+    unchanged.write_text("same", encoding="utf-8")
     (nested / "report.txt").write_text("old", encoding="utf-8")
     (readonly / "ignored.txt").write_text("unchanged", encoding="utf-8")
 
@@ -1005,6 +1010,7 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
 
     assert set(pre_state) == {"/work"}
     assert "existing.txt" in pre_state["/work"]
+    assert "unchanged.txt" in pre_state["/work"]
     assert "ignored.txt" not in pre_state["/work"]
     assert {item.additional_properties["path"] for item in data_items} == {
         "/work/artifact.bin",
@@ -1018,6 +1024,305 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
         if item.additional_properties["path"] == "/work/existing.txt"
     )
     assert all(not item.additional_properties["path"].startswith("/readonly/") for item in data_items)
+    assert all(item.additional_properties["path"] != "/work/unchanged.txt" for item in data_items)
+
+
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    is_reparse_point = bool(reparse_attribute and getattr(link.lstat(), "st_file_attributes", 0) & reparse_attribute)
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
+
+
+def _model_junction_or_skip(*, link: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``link`` look like an NTFS junction to pathlib while still traversing to ``target``.
+
+    The stat-family answers for ``link`` become those of a junction (not a symlink, a directory with the
+    reparse-point attribute) and every other path is untouched, so non-Windows runs exercise the same walker
+    and capture logic. The real-junction variants cover NTFS itself.
+    """
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Symbolic links are not supported in this environment: {exc!r}")
+
+    original_is_symlink = Path.is_symlink
+    original_lstat = Path.lstat
+
+    def is_symlink(self: Path) -> bool:
+        return False if self == link else original_is_symlink(self)
+
+    def lstat(self: Path) -> Any:
+        real = original_lstat(self)
+        if self != link:
+            return real
+        return types.SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o755,
+            st_size=0,
+            st_mtime_ns=real.st_mtime_ns,
+            st_dev=real.st_dev,
+            st_ino=real.st_ino,
+            st_file_attributes=getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0),
+        )
+
+    monkeypatch.setattr(Path, "is_symlink", is_symlink)
+    monkeypatch.setattr(Path, "lstat", lstat)
+
+
+@pytest.mark.parametrize("junction_kind", ["windows", "modeled"])
+@pytest.mark.parametrize("create_before_snapshot", [True, False])
+def test_capture_written_files_skips_junction_to_outside_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    junction_kind: str,
+    create_before_snapshot: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "existing.txt").write_text("before", encoding="utf-8")
+    junction = writable / "linked"
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+
+    def create_junction() -> None:
+        if junction_kind == "windows":
+            _create_junction_or_skip(link=junction, target=outside)
+        else:
+            _model_junction_or_skip(link=junction, target=outside, monkeypatch=monkeypatch)
+
+    if create_before_snapshot:
+        create_junction()
+    pre_state = execute_code_module._snapshot_writable_mounts([mount])
+    if not create_before_snapshot:
+        create_junction()
+
+    try:
+        assert not any(path.startswith("linked/") for path in pre_state["/input"])
+        (outside / "existing.txt").write_text("modified", encoding="utf-8")
+        (outside / "created.txt").write_text("created", encoding="utf-8")
+        (writable / "report.txt").write_text("legitimate", encoding="utf-8")
+
+        captured = execute_code_module._capture_written_files([mount], pre_state)
+
+        assert {item.additional_properties["path"] for item in captured if item.type == "data"} == {"/input/report.txt"}
+    finally:
+        if junction_kind == "windows":
+            junction.rmdir()
+
+
+def test_iter_real_files_fails_closed_when_reparse_probe_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    readable = tmp_path / "readable.txt"
+    readable.write_text("safe", encoding="utf-8")
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    (blocked / "secret.txt").write_text("secret", encoding="utf-8")
+    original_probe = execute_code_module._is_link_or_reparse_point
+
+    def fail_for_blocked(path: Path) -> bool:
+        if path == blocked:
+            raise PermissionError("access denied")
+        return original_probe(path)
+
+    monkeypatch.setattr(execute_code_module, "_is_link_or_reparse_point", fail_for_blocked)
+
+    assert set(execute_code_module._iter_real_files(tmp_path)) == {readable}
+    assert execute_code_module._safe_capture_file_stat(root=tmp_path, entry=blocked / "secret.txt") is None
+
+
+def _skip_without_symlinks(tmp_path: Path) -> None:
+    probe = tmp_path / "symlink-probe"
+    try:
+        probe.symlink_to(tmp_path / "missing-target")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Symbolic links are not supported in this environment: {exc!r}")
+    probe.unlink()
+
+
+def _swap_after_first_validation(monkeypatch: pytest.MonkeyPatch, swap: Callable[[], None]) -> None:
+    """Run ``swap`` once, right after the first path validation and before the file is opened."""
+    original = execute_code_module._safe_capture_file_stat
+    swapped = False
+
+    def validate_then_swap(**kwargs: Any) -> Any:
+        nonlocal swapped
+        result = original(**kwargs)
+        if not swapped:
+            swapped = True
+            swap()
+        return result
+
+    monkeypatch.setattr(execute_code_module, "_safe_capture_file_stat", validate_then_swap)
+
+
+def test_safe_capture_file_stat_rejects_links_outside_paths_and_non_files(tmp_path: Path) -> None:
+    _skip_without_symlinks(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "file.txt").write_text("payload", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("HOST_SECRET", encoding="utf-8")
+    (root / "linked").symlink_to(outside, target_is_directory=True)
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(root, target_is_directory=True)
+    safe_stat = execute_code_module._safe_capture_file_stat
+
+    assert safe_stat(root=root, entry=root / "file.txt") is not None
+    assert safe_stat(root=root, entry=root / "linked" / "secret.txt") is None
+    assert safe_stat(root=root, entry=outside / "secret.txt") is None
+    assert safe_stat(root=root, entry=root) is None
+    assert safe_stat(root=linked_root, entry=linked_root / "file.txt") is None
+    assert list(execute_code_module._iter_real_files(linked_root)) == []
+
+
+@pytest.mark.parametrize("recheck_result", ["unsafe", "different-file"])
+def test_capture_written_files_rechecks_path_after_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recheck_result: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "artifact.txt"
+    artifact.write_text("payload", encoding="utf-8")
+    other = tmp_path / "other.txt"
+    other.write_text("other", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+    safety_checks = iter([artifact.lstat(), None if recheck_result == "unsafe" else other.lstat()])
+
+    monkeypatch.setattr(
+        execute_code_module,
+        "_safe_capture_file_stat",
+        lambda **_: next(safety_checks),
+    )
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert captured == []
+
+
+@pytest.mark.parametrize("replacement_kind", ["file", "directory"])
+def test_capture_written_files_skips_file_replaced_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_kind: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "artifact.txt"
+    artifact.write_text("payload", encoding="utf-8")
+    # Created before the original is removed so the two files cannot share an inode number.
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_text("REPLACED", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+
+    def swap() -> None:
+        if replacement_kind == "file":
+            os.replace(replacement, artifact)
+        else:
+            artifact.unlink()
+            artifact.mkdir()
+
+    _swap_after_first_validation(monkeypatch, swap)
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert captured == []
+
+
+def test_capture_written_files_skips_file_removed_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "artifact.txt"
+    artifact.write_text("payload", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+    _swap_after_first_validation(monkeypatch, artifact.unlink)
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert captured == []
+
+
+def test_capture_written_files_does_not_follow_leaf_link_swapped_in_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    _skip_without_symlinks(tmp_path)
+    writable = tmp_path / "writable"
+    writable.mkdir()
+    artifact = writable / "artifact.txt"
+    artifact.write_text("payload", encoding="utf-8")
+    secret = tmp_path / "secret.txt"
+    secret.write_text("HOST_SECRET", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+
+    def swap() -> None:
+        artifact.unlink()
+        artifact.symlink_to(secret)
+
+    _swap_after_first_validation(monkeypatch, swap)
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert not any(item.type == "data" for item in captured)
+
+
+def test_capture_written_files_does_not_follow_parent_link_swapped_in_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    _skip_without_symlinks(tmp_path)
+    writable = tmp_path / "writable"
+    parent = writable / "sub"
+    parent.mkdir(parents=True)
+    (parent / "report.txt").write_text("payload", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "report.txt").write_text("HOST_SECRET", encoding="utf-8")
+    mount = FileMount(host_path=writable, mount_path="/input", mode="read-write")
+
+    def swap() -> None:
+        parent.rename(writable / "original-sub")
+        parent.symlink_to(outside, target_is_directory=True)
+
+    _swap_after_first_validation(monkeypatch, swap)
+
+    captured = execute_code_module._capture_written_files([mount], {"/input": {}})
+
+    assert not any(item.type == "data" for item in captured)
 
 
 # ---------------------------------------------------------------------------
