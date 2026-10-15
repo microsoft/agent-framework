@@ -277,15 +277,21 @@ def _has_complete_parquet_snapshot(data_dir: Path) -> bool:
     complete on their own.
     """
     sharded: dict[tuple[Path, str], tuple[set[int], int]] = {}
+    unsharded_seen = False
     for path in data_dir.rglob("metadata*.parquet"):
         match = _SHARDED_PARQUET_RE.fullmatch(path.name)
         if match is None:
-            return True
+            unsharded_seen = True
+            continue
         key = (path.parent, match.group(1))
         indexes, total = sharded.get(key, (set(), int(match.group(3))))
         indexes.add(int(match.group(2)))
         sharded[key] = (indexes, max(total, int(match.group(3))))
-    return bool(sharded) and all(len(indexes) == total for indexes, total in sharded.values())
+    if not sharded:
+        return unsharded_seen
+    # The loader reads every matching parquet file, so a single incomplete sharded
+    # family disqualifies the directory even when unsharded files also exist.
+    return all(len(indexes) == total for indexes, total in sharded.values())
 
 
 def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max_n: int | None = None) -> list[Task]:
