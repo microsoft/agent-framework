@@ -220,6 +220,42 @@ class TestFieldForwarding:
         assert handler.invocations[0].workflow_session_id
         assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
 
+    @pytest.mark.parametrize("run_kind", ["direct", "sessionless_agent", "explicit_agent"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_entry_checkpoint_replay_preserves_workflow_session_id(self, run_kind: str, streaming: bool) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = _yaml(_action())
+        workflow = factory.create_workflow_from_definition(definition)
+        session = AgentSession() if run_kind == "explicit_agent" else None
+
+        if run_kind == "direct":
+            if streaming:
+                await workflow.run({}, stream=True, checkpoint_storage=storage).get_final_response()
+            else:
+                await workflow.run({}, checkpoint_storage=storage)
+        else:
+            agent = workflow.as_agent()
+            if streaming:
+                await agent.run(
+                    "first turn", session=session, stream=True, checkpoint_storage=storage
+                ).get_final_response()
+            else:
+                await agent.run("first turn", session=session, checkpoint_storage=storage)
+
+        [original] = handler.invocations
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        [entry_checkpoint] = [checkpoint for checkpoint in checkpoints if checkpoint.iteration_count == 0]
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run(checkpoint_id=entry_checkpoint.checkpoint_id, checkpoint_storage=storage)
+
+        assert len(handler.invocations) == 2
+        assert original.workflow_session_id
+        assert handler.invocations[1].workflow_session_id == original.workflow_session_id
+
     @pytest.mark.parametrize("intervening_run", ["explicit_session", "direct_dict", "direct_message_list"])
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("restore", [False, True])

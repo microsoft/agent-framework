@@ -29,9 +29,10 @@ endpoint, label, connection, and headers, so separate fresh runs do not share a
 stateful MCP protocol session while continuations and checkpoint restores do.
 Direct fresh runs reset this scope even for message-list inputs; only
 framework-marked WorkflowAgent turns retain the agent continuation scope.
-Sessionless WorkflowAgent turns select their own checkpointed scope at Entry,
+Run scopes are selected before the initial entry checkpoint and preserved when
+Entry replays. Sessionless WorkflowAgent turns select their own checkpointed scope,
 independent of explicit agent sessions, direct runs, and restored approval scopes.
-Approval continuations keep their originating active scope until the next Entry.
+Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.

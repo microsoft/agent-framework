@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
@@ -1088,6 +1088,52 @@ class TestCache:
             assert all(entry.active_users == 0 for entry in handler._cache.values())
             cancel_first_close = False
             await asyncio.wait_for(handler.aclose(), timeout=1)
+
+    async def test_repeated_cancellation_during_eviction_finalization_completes_shutdown(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        finalization_waiting = asyncio.Event()
+        original_close = FakeTool.close
+
+        class ObservedLock(asyncio.Lock):
+            async def acquire(self) -> Literal[True]:
+                if self.locked():
+                    finalization_waiting.set()
+                return await super().acquire()
+
+        handler._cache_lock = ObservedLock()
+
+        async def gated_close(tool: FakeTool) -> None:
+            if tool.kwargs["url"] == "https://a/":
+                close_started.set()
+                await release_close.wait()
+            await original_close(tool)
+
+        with _patch_tool(), patch.object(FakeTool, "close", gated_close):
+            await handler.invoke_tool(_invocation(server_url="https://a/"))
+            retired_entry = next(iter(handler._cache.values()))
+            invocation = asyncio.create_task(handler.invoke_tool(_invocation(server_url="https://b/")))
+            await close_started.wait()
+            invocation.cancel()
+            await handler._cache_lock.acquire()
+            try:
+                release_close.set()
+                await asyncio.wait_for(finalization_waiting.wait(), timeout=1)
+                invocation.cancel()
+                await asyncio.sleep(0)
+            finally:
+                handler._cache_lock.release()
+
+            await asyncio.wait({invocation}, timeout=1)
+            assert invocation.done()
+            with pytest.raises(asyncio.CancelledError):
+                invocation.result()
+            assert retired_entry.closed.is_set()
+            assert id(retired_entry) not in handler._retired
+            await asyncio.wait_for(handler.aclose(), timeout=1)
+
+        assert all(tool.close_count == 1 for tool in FakeTool.instances)
 
     @pytest.mark.asyncio
     async def test_repeated_cancellation_while_releasing_entry_does_not_leak_lease(self) -> None:

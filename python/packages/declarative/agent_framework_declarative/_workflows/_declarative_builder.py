@@ -22,6 +22,8 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowEvent,
 )
+from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY
+from agent_framework._workflows._state import State
 
 from ._declarative_base import (
     ConditionResult,
@@ -50,7 +52,7 @@ from ._executors_mcp import (
 )
 from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
 from ._http_handler import HttpRequestHandler
-from ._mcp_handler import MCPToolHandler
+from ._mcp_handler import MCPToolHandler, activate_workflow_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,10 @@ def _validate_mcp_response_batch(requests: Sequence[WorkflowEvent[Any]]) -> None
         raise DeclarativeWorkflowError(
             "MCP approval responses from different workflow sessions must be submitted in separate runs."
         )
+
+
+def _initialize_mcp_run_state(state: State) -> None:
+    activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=state.get(WORKFLOW_AGENT_RUN_KEY) is True)
 
 
 class DeclarativeWorkflowBuilder:
@@ -262,6 +268,7 @@ class DeclarativeWorkflowBuilder:
 
         workflow = builder.build()
         workflow._response_batch_validator = _validate_mcp_response_batch  # pyright: ignore[reportPrivateUsage]
+        workflow._initial_state_initializer = _initialize_mcp_run_state  # pyright: ignore[reportPrivateUsage]
         return workflow
 
     def _collect_explicit_ids(self, actions: list[dict[str, Any]] | None) -> None:

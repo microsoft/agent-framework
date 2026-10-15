@@ -414,6 +414,7 @@ class Workflow(DictConvertible):
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
         self._response_batch_validator: Callable[[Sequence[WorkflowEvent]], None] | None = None
+        self._initial_state_initializer: Callable[[State], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -767,6 +768,9 @@ class Workflow(DictConvertible):
                     f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
                     f"Expected input types: {start_executor.input_types}."
                 )
+
+            if self._initial_state_initializer is not None:
+                self._initial_state_initializer(self._runner.state)
 
             await self._runner.context.send_message(entry_message)
             # Record the entry checkpoint capturing the seeded input before any

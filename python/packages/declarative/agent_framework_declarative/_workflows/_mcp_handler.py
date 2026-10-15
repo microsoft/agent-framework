@@ -813,14 +813,17 @@ class DefaultMCPToolHandler:
         return exc
 
     async def _release_entry(self, entry: _CacheEntry) -> None:
-        release = asyncio.create_task(self._release_entry_core(entry))
+        await self._await_cleanup_task(asyncio.create_task(self._release_entry_core(entry)))
+
+    @staticmethod
+    async def _await_cleanup_task(cleanup: asyncio.Task[None]) -> None:
         cancelled = False
-        while not release.done():
+        while not cleanup.done():
             try:
-                await asyncio.shield(release)
+                await asyncio.shield(cleanup)
             except asyncio.CancelledError:
                 cancelled = True
-        release.result()
+        cleanup.result()
         if cancelled:
             raise asyncio.CancelledError
 
@@ -836,6 +839,9 @@ class DefaultMCPToolHandler:
             await self._close_claimed_entry(entry)
 
     async def _close_claimed_entry(self, entry: _CacheEntry) -> None:
+        await self._await_cleanup_task(asyncio.create_task(self._close_claimed_entry_core(entry)))
+
+    async def _close_claimed_entry_core(self, entry: _CacheEntry) -> None:
         cleanup_outcome: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         try:
             await self._close_invocation_entry(entry, cleanup_outcome)
