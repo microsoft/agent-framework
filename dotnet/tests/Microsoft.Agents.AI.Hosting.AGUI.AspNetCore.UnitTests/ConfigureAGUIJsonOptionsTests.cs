@@ -32,6 +32,48 @@ public sealed class ConfigureAGUIJsonOptionsTests
         Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(ChatMessage))));
     }
 
+    [Fact]
+    public void AddAGUIServer_ConfiguresJsonOptions_RoundTripsInterruptRequest()
+    {
+        // Arrange
+        JsonSerializerOptions options = BuildConfiguredSerializerOptions();
+        ChatMessage message = new(ChatRole.Assistant, [new InterruptRequestContent("request-1")
+        {
+            Reason = "confirmation",
+            Message = "Approve this action?",
+        }]);
+
+        // Act
+        string json = JsonSerializer.Serialize(message, options);
+        ChatMessage restored = JsonSerializer.Deserialize<ChatMessage>(json, options)!;
+
+        // Assert
+        InterruptRequestContent content = Assert.IsType<InterruptRequestContent>(Assert.Single(restored.Contents));
+        Assert.Equal("request-1", content.RequestId);
+        Assert.Equal("confirmation", content.Reason);
+        Assert.Equal("Approve this action?", content.Message);
+    }
+
+    [Fact]
+    public void AddAGUIServer_ConfiguresJsonOptions_RoundTripsInterruptResponse()
+    {
+        // Arrange
+        JsonSerializerOptions options = BuildConfiguredSerializerOptions();
+        ChatMessage message = new(ChatRole.User, [new InterruptResponseContent("request-1")
+        {
+            Payload = JsonSerializer.SerializeToElement(new { approved = true }),
+        }]);
+
+        // Act
+        string json = JsonSerializer.Serialize(message, options);
+        ChatMessage restored = JsonSerializer.Deserialize<ChatMessage>(json, options)!;
+
+        // Assert
+        InterruptResponseContent content = Assert.IsType<InterruptResponseContent>(Assert.Single(restored.Contents));
+        Assert.Equal("request-1", content.RequestId);
+        Assert.True(Assert.IsType<JsonElement>(content.Payload).GetProperty("approved").GetBoolean());
+    }
+
     private static JsonSerializerOptions BuildConfiguredSerializerOptions()
     {
         ServiceCollection services = new();
