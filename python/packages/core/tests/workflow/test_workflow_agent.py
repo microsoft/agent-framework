@@ -3046,6 +3046,4 @@ class TestWorkflowAsAgentFilteringRound8:
         result = await agent.run("test")
         assert result.messages == []
         assert result.usage_details is not None
-        usage = result.usage_details
-        total = usage.total_token_count if hasattr(usage, "total_token_count") else usage.get("total_token_count")
-        assert total == 18
+        assert result.usage_details.get("total_token_count") == 18
