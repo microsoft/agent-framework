@@ -41,8 +41,8 @@ public sealed class ConfigureAGUIJsonOptionsTests
 
         // AG-UI receivers declare the optional event fields as optional, not nullable, so writing them
         // as explicit nulls fails validation client-side. The configured options must omit them.
-        json.Should().NotContain("null");
-        json.Should().Be("""{"type":"RUN_STARTED","threadId":"thread","runId":"run"}""");
+        Assert.DoesNotContain("null", json);
+        Assert.Equal("""{"type":"RUN_STARTED","threadId":"thread","runId":"run"}""", json);
     }
 
     private static JsonSerializerOptions BuildConfiguredSerializerOptions()
