@@ -20,6 +20,19 @@ from .models._discovery_models import EntityInfo
 logger = logging.getLogger(__name__)
 
 
+def _global_names(scope: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> set[str]:
+    """Return the names a function or class body declares ``global``, not counting nested scopes."""
+    names: set[str] = set()
+    pending: list[ast.AST] = list(scope.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.Global):
+            names.update(node.names)
+        elif not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
 class EntityDiscovery:
     """Discovery for Agent Framework entities - agents and workflows."""
 
@@ -555,12 +568,28 @@ class EntityDiscovery:
             source = file_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(file_path))
 
-            # Look for module-level assignments of 'agent' or 'workflow'
-            for node in ast.walk(tree):
+            # Look for assignments of 'agent' or 'workflow' that create module attributes. In a
+            # function or class body that is only the case for names the scope declares global;
+            # otherwise they are locals or class attributes.
+            exports = {"agent", "workflow"}
+            pending: list[tuple[ast.AST, set[str]]] = [(node, exports) for node in tree.body]
+            while pending:
+                node, names = pending.pop()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    scope_names = exports & _global_names(node)
+                    pending.extend((child, scope_names) for child in node.body)
+                    continue
+                pending.extend((child, names) for child in ast.iter_child_nodes(node))
                 if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id in ("agent", "workflow"):
-                            return True
+                    targets = node.targets
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    # Annotated assignment, e.g. `agent: Agent = Agent(...)`
+                    targets = [node.target]
+                else:
+                    continue
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id in names:
+                        return True
         except Exception as e:
             logger.debug(f"Could not parse {file_path} for entity exports: {e}")
             return False

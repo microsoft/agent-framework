@@ -24,7 +24,20 @@ from collections.abc import (
 from copy import deepcopy
 from datetime import datetime
 from inspect import isawaitable, ismethod
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Final,
+    Generic,
+    Literal,
+    NamedTuple,
+    NewType,
+    TypeAlias,
+    cast,
+    get_args,
+    overload,
+)
 
 from typing_extensions import Required, TypedDict
 
@@ -56,11 +69,16 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     """Parse a list of content data into appropriate Content objects.
 
     Args:
-        contents_data: List of content data (strings, dicts, or already constructed objects)
+        contents_data: List of content data (strings, dicts, or already constructed objects).
+            A single string is treated as one text item.
 
     Returns:
         List of Content objects with unknown types logged and ignored
     """
+    if isinstance(contents_data, str):
+        # A string is itself a sequence of strings, so iterating it would create one text
+        # content per character.
+        contents_data = [contents_data]
     contents: list[Content] = []
     for content_data in contents_data:
         if content_data is None:
@@ -441,6 +459,8 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_call",
     "code_interpreter_tool_result",
 })
+
+_CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
 
 
 class TextSpanRegion(TypedDict, total=False):
@@ -1906,6 +1926,13 @@ class Content:
             remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
         if (content_items := remaining.get("items")) and isinstance(content_items, list):
             remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
+        # A single nested Content (e.g., outputs in image_generation_tool_result) and Content items in a tool output
+        # (e.g., output in mcp_server_tool_result). These fields can also hold plain values such as tool JSON.
+        # A list in outputs was converted above and passes through unchanged.
+        if (single_output := remaining.get("outputs")) is not None:
+            remaining["outputs"] = cls._from_serialized_value(single_output)
+        if (tool_output := remaining.get("output")) and isinstance(tool_output, list):
+            remaining["output"] = [cls._from_serialized_value(item) for item in cast(list[Any], tool_output)]
 
         return cls(
             type=content_type,
@@ -1914,6 +1941,30 @@ class Content:
             raw_representation=raw_representation,
             **remaining,
         )
+
+    @classmethod
+    def _from_serialized_value(cls: type[ContentT], value: Any) -> Any:
+        """Rebuild a Content from its serialized mapping, or return the value unchanged.
+
+        A mapping is rebuilt only when it has a known content type and the rebuilt Content serializes back to the
+        same mapping, with or without ``None`` values. Any other value, such as tool JSON that only shares a
+        content type name, is kept as it is. A mapping identical to a serialized Content (including its
+        ``additional_properties``) cannot be told apart from one and is rebuilt.
+        """
+        if not isinstance(value, dict):
+            return value
+        mapping = cast(dict[str, Any], value)
+        content_type = mapping.get("type")
+        if not isinstance(content_type, str) or content_type not in _CONTENT_TYPES:
+            return mapping
+        try:
+            content = cls.from_dict(mapping)
+            if content.to_dict() == mapping or content.to_dict(exclude_none=False) == mapping:
+                return content
+        except Exception:
+            # The mapping is not a serialized Content (for example tool JSON with other fields), so keep it.
+            return mapping
+        return mapping
 
     def __add__(self, other: Content) -> Content:
         """Concatenate or merge two Content instances."""
@@ -2306,7 +2357,8 @@ class Message(SerializationMixin):
         Args:
             role: The role of the author of the message (e.g., "user", "assistant", "system", "tool").
             contents: A sequence of content items. Can be Content objects, strings (auto-converted
-                to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
+                to TextContent), or dicts (parsed via Content.from_dict). A single string is
+                treated as one text item. Defaults to empty list.
 
         Keyword Args:
             author_name: Optional name of the author of the message.

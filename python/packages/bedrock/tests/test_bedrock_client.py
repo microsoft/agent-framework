@@ -1044,3 +1044,36 @@ def test_parse_message_contents_requires_tool_use_name() -> None:
 
     with pytest.raises(ChatClientInvalidResponseException, match="missing required tool name"):
         client._parse_message_contents([{"toolUse": {"toolUseId": "call-1"}}])
+
+
+def test_prepare_options_keeps_per_call_client_kwargs() -> None:
+    """Per-call client kwargs must land in the Converse request, not vanish (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        guardrailConfig={"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"},
+        requestMetadata={"channel": "test"},
+    )
+
+    assert request["guardrailConfig"] == {"guardrailIdentifier": "gr-1", "guardrailVersion": "DRAFT"}
+    assert request["requestMetadata"] == {"channel": "test"}
+
+
+def test_prepare_options_prompt_cleanup_uses_overridden_model_id() -> None:
+    """A prompt ARN arriving through client kwargs must trigger the ARN cleanup (#9344)."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    request = client._prepare_options(
+        messages,
+        {},
+        modelId="arn:aws:bedrock:us-east-1:123456789012:prompt/PROMPT123",
+    )
+
+    assert ":prompt/" in request["modelId"]
+    assert "inferenceConfig" not in request, "prompt ARN requests must not carry inferenceConfig"
+    assert "system" not in request
+    assert "toolConfig" not in request

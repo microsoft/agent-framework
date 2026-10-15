@@ -1563,7 +1563,7 @@ class RawAnthropicClient(
                                 )
                             )
                             for bash_file_content in content_block.content.content:
-                                contents.append(
+                                shell_outputs.append(
                                     Content.from_hosted_file(
                                         file_id=bash_file_content.file_id,
                                         raw_representation=bash_file_content,
