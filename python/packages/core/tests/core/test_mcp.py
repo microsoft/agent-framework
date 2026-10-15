@@ -32,6 +32,7 @@ from agent_framework import (
     FunctionTool,
     MCPStdioTool,
     MCPStreamableHTTPTool,
+    MCPTaskOptions,  # ty: ignore[deprecated]
     MCPWebsocketTool,  # ty: ignore[deprecated]
     Message,
     SupportsChatGetResponse,
@@ -185,6 +186,13 @@ class _TransportBoundClientContext:
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+def test_mcp_task_options_compatibility_shim() -> None:
+    with pytest.warns(DeprecationWarning, match="MCPTaskOptions is retained only for import compatibility"):
+        options = MCPTaskOptions("legacy", default_ttl=30, unknown_option=True)  # ty: ignore[deprecated]
+
+    assert isinstance(options, MCPTaskOptions)  # ty: ignore[deprecated]
 
 
 @pytest.mark.parametrize(

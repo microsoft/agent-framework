@@ -127,6 +127,7 @@ from ._in_memory import InMemoryCollection, InMemoryStore
 from ._mcp import (
     MCPStdioTool,
     MCPStreamableHTTPTool,
+    MCPTaskOptions,
     MCPWebsocketTool,
     SamplingApprovalCallback,
 )
@@ -516,6 +517,7 @@ __all__ = [
     "MCPSkillsSource",
     "MCPStdioTool",
     "MCPStreamableHTTPTool",
+    "MCPTaskOptions",
     "MCPWebsocketTool",
     "MemoryContextProvider",
     "MemoryFileStore",

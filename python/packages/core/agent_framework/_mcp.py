@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextvars
 import json
 import logging
 import re
@@ -13,6 +12,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -227,8 +227,8 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 # object is a reference to the owner of the headers, so we keep track which headers belong to which tool
-_mcp_call_headers: contextvars.ContextVar[tuple[object, dict[str, str]]] = contextvars.ContextVar("_mcp_call_headers")
-_mcp_tool_runtime_context: contextvars.ContextVar[tuple[object, Mapping[str, Any]] | None] = contextvars.ContextVar(
+_mcp_call_headers: ContextVar[tuple[object, dict[str, str]]] = ContextVar("_mcp_call_headers")
+_mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] = ContextVar(
     "_mcp_tool_runtime_context", default=None
 )
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
@@ -332,7 +332,7 @@ class _MCPHostPayloadCapture:
         return items
 
 
-_mcp_host_payload_capture: contextvars.ContextVar[_MCPHostPayloadCapture | None] = contextvars.ContextVar(
+_mcp_host_payload_capture: ContextVar[_MCPHostPayloadCapture | None] = ContextVar(
     "_mcp_host_payload_capture",
     default=None,
 )
@@ -808,6 +808,18 @@ def _build_prefixed_mcp_name(
         return normalized_name
     trimmed_name = normalized_name.lstrip("_.-")
     return f"{normalized_prefix}_{trimmed_name}" if trimmed_name else normalized_prefix
+
+
+@deprecated(
+    "MCP Tasks support was removed during the MCP SDK 2.x migration. "
+    "MCPTaskOptions is retained only for import compatibility.",
+    category=DeprecationWarning,
+)
+class MCPTaskOptions:
+    """Deprecated compatibility shim for the removed MCP Tasks API."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
 
 
 def _normalize_additional_tool_argument_names(
