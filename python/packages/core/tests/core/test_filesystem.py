@@ -107,6 +107,18 @@ def test_atomic_write_text_rejects_preexisting_symbolic_link(tmp_path, monkeypat
     assert temp_path.is_symlink()
 
 
+def test_atomic_write_text_preserves_stream_initialization_error(tmp_path) -> None:
+    """A stream setup failure must retain its error and remove the temporary file."""
+    destination_path = tmp_path / "state.json"
+    destination_path.write_text("original", encoding="utf-8")
+
+    with pytest.raises(LookupError, match="unknown encoding"):
+        _atomic_write_text(destination_path, "replacement", encoding="not-a-real-encoding")
+
+    assert destination_path.read_text(encoding="utf-8") == "original"
+    assert list(tmp_path.glob(".maf-state-*.tmp")) == []
+
+
 SAFE_IDENTIFIERS: tuple[str, ...] = (
     "customer-42",
     "customer_42",

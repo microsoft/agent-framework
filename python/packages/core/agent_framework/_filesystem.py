@@ -58,10 +58,12 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
     try:
         file_descriptor = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
         cleanup_path = temp_path
-        file_handle = os.fdopen(file_descriptor, "w", encoding=encoding)
-        file_descriptor = None
+        file_handle = os.fdopen(file_descriptor, "w", encoding=encoding, closefd=False)
         with file_handle:
             file_handle.write(text)
+        descriptor_to_close = file_descriptor
+        file_descriptor = None
+        os.close(descriptor_to_close)
         os.replace(temp_path, path)
         cleanup_path = None
     finally:
