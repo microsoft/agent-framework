@@ -23,7 +23,7 @@ from collections.abc import (
 )
 from copy import deepcopy
 from datetime import datetime
-from inspect import isawaitable
+from inspect import isawaitable, ismethod
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NamedTuple, NewType, TypeAlias, cast, overload
 
 from typing_extensions import Required, TypedDict
@@ -135,7 +135,7 @@ def detect_media_type_from_base64(
     Args:
         data_bytes: Raw binary data.
         data_str: Base64-encoded data (without data URI prefix).
-        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        data_uri: Full data URI string (e.g., "data:image/png;base64,iVBORw0KGgo=").
             This will look at the actual data to determine the media_type and not at the URI prefix.
             Will also not compare those two values.
 
@@ -151,13 +151,13 @@ def detect_media_type_from_base64(
 
             from agent_framework import detect_media_type_from_base64
 
-            # Detect from base64 string
-            base64_data = "iVBORw0KGgo..."
+            # Detect from the base64-encoded PNG signature
+            base64_data = "iVBORw0KGgo="
             media_type = detect_media_type_from_base64(data_str=base64_data)
             # Returns: "image/png"
 
             # Works with data URIs too
-            data_uri = "data:image/png;base64,iVBORw0KGgo..."
+            data_uri = "data:image/png;base64,iVBORw0KGgo="
             media_type = detect_media_type_from_base64(data_uri=data_uri)
             # Returns: "image/png"
     """
@@ -5037,6 +5037,26 @@ def _append_instructions(
     return combined
 
 
+def _wrap_plain_callables_once(tools: Any, wrapped: dict[object, Any]) -> Any:
+    """Wrap each plain callable in ``tools`` in a FunctionTool, reusing the wrapper for a repeated callable."""
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool
+    from ._tools import tool as make_tool
+
+    if isinstance(tools, (str, bytes, bytearray, Mapping)) or not isinstance(tools, Sequence):
+        tools = [tools]
+    items: list[Any] = []
+    for item in cast(Sequence[Any], tools):
+        if callable(item) and not isinstance(item, (FunctionTool, MCPTool, dict)):
+            # Every `obj.method` access is a new object, so key bound methods by instance and function
+            key = (id(item.__self__), id(item.__func__)) if ismethod(item) else id(item)
+            if key not in wrapped:
+                wrapped[key] = make_tool(item)
+            item = wrapped[key]
+        items.append(item)
+    return items
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -5092,9 +5112,12 @@ def merge_chat_options(
             # Merge tools lists
             base_tools = result.get("tools")
             if base_tools and value:
-                # Add tools that aren't already present
-                merged_tools = list(base_tools)
-                for tool in value if isinstance(value, Iterable) else [value]:  # type: ignore[reportUnknownVariableType]
+                # Add tools that aren't already present. normalize_tools wraps a plain
+                # callable in a new FunctionTool each time, so wrap each plain function
+                # once here and the same function given on both sides is one tool.
+                wrapped: dict[object, Any] = {}
+                merged_tools = normalize_tools(_wrap_plain_callables_once(base_tools, wrapped))
+                for tool in normalize_tools(_wrap_plain_callables_once(value, wrapped)):
                     if tool not in merged_tools:
                         merged_tools.append(tool)
                 result["tools"] = merged_tools
