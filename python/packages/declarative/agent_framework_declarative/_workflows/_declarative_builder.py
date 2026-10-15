@@ -43,7 +43,11 @@ from ._executors_control_flow import (
     IfConditionEvaluatorExecutor,
     JoinExecutor,
 )
-from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
+from ._executors_external_input import (
+    EXTERNAL_INPUT_EXECUTORS,
+    ExternalInputRequest,
+    get_external_input_workflow_session_id,
+)
 from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
 from ._executors_mcp import (
     MCP_ACTION_EXECUTORS,
@@ -119,15 +123,17 @@ ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
 def _validate_mcp_response_batch(requests: Sequence[WorkflowEvent[Any]]) -> None:
     scopes: set[str | None] = set()
     for request in requests:
-        if isinstance(request.data, MCPToolApprovalRequest):
+        if isinstance(request.data, ExternalInputRequest):
+            scope = get_external_input_workflow_session_id(request.data)
+        elif isinstance(request.data, MCPToolApprovalRequest):
             scope = getattr(request.data, "workflow_session_id", None)
             if scope is not None and (not isinstance(scope, str) or not scope):
                 raise ValueError("Invalid MCP approval workflow session state.")
-            scopes.add(scope)
+        else:
+            continue
+        scopes.add(scope)
     if len(scopes) > 1:
-        raise DeclarativeWorkflowError(
-            "MCP approval responses from different workflow sessions must be submitted in separate runs."
-        )
+        raise DeclarativeWorkflowError("Responses from different workflow sessions must be submitted in separate runs.")
 
 
 def _initialize_mcp_run_state(state: State) -> None:

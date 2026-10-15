@@ -294,6 +294,155 @@ class TestFieldForwarding:
         assert resumed.workflow_session_id == original.workflow_session_id
         assert not await workflow._runner_context.get_pending_request_info_events()
 
+    @pytest.mark.parametrize("pause_kind", ["Question", "RequestExternalInput"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_pending_external_input_restores_originating_workflow_session_id(
+        self, pause_kind: str, streaming: bool, restore: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = {
+            "name": "mcp_pending_input",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {
+                    "kind": pause_kind,
+                    "id": "pause",
+                    "question" if pause_kind == "Question" else "prompt": "Continue?",
+                    "variable": "Local.answer",
+                },
+                {**_action(tool_name="after"), "id": "after"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        requests: list[WorkflowEvent[Any]] = []
+        for _ in range(2):
+            if streaming:
+                await workflow.run({}, stream=True, checkpoint_storage=storage).get_final_response()
+            else:
+                await workflow.run({}, checkpoint_storage=storage)
+            [request] = [
+                event
+                for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+                if event.request_id not in {previous.request_id for previous in requests}
+            ]
+            requests.append(request)
+        original_scopes = [invocation.workflow_session_id for invocation in handler.invocations]
+        assert all(original_scopes)
+        assert original_scopes[0] != original_scopes[1]
+
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        for request, scope in zip(requests, original_scopes, strict=True):
+            responses = {request.request_id: ExternalInputResponse(user_input="continue")}
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+            assert handler.invocations[-1].tool_name == "after"
+            assert handler.invocations[-1].workflow_session_id == scope
+        assert handler.call_count == 4
+        assert not await workflow._runner_context.get_pending_request_info_events()
+
+    @pytest.mark.parametrize("mixed_approval", [False, True])
+    @pytest.mark.parametrize("streaming", [False, True])
+    @pytest.mark.parametrize("restore", [False, True])
+    async def test_external_input_batches_reject_different_workflow_sessions(
+        self, mixed_approval: bool, streaming: bool, restore: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ExternalInputResponse, ToolApprovalResponse
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = {
+            "name": "mcp_input_batches",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {"kind": "Question", "id": "pause", "question": "Continue?", "variable": "Local.answer"},
+                {**_action(tool_name="after", require_approval=mixed_approval), "id": "after"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        await workflow.run({}, checkpoint_storage=storage)
+        [first] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        await workflow.run({}, checkpoint_storage=storage)
+        [second] = [
+            event
+            for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+            if event.request_id != first.request_id
+        ]
+        if mixed_approval:
+            await workflow.run(
+                responses={second.request_id: ExternalInputResponse(user_input="continue")},
+                checkpoint_storage=storage,
+            )
+            [second] = [
+                event
+                for event in (await workflow._runner_context.get_pending_request_info_events()).values()
+                if event.request_id != first.request_id
+            ]
+        if restore:
+            checkpoint_id = workflow.get_last_checkpoint_id()
+            assert checkpoint_id is not None
+            workflow = factory.create_workflow_from_definition(definition)
+            await workflow.run(checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        responses = {
+            first.request_id: ExternalInputResponse(user_input="continue"),
+            second.request_id: (
+                ToolApprovalResponse(approved=True) if mixed_approval else ExternalInputResponse(user_input="continue")
+            ),
+        }
+        with pytest.raises(DeclarativeWorkflowError, match="different workflow sessions"):
+            if streaming:
+                await workflow.run(responses=responses, stream=True).get_final_response()
+            else:
+                await workflow.run(responses=responses)
+        assert handler.call_count == 2
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == set(responses)
+
+    @pytest.mark.parametrize("pause_kind", ["Question", "RequestExternalInput"])
+    async def test_external_input_without_originating_scope_is_not_consumed(self, pause_kind: str) -> None:
+        from agent_framework_declarative._workflows import ExternalInputResponse
+
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        workflow = factory.create_workflow_from_definition({
+            "name": "mcp_legacy_input",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {
+                    "kind": pause_kind,
+                    "id": "pause",
+                    "question" if pause_kind == "Question" else "prompt": "Continue?",
+                    "variable": "Local.answer",
+                },
+                {**_action(tool_name="after"), "id": "after"},
+            ],
+        })
+        await workflow.run({})
+        [request] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        request.data.workflow_session_id = None
+
+        with pytest.raises(DeclarativeWorkflowError, match="originating workflow session"):
+            await workflow.run(responses={request.request_id: ExternalInputResponse(user_input="continue")})
+
+        assert handler.call_count == 1
+        assert set(await workflow._runner_context.get_pending_request_info_events()) == {request.request_id}
+
     @pytest.mark.parametrize("run_kind", ["direct", "sessionless_agent", "explicit_agent"])
     @pytest.mark.parametrize("streaming", [False, True])
     async def test_entry_checkpoint_replay_preserves_workflow_session_id(self, run_kind: str, streaming: bool) -> None:

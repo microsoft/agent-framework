@@ -34,7 +34,7 @@ framework-marked WorkflowAgent turns retain the agent continuation scope.
 Run scopes are selected before the initial entry checkpoint and preserved when
 Entry replays. Sessionless WorkflowAgent turns select their own checkpointed scope,
 independent of explicit agent sessions, direct runs, and restored approval scopes.
-Response-only continuations retain the originating agent identity even when supplied
+Response-only continuations retain the originating workflow scope even when supplied
 a new `AgentSession` after checkpoint restoration.
 Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
@@ -80,6 +80,13 @@ arguments. Explicit caller tool arguments in options are preserved.
 
 - **`ExternalInputRequest`** / **`ExternalInputResponse`** - Human-in-the-loop support
 - **`AgentExternalInputRequest`** / **`AgentExternalInputResponse`** - Agent-level input requests
+
+`Question` and `RequestExternalInput` requests retain their originating workflow
+scope across fresh runs and checkpoint restores. Responses restore that scope
+before updating state or continuing execution. Factory-built workflows reject
+response batches spanning different scopes, including mixed MCP approvals and
+external input. Legacy external-input requests without a valid originating scope
+are rejected before consumption rather than inheriting the current scope.
 
 ## Usage
 
