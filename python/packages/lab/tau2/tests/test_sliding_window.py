@@ -238,12 +238,11 @@ def test_get_token_count_warns_over_max():
     assert total > provider.max_tokens
 
     buffer = io.StringIO()
-    logger.remove()
-    logger.add(buffer, format="{message}")
+    handler_id = logger.add(buffer, format="{message}")
     try:
         provider._get_token_count(messages)
     finally:
-        logger.remove()
+        logger.remove(handler_id)
 
     logged = buffer.getvalue()
     assert "over max tokens" in logged
