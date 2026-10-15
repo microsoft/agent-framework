@@ -57,6 +57,8 @@ def mock_foundry_local_manager_factory() -> Callable[[], MagicMock]:
         mock_model.id = "test-model-id"
         mock_model.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.CPU))
         mock_model.variants = [mock_model]
+        mock_model.is_loaded = False
+        mock_model.load.side_effect = lambda: setattr(mock_model, "is_loaded", True)
         mock_manager.catalog.get_model.return_value = mock_model
         mock_manager.catalog.get_model_variant.return_value = mock_model
 
@@ -65,6 +67,8 @@ def mock_foundry_local_manager_factory() -> Callable[[], MagicMock]:
         local_model.id = "local-model:1"
         local_model.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.CPU))
         local_model.variants = [local_model]
+        local_model.is_loaded = False
+        local_model.load.side_effect = lambda: setattr(local_model, "is_loaded", True)
         local_catalog.get_model.return_value = local_model
         local_catalog.get_model_variant.return_value = local_model
         mock_manager.get_catalog.return_value = local_catalog

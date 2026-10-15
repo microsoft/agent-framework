@@ -13,7 +13,9 @@ selected catalog. The application owns local-model registration and assets.
 
 `FoundryLocalClient` exposes the SDK `Configuration` for initial manager setup,
 download progress/cancellation controls, and exact device/variant selection.
-Skipping preparation requires the selected variant to be loaded before inference.
+`prepare_model=False` defers download/load of the configured variant until inference,
+on a worker thread under the shared setup lock. Already loaded variants are reused.
+Per-request model overrides remain caller-prepared; they do not prepare the configured model.
 Clients own their HTTP connections, not the shared native manager.
 Failed setup stops a web service it started on an existing manager without closing
 that manager or stopping a previously running service.

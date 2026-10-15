@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from importlib import import_module
 from queue import Queue
-from threading import Event, Lock
+from threading import Event, Lock, get_ident
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
@@ -611,6 +611,10 @@ async def _client_with_transport(
     function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     catalog_type: Literal["public", "local"] = "public",
     model: str = "test-model-id",
+    prepare_model: bool = False,
+    device: DeviceType | Literal["CPU", "GPU", "NPU"] | None = None,
+    download_progress_callback: Callable[[float], None] | None = None,
+    download_cancel_event: Event | None = None,
 ) -> AsyncGenerator[FoundryLocalClient[FoundryLocalChatOptions[None]]]:
     async with (
         DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(respond), trust_env=False) as http_client,
@@ -625,7 +629,10 @@ async def _client_with_transport(
             yield FoundryLocalClient(
                 model=model,
                 catalog_type=catalog_type,
-                prepare_model=False,
+                prepare_model=prepare_model,
+                device=device,
+                download_progress_callback=download_progress_callback,
+                download_cancel_event=download_cancel_event,
                 middleware=middleware,
                 function_invocation_configuration=function_invocation_configuration,
             )
@@ -661,6 +668,307 @@ def _completion_response(message: dict[str, Any], *, stream: bool, finish_reason
         headers={"content-type": "text/event-stream"},
         text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
     )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_eager_preparation_still_prepares_during_construction(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+
+    def respond(request: Any) -> Any:
+        model.download.assert_called_once_with()
+        model.load.assert_called_once_with()
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond, prepare_model=True) as client:
+        model.download.assert_called_once_with()
+        model.load.assert_called_once_with()
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            response = await client.get_response(messages, stream=True).get_final_response()
+        else:
+            response = await client.get_response(messages)
+        assert response.text == "Hello"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("catalog_type", ["public", "local"])
+async def test_foundry_local_lazy_preparation_pins_variant_and_preserves_download_controls(
+    mock_foundry_local_manager: MagicMock, stream: bool, catalog_type: Literal["public", "local"]
+) -> None:
+    catalog = (
+        mock_foundry_local_manager.catalog
+        if catalog_type == "public"
+        else mock_foundry_local_manager.get_catalog.return_value
+    )
+    variant = MagicMock(spec=IModel)
+    variant.id = "selected-gpu:2"
+    variant.info = SimpleNamespace(runtime=SimpleNamespace(device_type=DeviceType.GPU))
+    variant.is_loaded = False
+    catalog.get_model.return_value.variants.append(variant)
+    event_loop_thread = get_ident()
+    progress_threads: list[int] = []
+    progress: list[float] = []
+    cancel_event = Event()
+    payloads: list[dict[str, Any]] = []
+
+    def report_progress(value: float) -> None:
+        progress_threads.append(get_ident())
+        progress.append(value)
+
+    def download(*, progress_callback: Callable[[float], None], cancel_event: Event) -> None:
+        assert not cancel_event.is_set()
+        assert get_ident() != event_loop_thread
+        progress_callback(100.0)
+
+    def load() -> None:
+        assert get_ident() != event_loop_thread
+        variant.is_loaded = True
+
+    variant.download.side_effect = download
+    variant.load.side_effect = load
+
+    def respond(request: Any) -> Any:
+        assert variant.is_loaded
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(
+        respond,
+        model="model-alias",
+        catalog_type=catalog_type,
+        device="GPU",
+        download_progress_callback=report_progress,
+        download_cancel_event=cancel_event,
+    ) as client:
+        variant.download.assert_not_called()
+        variant.load.assert_not_called()
+        for _ in range(2):
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                response_stream = client.get_response(messages, stream=True)
+                if not payloads:
+                    variant.load.assert_not_called()
+                response = await response_stream.get_final_response()
+            else:
+                response = await client.get_response(messages)
+            assert response.text == "Hello"
+    assert [payload["model"] for payload in payloads] == ["selected-gpu:2", "selected-gpu:2"]
+    variant.download.assert_called_once_with(progress_callback=report_progress, cancel_event=cancel_event)
+    variant.load.assert_called_once_with()
+    catalog.get_model.return_value.select_variant.assert_not_called()
+    assert progress == [100.0]
+    assert progress_threads[0] != event_loop_thread
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_lazy_preparation_reuses_loaded_model(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+
+    def respond(request: Any) -> Any:
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        # Manual preparation after client construction must also be respected.
+        model.is_loaded = True
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            response = await client.get_response(messages, stream=True).get_final_response()
+        else:
+            response = await client.get_response(messages)
+        assert response.text == "Hello"
+    model.download.assert_not_called()
+    model.load.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("stage", ["download", "load"])
+async def test_foundry_local_lazy_preparation_failure_does_not_send_inference_and_can_retry(
+    mock_foundry_local_manager: MagicMock, stream: bool, stage: str
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    failed_operation = model.download if stage == "download" else model.load
+    failed_operation.side_effect = RuntimeError(f"{stage} failed")
+    requests: list[Any] = []
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        assert model.is_loaded
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        with pytest.raises(RuntimeError, match=f"{stage} failed"):
+            if stream:
+                await client.get_response(messages, stream=True).get_final_response()
+            else:
+                await client.get_response(messages)
+        assert not requests
+        if stage == "download":
+            model.load.assert_not_called()
+        failed_operation.side_effect = None if stage == "download" else lambda: setattr(model, "is_loaded", True)
+        if stream:
+            response = await client.get_response(messages, stream=True).get_final_response()
+        else:
+            response = await client.get_response(messages)
+        assert response.text == "Hello"
+    assert len(requests) == 1
+    mock_foundry_local_manager.close.assert_not_called()
+    mock_foundry_local_manager.stop_web_service.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_lazy_preparation_serializes_clients_without_blocking_event_loop(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    started = Event()
+    release = Event()
+    requests: list[Any] = []
+
+    def load() -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("Test did not release native loading.")
+        model.is_loaded = True
+
+    model.load.side_effect = load
+
+    def respond(request: Any) -> Any:
+        assert model.is_loaded
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as first, _client_with_transport(respond) as second:
+
+        async def request_response(client: FoundryLocalClient[FoundryLocalChatOptions[None]]) -> str:
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                return (await client.get_response(messages, stream=True).get_final_response()).text
+            return (await client.get_response(messages)).text
+
+        first_request = asyncio.create_task(request_response(first))
+        second_request = asyncio.create_task(request_response(second))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            await asyncio.sleep(0)
+            assert not first_request.done()
+            assert not second_request.done()
+            assert not requests
+        finally:
+            release.set()
+        assert await asyncio.gather(first_request, second_request) == ["Hello", "Hello"]
+    model.download.assert_called_once_with()
+    model.load.assert_called_once_with()
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_cancelling_lazy_request_preserves_native_preparation(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    started = Event()
+    release = Event()
+    requests: list[Any] = []
+
+    def load() -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("Test did not release native loading.")
+        model.is_loaded = True
+
+    model.load.side_effect = load
+
+    def respond(request: Any) -> Any:
+        assert model.is_loaded
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+
+        async def request_response() -> str:
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                return (await client.get_response(messages, stream=True).get_final_response()).text
+            return (await client.get_response(messages)).text
+
+        first_request = asyncio.create_task(request_response())
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            first_request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first_request
+            assert not requests
+            assert not model.is_loaded
+        finally:
+            release.set()
+        assert await request_response() == "Hello"
+    assert len(requests) == 1
+    model.download.assert_called_once_with()
+    model.load.assert_called_once_with()
+    mock_foundry_local_manager.close.assert_not_called()
+    mock_foundry_local_manager.stop_web_service.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_deferred_download_honors_cancellation_event(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    cancel_event = Event()
+    cancel_event.set()
+    requests: list[Any] = []
+
+    def download(*, progress_callback: Callable[[float], None] | None, cancel_event: Event) -> None:
+        assert cancel_event.is_set()
+        raise RuntimeError("download cancelled")
+
+    model.download.side_effect = download
+
+    def respond(request: Any) -> Any:
+        requests.append(request)
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond, download_cancel_event=cancel_event) as client:
+        model.download.assert_not_called()
+        with pytest.raises(RuntimeError, match="download cancelled"):
+            messages = [Message(role="user", contents=["Hi"])]
+            if stream:
+                await client.get_response(messages, stream=True).get_final_response()
+            else:
+                await client.get_response(messages)
+    model.download.assert_called_once_with(progress_callback=None, cancel_event=cancel_event)
+    model.load.assert_not_called()
+    assert not requests
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_foundry_local_lazy_preparation_does_not_provision_request_overrides(
+    mock_foundry_local_manager: MagicMock, stream: bool
+) -> None:
+    model = mock_foundry_local_manager.catalog.get_model_variant.return_value
+    payloads: list[dict[str, Any]] = []
+
+    def respond(request: Any) -> Any:
+        payloads.append(json.loads(request.content))
+        return _completion_response({"content": "Hello"}, stream=stream)
+
+    async with _client_with_transport(respond) as client:
+        messages = [Message(role="user", contents=["Hi"])]
+        if stream:
+            response = await client.get_response(
+                messages, stream=True, options={"model": "caller-prepared:1"}
+            ).get_final_response()
+        else:
+            response = await client.get_response(messages, options={"model": "caller-prepared:1"})
+        assert response.text == "Hello"
+    assert payloads[0]["model"] == "caller-prepared:1"
+    model.download.assert_not_called()
+    model.load.assert_not_called()
 
 
 @pytest.mark.parametrize("stream", [False, True])

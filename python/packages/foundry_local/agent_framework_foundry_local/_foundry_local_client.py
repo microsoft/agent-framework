@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from threading import Event, Lock
@@ -24,7 +25,7 @@ from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
-from foundry_local_sdk import Configuration, DeviceType, FoundryLocalManager
+from foundry_local_sdk import Configuration, DeviceType, FoundryLocalManager, IModel
 from foundry_local_sdk.catalog import CatalogType
 from openai import DEFAULT_TIMEOUT, AsyncOpenAI
 from pydantic import BaseModel
@@ -235,6 +236,49 @@ class FoundryLocalClient(
             client_kwargs=effective_client_kwargs,
         )
 
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        inner_get_response = super()._inner_get_response
+        if not self._prepare_model_on_request or (options.get("model") or self.model) != self._model_handle.id:
+            return inner_get_response(messages=messages, options=options, stream=stream, **kwargs)
+
+        if stream:
+
+            async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+                await asyncio.to_thread(self._ensure_model_loaded)
+                response = inner_get_response(messages=messages, options=options, stream=True, **kwargs)
+                if not isinstance(response, ResponseStream):
+                    raise TypeError("Streaming responses must return a ResponseStream.")
+                return response  # type: ignore[reportUnknownVariableType]
+
+            return ResponseStream[ChatResponseUpdate, ChatResponse].from_awaitable(_get_stream())
+
+        async def _get_response() -> ChatResponse:
+            await asyncio.to_thread(self._ensure_model_loaded)
+            return await inner_get_response(messages=messages, options=options, stream=False, **kwargs)
+
+        return _get_response()
+
+    def _ensure_model_loaded(self) -> None:
+        with _MANAGER_SETUP_LOCK:
+            if not self._model_handle.is_loaded:
+                self._prepare_model()
+
+    def _prepare_model(self) -> None:
+        if self._download_progress_callback is None and self._download_cancel_event is None:
+            self._model_handle.download()
+        else:
+            self._model_handle.download(
+                progress_callback=self._download_progress_callback, cancel_event=self._download_cancel_event
+            )
+        self._model_handle.load()
+
     def _prepare_options(self, messages: Sequence[Message], options: Mapping[str, Any]) -> dict[str, Any]:
         prepared = super()._prepare_options(messages, options)
         native_metadata: dict[str, str] = {}
@@ -306,16 +350,19 @@ class FoundryLocalClient(
                 client's default when omitted; does not apply to native model preparation.
             prepare_model: Whether to download the model into the cache, and load the model into
                 the inferencing service upon initialization. Default is True.
-                If False, the exact model variant must already be loaded, or be downloaded
-                and loaded manually before inference.
+                If False, preparation is deferred until the first inference request for the
+                configured model. An already loaded variant is reused. The first request
+                may take longer while downloading and loading the model.
             catalog_type: The catalog used for model lookup and HTTP inference.
                 Defaults to "public". Use "local" for models already registered through
                 the SDK's local catalog. Also accepts foundry_local_sdk.catalog.CatalogType.
                 Per-request model overrides remain in the selected catalog.
             download_progress_callback: Optional callback receiving native download progress
-                as a percentage from 0 to 100. Used only when prepare_model is True.
+                as a percentage from 0 to 100, including deferred preparation.
+                Deferred callbacks run on a worker thread.
             download_cancel_event: Optional event that cancels native model download when set.
-                Used only when prepare_model is True; does not cancel model loading or inference.
+                Also applies to deferred preparation; does not cancel model loading or inference.
+                Cancelling an awaiting request does not interrupt native preparation already in progress.
             device: The device type to use for model inference.
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
@@ -369,7 +416,8 @@ class FoundryLocalClient(
                     model="phi-4-mini",
                     prepare_model=False,
                 )
-                # Prepare the exact resolved variant manually before inference.
+                # The first inference request prepares the exact resolved variant.
+                # Alternatively, prepare it manually before inference:
                 model = client.manager.catalog.get_model_variant(client.model)
                 if model is not None:
                     model.download()
@@ -461,14 +509,12 @@ class FoundryLocalClient(
                     raise ValueError(f"Model with ID or alias '{target}' not found in Foundry Local.")
 
                 model_id = model_handle.id
+                self._model_handle: IModel = model_handle
+                self._prepare_model_on_request = not prepare_model
+                self._download_progress_callback = download_progress_callback
+                self._download_cancel_event = download_cancel_event
                 if prepare_model:
-                    if download_progress_callback is None and download_cancel_event is None:
-                        model_handle.download()
-                    else:
-                        model_handle.download(
-                            progress_callback=download_progress_callback, cancel_event=download_cancel_event
-                        )
-                    model_handle.load()
+                    self._prepare_model()
 
                 catalog_path = "/catalogs/local" if catalog_kind == CatalogType.LOCAL else ""
                 super().__init__(

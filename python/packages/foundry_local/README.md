@@ -27,6 +27,7 @@ function invocation continue to use Agent Framework's OpenAI transport.
 
 All clients in a process share the SDK manager and web service. Concurrent client
 construction is serialized through model preparation and failed-setup cleanup.
+Deferred preparation is serialized with setup too; HTTP inference does not hold that lock.
 To customize cache directories or other SDK settings, pass
 `configuration=Configuration(app_name="my-app", ...)`
 when creating the first client, or initialize `FoundryLocalManager` yourself before
@@ -35,15 +36,20 @@ before selecting GPU/NPU variants. A `device` value of `"CPU"`, `"GPU"`, or `"NP
 selects a matching variant; an exact model ID is never replaced by a sibling variant.
 
 `bootstrap=False` requires an already initialized SDK manager with a running web
-service in the same process. `prepare_model=False` skips native download/load during
-construction; the exact selected variant must already be loaded or be prepared
-manually before inference. The HTTP service does not load it automatically.
+service in the same process. `prepare_model=False` defers native download/load until
+the first inference request for the configured model. The adapter prepares the exact
+selected variant on a worker thread before sending HTTP inference; an already loaded
+variant is reused. This preserves lazy first-call loading even though the HTTP service
+does not load models automatically. Applications can still download/load the variant
+manually beforehand to avoid first-request preparation latency.
 `timeout` applies to HTTP inference requests, not native preparation.
 
 `download_progress_callback` receives download percentages from 0 to 100, and
 `download_cancel_event` accepts a `threading.Event` to cancel the download.
-Both apply only when `prepare_model=True`. They do not cancel model loading or
-inference; asynchronous request cancellation uses the normal Agent Framework API.
+Both apply to eager and deferred preparation. Deferred progress callbacks run on a
+worker thread. These controls do not cancel model loading or inference; asynchronous
+request cancellation uses the normal Agent Framework API and does not interrupt
+native preparation already running.
 
 Clients do not close or unload the shared manager. After all clients finish, close
 their HTTP clients and call `client.manager.close()` once at application shutdown.
@@ -95,7 +101,7 @@ finally:
 
 The normal preparation, exact variant selection, streaming, middleware, tools,
 and structured-output APIs also apply to local models, subject to model/runtime
-capabilities. `prepare_model=False` still requires manual loading before inference.
+capabilities. `prepare_model=False` also supports lazy preparation of registered local models.
 Clients do not unregister local models or delete their assets; the application
 owns registration and manager shutdown.
 
