@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
@@ -33,7 +33,7 @@ constraints = [
     { name = "litellm", specifier = ">=1.100.0" },
 ]
 overrides = [
-    { name = "mcp", extras = ["ws"], specifier = ">=1.27.0,<2" },
+    { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "python-multipart", specifier = ">=0.0.31" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
@@ -49,7 +49,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.20.0"
+version = "1.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "msgspec" },
@@ -60,9 +60,9 @@ dependencies = [
     { name = "regex" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ea/e6/afcf9b4c8cdee8642deb1d836f560b49835ddb9af30d07ab6301bbc470fc/agent_framework_core-1.20.0.tar.gz", hash = "sha256:2cc3bb1fc30e8f8c4cdcd74c6996b58c7cd92246c018f904982ee41762538f0d", size = 741992, upload-time = "2026-10-02T12:41:05.438Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/4e/ccbbb762eb222881e0fb9b63d3c03ed298d26fea9725ef8beb3d40633523/agent_framework_core-1.21.0.tar.gz", hash = "sha256:3ddd6e46373875cceac857b671480c528b57d387b2d2177f52d32568d842017f", size = 750586, upload-time = "2026-10-08T10:42:40.918Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/66/1273c98faf8d3f11e6f3a882e3658c9311292c726c56e2228720169c4260/agent_framework_core-1.20.0-py3-none-any.whl", hash = "sha256:baa2e90a83c4aef9bf6ee11d2600a78e46439aa06a3fc372f2d50ccbd87584fc", size = 803359, upload-time = "2026-10-02T12:41:03.763Z" },
+    { url = "https://files.pythonhosted.org/packages/be/97/e99f86ebd1910d200b5c889d87b8a205e339ac87e372b8ba8cf374f9519a/agent_framework_core-1.21.0-py3-none-any.whl", hash = "sha256:ef333ff8348375b7d0757e690b1bd2ac3a1da67afc5cfacf6ce8db7da93bc423", size = 812842, upload-time = "2026-10-08T10:40:38.176Z" },
 ]
 
 [[package]]
@@ -157,15 +157,15 @@ tau2 = [{ name = "tau2", git = "https://github.com/sierra-research/tau2-bench?re
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.15.0"
+version = "1.16.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/97/e17fface9bf2d53a29c50074b8918c07b11f5efab4889303f9b4f90d05ad/agent_framework_openai-1.15.0.tar.gz", hash = "sha256:2b08d68538f82233a040f3fb9672d449b2d2832992b47c6046be6b193fced26f", size = 74408, upload-time = "2026-10-02T12:41:08.109Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/e0/40400b67cb4eefd6f74b52dffc3805f413fe296a882dfae3980f6b2cadf2/agent_framework_openai-1.16.0.tar.gz", hash = "sha256:f78877ff6e9a7fd207187d667db0d5eb5a22058ff39bad5cc6b6eb24016859b4", size = 74323, upload-time = "2026-10-08T10:43:01.97Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/55/a7520c76d267e128134f8ff4ce17a94dcc748a7ca9516e289c6551712181/agent_framework_openai-1.15.0-py3-none-any.whl", hash = "sha256:e66afa8be1e85344a0f1d446684bd67bd099ff0ed8e5ea96f415fc013b18c4fb", size = 79077, upload-time = "2026-10-02T12:41:06.933Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/9a/6796e96cf2490cd49111fde36ceb7ef9fd3ce8a329198f33b414273e06f3/agent_framework_openai-1.16.0-py3-none-any.whl", hash = "sha256:93790e61f8ee0104db56d2998bd03924c844600046b16efc26ed5df7fe1bee7f", size = 79126, upload-time = "2026-10-08T10:43:00.276Z" },
 ]
 
 [[package]]
@@ -2511,15 +2511,6 @@ http2 = [
 ]
 
 [[package]]
-name = "httpx-sse"
-version = "0.4.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
-]
-
-[[package]]
 name = "httpx2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3172,7 +3163,7 @@ proxy = [
     { name = "inquirerpy" },
     { name = "litellm-enterprise" },
     { name = "litellm-proxy-extras" },
-    { name = "mcp", extra = ["ws"] },
+    { name = "mcp" },
     { name = "orjson" },
     { name = "polars" },
     { name = "pydantic" },
@@ -3490,15 +3481,15 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.30.0"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
+    { name = "httpx2" },
     { name = "jsonschema" },
+    { name = "mcp-types" },
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
@@ -3508,14 +3499,22 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/8d/e0d339616f4810e9051d4aba6887afab289ab1f81875fe908b606cdfd0e3/mcp-2.3.0.tar.gz", hash = "sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8", size = 4171955, upload-time = "2026-10-02T22:06:56.091Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl", hash = "sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0", size = 234581, upload-time = "2026-09-07T14:34:14.266Z" },
+    { url = "https://files.pythonhosted.org/packages/20/d7/4a2878f128df729db3ca04e71bfce26405cc2e0c9ebe19c592feeb4c61b9/mcp-2.3.0-py3-none-any.whl", hash = "sha256:dd0c44c089d16453e8ae31a3877a0054d7a2314caaa81f5e0541b9b1734b2377", size = 368664, upload-time = "2026-10-02T22:06:52.119Z" },
 ]
 
-[package.optional-dependencies]
-ws = [
-    { name = "websockets" },
+[[package]]
+name = "mcp-types"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/2d/7c251e34207f6c51000312fc8839111ac45cfe02023f90b44e7f1051dd8e/mcp_types-2.3.0.tar.gz", hash = "sha256:d1e46549edb35ee19a94940fcee6d1addd7e589ab7ea92dda83f5d84781fc362", size = 65898, upload-time = "2026-10-02T22:06:57.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/48/32583066b155bb5d4507e7887dc88ee23118cc4de8e2a12870c49719e2a8/mcp_types-2.3.0-py3-none-any.whl", hash = "sha256:968efdbdaedfab06adae40d378a34395f1090c5921d4be3c9cde283aaf76d91d", size = 69108, upload-time = "2026-10-02T22:06:54.099Z" },
 ]
 
 [[package]]
