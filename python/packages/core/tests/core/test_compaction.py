@@ -45,6 +45,7 @@ from agent_framework._compaction import (
     append_compaction_message,
     extend_compaction_messages,
 )
+from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY
 
 
@@ -870,6 +871,18 @@ class _RecordingCompactionStrategy:
     async def __call__(self, messages: list[Message]) -> bool:
         self.call_count += 1
         return self.changed
+
+
+def test_agent_triggered_compaction_apis_are_experimental() -> None:
+    feature_id = ExperimentalFeature.AGENT_TRIGGERED_COMPACTION.value
+    for api in (AgentTriggeredCompactionStrategy, UnloadSkillsCompactionStrategy):
+        assert getattr(api, "__feature_stage__", None) == "experimental"
+        assert getattr(api, "__feature_id__", None) == feature_id
+        assert ".. warning:: Experimental" in (api.__doc__ or "")
+
+    _WARNED_FEATURES.discard((ExperimentalWarning, feature_id))
+    with pytest.warns(ExperimentalWarning, match=feature_id):
+        AgentTriggeredCompactionStrategy(UnloadSkillsCompactionStrategy())
 
 
 async def test_agent_triggered_compaction_runs_only_after_completed_trigger() -> None:
