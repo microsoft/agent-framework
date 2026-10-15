@@ -595,10 +595,10 @@ class _MCPConnection(Protocol):
 class _ClientMCPConnection:
     """MCP connection backed by a high-level Client."""
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: Client, *, is_framework_owned: bool) -> None:
         self.client: Client | None = client
         self.session: ClientSession | None = None
-        self.is_framework_owned = True
+        self.is_framework_owned = is_framework_owned
         self._client = client
 
     async def call_tool(
@@ -707,7 +707,7 @@ def _as_mcp_connection(  # pyright: ignore[reportUnusedFunction]
     from mcp import Client as MCPClient
 
     if isinstance(client, MCPClient):
-        return _ClientMCPConnection(client)
+        return _ClientMCPConnection(client, is_framework_owned=False)
     return _SessionMCPConnection(client)
 
 
@@ -1072,9 +1072,9 @@ class MCPTool:
         MCPStdioTool or MCPStreamableHTTPTool.
 
     Caching:
-        Framework-owned modern connections honor server-provided ``ttlMs`` and ``cacheScope`` hints through the
-        MCP SDK's per-Client response cache. Legacy servers and caller-supplied ``ClientSession`` connections remain
-        uncached under the default zero-TTL policy.
+        Modern high-level ``Client`` connections honor server-provided ``ttlMs`` and ``cacheScope`` hints through
+        the MCP SDK's per-Client response cache. Legacy servers and caller-supplied ``ClientSession`` connections
+        remain uncached under the default zero-TTL policy.
 
     Examples:
         See the subclass documentation for usage examples:
@@ -1094,6 +1094,7 @@ class MCPTool:
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         request_timeout: int | None = None,
         client: SupportsChatGetResponse | None = None,
@@ -1163,7 +1164,16 @@ class MCPTool:
             asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
         ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
-        self._connection: _MCPConnection | None = _SessionMCPConnection(session) if session is not None else None
+
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None:
+            self._connection = _ClientMCPConnection(mcp_client, is_framework_owned=False)
+        elif session is not None:
+            self._connection = _SessionMCPConnection(session)
+        else:
+            self._connection = None
+
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
@@ -2314,7 +2324,6 @@ class MCPTool:
                         sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                     )
                 )
-                session = mcp_client.session
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2347,7 +2356,8 @@ class MCPTool:
                 ) as init_span:
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, mcp_client.protocol_version)
                     self._set_server_capabilities(mcp_client.server_capabilities)
-                    self._ping_available = session.initialize_result is not None
+                    # initialize_result exists only for legacy negotiation; modern MCP has no ping.
+                    self._ping_available = mcp_client.session.initialize_result is not None
             except (Exception, asyncio.CancelledError) as ex:
                 cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
                 if cancelled:
@@ -2373,7 +2383,9 @@ class MCPTool:
                     error_msg,
                     inner_exception=ex if isinstance(ex, Exception) else None,
                 ) from ex
-            self._connection = _ClientMCPConnection(mcp_client)
+            self._connection = _ClientMCPConnection(mcp_client, is_framework_owned=True)
+        elif connection.client is not None:
+            self._set_server_capabilities(connection.client.server_capabilities)
         elif connection.session is not None:
             session = connection.session
             try:
@@ -3579,6 +3591,7 @@ class MCPStdioTool(MCPTool):
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
@@ -3627,6 +3640,9 @@ class MCPStdioTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
+            mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that client. Mutually exclusive
+                with ``session``.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
@@ -3703,6 +3719,7 @@ class MCPStdioTool(MCPTool):
             always_load=always_load,
             tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
+            mcp_client=mcp_client,
             session=session,
             client=client,
             load_tools=load_tools,
@@ -3786,6 +3803,7 @@ class MCPStreamableHTTPTool(MCPTool):
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
+        mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
@@ -3837,6 +3855,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
+            mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that client. Mutually exclusive
+                with ``session``.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
@@ -3982,6 +4003,7 @@ class MCPStreamableHTTPTool(MCPTool):
             always_load=always_load,
             tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
+            mcp_client=mcp_client,
             session=session,
             client=client,
             load_tools=load_tools,
