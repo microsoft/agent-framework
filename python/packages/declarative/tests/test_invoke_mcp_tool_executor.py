@@ -1031,7 +1031,7 @@ class TestRequestScopeContinuations:
             for event in (await workflow._runner_context.get_pending_request_info_events()).values()
             if event.request_id != first.request_id
         ]
-        first_scope, second_scope = [invocation.workflow_session_id for invocation in handler.invocations]
+        first_scope, second_scope = (invocation.workflow_session_id for invocation in handler.invocations)
         await workflow.run(
             responses={first.request_id: _scope_pause_response("InvokeAzureAgent", "continue")},
             checkpoint_storage=storage,
