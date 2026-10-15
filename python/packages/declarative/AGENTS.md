@@ -34,6 +34,8 @@ framework-marked WorkflowAgent turns retain the agent continuation scope.
 Run scopes are selected before the initial entry checkpoint and preserved when
 Entry replays. Sessionless WorkflowAgent turns select their own checkpointed scope,
 independent of explicit agent sessions, direct runs, and restored approval scopes.
+Response-only continuations retain the originating agent identity even when supplied
+a new `AgentSession` after checkpoint restoration.
 Approval continuations keep their originating active scope until the next run with new input.
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes

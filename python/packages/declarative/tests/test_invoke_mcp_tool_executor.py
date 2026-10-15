@@ -220,6 +220,80 @@ class TestFieldForwarding:
         assert handler.invocations[0].workflow_session_id
         assert handler.invocations[0].workflow_session_id == handler.invocations[1].workflow_session_id
 
+    @pytest.mark.parametrize("pause_kind", ["Question", "RequestExternalInput"])
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_response_only_agent_checkpoint_resume_preserves_workflow_session_id(
+        self, pause_kind: str, streaming: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        factory = WorkflowFactory(mcp_tool_handler=handler)
+        definition = {
+            "name": "mcp_continuation",
+            "actions": [
+                {**_action(tool_name="before"), "id": "before"},
+                {
+                    "kind": pause_kind,
+                    "id": "pause",
+                    "question" if pause_kind == "Question" else "prompt": "Continue?",
+                    "variable": "Local.answer",
+                },
+                {**_action(tool_name="after"), "id": "after"},
+            ],
+        }
+        workflow = factory.create_workflow_from_definition(definition)
+        agent = workflow.as_agent()
+        original_session = AgentSession()
+        if streaming:
+            response = await agent.run(
+                "first turn", session=original_session, stream=True, checkpoint_storage=storage
+            ).get_final_response()
+        else:
+            response = await agent.run("first turn", session=original_session, checkpoint_storage=storage)
+
+        [request] = (await workflow._runner_context.get_pending_request_info_events()).values()
+        [function_call] = [
+            content for message in response.messages for content in message.contents if content.type == "function_call"
+        ]
+        assert function_call.call_id == request.request_id
+        checkpoint_id = workflow.get_last_checkpoint_id()
+        assert checkpoint_id is not None
+        workflow = factory.create_workflow_from_definition(definition)
+        agent = workflow.as_agent()
+        resumed_session = AgentSession()
+        assert resumed_session.session_id != original_session.session_id
+        reply = Message(
+            role="user",
+            contents=[
+                Content(
+                    "function_result",
+                    call_id=request.request_id,
+                    result=ExternalInputResponse(user_input="continue"),
+                )
+            ],
+        )
+        if streaming:
+            await agent.run(
+                reply,
+                session=resumed_session,
+                stream=True,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=storage,
+            ).get_final_response()
+        else:
+            await agent.run(reply, session=resumed_session, checkpoint_id=checkpoint_id, checkpoint_storage=storage)
+
+        [original, resumed] = handler.invocations
+        assert original.tool_name == "before"
+        assert resumed.tool_name == "after"
+        assert original.workflow_session_id
+        assert resumed.workflow_session_id == original.workflow_session_id
+        assert not await workflow._runner_context.get_pending_request_info_events()
+
     @pytest.mark.parametrize("run_kind", ["direct", "sessionless_agent", "explicit_agent"])
     @pytest.mark.parametrize("streaming", [False, True])
     async def test_entry_checkpoint_replay_preserves_workflow_session_id(self, run_kind: str, streaming: bool) -> None:

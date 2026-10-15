@@ -163,7 +163,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
 
         // Assert
         Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => replacement));
-        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal.WaitAsync(timeout.Token)));
+        Assert.Same(cleanupException, await Assert.ThrowsAsync<OperationCanceledException>(() => disposal));
         Assert.Equal(1, stub.Initializations);
         Assert.Equal(1, stub.Terminations);
     }

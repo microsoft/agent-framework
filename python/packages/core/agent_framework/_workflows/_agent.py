@@ -516,7 +516,6 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 async for event in response_stream:
                     yield event
             else:
@@ -527,7 +526,6 @@ class WorkflowAgent(BaseAgent):
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
-                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 for event in await response_result:
                     yield event
         elif final_state == WorkflowRunState.IDLE:
