@@ -17,62 +17,17 @@ Capture:
 
 Ask only about unknowns that materially affect the design.
 
-## Minimal project
+## Start from maintained examples
 
-```text
-my-agent/
-  pyproject.toml
-  agent.py
-```
+For a new application, select the provider first and install only its required distribution and capabilities. Use the
+current quickstart or maintained sample for package commands and runnable code rather than copying versions or setup
+steps into the skill.
 
-For the canonical Foundry-backed starting point, use the package manager selected by the project or user:
+- [Your first agent](https://learn.microsoft.com/agent-framework/get-started/your-first-agent)
+- [Python getting-started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started)
 
-```bash
-# uv
-uv init --bare --python 3.13
-uv add agent-framework-foundry azure-identity
-
-# pip
-python -m pip install agent-framework-foundry azure-identity
-```
-
-Install only the distributions required by the selected provider and capabilities. Add prerelease resolution only when
-one of those distributions is prerelease.
-
-## Minimal Foundry agent
-
-Use environment variables in real applications:
-
-```python
-from __future__ import annotations
-
-import asyncio
-import os
-
-from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
-
-
-async def main() -> None:
-    agent = Agent(
-        client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["FOUNDRY_MODEL"],
-            credential=AzureCliCredential(),
-        ),
-        name="my-agent",
-        instructions="Describe the agent behavior here.",
-    )
-    print(await agent.run("Hello"))
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-Agent Framework does not automatically load `.env` files. Add `python-dotenv` and call `load_dotenv()` only when the
-application intentionally uses a `.env` file.
+The stable pattern is an `Agent` wrapping a chat client, instructions, tools, middleware, and ContextProviders. Agent
+Framework does not automatically load `.env` files; configuration loading remains application-owned.
 
 ## Provider selection
 
@@ -104,16 +59,12 @@ JSON schemas.
 
 ## Sessions
 
-Use an `AgentSession` for multi-turn state:
-
-```python
-session = agent.create_session()
-await agent.run("Remember Amsterdam.", session=session)
-response = await agent.run("What city should you remember?", session=session)
-```
+Create an `AgentSession` through the agent and pass the same session to each run in one logical conversation.
 
 - Do not reuse a session concurrently unless the provider and application explicitly support it.
 - Treat persisted session state as sensitive data.
+- Read [session documentation](https://learn.microsoft.com/agent-framework/concepts/agents/conversations/session) for
+  serialization and provider-specific continuation behavior.
 
 ## History
 

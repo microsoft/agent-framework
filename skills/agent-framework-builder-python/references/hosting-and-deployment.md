@@ -1,161 +1,51 @@
 # Hosting and deployment
 
-Use this path after the agent or workflow works locally. Keep Agent Framework application readiness separate from
-cloud provisioning, RBAC, quota, networking, and deployment operations.
-
-Hosting packages have independent lifecycle states. Verify current package maturity and host contracts before
-generating files.
+Use hosting after the agent or workflow works locally. Separate the runtime protocol from the deployment platform:
+hosting libraries expose an application; infrastructure tooling deploys it.
 
 ## Choose the hosting family
 
-| Need | Hosting family |
+| Need | Source of detail |
 | --- | --- |
-| Local execution | Direct Python process |
-| Protocol hosting in any self-managed environment | General `agent-framework-hosting*` packages |
-| Microsoft Foundry Agent Server | `agent-framework-foundry-hosting` |
-| Durable execution or Azure Functions | Durable Agent Framework extension |
+| Self-managed protocol endpoint | [Agent Framework hosting](https://learn.microsoft.com/agent-framework/hosting/) |
+| Microsoft Foundry Agent Server | [Foundry hosted agents](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent) |
+| Durable execution or Azure Functions | [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension) |
 
-Start with [hosting guidance](https://learn.microsoft.com/agent-framework/get-started/hosting) and then open the
-selected host's detailed documentation and current sample.
+General hosting packages target arbitrary environments and provide protocol adapters such as Responses, A2A, MCP, or
+Telegram. `agent-framework-foundry-hosting` is specific to the Foundry Agent Server and supports Responses and
+Invocations contracts. Check current package maturity and protocol documentation rather than copying option inventories
+into application code.
 
-## General hosting
+## Stable hosting rules
 
-The general hosting packages expose Agent Framework applications through protocols without targeting a specific cloud
-or deployment environment. The application owns the process, network endpoint, scaling, identity, persistence, and
-deployment platform.
+- Treat translated request options as caller-controlled input and forward only an explicit allowlist.
+- Choose one history owner; do not combine competing host, service, and agent history mechanisms.
+- Reuse an agent instance only when all mutable state is session-scoped. Otherwise use a request-owned factory.
+- Prefer native workflow hosting. A shared `workflow.as_agent()` instance can leak workflow state across requests.
+- Build fresh workflows and request-owned resources while keeping workflow and executor identities stable for
+  checkpoint restoration.
+- Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
-| Protocol or surface | Package |
-| --- | --- |
-| Shared hosting abstractions | `agent-framework-hosting` |
-| OpenAI-compatible Responses | `agent-framework-hosting-responses` |
-| Agent-to-Agent (A2A) | `agent-framework-hosting-a2a` |
-| Model Context Protocol (MCP) | `agent-framework-hosting-mcp` |
-| Telegram | `agent-framework-hosting-telegram` |
+Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
+storage providers, and protocol details.
 
-These packages provide host adapters and protocol behavior; they do not provision or deploy the surrounding
-infrastructure. They are currently alpha packages, so verify their current contracts before depending on them.
+## Deployment readiness
 
-Treat protocol request bodies and translated run options as caller-controlled input. Forward only an explicit allowlist
-of options that the application supports; do not pass caller-supplied tools, instructions, or
-`additional_function_arguments` into `agent.run(...)` unless the application deliberately exposes those capabilities.
+Verify the entry point imports, required packages and external files are included, configuration fails clearly, history
+and storage ownership are documented, request-owned resources are cleaned up, and no local credentials or caches enter
+the deployment package.
 
-## Foundry hosting
+## Deploy to Microsoft Foundry
 
-`agent-framework-foundry-hosting` is specifically for the Microsoft Foundry Agent Server and currently provides at
-least two hosting protocols:
+Foundry deployment commands, manifests, prerequisites, and injected configuration change independently from Agent
+Framework. Use current authoritative instructions:
 
-| Foundry protocol | API |
-| --- | --- |
-| OpenAI-compatible Responses | `ResponsesHostServer` |
-| Custom invocation request and response contracts | `InvocationsHostServer` |
+- [Agent Framework Foundry deployment guidance](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent#deploying-to-foundry)
+- [Foundry hosted-agent quickstart](https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent)
+- [Deploy a hosted agent](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent)
+- [Deploy from source code](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)
+- [Manage hosted agents](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent)
+- [Agent Framework hosted-agent samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents)
 
-This package integrates Agent Framework sessions, responses, approvals, workflows, and Foundry sandbox identity with
-the platform host. It is not the general-purpose hosting layer for arbitrary environments.
-
-### Responses protocol
-
-`agent-framework-foundry-hosting` is currently beta, so allow prerelease resolution when installing it.
-
-```python
-from __future__ import annotations
-
-import os
-
-from agent_framework import Agent
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
-from azure.identity import DefaultAzureCredential
-
-
-agent = Agent(
-    client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=DefaultAzureCredential(),
-    ),
-    instructions="You are a helpful assistant.",
-    default_options={"store": False},
-)
-
-ResponsesHostServer(agent=agent, history_source="agent_server").run()
-```
-
-Choose the history source deliberately:
-
-- `agent_server` lets the host reconstruct outer Responses history and disables duplicate inner storage;
-- `service` uses the downstream service's private continuation;
-- `agent` lets the agent's history provider or client storage own history.
-
-Do not combine competing history owners.
-
-### Invocations protocol
-
-Use `InvocationsHostServer` when the hosted application needs its own invocation payload and response contract instead
-of the OpenAI Responses protocol. Supply the documented parser or invocation handler and make session, identity, and
-workflow continuation behavior explicit.
-
-## Foundry agent and workflow ownership
-
-- Passing an agent instance reuses it for the host lifetime.
-- Pass a zero-argument sync or async factory when the agent owns mutable state outside `AgentSession`.
-- Prefer native `workflow=` hosting when the host supports workflows.
-- Hosting `workflow.as_agent()` is deprecated in Foundry hosting because a shared workflow agent is stateful and can
-  leak state across requests.
-- Workflow factories must build fresh workflows, executors, agents, clients, providers, and mutable tools while
-  preserving stable workflow and executor identities for checkpoint restoration.
-
-## Entry-point contracts
-
-- `build_agent()` is an application convention, not a framework requirement.
-- Export a module-level `agent` only when the selected discovery or hosting path requires it.
-- Foundry host servers accept an agent instance or factory through `agent=`.
-- Native Foundry workflow hosting has its own `workflow=` and request-parsing contracts.
-- General Responses, A2A, MCP, Telegram, and durable hosts use their own adapters; follow the selected package's
-  examples instead of applying Foundry-specific server contracts.
-
-## Configuration and identity
-
-Document only variables required by the selected provider and host. Common Foundry examples use:
-
-- `FOUNDRY_PROJECT_ENDPOINT`;
-- `FOUNDRY_MODEL`;
-- a development credential such as `AzureCliCredential`;
-- a deliberate production credential, commonly managed identity.
-
-Do not commit secrets. Review `DefaultAzureCredential` for production because its fallback chain may probe credentials
-the application did not intend to use.
-
-## Deployment readiness checklist
-
-- `pyproject.toml` declares only required runtime packages.
-- The selected entry point imports and constructs the agent or workflow.
-- Required environment variables fail with clear messages.
-- Session, checkpoint, response, and service-history ownership are explicit.
-- Tool side effects and approval behavior are documented.
-- External files, skills, prompts, and resources are packaged intentionally.
-- Health, logging, telemetry, and sensitive-data settings match the host.
-- Request-scoped resources are created and cleaned up by the request-scoped factory.
-- The deployment package contains no local credentials, caches, or unrelated files.
-- Host-specific manifests are added only by the deployment workflow that consumes them.
-
-## Deploy a hosted agent to Microsoft Foundry
-
-Foundry deployment commands, manifests, prerequisites, injected environment variables, and supported deployment paths
-change independently from Agent Framework. Do not reproduce or infer them from memory. After local readiness is proven,
-open the current authoritative guide for the scenario:
-
-- [Agent Framework: Foundry hosted agents and deployment](https://learn.microsoft.com/agent-framework/hosting/foundry-hosted-agent#deploying-to-foundry)
-- [Foundry quickstart: deploy your first hosted agent with azd](https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent)
-- [Foundry: deploy a hosted agent](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent)
-- [Foundry: deploy a hosted agent from source code](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code)
-- [Host Agent Framework agents as Foundry hosted agents](https://learn.microsoft.com/azure/foundry/how-to/develop/framework-hosted-agents#deploy)
-- [Manage deployed hosted agents](https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent)
-- [Agent Framework hosted-agent sample deployment instructions](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents#deploying-the-agent-to-foundry)
-
-Use the selected guide or sample as the source of truth for `azd`, provisioning, deployment, invocation, traces, RBAC,
-quota, capacity, troubleshooting, manifests, and runtime configuration.
-
-Current examples:
-
-- [First hosted agent](https://github.com/microsoft/agent-framework/blob/main/python/samples/01-get-started/07_hosting.py)
-- [Foundry hosting package guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/foundry_hosting/README.md)
-- [Foundry hosted-agent samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents)
+Use those sources for `azd`, provisioning, manifests, environment variables, deployment, invocation, RBAC, quota,
+monitoring, and troubleshooting. Do not reconstruct deployment files from memory.

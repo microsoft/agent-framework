@@ -1,133 +1,47 @@
 # Providers and integrations
 
-Choose integrations only after the application contract is clear. A model provider or agent service supplies the
-underlying intelligence; tools, memory, protocols, UI, and hosting add separate capabilities.
+Choose integrations only after the application contract is clear. Provider and connector capabilities, package
+maturity, and Python compatibility change more frequently than core Agent Framework patterns.
 
-Package and provider availability changes more frequently than core agent patterns. Check current Microsoft Learn
-documentation and package metadata before adding dependencies or promising feature parity.
+## Version and package selection
 
-## Python version compatibility
+- Check each selected distribution's `Requires-Python` metadata and the current
+  [Python package status](https://github.com/microsoft/agent-framework/blob/main/python/PACKAGE_STATUS.md).
+- Read the [Python README compatibility notes](https://github.com/microsoft/agent-framework/blob/main/python/README.md)
+  for current boundary-version limitations rather than copying that matrix into application guidance.
+- Install only the selected integrations and allow prerelease packages only when required.
 
-Agent Framework supports Python 3.11 through 3.15. Build new environments with the latest supported Python release, or
-at least the previous release (N-1), unless a required integration has a narrower compatibility range.
-
-Python 3.14 and 3.15 support the core framework, with these current integration limitations:
-
-| Area | Affected versions | Limitation |
-| --- | --- | --- |
-| Declarative Power Fx | Python 3.14-3.15 | `agent-framework-declarative` installs without its `powerfx` dependency. Expressions beginning with `=` are not evaluated. |
-| Redis | Python 3.15 | `agent-framework-redis` is unavailable because RedisVL requires Python earlier than 3.15. |
-| Hyperlight | Python 3.15 | `agent-framework-hyperlight` is unavailable until a compatible sandbox backend wheel is published. |
-| AG-UI A2UI | Python 3.15 | Base `agent-framework-ag-ui` works, but its optional `a2ui` extra is unavailable because the toolkit requires Python earlier than 3.15. |
-
-Check each selected distribution's `Requires-Python` metadata instead of assuming every integration supports the full
-framework range.
-
-## Providers and agent services
-
-Common released distributions include:
-
-- `agent-framework-foundry` for Microsoft Foundry chat clients, managed agents, memory, embeddings, and Foundry evals;
-- `agent-framework-openai` for OpenAI and Azure OpenAI Responses or Chat Completions clients;
-- `agent-framework-github-copilot` for GitHub Copilot-backed scenarios.
-
-Other providers and agent services have independent lifecycle states and Python requirements. Install only the selected
-distribution and allow prerelease packages only when required.
-
-If no existing provider matches the backend, use the
-[custom provider guidance](extensibility.md#custom-providers) to implement a `BaseChatClient` or
-`SupportsAgentRun` adapter instead of forking an unrelated provider.
+## Provider selection
 
 Start with the current
 [model provider catalog](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers/) and
 [agent service catalog](https://learn.microsoft.com/agent-framework/integrations/by-component/agent-services/).
 
-Verify:
+Verify authentication, streaming, structured output, hosted tools, history ownership, approval, and function-loop
+support instead of assuming provider parity. If no provider matches, use
+[Extensibility](extensibility.md#custom-providers).
 
-- authentication and identity;
-- Python and package version support;
-- streaming and structured output;
-- hosted tools;
-- application-managed versus service-managed history;
-- tool approval and function-loop behavior.
+## Capability categories
 
-## Tools
+- Use function tools for application-owned code and MCP for external tool services.
+- Use sessions and ContextProviders first; add memory, retrieval, or vector-store connectors when persistence, search,
+  scale, or an external data model requires them.
+- A2A connects agents across services; AG-UI connects agents or workflows to compatible frontends; hosting adapters
+  expose protocols. None of these replace application authorization.
+- Durable Task and Azure Functions integrations are maintained in the
+  [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension).
 
-Choose local versus hosted execution deliberately:
-
-- function tools for application-owned Python functions;
-- local MCP for caller-owned MCP clients and sessions;
-- hosted MCP, web search, file search, or code interpreter only when the selected provider supports them;
-- Agent Skills through `SkillsProvider` when the built agent should discover reusable capabilities.
-
-Keep local function and MCP side effects under the application's approval and security policy. Hosted execution still
-requires explicit identity, data-boundary, and provider-capability review.
-
-## Memory, retrieval, and vector stores
-
-Use normal sessions and context providers first. Add a connector when persistence, scale, search, or an external data
-model requires it.
-
-Current integration categories include:
-
-- chat history and context providers;
-- Foundry memory;
-- Azure AI Search;
-- Cosmos DB and Redis;
-- vector-store connectors such as PostgreSQL, MongoDB, Qdrant, DuckDB, Oracle, SQL Server, and DocumentDB;
-- graph and third-party memory providers.
-
-Some connector packages are alpha or beta even when core is released. Check lifecycle state and supported operations.
-
-Define tenant, user, retention, deletion, authorization, and encryption boundaries before persisting conversation,
-memory, or vector data.
-
-## Protocol and UI integrations
-
-- A2A for interoperable agent-to-agent communication.
-- MCP hosting when the application exposes tools through MCP.
-- ChatKit and other application-specific UI integrations where appropriate.
-
-Protocol integration does not replace authorization. Validate identities, payloads, exposed tools, and cross-tenant
-behavior at every boundary.
-
-### AG-UI
-
-Use `agent-framework-ag-ui` to connect Agent Framework agents and workflows to AG-UI-compatible frontends.
-
-- `add_agent_framework_fastapi_endpoint(...)` exposes a `SupportsAgentRun` implementation or `Workflow` through a
-  FastAPI endpoint.
-- `AgentFrameworkAgent` and `AgentFrameworkWorkflow` provide the protocol adapters.
-- `AGUIChatClient` connects an Agent Framework application to an existing AG-UI server.
-- AG-UI supports streaming events, tool calls, shared state, interrupts, approval resume, and thread snapshots.
-- Use a thread-scoped workflow factory when workflow instances hold mutable runtime state.
-- AG-UI thread and run IDs are correlation identifiers, not authentication or tenant-isolation boundaries.
-- The application owns authorization, durable snapshot storage, scaling, and frontend rendering policy.
-
-Current starting point:
-[AG-UI single-agent sample](https://github.com/microsoft/agent-framework/tree/main/python/samples/05-end-to-end/ag_ui_single_agent).
-
-## Durable and cloud integrations
-
-Durable Task and Azure Functions integrations are maintained in the
-[Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension), not in the main
-Python package tree.
-
-Foundry hosting and other host adapters have separate packages and lifecycle states. Read
-`hosting-and-deployment.md` before adding host or deployment files.
+For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
+application owns authorization, durable snapshots, scaling, and rendering policy.
 
 ## Selection checklist
 
-1. Confirm the provider or service and authentication model.
-2. Check package lifecycle and Python support.
-3. Check required provider features rather than assuming parity.
-4. Add only the selected integration packages.
-5. Define data, network, identity, approval, and retention boundaries.
-6. Build a focused integration test or opt-in live smoke test.
-7. Document required environment variables and permissions.
+Confirm the provider/service, authentication model, required capabilities, package maturity, Python range, data and
+tenant boundaries, approval policy, and required permissions. Add a focused integration test or opt-in live smoke test.
 
-Current catalogs:
+## Learn more
 
 - [Agent Framework integrations](https://learn.microsoft.com/agent-framework/integrations/)
 - [Python package status](https://github.com/microsoft/agent-framework/blob/main/python/PACKAGE_STATUS.md)
 - [Python samples](https://github.com/microsoft/agent-framework/tree/main/python/samples)
+- [AG-UI sample](https://github.com/microsoft/agent-framework/tree/main/python/samples/05-end-to-end/ag_ui_single_agent)

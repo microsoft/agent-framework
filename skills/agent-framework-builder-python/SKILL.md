@@ -2,7 +2,6 @@
 name: agent-framework-builder-python
 description: Use this skill when building, modifying, reviewing, evaluating, integrating, or hosting Python applications with Microsoft Agent Framework. Use it for Agent Framework agents, harness agents, workflows, orchestrations, declarative definitions, tools, sessions, middleware, evaluation, observability, integrations, or hosting, even when the user has not yet chosen the correct framework pattern.
 license: MIT
-compatibility: Agent Skills-compatible coding agents; examples use Python 3.13 and current Microsoft Agent Framework packages.
 metadata:
   version: "0.3"
   project: agent-framework
@@ -70,6 +69,10 @@ relying on remembered preview-era syntax.
 
 Use local guidance for stable decisions and common patterns. For provider matrices, package maturity, hosted tools,
 deployment details, or unfamiliar APIs, consult current sources before generating code:
+
+The reference pages intentionally describe selection rules, invariants, and non-obvious gotchas. Use public docstrings
+or API reference pages for signatures and option details, and use Learn or maintained samples for end-to-end
+procedures.
 
 When the coding agent supports MCP, configure the Microsoft Learn MCP Server as a Streamable HTTP server:
 
