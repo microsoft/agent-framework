@@ -562,9 +562,11 @@ internal sealed class InvokeFunctionToolExecutor(
         AIContent[] contents = [.. response.Messages.SelectMany(message => message.Contents)];
         FunctionResultContent? result = contents.OfType<FunctionResultContent>()
             .FirstOrDefault(r => this.IsCorrelatedPendingNonApprovalResult(r, response.RequestId));
-        if (result is not null && this._autoSendSnapshots.TryGetValue(result.CallId, out bool resultAutoSend))
+        if (result is not null)
         {
-            return resultAutoSend;
+            return this._autoSendSnapshots.TryGetValue(result.CallId, out bool resultAutoSend)
+                ? resultAutoSend
+                : this.GetAutoSendValue();
         }
 
         ToolApprovalResponseContent? approval = contents.OfType<ToolApprovalResponseContent>()
