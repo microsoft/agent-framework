@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections import UserDict
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
@@ -3569,6 +3572,136 @@ def test_declaration_registry_already_holding_the_framework_kind_is_rejected() -
         create_agent_hooks_middleware_from_declaration(
             declaration_document(framework_binding("allow")), interceptors={"allow": AllowGuard()}, registry=registry
         )
+
+
+@requires_declaration_sdk
+def test_declaration_registry_over_another_posture_is_refused() -> None:
+    from agent_hooks import HostRegistry
+
+    # The SDK validates a document against the registry's own surface. This registry says
+    # ``continue``, so the SDK alone accepts a document that omits the posture; the middleware
+    # terminates the run on a tool-seam host error and cannot honour that document.
+    registry = HostRegistry(replace(create_agent_hooks_host_registry().surface, tool_seam_host_error="continue"))
+    document = {"declaration": DECLARATION_VERSION, "bindings": []}
+    assert registry.resolve(HostDeclaration.from_value(document)).declaration == DECLARATION_VERSION
+
+    with pytest.raises(ValueError, match="tool_seam_host_error='continue'") as info:
+        create_agent_hooks_middleware_from_declaration(document, registry=registry)
+
+    # A programming error of the host, not a refusal of the document.
+    assert not isinstance(info.value, DeclarationError)
+    assert "create_agent_hooks_host_registry" in str(info.value)
+
+
+@requires_declaration_sdk
+def test_declaration_registry_streaming_unbuffered_is_refused() -> None:
+    from agent_hooks import HostRegistry
+
+    # This middleware buffers a streaming run until the output point is judged. A registry that
+    # advertises unbuffered streaming lets the SDK accept ``buffered_output: false``, which the
+    # middleware would then not honour.
+    surface = create_agent_hooks_host_registry().surface.with_capabilities(["incremental_output"])
+    registry = HostRegistry(surface.with_exposure_bound("one-chunk"))
+    document = {**declaration_document(), "surface": {"buffered_output": False, "exposure_bound": "one-chunk"}}
+    assert registry.resolve(HostDeclaration.from_value(document)).declaration == DECLARATION_VERSION
+
+    with pytest.raises(ValueError, match="streams_unbuffered=True") as info:
+        create_agent_hooks_middleware_from_declaration(document, registry=registry)
+
+    assert not isinstance(info.value, DeclarationError)
+
+
+@requires_declaration_sdk
+async def test_declaration_compatible_custom_registry_keeps_its_registered_names(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    from agent_hooks import HostRegistry
+
+    # A registry built by hand over the framework's surface passes the surface check, and the
+    # kind and identity provider registered on it stay available to the document.
+    records: list[InterceptionRecord] = []
+    identities: list[str] = []
+
+    def acme_identity(_context: Any) -> str:
+        identities.append("fixed-identity")
+        return identities[-1]
+
+    registry = (
+        HostRegistry(create_agent_hooks_host_registry().surface)
+        .kind("acme.allow", lambda _c, _b: AllowGuard())
+        .identity_provider("acme-id", acme_identity)
+    )
+    document = declaration_document({"id": "allow", "kind": "acme.allow"}, identity_provider="acme-id")
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(document, registry=registry, record_sink=records.append)
+        ],
+    )
+
+    response = await agent.run("hello")
+
+    assert response.text == "test response - hello"
+    assert points(records) == [
+        "agent_startup",
+        "input",
+        "pre_model_call",
+        "post_model_call",
+        "output",
+        "agent_shutdown",
+    ]
+    assert all(record.verdicts[0].name == "allow" for record in records)
+    assert {record.identity_provider for record in records} == {"acme-id"}
+    assert {record.input_identity for record in records} == {"fixed-identity"}
+    assert len(identities) >= len(records)
+
+
+@requires_declaration_sdk
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param(MappingProxyType(declaration_document(framework_binding("allow"))), id="mappingproxy"),
+        pytest.param(UserDict(declaration_document(framework_binding("allow"))), id="userdict"),
+    ],
+)
+async def test_declaration_value_accepts_any_mapping(
+    document: Mapping[str, Any], chat_client_base: MockBaseChatClient
+) -> None:
+    # ``HostDeclaration.from_value`` serializes with ``json.dumps``, which takes a ``dict`` but no
+    # other ``Mapping``; the factory copies the top-level mapping so the advertised type works.
+    records: list[InterceptionRecord] = []
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                document, interceptors={"allow": AllowGuard()}, record_sink=records.append
+            )
+        ],
+    )
+
+    response = await agent.run("hello")
+
+    assert response.text == "test response - hello"
+    assert {record.declaration for record in records} == {DECLARATION_VERSION}
+
+
+@requires_declaration_sdk
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(["not", "a", "document"], id="list"),
+        pytest.param("not a document", id="string"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_declaration_non_mapping_value_gets_the_sdk_refusal(value: Any) -> None:
+    # Only a top-level mapping is copied; anything else reaches the SDK as given and gets its
+    # own refusal, at the root pointer.
+    with pytest.raises(DeclarationError) as info:
+        create_agent_hooks_middleware_from_declaration(value)
+
+    assert info.value.error_class is DeclarationErrorClass.MALFORMED
+    assert info.value.findings[0].pointer == ""
 
 
 @requires_declaration_sdk

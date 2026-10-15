@@ -154,6 +154,7 @@ if TYPE_CHECKING:
         EnforcementMode,
         HostDeclaration,
         HostRegistry,
+        HostSurface,
         IdentityProvider,
         InterceptionBlocked,
         InterceptionEmitter,
@@ -1747,11 +1748,39 @@ def create_agent_hooks_middleware_from_emitter(
     return _build_bundle(config)
 
 
-def _host_registry() -> HostRegistry:
-    from agent_hooks import HostRegistry, HostSurface
+def _host_surface() -> HostSurface:
+    from agent_hooks import HostSurface
 
-    surface = HostSurface.from_capabilities(_DECLARATION_CAPABILITIES, tool_seam_host_error=_DECLARATION_POSTURE)
-    return HostRegistry(surface)
+    return HostSurface.from_capabilities(_DECLARATION_CAPABILITIES, tool_seam_host_error=_DECLARATION_POSTURE)
+
+
+def _host_registry() -> HostRegistry:
+    from agent_hooks import HostRegistry
+
+    return HostRegistry(_host_surface())
+
+
+def _check_registry_surface(registry: HostRegistry) -> None:
+    """Refuse a registry whose surface is not the one this middleware implements.
+
+    The loader validates a document against ``registry.surface``, so a registry over another
+    surface (the SDK default with posture ``continue``, or one that streams unbuffered) would
+    accept a document this middleware cannot honour. That is a programming error of the host,
+    not a refusal of the document, so it is a ``ValueError`` like the SDK's own registry checks.
+    """
+    expected = _host_surface().to_wire()
+    actual = registry.surface.to_wire()
+    if actual == expected:
+        return
+    differences = ", ".join(
+        f"{member}={actual.get(member)!r} (this middleware implements {expected.get(member)!r})"
+        for member in sorted(expected.keys() | actual.keys())
+        if actual.get(member) != expected.get(member)
+    )
+    raise ValueError(
+        f"registry surface differs from the surface this middleware implements: {differences}. "
+        "Build the registry with create_agent_hooks_host_registry()."
+    )
 
 
 @experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
@@ -1766,6 +1795,8 @@ def create_agent_hooks_host_registry() -> HostRegistry:
     ``tool_seam_host_error: terminate``; buffered streaming). Register binding kinds, custom
     identity providers, approval resolvers and approval redactors on it, then pass it as
     ``registry`` to one of the ``create_agent_hooks_middleware_from_declaration*`` factories.
+    Those factories refuse a registry over any other surface (``ValueError``), so a document is
+    always checked against the surface the code implements.
 
     Note:
         A document's ``configuration.posture.tool_seam_host_error`` must equal the posture the
@@ -1820,6 +1851,8 @@ def _bundle_from_declaration(
 
     if registry is None:
         registry = _host_registry()
+    else:
+        _check_registry_surface(registry)
     if interceptors is not None:
         registry.kind(_DECLARATION_KIND, _interceptor_kind_resolver(dict(interceptors)))
     # Load once here so a refused document (every class of spec section 7.7.6, kind resolvers
@@ -1877,15 +1910,19 @@ def create_agent_hooks_middleware_from_declaration(
     and pass it to :func:`create_agent_hooks_middleware_from_emitter`.
 
     Args:
-        declaration: The document as a mapping (any JSON value shape), or an
-            ``agent_hooks.HostDeclaration`` (for example from ``agent_hooks.DeclarationBuilder``).
+        declaration: The document as a mapping (any ``Mapping``; it is copied into a ``dict`` for
+            the SDK and its members must be JSON values), or an ``agent_hooks.HostDeclaration``
+            (for example from ``agent_hooks.DeclarationBuilder``).
 
     Keyword Args:
         interceptors: Interceptors by name for the ``agent_framework.interceptor`` kind.
             ``None`` leaves the kind unregistered, so a document that uses it is refused.
         registry: The host registry to resolve against; ``None`` uses a fresh registry with
-            this framework's surface and no registered names. The registry is used as given,
-            with the ``agent_framework.interceptor`` kind added when ``interceptors`` is set.
+            this framework's surface and no registered names. A given registry must carry that
+            same surface (build it with :func:`create_agent_hooks_host_registry`), so the
+            document is always checked against what this middleware implements; its registered
+            names are used as given, with the ``agent_framework.interceptor`` kind added when
+            ``interceptors`` is set.
         record_sink: Optional callable receiving every interception record.
 
     Returns:
@@ -1897,8 +1934,9 @@ def create_agent_hooks_middleware_from_declaration(
         agent_hooks.DeclarationError: If the loader refuses the document (unsupported version,
             unknown member, a posture or surface the framework does not implement, an
             unregistered name or kind, a binding its kind resolver rejects, and so on).
-        ValueError: If ``registry`` already has the ``agent_framework.interceptor`` kind while
-            ``interceptors`` is also given.
+        ValueError: If ``registry`` was built over a surface other than this framework's, or
+            already has the ``agent_framework.interceptor`` kind while ``interceptors`` is also
+            given.
 
     Examples:
         .. code-block:: python
@@ -1921,7 +1959,16 @@ def create_agent_hooks_middleware_from_declaration(
     _require_declaration_sdk()
     from agent_hooks import HostDeclaration
 
-    document = declaration if isinstance(declaration, HostDeclaration) else HostDeclaration.from_value(declaration)
+    if isinstance(declaration, HostDeclaration):
+        document = declaration
+    else:
+        # ``HostDeclaration.from_value`` serializes with ``json.dumps``, which takes a ``dict`` but no
+        # other ``Mapping`` (``MappingProxyType``, ``UserDict``). Anything that is not a mapping goes
+        # through as given, so the SDK's own refusal applies (``malformed``: the root is not an object).
+        value: Any = declaration
+        if isinstance(value, Mapping):
+            value = dict(cast("Mapping[str, Any]", value))
+        document = HostDeclaration.from_value(value)
     return _bundle_from_declaration(document, interceptors=interceptors, registry=registry, record_sink=record_sink)
 
 
