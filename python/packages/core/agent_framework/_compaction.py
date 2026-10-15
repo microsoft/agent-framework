@@ -16,6 +16,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import APPROVAL_REJECTION_RESULT_KEY, ChatResponse, Content, Message
@@ -1237,6 +1238,7 @@ def _completed_function_calls(
     ]
 
 
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
 class AgentTriggeredCompactionStrategy:
     """Run an existing compaction strategy after an agent invokes a trigger tool.
 
@@ -1398,6 +1400,7 @@ class AgentTriggeredCompactionStrategy:
                 message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
 
 
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
 class UnloadSkillsCompactionStrategy:
     """Exclude loaded skill bodies and resources selected by an unload tool.
 
