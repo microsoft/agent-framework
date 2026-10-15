@@ -210,10 +210,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 ### Model Context Protocol (`_mcp.py`)
 
 - **Client lifecycle design** - [ADR 0045](../../../docs/decisions/0045-python-mcp-v2-client-lifecycle.md)
-  defines the ownership boundary. Framework-created `_ClientMCPConnection` instances expose and route operations
-  through a high-level `mcp.Client`; their `session` remains `None`. Caller-owned `_SessionMCPConnection` instances
-  expose and call their `ClientSession` directly. Consequently, `MCPTool.session` is meaningful only for the
-  caller-supplied low-level path.
+  defines the ownership boundary. Both framework-created and caller-supplied `_ClientMCPConnection` instances expose
+  and route operations through a high-level `mcp.Client`; their `session` remains `None`, and
+  `is_framework_owned` determines whether Agent Framework may manage the Client lifecycle. Caller-supplied
+  `_SessionMCPConnection` instances expose and call their `ClientSession` directly as a deprecated low-level
+  compatibility path. Consequently, `MCPTool.session` is meaningful only for that low-level path.
 - **`MCPTool` connection state** - The private `_MCPConnection` Protocol is the normalized tools/prompts/catalog
   surface. `_ClientMCPConnection` and `_SessionMCPConnection` each own one lifecycle responsibility; `None` means
   disconnected, and the Client implementation is the single update point for SDK cache policy.
@@ -230,10 +231,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **Streamable HTTP cookies** - Framework-created clients reject response-cookie persistence with or without a `header_provider`; explicit `Cookie` headers from `static_headers` or a provider remain supported. Caller-provided clients retain their cookie behavior and ownership. Applications requiring cookie persistence must scope clients and MCP sessions to one authenticated principal. Cookie rejection does not isolate MCP protocol sessions or other server-side state.
 - **`function_invocation_kwargs` and MCP servers** - That dict is shared across every tool in the run, including every attached `MCPTool`, and any name in it reaches a server that declares a matching `inputSchema` property. `header_provider` does not mitigate this — it reads the kwargs without consuming them. To keep a credential out of tool arguments, source it outside `function_invocation_kwargs`: read a `ContextVar` inside the provider (this still allows a different value per request), configure a custom `http_client`, or use `env` for `MCPStdioTool`.
 - **Sampling guardrails** (`sampling_callback`) - Passing `client=` advertises `SamplingCapability` so the server can send `sampling/createMessage`. Because remote servers are untrusted (confused-deputy risk), the default `sampling_callback` is **deny-by-default** and applies, in order: a per-session rate limit (`sampling_max_requests`, default `_DEFAULT_SAMPLING_MAX_REQUESTS`), an approval gate (`sampling_approval_callback`), and a `maxTokens` cap (`sampling_max_tokens`, default `_DEFAULT_SAMPLING_MAX_TOKENS`). The approval callback (constructor arg on all subclasses; exported type alias `SamplingApprovalCallback`) receives the raw `CreateMessageRequestParams`, may be sync or async, and must return truthy to approve. When it is `None` (the default) every sampling request is denied; pass `lambda params: True` to restore legacy auto-approve as an explicit opt-in. Requests and denials are logged at WARNING (content is not logged). The per-session counter resets in `_reset_session_state`.
-- **MCP response caching** - Framework-owned high-level Clients use SDK response caching for tool/prompt catalogs
-  and resource reads, honoring modern server `ttlMs` / `cacheScope` hints. Legacy peers default to zero TTL,
-  caller-supplied `ClientSession` connections stay uncached, and reconnect or effective header-identity changes
-  replace the per-Client cache. Agent Framework does not expose shared-store or cache-mode configuration.
+- **MCP response caching** - High-level Clients use SDK response caching for tool/prompt catalogs and resource reads
+  regardless of whether Agent Framework or the caller owns the Client, honoring modern server `ttlMs` /
+  `cacheScope` hints. Legacy peers default to zero TTL, caller-supplied `ClientSession` connections stay uncached,
+  and reconnect or effective header-identity changes replace a framework-owned Client's per-Client cache. Agent
+  Framework does not expose shared-store or cache-mode configuration.
 - **MCP Tasks extension** - MCP Python SDK 2.2 does not implement the 2026 `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Restoration of the experimental Tasks API and removed sample is tracked in microsoft/agent-framework#8245.
 
 ### File Access Harness (`_harness/_file_access.py`)

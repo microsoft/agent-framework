@@ -3643,8 +3643,9 @@ class MCPStdioTool(MCPTool):
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``session``.
-            session: An existing MCP client session to use. The caller retains ownership;
-                closing or resetting this wrapper does not close or replace that session.
+            session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
+                usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
+                that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3858,8 +3859,9 @@ class MCPStreamableHTTPTool(MCPTool):
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``session``.
-            session: An existing MCP client session to use. The caller retains ownership;
-                closing or resetting this wrapper does not close or replace that session.
+            session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
+                usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
+                that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.

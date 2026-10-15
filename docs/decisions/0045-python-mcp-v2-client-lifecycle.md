@@ -14,10 +14,11 @@ negotiation and standard client behavior across modern and legacy peers.
 
 Using `Client` only for negotiation and then routing operations through `client.session` would bypass high-level
 behavior such as multi-round-trip request (MRTR) handling and response caching. At the same time, existing callers
-can supply an already-created `ClientSession` and expect Agent Framework not to take ownership of it.
+can supply an already-created `ClientSession` and expect Agent Framework not to take ownership of it, while callers
+using the modern API need to supply an already-entered high-level `Client` without transferring its ownership.
 
-This decision defines the lasting boundary between those two paths, including lifecycle, caching, subscription
-recovery, and the meaning of `MCPTool.session`.
+This decision defines the lasting boundary between the two SDK levels and three ownership modes, including lifecycle,
+caching, subscription recovery, and the meaning of `MCPTool.session`.
 
 This ADR covers the outbound Python MCP client. Hosting/server code continues to use the SDK server APIs.
 
@@ -27,7 +28,7 @@ This ADR covers the outbound Python MCP client. Hosting/server code continues to
 - Standard protocol behavior should remain owned by the MCP SDK rather than be duplicated in Agent Framework.
 - Framework-created resources must be closed by the task that opened them, including cancellation and failed
   connection attempts.
-- Caller-supplied sessions and HTTP clients must remain caller-owned.
+- Caller-supplied Clients, sessions, and HTTP clients must remain caller-owned.
 - Reconnect, authenticated header identity, catalog publication, security, tracing, and result conversion remain
   Agent Framework policy.
 - Tools, prompts, and resources should follow one operation-routing rule.
@@ -35,8 +36,8 @@ This ADR covers the outbound Python MCP client. Hosting/server code continues to
 
 ## Considered Options
 
-- Retain the high-level SDK `Client` and use it for standard operations, with `ClientSession` as an explicit
-  caller-owned low-level path.
+- Retain the high-level SDK `Client` and use it for standard operations in both ownership modes, with `ClientSession`
+  as a deprecated caller-owned low-level compatibility path.
 - Use `Client` only for negotiation while continuing operations through `client.session`.
 - Reimplement negotiation, MRTR, caching, and subscriptions around `ClientSession`.
 - Add separate modern and legacy Agent Framework tool classes or a public protocol-mode switch.
@@ -65,15 +66,21 @@ connections do not publish the SDK Client's internal compatibility session throu
 
 Agent Framework owns:
 
-- transport construction and framework-created resource cleanup;
-- the lifecycle-owner task, locks, connection publication, reset, reconnect, and cancellation cleanup;
+- transport construction, Client entry, and resource cleanup for framework-created connections;
+- the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;
 - result parsing, Agent Framework content conversion, tracing, and error translation;
 - atomic catalog publication and rollback after a failed complete fetch;
-- the background catalog-subscription task, refresh scheduling, retry/backoff, cancellation, and recovery after a
-  subscription ends or is lost;
+- the background catalog-subscription task for any high-level Client, including refresh scheduling, retry/backoff,
+  cancellation, and recovery after a subscription ends or is lost;
 - security and approval policy.
+
+The caller owns:
+
+- entering and closing a supplied high-level `Client`;
+- constructing and closing a supplied low-level `ClientSession`;
+- the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
 The SDK `Client` owns:
 
@@ -86,21 +93,22 @@ The SDK `Client` owns:
 
 ### Operation ownership
 
-| Operation | Framework-owned connection | Caller-owned connection |
-|---|---|---|
-| Connection negotiation | Enter `Client` in automatic mode | Reuse the supplied session; initialize it only for legacy compatibility when needed |
-| `tools/list`, `tools/call` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
-| `prompts/list`, `prompts/get` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
-| Resource reads | `Client` with SDK cache behavior | Direct, uncached session call |
-| Catalog subscriptions | Agent Framework owns recovery around `Client.listen()` | Legacy notification handling only |
-| `MCPTool.session` | `None` | The caller-supplied `ClientSession` |
-| Tasks or arbitrary extension RPCs | Future supported client API | Raw session request only at an explicit extension boundary |
+| Operation | Framework-owned `Client` | Caller-owned `Client` | Caller-owned `ClientSession` |
+|---|---|---|---|
+| Connection lifecycle | Agent Framework constructs, enters, and closes the Client | Caller constructs, enters, and closes the Client | Caller constructs and closes the session |
+| Connection negotiation | Enter `Client` in automatic mode | Reuse the already-entered Client | Initialize only when required for legacy compatibility |
+| `tools/list`, `tools/call` | `_ClientMCPConnection` calls `Client` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
+| `prompts/list`, `prompts/get` | `_ClientMCPConnection` calls `Client` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
+| Resource reads | `Client` with SDK cache behavior | `Client` with SDK cache behavior | Direct, uncached session call |
+| Catalog subscriptions | Agent Framework owns recovery around `Client.listen()` | Agent Framework owns recovery around `Client.listen()` | Legacy notification handling only |
+| `MCPTool.session` | `None` | `None` | The caller-supplied `ClientSession` |
+| Tasks or arbitrary extension RPCs | Future supported Client API | Future supported Client API | Raw session request only at an explicit extension boundary |
 
 ### Cache policy
 
-Framework-owned high-level Clients use SDK response caching for catalog and resource operations. Modern server
-`ttlMs` and `cacheScope` hints control reuse and invalidation. Legacy peers do not provide those hints and remain
-effectively uncached under the default zero TTL.
+High-level Clients use SDK response caching for catalog and resource operations regardless of whether Agent Framework
+or the caller owns the Client. Modern server `ttlMs` and `cacheScope` hints control reuse and invalidation. Legacy
+peers do not provide those hints and remain effectively uncached under the default zero TTL.
 
 Caller-supplied `ClientSession` connections always call the server directly. Agent Framework does not expose a
 shared cache store or cache-mode configuration. Reconnect or an effective header-identity change replaces the
@@ -108,9 +116,9 @@ framework-owned Client and its per-client cache.
 
 ### MRTR
 
-For framework-owned connections, `tools/call`, `prompts/get`, and `resources/read` use the high-level Client. The
-SDK drives embedded elicitation, sampling, and roots requests and retries the original operation with the required
-responses and state.
+For both framework-owned and caller-owned high-level connections, `tools/call`, `prompts/get`, and `resources/read`
+use the Client. The SDK drives embedded elicitation, sampling, and roots requests and retries the original operation
+with the required responses and state.
 
 Agent Framework does not import the SDK's private MRTR driver or implement parallel MRTR loops. A caller-supplied
 session remains a raw low-level path and does not gain automatic MRTR merely because callbacks are configured on it.
@@ -123,7 +131,7 @@ it is not part of this decision.
 The SDK Client owns protocol-level `listen` acknowledgment and event delivery. Agent Framework owns the long-running
 subscription lifecycle around it:
 
-- one background subscription task per active framework-owned Client;
+- one background subscription task per active high-level Client;
 - tool and prompt catalog refresh when events arrive;
 - refresh before reopening after stream loss or completion;
 - retry with bounded backoff for recoverable subscription failures;
@@ -133,9 +141,20 @@ subscription lifecycle around it:
 The recovery task always verifies that the Client is still the active connection before refreshing or reopening, so
 an obsolete subscription cannot mutate a replacement connection's catalogs.
 
-### Caller-supplied sessions
+### Caller-supplied high-level Clients
 
-A caller-supplied `ClientSession` remains a low-level compatibility path:
+A caller-supplied `Client` is the preferred way to provide an existing connection:
+
+- The Client must already be entered before the MCP tool connects.
+- Agent Framework does not enter, close, replace, or recreate it.
+- Standard operations continue through the high-level Client and retain SDK MRTR and response-cache behavior.
+- Agent Framework manages its own catalog-subscription task around `Client.listen()` while the wrapper is connected.
+- `MCPTool.session` remains `None`.
+- Closing or resetting the wrapper preserves the supplied Client so the caller can continue using or closing it.
+
+### Caller-supplied low-level sessions
+
+A caller-supplied `ClientSession` remains a deprecated low-level compatibility path:
 
 - Agent Framework does not enter, close, replace, wrap, or reconnect it.
 - An already negotiated session is reused.
@@ -164,13 +183,14 @@ sample remains deferred. An MRTR `InputRequiredResult` is not a Tasks `input_req
 
 - Good, because modern and legacy peers use one public Agent Framework API.
 - Good, because standard operations, MRTR, and caching stay on the supported high-level SDK surface.
-- Good, because the connection seam makes high-level and low-level ownership explicit.
+- Good, because the connection seam distinguishes framework-owned and caller-owned high-level Clients from the
+  deprecated low-level session path.
 - Good, because reconnect, cancellation, header identity, subscription recovery, parsing, and policy remain Agent
   Framework concerns.
-- Neutral, because caller-supplied sessions intentionally have fewer protocol conveniences.
-- Neutral, because `MCPTool.session` returns `None` for framework-created Client connections.
+- Neutral, because caller-supplied low-level sessions intentionally have fewer protocol conveniences.
+- Neutral, because `MCPTool.session` returns `None` for all high-level Client connections.
 - Bad, because integrations that previously treated `session` as a universal connection handle must instead use the
-  operation seam or a caller-owned session.
+  operation seam, a caller-owned Client, or the deprecated caller-owned session path.
 
 ## Validation
 
@@ -178,6 +198,7 @@ Committed contract tests cover:
 
 - modern negotiation and legacy fallback;
 - framework-owned Client publication, failure cleanup, reset, reconnect, cancellation, and header identity changes;
+- caller-owned Client publication, high-level operation routing, capability reuse, reset preservation, and cleanup;
 - standard operations routing through the active Client;
 - tool, prompt, and resource MRTR;
 - cache TTL, pagination, invalidation, reconnect, and identity changes;
@@ -187,11 +208,11 @@ Committed contract tests cover:
 
 ## Pros and Cons of the Options
 
-### Use Client for framework-owned operations
+### Use Client for high-level operations
 
 - Good, because it uses the SDK's supported high-level surface.
 - Good, because it avoids duplicate negotiation, MRTR, and caching code.
-- Good, because the low-level session remains available as an explicit caller-owned path.
+- Good, because the low-level session remains available as a deprecated caller-owned compatibility path.
 - Bad, because code cannot assume every MCP connection exposes a `ClientSession`.
 
 ### Use Client only for negotiation
