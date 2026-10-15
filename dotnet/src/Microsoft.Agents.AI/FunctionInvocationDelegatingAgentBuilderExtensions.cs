@@ -56,8 +56,8 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// <see cref="ChatClientAgentOptions.ChatOptions"/>, and tools supplied for an individual run. These tools are
     /// provided to the function-calling client through <see cref="ChatOptions.Tools"/>. Functions placed directly on
     /// <see cref="FunctionInvokingChatClient.AdditionalTools"/> are invoked without going through this callback
-    /// pipeline. Do not rely on these callbacks to enforce security checks, such as authorization or approval, for
-    /// functions that may be reachable through <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
+    /// pipeline. Do not rely on these callbacks to enforce checks, such as authorization or any other checks, for
+    /// functions that are registered via <see cref="FunctionInvokingChatClient.AdditionalTools"/>.
     /// </para>
     /// </remarks>
     public static AIAgentBuilder Use(this AIAgentBuilder builder, Func<AIAgent, FunctionInvocationContext, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>>, CancellationToken, ValueTask<object?>> callback)

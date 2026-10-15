@@ -15,7 +15,7 @@ This sample demonstrates multiple middleware layers working together: PII filter
 > through `ChatClientAgentOptions.ChatOptions.Tools`, or supplied for an individual run. These
 > tools are passed through `ChatOptions.Tools`. Functions added directly to
 > `FunctionInvokingChatClient.AdditionalTools` bypass this middleware entirely, so don't rely on
-> the middleware to enforce security checks (such as approval) for those functions.
+> the middleware to enforce checks for those functions.
 
 ## Prerequisites
 
