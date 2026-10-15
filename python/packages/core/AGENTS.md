@@ -16,7 +16,7 @@ agent_framework/
 ├── _vectors.py          # Vector store models, CRUD/search abstractions, and protocols
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
-├── _filesystem.py       # Private filesystem safety helpers (link detection, storage-key derivation)
+├── _filesystem.py       # Private filesystem safety helpers (atomic writes, link detection, storage-key derivation)
 ├── _skills.py           # Agent Skills system (models, executors, provider)
 ├── _mcp.py              # Model Context Protocol support
 ├── _telemetry.py        # User-Agent identity and internal feature-usage mask

@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import pytest
 
+from agent_framework import _filesystem as filesystem_module
 from agent_framework._filesystem import (  # pyright: ignore[reportPrivateUsage]
     _MAX_ENCODED_STORAGE_KEY_SEGMENT_LENGTH,
+    _atomic_write_text,
     _is_literal_storage_key_segment_safe,
     _storage_key_segment,
 )
@@ -79,6 +81,31 @@ UNSAFE_IDENTIFIERS: tuple[str, ...] = (
     "Session-1",
     "0198F0C5-1A2B-7C3D-8E4F-5A6B7C8D9E0F",
 )
+
+
+def test_atomic_write_text_rejects_preexisting_symbolic_link(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planted temporary-file link must not redirect a state write."""
+
+    class _FixedUuid:
+        hex = "0" * 32
+
+    monkeypatch.setattr(filesystem_module.uuid, "uuid4", _FixedUuid)
+    target_path = tmp_path / "target.txt"
+    target_path.write_text("original", encoding="utf-8")
+    temp_path = tmp_path / f".maf-state-{'0' * 32}.tmp"
+    try:
+        temp_path.symlink_to(target_path)
+    except (NotImplementedError, OSError):
+        pytest.skip("Symbolic links are not supported in this environment.")
+
+    destination_path = tmp_path / "state.json"
+    with pytest.raises(FileExistsError):
+        _atomic_write_text(destination_path, "replacement")
+
+    assert target_path.read_text(encoding="utf-8") == "original"
+    assert not destination_path.exists()
+    assert temp_path.is_symlink()
+
 
 SAFE_IDENTIFIERS: tuple[str, ...] = (
     "customer-42",
