@@ -3911,6 +3911,49 @@ def test_parse_result_nested_pydantic_model_with_non_utf8_bytes():
     }
 
 
+def test_parse_result_pydantic_model_with_non_utf8_bytes_keeps_computed_fields():
+    """The per-field fallback includes computed fields and leaves excluded fields out."""
+    from pydantic import Field, computed_field
+
+    class Result(BaseModel):
+        data: bytes
+        api_key: str = Field(exclude=True)
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def size(self) -> int:
+            return len(self.data)
+
+    parsed = FunctionTool.parse_result(Result(data=b"\xff\xfe", api_key="key"))
+
+    assert json.loads(parsed[0].text) == {"data": str(b"\xff\xfe"), "size": 2}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+def test_parse_result_pydantic_models_in_list_and_dict_with_non_utf8_bytes():
+    """Models inside a list or dict field that falls back keep their JSON-only serializers and exclusions."""
+    from pydantic import Field, field_serializer
+
+    class Inner(BaseModel):
+        data: bytes
+        created: datetime
+        token: str
+        api_key: str = Field(exclude=True)
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
+
+    class Outer(BaseModel):
+        items: list[Inner]
+        by_name: dict[str, Inner]
+
+    inner = Inner(data=b"\xff\xfe", created=datetime(2024, 1, 1, 12), token="secret", api_key="key")
+    parsed = FunctionTool.parse_result(Outer(items=[inner], by_name={"a": inner}))
+
+    expected_inner = {"data": str(b"\xff\xfe"), "created": "2024-01-01T12:00:00", "token": "***"}
+    assert json.loads(parsed[0].text) == {"items": [expected_inner], "by_name": {"a": expected_inner}}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 
