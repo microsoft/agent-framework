@@ -13,6 +13,14 @@ we've provided a console application that is able to execute any declarative wor
 
 ## Actions
 
+### Function tool approval
+
+`InvokeFunctionTool` requests approval when `requireApproval` evaluates to `true`
+or the matching function in `ResponseAgentProvider.Functions` exposes
+`ApprovalRequiredAIFunction`. Omitting `requireApproval` or setting it to `false`
+does not override the registered function's approval requirement. The workflow
+resumes the registered invocation only after a matching approval response.
+
 ### MCP session lifetime
 
 `DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,
@@ -57,6 +65,10 @@ on the server address.
 |**Question**|Presents a query or prompt requiring human input. Integrates human decision-making into automated processes.
 
 ### 🧩 State Management
+
+Variable names are case-sensitive, matching Power Fx record fields. Differently
+cased names retain independent values and metadata, including after checkpoint
+restoration.
 
 |Action|Description|
 |-|-|

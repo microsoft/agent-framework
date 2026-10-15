@@ -8,11 +8,12 @@ import json
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextvars import ContextVar
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
+from mcp.client.session import ClientSession
 
 from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
@@ -149,6 +150,12 @@ def _tool(client: httpx.AsyncClient, principal: str, *, declare_credential: bool
     )
 
 
+def _connected_client(tool: MCPStreamableHTTPTool) -> Any:
+    connection = tool._require_connection()
+    assert connection.client is not None
+    return connection.client
+
+
 def _calls(requests: list[httpx.Request]) -> list[httpx.Request]:
     return [
         request
@@ -181,7 +188,7 @@ async def test_owned_client_does_not_replay_response_cookie_across_principals(
         load_prompts=False,
         header_provider=lambda _: {"Authorization": principal.get()},
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             response_cookies.clear()
@@ -302,7 +309,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(
         else patch("agent_framework._mcp.streamable_http_client", side_effect=transport)
     )
     try:
-        with transport_patch, patch("httpx.AsyncClient", return_value=client), pytest.raises(error):
+        with transport_patch, patch("httpx2.AsyncClient", return_value=client), pytest.raises(error):
             await tool.connect()
         assert client.event_hooks["request"] == original_hooks
         assert client.is_closed is owned_client
@@ -335,7 +342,7 @@ async def test_owned_client_is_closed_after_successful_session(
         if header_source == "provider"
         else None,
     )
-    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+    with patch("httpx2.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
             await tool.call_tool("record")
@@ -416,8 +423,7 @@ async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambien
         await tool.call_tool("record", credential="token-a", marker="first")
         await tool.call_tool("record", credential="token-b", marker="second")
         await tool.load_tools()
-        assert tool.session is not None
-        await tool.session.send_ping()
+        await tool._ensure_connected()
         assert {function.name for function in tool.functions} == {"record", "token-b-only"}
 
         assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
@@ -736,7 +742,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         existing_session = tool.session
         existing_functions = list(tool.functions)
         existing_call_meta = dict(tool._tool_call_meta_by_name)
-        existing_task_support = dict(tool._tool_task_support_by_name)
         existing_param_names = {name: set(params) for name, params in tool._tool_param_names_by_name.items()}
 
         async def cancel_reconnect() -> None:
@@ -752,7 +757,6 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
         assert tool.session is existing_session
         assert tool.functions == existing_functions
         assert tool._tool_call_meta_by_name == existing_call_meta
-        assert tool._tool_task_support_by_name == existing_task_support
         assert tool._tool_param_names_by_name == existing_param_names
 
         await tool.call_tool("record", credential="token-b")
@@ -843,7 +847,7 @@ async def test_discovery_failure_cleans_up_resources(
     failure = failure_type("discovery failed")
     try:
         with (
-            patch("httpx.AsyncClient", return_value=client),
+            patch("httpx2.AsyncClient", return_value=client),
             patch.object(tool, discovery_method, new=AsyncMock(side_effect=failure)),
             pytest.raises(failure_type, match="discovery failed") as error,
         ):
@@ -902,7 +906,7 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
                         "name": "record" if failure_count == 2 else "partial_record",
                         "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
                         "_meta": {"source": "discovery"},
-                        "execution": {"taskSupport": "optional"},
+                        "execution": {"taskSupport": "forbidden"},
                     }
                 ]
             }
@@ -927,12 +931,12 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
         http_client=None if owned_client else create_client(),
         header_provider=lambda _: {"Authorization": "token-a"},
     )
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
 
     try:
-        with patch("httpx.AsyncClient", side_effect=create_client):
+        with patch("httpx2.AsyncClient", side_effect=create_client):
             for _ in range(2):
-                with pytest.raises(McpError, match="discovery failed"):
+                with pytest.raises(MCPError, match="discovery failed"):
                     await tool.connect()
                 assert tool.session is None
                 assert not tool.is_connected
@@ -940,7 +944,6 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
                 assert not tool._prompts_loaded
                 assert tool.functions == []
                 assert tool._tool_call_meta_by_name == {}
-                assert tool._tool_task_support_by_name == {}
                 assert tool._tool_param_names_by_name == {}
                 assert all(not client.event_hooks["request"] for client in clients)
                 assert all(client.is_closed is owned_client for client in clients)
@@ -995,7 +998,7 @@ async def test_cancelled_connect_caller_releases_abandoned_resources(
             async with tool:
                 pytest.fail("Cancelled setup must not enter the context manager")
 
-    with patch("httpx.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
+    with patch("httpx2.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
         caller = asyncio.create_task(enter())
         try:
             await asyncio.wait_for(setup_started.wait(), timeout=5)
@@ -1090,7 +1093,7 @@ async def test_abandoned_connect_is_cleaned_before_next_caller(mcp_http_server: 
     caller = asyncio.create_task(tool.connect())
     try:
         await asyncio.wait_for(setup_started.wait(), timeout=5)
-        abandoned_session = tool.session
+        abandoned_connection = tool._connection
         caller.cancel()
         with pytest.raises(asyncio.CancelledError):
             await caller
@@ -1098,7 +1101,7 @@ async def test_abandoned_connect_is_cleaned_before_next_caller(mcp_http_server: 
         release_setup.set()
         await asyncio.wait_for(retry, timeout=5)
         assert tool.is_connected
-        assert tool.session is not abandoned_session
+        assert tool._connection is not abandoned_connection
         assert (
             sum(
                 request.method == "POST" and json.loads(request.content).get("method") == "initialize"
@@ -1123,8 +1126,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 ) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         original_hooks = list(client.event_hooks["request"])
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
@@ -1169,8 +1171,7 @@ async def test_failed_discovery_preserves_caller_supplied_session(
 async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         borrowed = MCPStreamableHTTPTool(
             name="borrowed",
             url="https://must-not-connect.example/mcp",
@@ -1202,6 +1203,24 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
             await borrowed.close()
 
         await supplied_session.send_ping()
+
+
+async def test_replacing_supplied_session_invalidates_bound_header_identity() -> None:
+    """A recorded header identity is valid only for the session that established it."""
+    original_session = Mock(spec=ClientSession)
+    replacement_session = Mock(spec=ClientSession)
+    tool = MCPStreamableHTTPTool(
+        name="borrowed",
+        url="https://must-not-connect.example/mcp",
+        session=original_session,
+        header_provider=lambda _kwargs: {"Authorization": "A"},
+    )
+    tool._bind_session_headers({"Authorization": "A"})
+
+    tool.session = replacement_session
+
+    with pytest.raises(ToolExecutionException, match="identity is unknown"):
+        await tool._ensure_session_identity({"Authorization": "A"}, {})
 
 
 async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_server: MCPHTTPServer) -> None:
@@ -1238,8 +1257,7 @@ async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_serve
 async def test_cancelled_borrowed_session_caller_can_retry(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as source:
-        supplied_session = source.session
-        assert supplied_session is not None
+        supplied_session = cast(ClientSession, _connected_client(source).session)
         borrowed = MCPStreamableHTTPTool(
             name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
         )

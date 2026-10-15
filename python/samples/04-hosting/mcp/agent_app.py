@@ -4,7 +4,7 @@
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
 #     "azure-identity",
-#     "mcp>=1.27.0,<2",
+#     "mcp>=2.2.0,<3",
 #     "starlette>=0.40",
 #     "uvicorn>=0.30",
 # ]
@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from agent_framework import Agent
@@ -39,12 +40,24 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_hosting_mcp import AgentMCPTool
 from azure.identity.aio import DefaultAzureCredential
 from mcp import types
+from mcp.server import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
-server = Server("agent-framework-hosting-mcp-sample")
+
+async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+    """Describe the app-owned MCP tool schema."""
+    return await agent_tool.list_tools()
+
+
+async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+    """Run the app-owned tool with native MCP and Agent Framework values."""
+    return await agent_tool.call_tool(params.name, params.arguments)
+
+
+server = Server("agent-framework-hosting-mcp-sample", on_list_tools=list_tools, on_call_tool=call_tool)
 credential = DefaultAzureCredential()
 agent = Agent(
     client=FoundryChatClient(
@@ -68,18 +81,6 @@ agent_tool = AgentMCPTool(
         }
     },
 )
-
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    """Describe the app-owned MCP tool schema."""
-    return await agent_tool.list_tools()
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, object] | None) -> list[types.ContentBlock]:
-    """Run the app-owned tool with native MCP and Agent Framework values."""
-    return await agent_tool.call_tool(name, arguments)
 
 
 session_manager = StreamableHTTPSessionManager(

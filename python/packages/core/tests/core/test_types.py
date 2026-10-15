@@ -1371,6 +1371,25 @@ def test_chat_message_text():
     assert isinstance(message.contents[0], Content)
 
 
+@pytest.mark.parametrize(
+    "message",
+    [Message("user", "Hello, how are you?"), Message(role="user", contents="Hello, how are you?")],
+    ids=["positional", "keyword"],
+)
+def test_chat_message_with_single_string_contents(message: Message) -> None:
+    """A bare string is one text content, not a sequence of single-character contents."""
+    assert len(message.contents) == 1
+    assert message.contents[0].type == "text"
+    assert message.text == "Hello, how are you?"
+
+
+def test_chat_message_with_empty_string_contents() -> None:
+    message = Message("user", "")
+
+    assert len(message.contents) == 1
+    assert message.text == ""
+
+
 def test_chat_message_contents():
     """Test the Message class to ensure it initializes correctly with contents."""
     # Create a Message with a role and multiple contents
@@ -4705,6 +4724,77 @@ def test_function_result_items_roundtrip_via_dict():
     assert restored.items[1].type == "data"
 
 
+@pytest.mark.parametrize("serialization", ["dict", "dict_with_none", "json"])
+def test_tool_result_nested_content_roundtrips(serialization: str):
+    """Test that nested Content in image generation and MCP server tool results survives a round trip."""
+    image = Content.from_uri("data:image/png;base64,iVBORw0KGgo=")
+    output = [
+        Content.from_text("42", annotations=[{"type": "citation", "url": "https://example.com/source"}]),
+        Content.from_uri("https://example.com/report.pdf", media_type="application/pdf"),
+        Content.from_hosted_file("file_1"),
+        Content.from_function_result(call_id="call_1", result=[Content.from_text("done")]),
+    ]
+    message = Message(
+        "assistant",
+        [
+            Content.from_image_generation_tool_result(image_id="ig_1", outputs=image),
+            Content.from_mcp_server_tool_result("mcp_1", output=output),
+        ],
+    )
+
+    if serialization == "dict":
+        restored = Message.from_dict(message.to_dict())
+    elif serialization == "dict_with_none":
+        restored = Message.from_dict(message.to_dict(exclude_none=False))
+    else:
+        restored = Message.from_json(message.to_json())
+    restored_image, restored_mcp = restored.contents
+
+    assert isinstance(restored_image.outputs, Content)
+    assert restored_image.outputs == image
+    assert restored_mcp.output is not None
+    assert all(isinstance(item, Content) for item in restored_mcp.output)
+    assert restored_mcp.output == output
+
+
+@pytest.mark.parametrize(
+    "tool_json",
+    [
+        {"type": "text", "value": 1},
+        {"type": "text", "text": "x"},
+        {"type": "data", "data": "AAAA", "media_type": "image/png"},
+        {"type": "text", "text": "x", "annotations": {"audience": ["user"]}},
+        {"type": "text", "function_call": {"a": 1}},
+    ],
+    ids=["unknown_field", "text_shape", "data_with_str_data", "mcp_annotations", "invalid_nested_content"],
+)
+def test_tool_result_json_with_content_type_name_roundtrips(tool_json: dict[str, Any]):
+    """Test that tool JSON whose type is a content type name is kept as it is in a round trip."""
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=[Content.from_text("42"), tool_json])
+    image_result = Content.from_image_generation_tool_result(image_id="ig_1", outputs=tool_json)
+
+    restored_mcp = Content.from_dict(mcp_result.to_dict())
+    restored_image = Content.from_dict(image_result.to_dict())
+
+    assert restored_mcp.output == [Content.from_text("42"), tool_json]
+    assert isinstance(restored_mcp.output[1], dict)
+    assert restored_image.outputs == tool_json
+    assert restored_mcp.to_dict()["output"][1] == tool_json
+    assert restored_image.to_dict()["outputs"] == tool_json
+
+
+def test_tool_result_plain_outputs_roundtrip_via_dict():
+    """Test that output values that are not serialized Content stay unchanged in a round trip."""
+    output = ["plain", {"type": "object", "value": 1}, {"type": ["x"]}, {"answer": 42}]
+    mcp_result = Content.from_mcp_server_tool_result("mcp_1", output=output)
+    image_result = Content.from_image_generation_tool_result(
+        image_id="ig_1", outputs={"url": "https://example.com/a.png"}
+    )
+
+    assert Content.from_dict(mcp_result.to_dict()).output == output
+    assert Content.from_dict(image_result.to_dict()).outputs == {"url": "https://example.com/a.png"}
+
+
 def test_from_function_result_with_non_content_list():
     """Test Content.from_function_result with a list of non-Content objects falls back to str."""
     result = Content.from_function_result(call_id="test-789", result=["hello", "world"])
@@ -4975,6 +5065,15 @@ def test_parse_content_list_with_content_objects():
 def test_parse_content_list_with_dicts():
     """Test _parse_content_list converts dicts to Content."""
     result = _parse_content_list([{"type": "text", "text": "hello"}])
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
+
+
+def test_parse_content_list_with_single_string():
+    """Test _parse_content_list treats a bare string as one text item, not one per character."""
+    result = _parse_content_list("hello")
 
     assert len(result) == 1
     assert result[0].type == "text"
