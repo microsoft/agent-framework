@@ -13,4 +13,8 @@ the Agent Framework .NET SDK. Entries are reviewed against the
 > repository and issue tracker.
 > For security concerns, follow the maintainer's security reporting guidance.
 
-No projects have been added yet.
+## Vector stores
+
+| Name | Brief description | Scenarios | Project | Issues |
+| --- | --- | --- | --- | --- |
+| CommunityToolkit.VectorData.Chroma | A Microsoft.Extensions.VectorData provider for Chroma and Chroma Cloud, built on ChromaDotNet.Client. | Chat history memory with `ChatHistoryMemoryProvider`; RAG with `TextSearchProvider`; hybrid search on Chroma Cloud | [CommunityToolkit.VectorData.Chroma](https://www.nuget.org/packages/CommunityToolkit.VectorData.Chroma) | [Open an issue](https://github.com/CommunityToolkit/AI/issues/new) |
