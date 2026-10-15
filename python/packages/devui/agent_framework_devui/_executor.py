@@ -721,6 +721,10 @@ class AgentFrameworkExecutor:
                                     file_id = content_dict.get("file_id")
                                     detail = content_dict.get("detail", "auto")
                                     image_properties = {
+                                        "openai": {
+                                            "content_type": "input_image",
+                                            "image_detail": detail if isinstance(detail, str) else "auto",
+                                        },
                                         "openai_content_type": "input_image",
                                         "detail": detail if isinstance(detail, str) else "auto",
                                     }
@@ -754,10 +758,14 @@ class AgentFrameworkExecutor:
 
                                     # Use file_data or file_url
                                     # Include filename in additional_properties for OpenAI/Azure file handling
-                                    file_properties: dict[str, Any] = {"openai_content_type": "input_file"}
+                                    file_properties: dict[str, Any] = {
+                                        "openai": {"content_type": "input_file"},
+                                        "openai_content_type": "input_file",
+                                    }
                                     if filename:
                                         file_properties["filename"] = filename
                                     if isinstance(detail, str):
+                                        cast(dict[str, Any], file_properties["openai"])["image_detail"] = detail
                                         file_properties["detail"] = detail
 
                                     if isinstance(file_data, str) and file_data:
@@ -775,6 +783,7 @@ class AgentFrameworkExecutor:
                                             Content.from_uri(
                                                 uri=data_uri,
                                                 media_type=media_type,
+                                                name=filename or None,
                                                 additional_properties=file_properties,
                                             )
                                         )
@@ -788,6 +797,7 @@ class AgentFrameworkExecutor:
                                             Content.from_uri(
                                                 uri=file_url,
                                                 media_type=media_type,
+                                                name=filename or None,
                                                 additional_properties=file_properties,
                                             )
                                         )

@@ -37,6 +37,7 @@ from agent_framework import (
     Message,
     SupportsAgentRun,
     ToolApprovalMiddleware,
+    ToolApprovalState,
     WorkflowAgent,
 )
 from agent_framework._middleware import (
@@ -124,6 +125,7 @@ from ._utils import (
     _AGUI_MCP_TOOL_RESULT_KEY,
     _approval_interrupt_id,
     _bound_host_payload_history,
+    _function_call_is_hosted,
     _function_call_server_label,
     _mcp_host_history_fields,
     _model_items_for_agui_replay,
@@ -162,6 +164,13 @@ _PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
 # a VM-isolated sandbox with a persistent filesystem, so a client-supplied value would run the server's
 # credentialed call inside another session's sandbox.
 _RESERVED_SERVICE_SESSION_STATE_KEYS: frozenset[str] = frozenset({"foundry_hosted_agent_session_id"})
+
+# Session-state key of standalone FIDES security middleware (``agent_framework.security``). It holds the context label,
+# hidden variables, and pending policy approvals that policy enforcement trusts, so request Shared State must never
+# supply it. The key is spelled literally because importing ``agent_framework.security`` emits its experimental-feature
+# warning for every AG-UI user; a test pins it to the core constant. Unlike the provider-owned keys above, it is
+# protected only from request state: it must keep persisting in private Session Continuation State.
+_FIDES_SESSION_STATE_KEY = "__agent_framework_fides_security__"
 
 
 @dataclass
@@ -799,7 +808,7 @@ def _function_call_execution_owner(
     has_deferred_owner: bool = False,
 ) -> ApprovalExecutionOwner:
     """Resolve execution ownership only after the call and available tools exist."""
-    if _function_call_server_label(function_call):
+    if _function_call_is_hosted(function_call):
         return ApprovalExecutionOwner.HOSTED
     tool = _get_tool_map(tools).get(function_call.name) if tools and function_call.name else None
     if tool is not None and not getattr(tool, "declaration_only", False):
@@ -1100,6 +1109,10 @@ def _approval_state_tool_call_ids(
     """Return server-owned approval call ids that are not abandoned."""
     call_ids: set[str] = set()
     for occurrence in approval_state_store.lifecycle.occurrences_for_thread(thread_id=thread_id):
+        # Terminal occurrences are retained only for replay. Their call ID no longer belongs to an
+        # open call, so a later turn reusing it can still be abandoned and needs a skipped result.
+        if occurrence.status.is_terminal:
+            continue
         call_ids.add(occurrence.identity.call_id)
         call_ids.add(occurrence.function_call_id)
         call_ids.update(occurrence.aliases)
@@ -1836,8 +1849,12 @@ async def _resolve_approval_responses(
         if primary_response.function_call is not None:
             if server_label:
                 primary_response.function_call.additional_properties["server_label"] = server_label
+                primary_response.function_call.hosted = True
+                primary_response.function_call.server_name = server_label
             else:
                 primary_response.function_call.additional_properties.pop("server_label", None)
+                primary_response.function_call.hosted = False
+                primary_response.function_call.server_name = None
                 primary_response.function_call.id = pending_entry.function_call_id
                 primary_response.additional_properties[_APPROVAL_REQUEST_ID_KEY] = (
                     pending_entry.response_id or pending_entry.identity.interrupt_id
@@ -2225,11 +2242,29 @@ def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
     return call_ids
 
 
-def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) -> dict[str, dict[str, Any]]:
-    """Build replayable AG-UI tool messages from resolved approval results."""
-    result_by_call_id: dict[str, dict[str, Any]] = {}
+def _resolved_tool_result_snapshot_messages(
+    resolved_messages: list[Message],
+) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    """Build replayable AG-UI tool messages from resolved approval results.
+
+    Results are keyed by call id and declaration occurrence: the number of assistant messages
+    declaring that call id up to the result (at least one). A later turn that reuses a call id
+    therefore keeps its result apart from the earlier turn's. Distinct function calls inside one
+    assistant message can also share a call id, so each key holds every result in resolution order.
+    """
+    declarations: dict[str, int] = {}
+    results_by_occurrence: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for msg in resolved_messages:
-        if get_role_value(msg) != "tool":
+        role = get_role_value(msg)
+        if role == "assistant":
+            for call_id in {
+                str(content.call_id)
+                for content in msg.contents or []
+                if content.type == "function_call" and content.call_id
+            }:
+                declarations[call_id] = declarations.get(call_id, 0) + 1
+            continue
+        if role != "tool":
             continue
         function_results = [
             content for content in msg.contents or [] if content.type == "function_result" and content.call_id
@@ -2252,48 +2287,75 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
                         _model_items_for_agui_replay(content, llm_result),
                     )
                 )
-            result_by_call_id[call_id] = snapshot_message
-    return result_by_call_id
+            occurrence = (call_id, max(1, declarations.get(call_id, 0)))
+            results_by_occurrence.setdefault(occurrence, []).append(snapshot_message)
+    return results_by_occurrence
+
+
+def _snapshot_tool_message_occurrences(snapshot_messages: list[dict[str, Any]]) -> dict[int, tuple[str, int]]:
+    """Map each snapshot tool message to its call id and declaration occurrence."""
+    declarations: dict[str, int] = {}
+    occurrences: dict[int, tuple[str, int]] = {}
+    for message in snapshot_messages:
+        role = normalize_agui_role(message.get("role", ""))
+        if role == "assistant":
+            for call_id in set(_snapshot_tool_call_ids(message)):
+                declarations[call_id] = declarations.get(call_id, 0) + 1
+        elif role == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
+            if tool_call_id:
+                call_id = str(tool_call_id)
+                occurrences[id(message)] = (call_id, max(1, declarations.get(call_id, 0)))
+    return occurrences
 
 
 def _merge_resolved_approval_results_into_snapshot(
     snapshot_messages: list[dict[str, Any]],
     resolved_messages: list[Message],
 ) -> None:
-    """Persist approval-resolved tool results under their original tool call ids."""
-    result_by_call_id = _resolved_tool_result_snapshot_messages(resolved_messages)
-    if not result_by_call_id:
+    """Persist approval-resolved tool results under their original tool call ids.
+
+    The results of the n-th assistant message declaring a call id follow the n-th snapshot
+    assistant message declaring it, in resolution order, so a call id reused by a later turn
+    stays paired with its own call. Sibling occurrences hidden from the client share the
+    visible call's id, so one declared call can be followed by several results.
+    """
+    results_by_occurrence = _resolved_tool_result_snapshot_messages(resolved_messages)
+    if not results_by_occurrence:
         snapshot_messages[:] = [message for message in snapshot_messages if not message.get("function_approvals")]
         return
 
+    tool_message_occurrences = _snapshot_tool_message_occurrences(snapshot_messages)
+    replaced_occurrences = set(results_by_occurrence)
+    retained_host_messages: set[int] = set()
     for message in snapshot_messages:
-        if normalize_agui_role(message.get("role", "")) != "tool":
+        occurrence = tool_message_occurrences.get(id(message))
+        if occurrence is None or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
             continue
-        tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
-        if not tool_call_id or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
-            continue
-        replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None and replacement.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
-            result_by_call_id.pop(str(tool_call_id))
+        queued_results = results_by_occurrence.get(occurrence)
+        if queued_results and queued_results[0].get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            # Keep the host-rendered result already in the snapshot for this occurrence.
+            queued_results.pop(0)
+            retained_host_messages.add(id(message))
 
+    declarations: dict[str, int] = {}
     merged_messages: list[dict[str, Any]] = []
     for message in snapshot_messages:
         if message.get("function_approvals"):
             continue
-        role = normalize_agui_role(message.get("role", ""))
-        if role == "tool":
-            tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
-            if tool_call_id and str(tool_call_id) in result_by_call_id:
-                continue
-        merged_messages.append(message)
-        if role != "assistant":
+        if id(message) not in retained_host_messages and tool_message_occurrences.get(id(message)) in (
+            replaced_occurrences
+        ):
             continue
-        for call_id in _snapshot_tool_call_ids(message):
-            result_message = result_by_call_id.pop(call_id, None)
-            if result_message is not None:
-                merged_messages.append(result_message)
+        merged_messages.append(message)
+        if normalize_agui_role(message.get("role", "")) != "assistant":
+            continue
+        for call_id in dict.fromkeys(_snapshot_tool_call_ids(message)):
+            declarations[call_id] = declarations.get(call_id, 0) + 1
+            merged_messages.extend(results_by_occurrence.pop((call_id, declarations[call_id]), []))
 
-    merged_messages.extend(result_by_call_id.values())
+    for queued_results in results_by_occurrence.values():
+        merged_messages.extend(queued_results)
     snapshot_messages[:] = merged_messages
 
 
@@ -2570,7 +2632,11 @@ def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) 
 
 
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
-    """Return session-state namespaces that client Shared State cannot own."""
+    """Return session-state namespaces that client Shared State cannot own.
+
+    Names come from optional attributes of ``agent``, which a wrapper may hide, so ``run_agent_stream`` also protects
+    tool approval state by shape; see :func:`_carries_tool_approval_authority`.
+    """
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
     agent_middleware = categorize_middleware(getattr(agent, "middleware", None))["agent"]
     return {
@@ -2579,8 +2645,64 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
         *(provider.source_id for provider in context_providers),
         *_provider_service_session_state_keys(agent),
+        *_fides_session_state_keys(agent),
         *(middleware.source_id for middleware in agent_middleware if isinstance(middleware, ToolApprovalMiddleware)),
     }
+
+
+# Field names ToolApprovalMiddleware reads from ``session.state[source_id]`` (``ToolApprovalState``). They are spelled
+# literally so this check does not depend on the installed core version; a test pins them to ``ToolApprovalState``.
+_TOOL_APPROVAL_STATE_FIELDS: tuple[str, ...] = ("rules", "queued_approval_requests", "collected_approval_responses")
+
+
+def _tool_approval_state_keys(session_state: Mapping[str, Any]) -> set[str]:
+    """Return trusted session-state keys holding ToolApprovalMiddleware state, whatever ``source_id`` named them.
+
+    The middleware reads either a mapping or a ``ToolApprovalState`` object, so both forms are recognized.
+    """
+    return {
+        key
+        for key, value in session_state.items()
+        if isinstance(value, ToolApprovalState)
+        or (
+            isinstance(value, Mapping)
+            and any(field in cast(Mapping[str, Any], value) for field in _TOOL_APPROVAL_STATE_FIELDS)
+        )
+    }
+
+
+def _carries_tool_approval_authority(value: Any) -> bool:
+    """Return whether client state would give ToolApprovalMiddleware approvals the server never recorded.
+
+    ``ToolApprovalMiddleware`` names its state with an application-chosen ``source_id``, so approval authority is
+    recognized by shape rather than by name. Any non-empty approval list counts whatever its item encoding, because
+    ``ToolApprovalState`` loads more than JSON objects (for example key/value pair lists), so matching the item
+    shape would leave gaps.
+    """
+    if not isinstance(value, Mapping):
+        return False
+    state = cast(Mapping[str, Any], value)
+    return any(isinstance(state.get(field), list) and bool(state[field]) for field in _TOOL_APPROVAL_STATE_FIELDS)
+
+
+def _fides_session_state_keys(agent: SupportsAgentRun) -> set[str]:
+    """Return standalone FIDES session-state keys that client Shared State cannot supply.
+
+    Always includes the default key. A custom ``session_state_key`` is added when its middleware is visible on the
+    agent or its client before the run; middleware injected later, or hidden behind a wrapper that does not expose its
+    key, cannot be discovered.
+    """
+    client_middleware = getattr(getattr(agent, "client", None), "function_middleware", None)
+    function_middleware = categorize_middleware(
+        getattr(agent, "middleware", None),
+        cast(Sequence[Any], client_middleware) if isinstance(client_middleware, (list, tuple)) else None,
+    )["function"]
+    keys = {_FIDES_SESSION_STATE_KEY}
+    for middleware in function_middleware:
+        key = getattr(middleware, "_security_session_state_key", None)
+        if isinstance(key, str):
+            keys.add(key)
+    return keys
 
 
 def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:
@@ -3192,7 +3314,24 @@ async def _run_agent_stream(
         restore_service_session_id=config.use_service_session,
         excluded_state_keys=set() if config.use_service_session else _provider_service_session_state_keys(agent),
     )
-    protected_session_state_keys = _request_state_protected_keys(agent)
+    # A wrapper can hide ToolApprovalMiddleware from the agent AG-UI was handed, so its application-chosen source_id
+    # may be unknown here. Approval authority is therefore also protected by shape: namespaces the server already
+    # holds, and client values that would supply approvals.
+    named_protected_keys = _request_state_protected_keys(agent)
+    authority_state_keys = {key for key, value in flow.current_state.items() if _carries_tool_approval_authority(value)}
+    protected_session_state_keys = {
+        *named_protected_keys,
+        *_tool_approval_state_keys(session.state),
+        *authority_state_keys,
+    }
+    if ignored_authority_keys := authority_state_keys.difference(named_protected_keys):
+        shown_keys = sorted(ignored_authority_keys)[:5]
+        omitted = len(ignored_authority_keys) - len(shown_keys)
+        logger.warning(
+            "Ignoring client Shared State %s%s: it carries tool approval authority, which is server-owned.",
+            ", ".join(repr(key[:120]) for key in shown_keys),
+            f" and {omitted} more" if omitted else "",
+        )
     session.state.update(
         {
             key: copy.deepcopy(value)
@@ -3596,6 +3735,7 @@ async def _run_agent_stream(
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     stream_completed = False
     native_approval_flow_result_ids: set[int] = set()
+    native_approval_results: list[Content] = []
     try:
         with telemetry_context():
             for queued_executions in forwarded_executions.values():
@@ -3690,6 +3830,7 @@ async def _run_agent_stream(
                         and intent.owner is not ApprovalExecutionOwner.HOSTED
                     ):
                         native_approval_result = True
+                        native_approval_results.append(content)
                         suppress_approval_call_end = intent.owner is ApprovalExecutionOwner.LOCAL
                         _replace_approval_contents_with_results(
                             messages, _collect_approval_responses(messages), [[content]]
@@ -3957,7 +4098,23 @@ async def _run_agent_stream(
     # Feature #5: Suppress intermediate snapshots for predictive tools without confirmation
     _clean_resolved_approvals_from_snapshot(snapshot_messages, messages)
     if native_approval_flow_result_ids:
-        _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
+        # A decision collected in an earlier request has no approval response in this
+        # request's messages, so its result was never folded into them. Carry it into
+        # the merge so it is persisted next to its call like the rest of the batch.
+        # Match by result object, not call id: distinct occurrences can share a call id.
+        folded_result_ids = {
+            id(content)
+            for message in messages
+            if get_role_value(message) == "tool"
+            for content in message.contents or []
+            if content.type == "function_result"
+        }
+        carried_results = [
+            Message(role="tool", contents=[result])
+            for result in native_approval_results
+            if id(result) not in folded_result_ids
+        ]
+        _merge_resolved_approval_results_into_snapshot(snapshot_messages, [*messages, *carried_results])
         flow.tool_results[:] = [
             result for result in flow.tool_results if id(result) not in native_approval_flow_result_ids
         ]

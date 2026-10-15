@@ -48,6 +48,15 @@ namespace Microsoft.Agents.AI;
 /// <item><b>Tool-level:</b> Approve all calls to a specific tool, regardless of arguments.</item>
 /// <item><b>Tool+arguments:</b> Approve all calls to a specific tool with exactly matching arguments.</item>
 /// </list>
+/// <para>
+/// <b>Security:</b> Standing approval rules are stored in the session; they are not tied to the agent or tool
+/// instance that recorded them. Reusing a session with a different or rebuilt agent, or with a changed tool set,
+/// can let another tool with the same name match an earlier rule. This is especially important when tools can come
+/// from an outside source such as MCP. Before passing such a session to an agent, ensure its standing approvals
+/// are still valid for all tools the agent can use. A changed tool does not always require a new approval. For
+/// example, an upgraded agent may use an improved version of a tool for which the old approval is still appropriate.
+/// The developer must decide whether each standing approval should carry over to the changed tool.
+/// </para>
 /// </remarks>
 public sealed class ToolApprovalAgent : DelegatingAIAgent
 {

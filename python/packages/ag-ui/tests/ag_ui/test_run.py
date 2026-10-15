@@ -29,21 +29,26 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    ToolApprovalRule,
+    ToolApprovalState,
 )
 from agent_framework.exceptions import AgentInvalidResponseException, ResponseInvalidatedException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
+    _TOOL_APPROVAL_STATE_FIELDS,
     _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
+    _carries_tool_approval_authority,
     _create_state_context_message,
     _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _normalize_response_stream,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+    _tool_approval_state_keys,
     run_agent_stream,
 )
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -3758,6 +3763,164 @@ async def test_reserved_service_session_keys_protected_without_agent_declaration
     ]
 
     assert observed_state == [{"client_value": "available"}]
+
+
+def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
+    """Any non-empty approval list is authority whatever its item encoding; inert shapes are not."""
+    authority_states: list[Any] = [
+        {"rules": [{"tool_name": "gated_tool"}]},
+        {"rules": [[["tool_name", "gated_tool"]]]},
+        {"rules": ["not-a-rule"]},
+        {"rules": [], "queued_approval_requests": [{}]},
+        {"queued_approval_requests": [{}]},
+        {"collected_approval_responses": [{}]},
+    ]
+    inert_states: list[Any] = [
+        None,
+        "text",
+        1,
+        [],
+        {},
+        {"rules": []},
+        {"rules": None},
+        {"rules": {"tool_name": "gated_tool"}},
+        {"rules": "gated_tool"},
+        {"unrelated": [1]},
+    ]
+
+    for authority in authority_states:
+        assert _carries_tool_approval_authority(authority), authority
+    for inert in inert_states:
+        assert not _carries_tool_approval_authority(inert), inert
+
+
+def test_tool_approval_state_keys_find_server_state_whatever_the_source_id() -> None:
+    """Server-held approval state, as a mapping or a ``ToolApprovalState`` object, is found under any ``source_id``."""
+    session_state = {
+        "custom_approvals": {"rules": []},
+        "queued_only": {"queued_approval_requests": []},
+        "state_object": ToolApprovalState(rules=[ToolApprovalRule(tool_name="gated_tool")]),
+        "empty_state_object": ToolApprovalState(),
+        "document": {"title": "synthetic"},
+        "text": "value",
+        "empty": {},
+    }
+
+    assert _tool_approval_state_keys(session_state) == {
+        "custom_approvals",
+        "queued_only",
+        "state_object",
+        "empty_state_object",
+    }
+
+
+def test_tool_approval_state_fields_match_tool_approval_state() -> None:
+    """The literal field names guarding client state track ``ToolApprovalState``, so a new field cannot slip by."""
+    assert set(_TOOL_APPROVAL_STATE_FIELDS) == set(ToolApprovalState().to_dict(exclude={"type"}))
+
+
+def test_standalone_fides_default_state_key_matches_core():
+    """AG-UI spells the default FIDES key literally, so it must stay identical to the key core's middleware uses."""
+    from agent_framework.security import (
+        _STANDALONE_SESSION_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY
+
+    assert _FIDES_SESSION_STATE_KEY == _STANDALONE_SESSION_STATE_KEY
+
+
+@pytest.mark.parametrize("location", ["agent", "bundle", "client", "client-tuple", "forwarding-wrapper"])
+def test_request_state_protected_keys_include_configured_standalone_fides_keys(location: str):
+    """Configured FIDES state keys stay server-owned wherever their middleware is visible before the run."""
+    from types import SimpleNamespace
+
+    from agent_framework import FunctionMiddleware, MiddlewareBundle
+    from agent_framework.security import LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class ForwardingMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    middleware = [
+        LabelTrackingFunctionMiddleware(session_state_key="label_state"),
+        PolicyEnforcementFunctionMiddleware(session_state_key="policy_state"),
+    ]
+    stub = StubAgent()
+    if location == "agent":
+        setattr(stub, "middleware", middleware)
+    elif location == "bundle":
+        setattr(stub, "middleware", [MiddlewareBundle(middleware)])
+    elif location == "client":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=middleware)
+    elif location == "client-tuple":
+        stub.client = SimpleNamespace(function_invocation_configuration=None, function_middleware=tuple(middleware))
+    else:
+        setattr(stub, "middleware", [ForwardingMiddleware(item) for item in middleware])
+
+    assert {_FIDES_SESSION_STATE_KEY, "label_state", "policy_state"} <= _request_state_protected_keys(stub)
+
+
+def test_request_state_protected_keys_reserve_default_standalone_fides_key_without_discoverable_middleware():
+    """The default FIDES key stays server-owned for agents that expose no middleware or hide it behind a wrapper."""
+    from agent_framework import FunctionMiddleware
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import _FIDES_SESSION_STATE_KEY, _request_state_protected_keys
+
+    class OpaqueMiddleware(FunctionMiddleware):
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        async def process(self, context: Any, call_next: Any) -> None:
+            await self._inner.process(context, call_next)
+
+    wrapped = StubAgent()
+    setattr(wrapped, "middleware", [OpaqueMiddleware(LabelTrackingFunctionMiddleware())])
+
+    for agent in (StubAgent(), wrapped):
+        assert _FIDES_SESSION_STATE_KEY in _request_state_protected_keys(agent)
+
+
+def test_standalone_fides_state_is_not_a_provider_service_session_key():
+    """FIDES state is protected from request state but must keep persisting in private continuation.
+
+    Reserving it like a provider-owned key would also drop it from stateless Session Continuation State, silently
+    discarding the server's own context label.
+    """
+    from agent_framework import AgentSession
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    from agent_framework_ag_ui._agent_run import (
+        _FIDES_SESSION_STATE_KEY,
+        _provider_service_session_state_keys,
+        _serialize_session_continuation_state,
+    )
+
+    stub = StubAgent()
+    setattr(stub, "middleware", [LabelTrackingFunctionMiddleware(session_state_key="custom_state")])
+    expected = {_FIDES_SESSION_STATE_KEY: {"context_label": "default"}, "custom_state": {"context_label": "custom"}}
+    session = AgentSession()
+    session.state.update(expected)
+
+    assert not set(expected) & _provider_service_session_state_keys(stub)
+    assert (
+        _serialize_session_continuation_state(
+            session,
+            stub,
+            shared_state_keys=set(),
+            include_service_session_id=False,
+        )
+        == expected
+    )
 
 
 async def test_request_state_cannot_assign_service_session_id():

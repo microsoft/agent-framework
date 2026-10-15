@@ -8,6 +8,14 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 pip install agent-framework-ag-ui
 ```
 
+The base package supports Python 3.10–3.15. The optional A2UI integration
+currently supports Python 3.10–3.14 because `ag-ui-a2ui-toolkit` declares
+`Requires-Python <3.15`:
+
+```bash
+pip install "agent-framework-ag-ui[a2ui]"
+```
+
 ## Quick Start
 
 ### Server (Host an AI Agent)
@@ -487,6 +495,13 @@ AG-UI events and snapshot operations. When using `AgentFrameworkWorkflow(workflo
 also scopes the in-memory workflow cache even without a snapshot store; provide it in multi-user deployments so two
 users who submit the same `threadId` do not share a live `Workflow` instance.
 
+A workflow request that omits `threadId` is assigned a generated Thread id. It is reported in `RUN_STARTED`, keys the
+`workflow_factory` instance and Thread Snapshot, and owns that run's pending `request_info` interrupts. Send it back as
+`threadId` to continue the run; a continuation that omits it receives `WORKFLOW_RESUME_NOT_FOUND`. With
+`workflow_factory`, a request without `threadId` that carries a `resume` entry, a tool result, or an approval response
+is rejected the same way instead of starting a new run, so send `threadId` with every such request. A checkpoint
+created by such a run resumes with `checkpointId` and either the reported `threadId` or, as before, no `threadId`.
+
 Authenticate and authorize the current scope on every request, including hydration and approval resume, rather than
 trusting a scope supplied through Shared State or forwarded properties. A configured resolver must return a non-empty
 string. Returning `None`, an empty string, or another type fails the request with a generic HTTP 500 configuration
@@ -505,8 +520,10 @@ shared multi-tenant deployment, even with a trusted resolver. Keep it disabled w
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
 values, are not passed through typed session restoration, and are excluded from private Session Continuation State.
-Keys owned by configured context providers or reserved for approval and message-injection middleware are not copied
-into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+Keys owned by configured context providers or reserved for approval, message-injection, and standalone FIDES security
+middleware are not copied into `AgentSession.state`; their server-owned values take precedence over client Shared State.
+A custom FIDES `session_state_key` is protected when its middleware is visible on the agent or its client before the
+run; use `SecureAgentConfig` for middleware that a context provider injects later.
 
 When scoped snapshots are configured, each category has one State Authority:
 
