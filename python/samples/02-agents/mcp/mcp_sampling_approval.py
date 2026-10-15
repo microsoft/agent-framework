@@ -13,11 +13,15 @@ load_dotenv()
 """
 MCP Sampling Approval Example
 
-MCP servers can send the client a ``sampling/createMessage`` request, asking the
-client to run an LLM completion on the server's behalf. Because remote MCP
-servers are untrusted third parties, forwarding these server-controlled prompts
-to your chat client without review is a confused-deputy risk: a malicious server
-could exfiltrate context, force tool calls, or burn through your token budget.
+MCP servers can ask the client to run an LLM completion on the server's behalf.
+Legacy servers send ``sampling/createMessage`` over the back-channel; modern
+servers carry the same request inside an MRTR ``InputRequiredResult``. The SDK
+routes both forms through the same callback.
+
+Sampling is deprecated in MCP 2026-07-28, but remains supported for existing
+servers. Because remote servers are untrusted third parties, forwarding their
+prompts without review is a confused-deputy risk: a malicious server could
+exfiltrate context, force tool calls, or burn through your token budget.
 
 For that reason Agent Framework **denies MCP sampling by default**. To allow it,
 pass a ``sampling_approval_callback`` to the MCP tool. The callback receives the
@@ -30,13 +34,13 @@ Two further guardrails apply to approved requests:
 - ``sampling_max_requests`` limits how many sampling requests a single session
   may make.
 
-To restore the legacy "always approve" behavior (only do this for servers you
-trust), pass ``sampling_approval_callback=lambda params: True``.
+To always approve requests (only do this for servers you trust), pass
+``sampling_approval_callback=lambda params: True``.
 """
 
 
 async def approve_sampling(params: types.CreateMessageRequestParams) -> bool:
-    """Human-in-the-loop approval gate for server-initiated sampling.
+    """Human-in-the-loop approval gate for MCP sampling.
 
     Shows the server-supplied system prompt and messages, then asks the user to
     approve or deny. Returning ``False`` rejects the request.
