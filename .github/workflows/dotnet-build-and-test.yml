@@ -497,7 +497,7 @@ jobs:
   # Repository PRs and reviewer-approved merge groups can run integration checks before merging.
   dotnet-integration-test:
     needs: paths-filter
-    if: needs.paths-filter.outputs.dotnetChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+    if: needs.paths-filter.outputs.dotnetChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
     permissions:
       contents: read
       id-token: "write"
@@ -542,7 +542,7 @@ jobs:
   # gated on paths-filter.outputs.foundryHostingChanges so unrelated edits skip the work.
   dotnet-foundry-hosted-it:
     needs: paths-filter
-    if: needs.paths-filter.outputs.foundryHostingChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+    if: needs.paths-filter.outputs.foundryHostingChanges == 'true' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
     permissions:
       contents: read
       id-token: "write"
