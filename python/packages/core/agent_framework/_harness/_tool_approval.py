@@ -58,9 +58,12 @@ def _serialize_arguments(function_call: Content) -> dict[str, str]:
 
 
 def _server_label(function_call: Content) -> str | None:
-    """Return the hosted-tool server boundary for a function call, if present."""
-    value = function_call.additional_properties.get("server_label")
-    return value if isinstance(value, str) else None
+    """Return the hosted-tool server boundary for a function call, if present.
+
+    Legacy ``additional_properties["server_label"]`` is normalized into first-class
+    ``hosted`` and ``server_name`` by Content construction and restoration.
+    """
+    return function_call.server_name if function_call.hosted else None
 
 
 def _content_from_state(value: Any) -> Content:
@@ -236,6 +239,13 @@ class ToolApprovalState(SerializationMixin):
 def create_always_approve_tool_response(request: Content, *, reason: str | None = None) -> Content:
     """Create an approval response that records a standing rule for the whole tool.
 
+    .. warning::
+        Standing rules are stored in the supplied :class:`AgentSession` and are
+        not tied to the agent or tool instance that created the request. Before
+        reusing the session with a different agent or tool set, especially one
+        that can load tools from an outside source such as MCP, ensure the rule
+        is still appropriate for every matching tool name.
+
     Args:
         request: The ``function_approval_request`` content to approve.
 
@@ -250,7 +260,15 @@ def create_always_approve_tool_response(request: Content, *, reason: str | None 
 
 
 def create_always_approve_tool_with_arguments_response(request: Content, *, reason: str | None = None) -> Content:
-    """Create an approval response that records a standing rule for the tool and exact arguments."""
+    """Create an approval response that records a standing rule for the tool and exact arguments.
+
+    .. warning::
+        Standing rules are stored in the supplied :class:`AgentSession` and are
+        not tied to the agent or tool instance that created the request. Before
+        reusing the session with a different agent or tool set, especially one
+        that can load tools from an outside source such as MCP, ensure the rule
+        is still appropriate for every matching tool name and argument set.
+    """
     return _create_always_approve_response(request, ALWAYS_APPROVE_TOOL_WITH_ARGUMENTS, reason=reason)
 
 
@@ -364,6 +382,19 @@ class ToolApprovalMiddleware(AgentMiddleware):
     This middleware is opt-in and requires callers to run the agent with an
     :class:`AgentSession`, because approval rules and queued requests are stored
     in session state.
+
+    .. warning::
+        **Security.** Standing approval rules persist in the supplied session
+        and are not tied to the agent or tool instance that recorded them.
+        Reusing the session with a different or rebuilt agent, or with a changed
+        tool set, can let another tool with the same name match an earlier rule.
+        This is especially important when tools can come from an outside source
+        such as MCP. Before passing such a session to the agent, ensure its
+        standing approvals are still valid for all tools the agent can use. A
+        changed tool does not always require a new approval. For example, an
+        upgraded agent may use an improved version of a tool for which the old
+        approval is still appropriate. The developer must decide whether each
+        standing approval should carry over to the changed tool.
     """
 
     def __init__(

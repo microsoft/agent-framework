@@ -145,6 +145,11 @@ public static class IWorkflowContextExtensions
     /// <param name="expression">The expression to evaluate.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated expression value and its sensitivity metadata.</returns>
+    /// <remarks>
+    /// Callers must preserve the sensitivity metadata when storing the result and reject sensitive
+    /// values before using them for output or control-flow decisions. Use <see cref="EvaluateValueAsync{TValue}"/>
+    /// when sensitivity metadata does not need to be propagated.
+    /// </remarks>
     public static async ValueTask<EvaluationResult<TValue?>> EvaluateValueWithSensitivityAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);

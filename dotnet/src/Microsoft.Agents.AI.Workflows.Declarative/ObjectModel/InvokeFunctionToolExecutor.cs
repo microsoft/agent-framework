@@ -32,6 +32,7 @@ internal sealed class InvokeFunctionToolExecutor(
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
     private const string HasApprovalRequiredInvocationStateKey = nameof(_hasApprovalRequiredInvocation);
     private const string PendingCallIdsStateKey = nameof(_pendingNonApprovalCallIds);
+    private const string AutoSendSnapshotsStateKey = nameof(_autoSendSnapshots);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
 
     /// <summary>
@@ -40,6 +41,7 @@ internal sealed class InvokeFunctionToolExecutor(
     /// response is captured.
     /// </summary>
     private readonly ConcurrentDictionary<string, ApprovalSnapshot> _approvalSnapshots = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool> _autoSendSnapshots = new(StringComparer.Ordinal);
 
     private bool _hasApprovalRequiredInvocation;
 
@@ -77,11 +79,13 @@ internal sealed class InvokeFunctionToolExecutor(
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string functionName = this.GetFunctionName();
-        bool requireApproval = this.GetRequireApproval();
+        bool requireApproval = this.GetRequireApproval(functionName);
+        bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? arguments = this.GetArguments();
 
         // Per-invocation request id stamped on the outbound content.
         string requestId = Guid.NewGuid().ToString("N");
+        this._autoSendSnapshots[requestId] = autoSend;
 
         // Create the function call content to send to the caller
         FunctionCallContent functionCall = new(
@@ -128,7 +132,6 @@ internal sealed class InvokeFunctionToolExecutor(
         ExternalInputResponse response,
         CancellationToken cancellationToken)
     {
-        bool autoSend = this.GetAutoSendValue();
         string? conversationId = this.GetConversationId();
         string? responseRequestId = response.RequestId;
 
@@ -154,6 +157,8 @@ internal sealed class InvokeFunctionToolExecutor(
                 .FirstOrDefault(r => string.Equals(r.CallId, this.Id, StringComparison.Ordinal)
                     && IsCorrelatedResponse(r.CallId, responseRequestId));
         }
+
+        bool autoSend = matchingResult is not null && this.GetResponseAutoSendValue(response);
 
         // When the caller approved an approval-required function call but didn't execute it
         // locally (the hosted Foundry scenario, where mcp_approval_response is converted to a
@@ -183,16 +188,21 @@ internal sealed class InvokeFunctionToolExecutor(
                 else if (!approval.Approved)
                 {
                     this._approvalSnapshots.TryRemove(approval.RequestId, out _);
+                    this._autoSendSnapshots.TryRemove(approval.RequestId, out _);
                     await this.AssignErrorAsync(context, "Function invocation was not approved by user.").ConfigureAwait(false);
-                }
-                else if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
-                {
-                    matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
-                    approvedFunctionResult = matchingResult;
                 }
                 else
                 {
-                    await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+                    autoSend = this.GetResponseAutoSendValue(response);
+                    if (this._approvalSnapshots.TryRemove(approval.RequestId, out ApprovalSnapshot? snapshot))
+                    {
+                        matchingResult = await this.InvokeRegisteredFunctionAsync(approval.RequestId, snapshot, cancellationToken).ConfigureAwait(false);
+                        approvedFunctionResult = matchingResult;
+                    }
+                    else
+                    {
+                        await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+                    }
                 }
             }
             else if (!this._approvalSnapshots.IsEmpty)
@@ -246,6 +256,7 @@ internal sealed class InvokeFunctionToolExecutor(
             // Drop the per-invocation entry now that the response side effects have been processed.
             this._pendingNonApprovalCallIds.TryRemove(matchingResult.CallId, out _);
             this._approvalSnapshots.TryRemove(matchingResult.CallId, out _);
+            this._autoSendSnapshots.TryRemove(matchingResult.CallId, out _);
         }
 
         // Completes the action after processing the function result.
@@ -266,6 +277,7 @@ internal sealed class InvokeFunctionToolExecutor(
     public override ValueTask ResetAsync()
     {
         this._approvalSnapshots.Clear();
+        this._autoSendSnapshots.Clear();
         this._hasApprovalRequiredInvocation = false;
         this._pendingNonApprovalCallIds.Clear();
         return default;
@@ -285,6 +297,8 @@ internal sealed class InvokeFunctionToolExecutor(
 
         List<string> pendingCopy = [.. this._pendingNonApprovalCallIds.Keys];
         await context.QueueStateUpdateAsync(PendingCallIdsStateKey, pendingCopy, null, cancellationToken).ConfigureAwait(false);
+        Dictionary<string, bool> autoSendCopy = this._autoSendSnapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
+        await context.QueueStateUpdateAsync(AutoSendSnapshotsStateKey, autoSendCopy, null, cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -297,6 +311,16 @@ internal sealed class InvokeFunctionToolExecutor(
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+        this._autoSendSnapshots.Clear();
+        Dictionary<string, bool>? autoSendSnapshots = await context.ReadStateAsync<Dictionary<string, bool>>(
+            AutoSendSnapshotsStateKey, null, cancellationToken).ConfigureAwait(false);
+        if (autoSendSnapshots is not null)
+        {
+            foreach (KeyValuePair<string, bool> entry in autoSendSnapshots)
+            {
+                this._autoSendSnapshots[entry.Key] = entry.Value;
+            }
+        }
         this._approvalSnapshots.Clear();
         Dictionary<string, ApprovalSnapshot>? snapshots = await context.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(
             ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
@@ -522,14 +546,39 @@ internal sealed class InvokeFunctionToolExecutor(
         return new FunctionResultContent(callId, serialized);
     }
 
-    private bool GetRequireApproval()
+    private bool GetRequireApproval(string functionName)
     {
-        if (this.Model.RequireApproval is null)
+        bool requireApproval = this.Model.RequireApproval is not null
+            && this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.RequireApproval), "require approval");
+
+        return requireApproval
+            || agentProvider.Functions?.FirstOrDefault(
+                f => string.Equals(f.Name, functionName, StringComparison.Ordinal))
+                ?.GetService<ApprovalRequiredAIFunction>() is not null;
+    }
+
+    private bool GetResponseAutoSendValue(ExternalInputResponse response)
+    {
+        AIContent[] contents = [.. response.Messages.SelectMany(message => message.Contents)];
+        FunctionResultContent? result = contents.OfType<FunctionResultContent>()
+            .FirstOrDefault(r => this.IsCorrelatedPendingNonApprovalResult(r, response.RequestId));
+        if (result is not null)
         {
-            return false;
+            return this._autoSendSnapshots.TryGetValue(result.CallId, out bool resultAutoSend)
+                ? resultAutoSend
+                : this.GetAutoSendValue();
         }
 
-        return this.Evaluator.GetValue(this.Model.RequireApproval).Value;
+        ToolApprovalResponseContent? approval = contents.OfType<ToolApprovalResponseContent>()
+            .FirstOrDefault(r => this._approvalSnapshots.ContainsKey(r.RequestId) &&
+                IsCorrelatedResponse(r.RequestId, response.RequestId));
+        if (approval is not null && this._autoSendSnapshots.TryGetValue(approval.RequestId, out bool approvalAutoSend))
+        {
+            return approvalAutoSend;
+        }
+
+        // Older checkpoints and legacy responses have no captured setting.
+        return this.GetAutoSendValue();
     }
 
     private bool GetAutoSendValue()
@@ -540,7 +589,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // default as autoSend = true (the historical behavior).
         if (this.Model.Output is { AutoSendIsDefaultValue: false } output)
         {
-            return this.Evaluator.GetValue(output.AutoSend).Value;
+            return this.GetNonSensitiveValue(this.Evaluator.GetValue(output.AutoSend), "auto send");
         }
 
         return true;

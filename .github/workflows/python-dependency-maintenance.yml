@@ -43,18 +43,18 @@ jobs:
           echo "DEPENDENCY_RELEASE_CUTOFF=${cutoff}" >> "$GITHUB_ENV"
           echo "Using dependency release cutoff: ${cutoff}"
 
-      - name: Repin dev dependency declarations
+      - name: Repin development and tool dependency declarations
         run: uv run poe upgrade-dev-dependency-pins
         working-directory: ./python
 
-      - name: Refresh lockfile after dev pin updates
+      - name: Refresh lockfile after dependency pin updates
         run: uv lock
         working-directory: ./python
 
-      - name: Save dev dependency changes
+      - name: Save development and tool dependency changes
         run: |
           DEV_PATCH="${RUNNER_TEMP}/python-dev-dependency-updates.patch"
-          git diff -- python/pyproject.toml "python/packages/*/pyproject.toml" python/uv.lock > "${DEV_PATCH}"
+          git diff -- python/pyproject.toml "python/packages/*/pyproject.toml" "python/tooling/requirements-*.txt" python/uv.lock > "${DEV_PATCH}"
           if [ -s "${DEV_PATCH}" ]; then
             echo "has_dev_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -117,7 +117,7 @@ jobs:
             const bodyLines = [
               "Automated dependency bounds test mode failed before dependency upper-bound validation could run.",
               "",
-              "The weekly dependency maintenance workflow kept only dev dependency updates for the generated PR, if any, and skipped dependency range updates for this run.",
+              "The weekly dependency maintenance workflow kept only development and tool dependency updates for the generated PR, if any, and skipped dependency range updates for this run.",
               "",
             ]
 
@@ -271,13 +271,13 @@ jobs:
               core.info(`Created issue: ${title}`)
             }
 
-      - name: Keep only dev updates when range validation fails
+      - name: Keep only development and tool updates when range validation fails
         if: steps.validate_bounds_test.outcome != 'success' || steps.validate_ranges.outcome != 'success'
         env:
           DEV_PATCH: ${{ steps.dev_changes.outputs.patch }}
           HAS_DEV_CHANGES: ${{ steps.dev_changes.outputs.has_dev_changes }}
         run: |
-          git restore python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
+          git restore python/pyproject.toml python/packages/*/pyproject.toml python/tooling/requirements-*.txt python/uv.lock
           if [ "${HAS_DEV_CHANGES}" = "true" ]; then
             git apply "${DEV_PATCH}"
           fi
@@ -308,7 +308,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${BRANCH}"
 
-          git add python/pyproject.toml python/packages/*/pyproject.toml python/uv.lock
+          git add python/pyproject.toml python/packages/*/pyproject.toml python/tooling/requirements-*.txt python/uv.lock
           if git diff --cached --quiet; then
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             echo "No dependency updates to commit."

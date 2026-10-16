@@ -7,12 +7,15 @@ import pytest
 
 from scripts.dependencies._dependency_bounds_lower_impl import _select_validation_tasks as _select_lower_tasks
 from scripts.dependencies._dependency_bounds_runtime import (
+    extend_command_with_runtime_tools,
     extend_command_with_task,
+    load_runtime_tool_requirements,
     load_workspace_package_configs,
     resolve_internal_editables,
 )
 from scripts.dependencies._dependency_bounds_upper_impl import _select_validation_tasks as _select_upper_tasks
 from scripts.dependencies.validate_dependency_bounds import _build_test_plans
+from scripts.tool_requirements import load_requirements
 
 
 def _write_project(path: Path, content: str) -> None:
@@ -176,23 +179,42 @@ dependency-pyright = "pyright --project pyrightconfig.dependency.json"
     assert plans[0].typing_task == "dependency-pyright"
 
 
-def test_dependency_pyright_reuses_root_test_requirements(tmp_path: Path) -> None:
+def test_dependency_pyright_uses_the_shared_runtime_environment() -> None:
+    command = ["uv", "run"]
+
+    extend_command_with_task(command, "dependency-pyright")
+
+    assert command[-3:-1] == ["python", "-c"]
+
+
+def test_runtime_tools_come_from_on_demand_requirement_bundles(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         """
 [dependency-groups]
-test = ["azure-monitor-opentelemetry", "mcp[ws]"]
+dev = ["uv==0.12.23", "poethepoet==0.48.0", "pytest==9.1.1"]
+tool-runtime = ["packaging==26.3", "rich==15.0.0"]
 """
     )
+    requirements = load_runtime_tool_requirements(str(tmp_path))
+
+    assert "uv==0.12.23" not in requirements
+    assert "poethepoet==0.48.0" in requirements
+    assert "pytest==9.1.1" in requirements
+    assert "packaging==26.3" in requirements
+    assert "rich==15.0.0" in requirements
+    assert set(load_requirements("quality")).issubset(requirements)
+    assert set(load_requirements("typing")).issubset(requirements)
+
+    command = ["uv", "run"]
+    extend_command_with_runtime_tools(command, tmp_path)
+
+    for requirement in requirements:
+        assert ["--with", requirement] == command[command.index(requirement) - 1 : command.index(requirement) + 1]
+
+
+def test_poe_tasks_use_the_existing_isolated_environment() -> None:
     command = ["uv", "run"]
 
-    extend_command_with_task(command, "dependency-pyright", workspace_root=tmp_path)
+    extend_command_with_task(command, "test")
 
-    assert command[:6] == [
-        "uv",
-        "run",
-        "--with",
-        "azure-monitor-opentelemetry",
-        "--with",
-        "mcp[ws]",
-    ]
-    assert command[-3:-1] == ["python", "-c"]
+    assert command[-6:] == ["python", "-m", "poethepoet", "--executor", "simple", "test"]

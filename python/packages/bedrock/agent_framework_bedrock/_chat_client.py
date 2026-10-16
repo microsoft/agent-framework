@@ -30,6 +30,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    get_namespaced_value,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
@@ -62,7 +63,9 @@ logger = logging.getLogger("agent_framework.bedrock")
 
 # Marks text_reasoning content whose protected_data is base64 of a Bedrock ``redactedContent`` blob,
 # as opposed to the signature of a ``reasoningText`` block.
-_REDACTED_REASONING_KEY = "bedrock.redacted_reasoning"
+_BEDROCK_ADDITIONAL_PROPS_NAMESPACE = "bedrock"
+_REDACTED_REASONING_KEY = "redacted_reasoning"
+_LEGACY_REDACTED_REASONING_KEY = "bedrock.redacted_reasoning"
 
 
 @dataclass
@@ -274,7 +277,8 @@ class BedrockChatClient(
         """Create a Bedrock chat client and load AWS credentials.
 
         Args:
-            region: Region to send Bedrock requests to; falls back to BEDROCK_REGION.
+            region: Region to send Bedrock requests to; falls back to BEDROCK_REGION, then to the region
+                of ``boto3_session``, then to us-east-1.
             model: Default model identifier; falls back to BEDROCK_CHAT_MODEL.
             access_key: Optional AWS access key for manual credential injection.
             secret_key: Optional AWS secret key paired with ``access_key``.
@@ -318,7 +322,8 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        region = settings.get("region") or DEFAULT_REGION
+        session_region = boto3_session.region_name if boto3_session and not client else None
+        region = settings.get("region") or session_region or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
         if client:
@@ -493,7 +498,11 @@ class BedrockChatClient(
         ):
             if (value := options.get(key)) is not None:
                 run_options[key] = value
-        if ":prompt/" in model:
+        # Per-call client kwargs (for example Bedrock-native fields passed through
+        # client_kwargs) join the request before the prompt-ARN cleanup so that
+        # branch still strips fields Converse rejects, mirroring the other clients.
+        run_options.update(kwargs)
+        if ":prompt/" in run_options["modelId"]:
             # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
             if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
                 del run_options["inferenceConfig"]  # only the client default, nothing the caller asked for
@@ -610,7 +619,11 @@ class BedrockChatClient(
                 return {"image": {"format": image_format, "source": {"bytes": _get_data_bytes(content)}}}
             case "text_reasoning":
                 # Extended thinking with tool use requires reasoning blocks to be sent back unchanged.
-                if content.additional_properties.get(_REDACTED_REASONING_KEY):
+                if get_namespaced_value(
+                    content.additional_properties,
+                    _BEDROCK_ADDITIONAL_PROPS_NAMESPACE,
+                    _REDACTED_REASONING_KEY,
+                ) or content.additional_properties.get(_LEGACY_REDACTED_REASONING_KEY):
                     try:
                         redacted = base64.b64decode(content.protected_data or "", validate=True)
                     except ValueError:
@@ -726,11 +739,21 @@ class BedrockChatClient(
         return f"reasoning-{uuid4().hex}"
 
     @staticmethod
-    def _redacted_reasoning_content(redacted: bytes, *, id: str, raw_representation: Any) -> Content:
+    def _redacted_reasoning_content(
+        redacted: bytes,
+        *,
+        id: str,
+        raw_representation: Any,
+        merge_mode: Literal["append", "replace"] | None = None,
+    ) -> Content:
         return Content.from_text_reasoning(
             id=id,
             protected_data=base64.b64encode(redacted).decode("utf-8"),
-            additional_properties={_REDACTED_REASONING_KEY: True},
+            merge_mode=merge_mode,
+            additional_properties={
+                _BEDROCK_ADDITIONAL_PROPS_NAMESPACE: {_REDACTED_REASONING_KEY: True},
+                _LEGACY_REDACTED_REASONING_KEY: True,
+            },
             raw_representation=raw_representation,
         )
 
@@ -772,18 +795,24 @@ class BedrockChatClient(
             if tool_use := block_start.get("start", {}).get("toolUse"):
                 tool_call_ids[block_start.get("contentBlockIndex", 0)] = tool_use["toolUseId"]
                 contents.append(
-                    Content.from_function_call(call_id=tool_use["toolUseId"], name=tool_use["name"], arguments="")
+                    Content.from_function_call(
+                        call_id=tool_use["toolUseId"],
+                        name=tool_use["name"],
+                        arguments="",
+                        merge_mode="append",
+                    )
                 )
         elif block_delta := event.get("contentBlockDelta"):
             delta = block_delta.get("delta", {})
             if text_value := delta.get("text"):
-                contents.append(Content.from_text(text=text_value, raw_representation=delta))
+                contents.append(Content.from_text(text=text_value, merge_mode="append", raw_representation=delta))
             elif tool_use_delta := delta.get("toolUse"):
                 contents.append(
                     Content.from_function_call(
                         call_id=tool_call_ids.get(block_delta.get("contentBlockIndex", 0), ""),
                         name="",
                         arguments=tool_use_delta.get("input", ""),
+                        merge_mode="append",
                     )
                 )
             elif reasoning_delta := delta.get("reasoningContent"):
@@ -797,7 +826,12 @@ class BedrockChatClient(
                     # Merging keeps only the latest protected_data, so send everything received so far.
                     block.redacted += bytes(redacted)
                     contents.append(
-                        self._redacted_reasoning_content(block.redacted, id=block.id, raw_representation=delta)
+                        self._redacted_reasoning_content(
+                            block.redacted,
+                            id=block.id,
+                            raw_representation=delta,
+                            merge_mode="replace",
+                        )
                     )
                 elif "text" in reasoning_delta or "signature" in reasoning_delta:
                     contents.append(
@@ -806,13 +840,14 @@ class BedrockChatClient(
                             # "" rather than None, so a signed block without text is still replayed.
                             text=reasoning_delta.get("text") or "",
                             protected_data=reasoning_delta.get("signature"),
+                            merge_mode="append",
                             raw_representation=delta,
                         )
                     )
         elif message_stop := event.get("messageStop"):
             finish_reason = self._map_finish_reason(message_stop.get("stopReason"))
         elif (metadata := event.get("metadata")) and (usage_details := self._parse_usage(metadata.get("usage"))):
-            contents.append(Content.from_usage(usage_details=usage_details))
+            contents.append(Content.from_usage(usage_details=usage_details, merge_mode="replace"))
         if not contents and finish_reason is None:
             return None
         return ChatResponseUpdate(
