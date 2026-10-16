@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -125,6 +126,23 @@ def _unescape_markdown_line(line: str) -> str:
 
 
 def _slugify_topic(topic: str) -> str:
+    normalized = _normalize_topic(topic)
+    slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
+    if slug == normalized.lower():
+        # Already a safe stem; the mapping lost nothing, so the filename
+        # stays byte-identical to what older versions wrote.
+        return slug
+    # The readable slug is a lossy projection (non-ASCII, accents, case,
+    # punctuation): two distinct topics can share it. Suffix the full digest
+    # of the normalized topic so byte-distinct topics get distinct files; a
+    # truncated prefix still collides (e.g. "丮仑一一" and "仺价一一" share
+    # the 8-hex-char prefix 36749dfe).
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"{slug}-{digest}" if slug else f"memory-topic-{digest}"
+
+
+def _legacy_slugify_topic(topic: str) -> str:
+    """The pre-digest slug derivation, kept to read stores written by older versions."""
     slug = re.sub(r"[^a-z0-9]+", "-", _normalize_topic(topic).lower()).strip("-")
     return slug or "memory-topic"
 
@@ -591,6 +609,14 @@ class MemoryStore(ABC):
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
 
+    def migrate_misfiled_legacy_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        """Move a different topic's legacy-addressed record off this topic's canonical address.
+
+        Only stores with lossy filename-derived addressing can hold misfiled
+        legacy records; the default store contract has nothing to migrate.
+        """
+        del session, source_id, topic
+
     @abstractmethod
     def rebuild_index(
         self,
@@ -766,6 +792,48 @@ class MemoryFileStore(MemoryStore):
     def _topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path:
         return self._get_topics_directory(session, source_id=source_id) / f"{_slugify_topic(topic)}.md"
 
+    def _legacy_topic_path(self, session: AgentSession, *, source_id: str, topic: str) -> Path | None:
+        """The path a pre-digest version wrote for this topic, if it differs."""
+        legacy = self._get_topics_directory(session, source_id=source_id) / f"{_legacy_slugify_topic(topic)}.md"
+        return legacy if legacy != self._topic_path(session, source_id=source_id, topic=topic) else None
+
+    def _topic_read_candidates(self, session: AgentSession, *, source_id: str, topic: str) -> list[Path]:
+        candidates = [self._topic_path(session, source_id=source_id, topic=topic)]
+        legacy = self._legacy_topic_path(session, source_id=source_id, topic=topic)
+        if legacy is not None and self._topic_file_matches(legacy, topic=topic):
+            candidates.append(legacy)
+        return candidates
+
+    @staticmethod
+    def _topic_file_matches(path: Path, *, topic: str) -> bool:
+        """True when the file's stored topic is the requested topic.
+
+        A legacy-named file is only a fallback alias for ``topic`` when the
+        topic recorded inside the file agrees. The slug strips accents and
+        non-ASCII text, so a same-stem file can belong to a different topic
+        and must not be read, migrated, or deleted through the fallback.
+        """
+        try:
+            record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+        return record.topic == _normalize_topic(topic)
+
+    @staticmethod
+    def _is_unmigrated_legacy_of_other_topic(path: Path, record: MemoryTopicRecord, *, topic: str) -> bool:
+        """True when ``path`` is a pre-digest file that belongs to a different topic.
+
+        The slug projection is lossy, so a legacy stem like ``caf`` can hold a
+        file whose stored topic is ``café`` while ``caf`` is requested. Such a
+        file must be migrated to its own derived name first, never read,
+        merged, or deleted as the requested topic.
+        """
+        return (
+            record.topic != _normalize_topic(topic)
+            and path.stem == _legacy_slugify_topic(record.topic)
+            and path.stem != record.slug
+        )
+
     @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
         serialized = dumps(value)
@@ -813,27 +881,76 @@ class MemoryFileStore(MemoryStore):
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
+            if topic_path.stem == _legacy_slugify_topic(record.topic) and topic_path.stem != record.slug:
+                # Not yet migrated: the file still sits at its pre-digest name. Key the
+                # record by the stem that exists on disk so index pointers and
+                # get_topic(entry.slug) resolve to it before a rewrite migrates it.
+                record.slug = topic_path.stem
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
     def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
         """Return one topic memory file by topic name or slug."""
-        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
-        if not topic_path.exists():
-            raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        for topic_path in self._topic_read_candidates(session, source_id=source_id, topic=topic):
+            if topic_path.exists():
+                return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
 
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file."""
         topic_path = self._topic_path(session, source_id=source_id, topic=record.slug)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
+        # Absorb pre-digest files into the new name so the topic does not
+        # list twice. The record's slug is already the derived stem, so the
+        # legacy name has to be re-derived from the human-readable topic too.
+        # Never touch the file just written: an explicit slug can collide
+        # with the legacy stem re-derived from the topic.
+        legacy_paths = {
+            path
+            for value in (record.topic, record.slug)
+            if (path := self._legacy_topic_path(session, source_id=source_id, topic=value)) is not None
+            and path != topic_path
+        }
+        for legacy_path in legacy_paths:
+            if legacy_path.exists() and self._topic_file_matches(legacy_path, topic=record.topic):
+                legacy_path.unlink()
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
+        candidates: list[Path] = []
+        for topic_path in self._topic_read_candidates(session, source_id=source_id, topic=topic):
+            if not topic_path.exists():
+                continue
+            try:
+                record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+            except (OSError, UnicodeDecodeError, ValueError):
+                record = None
+            if record is not None and self._is_unmigrated_legacy_of_other_topic(topic_path, record, topic=topic):
+                # A different topic's pre-digest file sits at this stem: it is
+                # not this topic's file, so it must survive the delete.
+                continue
+            candidates.append(topic_path)
+        if not candidates:
+            raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
+        for topic_path in candidates:
+            topic_path.unlink()
+
+    def migrate_misfiled_legacy_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        """Move a different topic's pre-digest file off this topic's primary path.
+
+        The slug projection is lossy, so a legacy stem like ``caf`` can hold a
+        file whose stored topic is ``café``. A write for ``caf`` must migrate
+        that record to its derived name first instead of merging into it.
+        """
         topic_path = self._topic_path(session, source_id=source_id, topic=topic)
         if not topic_path.exists():
-            raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        topic_path.unlink()
+            return
+        try:
+            record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return
+        if self._is_unmigrated_legacy_of_other_topic(topic_path, record, topic=topic):
+            self.write_topic(session, record, source_id=source_id)
 
     def rebuild_index(
         self,
@@ -1515,6 +1632,11 @@ class MemoryContextProvider(HistoryProvider):
         normalized_topic = _normalize_topic(topic)
         normalized_memory = _normalize_memory_text(memory)
         async with self._topic_async_lock(session, normalized_topic):
+            # get_topic resolves loosely (slugs and legacy aliases included): a
+            # pre-digest file of another topic can sit at this topic's primary
+            # path. Migrate such a record first so this write never merges into
+            # or overwrites a different topic.
+            self.store.migrate_misfiled_legacy_topic(session, source_id=self.source_id, topic=normalized_topic)
             try:
                 existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
             except FileNotFoundError:
