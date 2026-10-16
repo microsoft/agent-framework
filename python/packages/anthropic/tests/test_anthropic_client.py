@@ -4201,7 +4201,14 @@ def test_parse_citations_char_location(mock_anthropic_client: MagicMock) -> None
     result = client._parse_citations_from_anthropic(mock_block)
 
     assert result is not None
-    assert len(result) > 0
+    assert result == [
+        {
+            "type": "citation",
+            "title": "Source Title",
+            "snippet": "Citation snippet",
+            "raw_representation": mock_citation,
+        }
+    ]
 
 
 def test_parse_citations_page_location(mock_anthropic_client: MagicMock) -> None:
@@ -4225,7 +4232,14 @@ def test_parse_citations_page_location(mock_anthropic_client: MagicMock) -> None
     result = client._parse_citations_from_anthropic(mock_block)
 
     assert result is not None
-    assert len(result) > 0
+    assert result == [
+        {
+            "type": "citation",
+            "title": "Document Title",
+            "snippet": "Cited text from page",
+            "raw_representation": mock_citation,
+        }
+    ]
 
 
 def test_parse_citations_content_block_location(
@@ -4251,7 +4265,14 @@ def test_parse_citations_content_block_location(
     result = client._parse_citations_from_anthropic(mock_block)
 
     assert result is not None
-    assert len(result) > 0
+    assert result == [
+        {
+            "type": "citation",
+            "title": "Document Title",
+            "snippet": "Cited text from content blocks",
+            "raw_representation": mock_citation,
+        }
+    ]
 
 
 def test_parse_citations_web_search_location(mock_anthropic_client: MagicMock) -> None:
@@ -4274,7 +4295,15 @@ def test_parse_citations_web_search_location(mock_anthropic_client: MagicMock) -
     result = client._parse_citations_from_anthropic(mock_block)
 
     assert result is not None
-    assert len(result) > 0
+    assert result == [
+        {
+            "type": "citation",
+            "title": "Search Result",
+            "snippet": "Cited text from search",
+            "url": "https://example.com",
+            "raw_representation": mock_citation,
+        }
+    ]
 
 
 def test_parse_citations_search_result_location(
@@ -4301,7 +4330,15 @@ def test_parse_citations_search_result_location(
     result = client._parse_citations_from_anthropic(mock_block)
 
     assert result is not None
-    assert len(result) > 0
+    assert result == [
+        {
+            "type": "citation",
+            "title": "Search Result",
+            "snippet": "Cited text",
+            "url": "https://source.com",
+            "raw_representation": mock_citation,
+        }
+    ]
 
 
 @pytest.mark.flaky
