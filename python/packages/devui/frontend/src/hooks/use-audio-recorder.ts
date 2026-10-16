@@ -30,6 +30,7 @@ export const SUPPORTED_INPUT_AUDIO_ACCEPT = "audio/wav,audio/x-wav,audio/mpeg,au
 const MP3_MEDIA_TYPES = new Set(["audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"]);
 const AUDIO_FILE_EXTENSION_PATTERN = /\.(aac|flac|m4a|mp3|ogg|wav)$/i;
 const MICROPHONE_WARMUP_MS = 600;
+const MAX_DURATION_TIMER_GRACE_MS = 250;
 
 function getAudioContextConstructor(): typeof AudioContext | undefined {
   return window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -237,7 +238,7 @@ export async function createRecordedAudioFromBase64(
   };
 }
 
-export function useAudioRecorder(options: AudioRecorderOptions) {
+export function useAudioRecorder(options: AudioRecorderOptions, onRecordingComplete?: (recording: RecordedAudio) => void) {
   const [isRecording, setIsRecording] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -253,7 +254,13 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
   const startedAtRef = useRef<number>(0);
   const intervalRef = useRef<number | null>(null);
   const warmupTimeoutRef = useRef<number | null>(null);
+  const maxDurationTimeoutRef = useRef<number | null>(null);
   const cancelledRef = useRef(false);
+  const autoStoppingRef = useRef(false);
+  const stopRequestRef = useRef<{
+    resolve: (recording: RecordedAudio | null) => void;
+    reject: (error: unknown) => void;
+  } | null>(null);
 
   const isSupported = useMemo(() => {
     return Boolean(
@@ -338,14 +345,84 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     }
   }, []);
 
+  const clearMaxDurationTimer = useCallback(() => {
+    if (maxDurationTimeoutRef.current !== null) {
+      window.clearTimeout(maxDurationTimeoutRef.current);
+      maxDurationTimeoutRef.current = null;
+    }
+  }, []);
+
   const resetRecordingState = useCallback(() => {
     clearTimer();
     clearWarmupTimer();
+    clearMaxDurationTimer();
     stopInputMeter();
     setIsRecording(false);
     setIsStarting(false);
     setRecordingSeconds(0);
-  }, [clearTimer, clearWarmupTimer, stopInputMeter]);
+  }, [clearMaxDurationTimer, clearTimer, clearWarmupTimer, stopInputMeter]);
+
+  const finalizeStoppedRecording = useCallback(
+    async (recorder: MediaRecorder): Promise<RecordedAudio | null> => {
+      clearTimer();
+      clearWarmupTimer();
+      clearMaxDurationTimer();
+      setIsRecording(false);
+      setIsStarting(false);
+      setIsProcessing(true);
+      releaseStream();
+
+      try {
+        if (cancelledRef.current) {
+          return null;
+        }
+
+        const durationSeconds = (Date.now() - startedAtRef.current) / 1000;
+        const allowedDurationSeconds = options.maxDurationSeconds + MAX_DURATION_TIMER_GRACE_MS / 1000;
+        if (!autoStoppingRef.current && durationSeconds > allowedDurationSeconds) {
+          throw new Error(`Recording is longer than the ${options.maxDurationSeconds}s limit.`);
+        }
+
+        const sourceBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (sourceBlob.size === 0) {
+          throw new Error("No audio was captured.");
+        }
+
+        const { blob: wavBlob, waveformPeaks } = await normalizeToWav(sourceBlob, options.sampleRate);
+        if (wavBlob.size > options.maxPayloadBytes) {
+          throw new Error(
+            `Recording is too large (${Math.ceil(wavBlob.size / 1024 / 1024)} MB). ` +
+              `Limit is ${Math.ceil(options.maxPayloadBytes / 1024 / 1024)} MB.`
+          );
+        }
+
+        return createRecordedAudioFromBlob(
+          wavBlob,
+          "wav",
+          Math.min(durationSeconds, options.maxDurationSeconds),
+          waveformPeaks
+        );
+      } catch (processingError) {
+        const message = processingError instanceof Error ? processingError.message : "Failed to process audio.";
+        setError(message);
+        throw processingError;
+      } finally {
+        setIsProcessing(false);
+        chunksRef.current = [];
+        mediaRecorderRef.current = null;
+        autoStoppingRef.current = false;
+      }
+    },
+    [
+      clearMaxDurationTimer,
+      clearTimer,
+      clearWarmupTimer,
+      options.maxDurationSeconds,
+      options.maxPayloadBytes,
+      options.sampleRate,
+      releaseStream,
+    ]
+  );
 
   const startRecording = useCallback(async () => {
     if (!isSupported) {
@@ -357,6 +434,8 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
     setIsStarting(true);
     chunksRef.current = [];
     cancelledRef.current = false;
+    autoStoppingRef.current = false;
+    stopRequestRef.current = null;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -368,6 +447,12 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
           sampleRate: options.sampleRate,
         },
       });
+      if (cancelledRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        setIsStarting(false);
+        return;
+      }
+
       const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
@@ -392,6 +477,33 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
             setRecordingSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
           }, 250);
         }, MICROPHONE_WARMUP_MS);
+
+        maxDurationTimeoutRef.current = window.setTimeout(() => {
+          const activeRecorder = mediaRecorderRef.current;
+          if (!activeRecorder || activeRecorder.state === "inactive") {
+            return;
+          }
+
+          autoStoppingRef.current = true;
+          activeRecorder.stop();
+        }, Math.max(1, options.maxDurationSeconds) * 1000);
+      };
+
+      recorder.onstop = () => {
+        const stopRequest = stopRequestRef.current;
+        const wasAutoStopping = autoStoppingRef.current;
+        stopRequestRef.current = null;
+
+        finalizeStoppedRecording(recorder)
+          .then((recording) => {
+            if (recording && wasAutoStopping) {
+              onRecordingComplete?.(recording);
+            }
+            stopRequest?.resolve(recording);
+          })
+          .catch((error) => {
+            stopRequest?.reject(error);
+          });
       };
 
       streamRef.current = stream;
@@ -405,68 +517,29 @@ export function useAudioRecorder(options: AudioRecorderOptions) {
       setIsStarting(false);
       setError(recordingError instanceof Error ? recordingError.message : "Microphone permission was denied.");
     }
-  }, [isSupported, options, releaseStream, startInputMeter]);
+  }, [finalizeStoppedRecording, isSupported, onRecordingComplete, options, releaseStream, startInputMeter]);
 
   const stopRecording = useCallback(async (): Promise<RecordedAudio | null> => {
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state === "inactive") {
+      setIsStarting(false);
       return null;
     }
 
+    setIsStarting(false);
+    clearWarmupTimer();
+
     return new Promise((resolve, reject) => {
-      recorder.onstop = async () => {
-        clearTimer();
-        clearWarmupTimer();
-        setIsRecording(false);
-        setIsProcessing(true);
-        releaseStream();
+      if (stopRequestRef.current) {
+        resolve(null);
+        return;
+      }
 
-        try {
-          if (cancelledRef.current) {
-            resolve(null);
-            return;
-          }
-
-          const durationSeconds = (Date.now() - startedAtRef.current) / 1000;
-          if (durationSeconds > options.maxDurationSeconds) {
-            throw new Error(`Recording is longer than the ${options.maxDurationSeconds}s limit.`);
-          }
-
-          const sourceBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-          if (sourceBlob.size === 0) {
-            throw new Error("No audio was captured.");
-          }
-
-          const { blob: wavBlob, waveformPeaks } = await normalizeToWav(sourceBlob, options.sampleRate);
-          if (wavBlob.size > options.maxPayloadBytes) {
-            throw new Error(
-              `Recording is too large (${Math.ceil(wavBlob.size / 1024 / 1024)} MB). ` +
-                `Limit is ${Math.ceil(options.maxPayloadBytes / 1024 / 1024)} MB.`
-            );
-          }
-
-          resolve(await createRecordedAudioFromBlob(wavBlob, "wav", durationSeconds, waveformPeaks));
-        } catch (processingError) {
-          const message = processingError instanceof Error ? processingError.message : "Failed to process audio.";
-          setError(message);
-          reject(processingError);
-        } finally {
-          setIsProcessing(false);
-          chunksRef.current = [];
-          mediaRecorderRef.current = null;
-        }
-      };
+      stopRequestRef.current = { resolve, reject };
 
       recorder.stop();
     });
-  }, [
-    clearTimer,
-    clearWarmupTimer,
-    options.maxDurationSeconds,
-    options.maxPayloadBytes,
-    options.sampleRate,
-    releaseStream,
-  ]);
+  }, [clearWarmupTimer]);
 
   const cancelRecording = useCallback(() => {
     cancelledRef.current = true;

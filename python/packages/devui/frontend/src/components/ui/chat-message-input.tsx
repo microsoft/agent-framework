@@ -32,6 +32,7 @@ import type { ResponseInputContent, ResponseInputTextParam, ResponseInputImagePa
 import type { ResponseInputAudioParam } from "@/types/agent-framework";
 
 const UNSUPPORTED_AUDIO_UPLOAD_MESSAGE = "Only WAV and MP3 audio uploads can be sent as agent audio input.";
+const MULTIPLE_AUDIO_UPLOAD_MESSAGE = "Only one audio upload can be attached at a time.";
 
 export interface ChatMessageInputProps {
   onSubmit: (content: ResponseInputContent[]) => Promise<void>;
@@ -74,18 +75,6 @@ export function ChatMessageInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingAudioRef = useRef<RecordedAudio | null>(null);
   const audioInput = useDevUIStore((state) => state.audioInput);
-  const {
-    isSupported: isAudioSupported,
-    isRecording,
-    isStarting: isStartingAudio,
-    isProcessing: isProcessingAudio,
-    recordingSeconds,
-    inputLevel,
-    error: audioError,
-    startRecording,
-    stopRecording,
-    cancelRecording,
-  } = useAudioRecorder(audioInput);
   const pushToTalkTimeoutRef = useRef<number | null>(null);
   const pushToTalkStartRef = useRef<Promise<void> | null>(null);
   const pushToTalkActiveRef = useRef(false);
@@ -134,6 +123,19 @@ export function ChatMessageInput({
       return recording;
     });
   }, []);
+
+  const {
+    isSupported: isAudioSupported,
+    isRecording,
+    isStarting: isStartingAudio,
+    isProcessing: isProcessingAudio,
+    recordingSeconds,
+    inputLevel,
+    error: audioError,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+  } = useAudioRecorder(audioInput, replaceAudioRecording);
 
   // Detect file extension from content
   const detectFileExtension = (text: string): string => {
@@ -203,6 +205,13 @@ export function ChatMessageInput({
 
       if (attachments.length + attachmentFiles.length > maxAttachments) {
         console.warn(`Cannot add more than ${maxAttachments} attachments`);
+        return;
+      }
+
+      if (audioFiles.length > 1) {
+        console.warn(MULTIPLE_AUDIO_UPLOAD_MESSAGE);
+        setPasteNotification(MULTIPLE_AUDIO_UPLOAD_MESSAGE);
+        setTimeout(() => setPasteNotification(null), 3000);
         return;
       }
 

@@ -217,6 +217,7 @@ export function isExecutorAction(item: WorkflowItem): item is ExecutorActionItem
 
 // Union of all possible output items
 export type ResponseOutputItem =
+  | ResponseOutputMessage
   | ResponseFunctionToolCall
   | ResponseOutputImageItem
   | ResponseOutputFileItem
@@ -396,7 +397,7 @@ export interface OpenAIResponse {
   object: "response";
   created_at: number;
   model: string;
-  output: ResponseOutputMessage[];
+  output: ResponseOutputItem[];
   usage: ResponseUsage;
   parallel_tool_calls: boolean;
   tool_choice: string;

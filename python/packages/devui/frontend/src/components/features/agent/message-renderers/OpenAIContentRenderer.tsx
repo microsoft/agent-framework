@@ -15,7 +15,7 @@ import {
   X,
   Clock,
 } from "lucide-react";
-import type { MessageContent, MessageOutputFile } from "@/types/openai";
+import type { MessageContent, MessageInputFile, MessageOutputFile } from "@/types/openai";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { AudioMessagePreview } from "@/components/ui/audio-message-preview";
 import {
@@ -186,6 +186,55 @@ function useBase64ToBlobUrl(data: string | undefined, mimeType: string): string 
   return blobUrl;
 }
 
+function audioMimeTypeFromFilename(filename?: string): string | undefined {
+  const lowerFilename = filename?.toLowerCase() || "";
+  if (lowerFilename.endsWith(".wav")) return "audio/wav";
+  if (lowerFilename.endsWith(".mp3")) return "audio/mpeg";
+  if (lowerFilename.endsWith(".m4a")) return "audio/mp4";
+  if (lowerFilename.endsWith(".ogg")) return "audio/ogg";
+  if (lowerFilename.endsWith(".flac")) return "audio/flac";
+  if (lowerFilename.endsWith(".aac")) return "audio/aac";
+  return undefined;
+}
+
+function fileDataSourceUrl(fileData: string | undefined, mimeType: string | undefined): string | undefined {
+  if (!fileData) {
+    return undefined;
+  }
+  return fileData.startsWith("data:") ? fileData : `data:${mimeType || "application/octet-stream"};base64,${fileData}`;
+}
+
+function isAudioFilename(filename?: string): boolean {
+  return Boolean(filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/));
+}
+
+function NativeAudioFileRenderer({
+  sourceUrl,
+  mimeType,
+  filename,
+  className,
+  autoPlay,
+}: {
+  sourceUrl: string;
+  mimeType?: string;
+  filename?: string;
+  className?: string;
+  autoPlay?: boolean;
+}) {
+  return (
+    <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <Music className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">{filename || "Audio file"}</span>
+      </div>
+      <audio controls autoPlay={autoPlay} className="w-full">
+        <source src={sourceUrl} type={mimeType} />
+        Your browser does not support audio playback.
+      </audio>
+    </div>
+  );
+}
+
 // File content renderer (handles both input and output files)
 function FileContentRenderer({ content, className, autoPlayAudio }: ContentRendererProps) {
   const [isExpanded, setIsExpanded] = useState(true);
@@ -194,13 +243,14 @@ function FileContentRenderer({ content, className, autoPlayAudio }: ContentRende
   const isFileContent = content.type === "input_file" || content.type === "output_file";
   const fileUrl = isFileContent ? (content.file_url || content.file_data) : undefined;
   const filename = isFileContent ? (content.filename || "file") : undefined;
-  const mimeType = content.type === "output_file" ? content.mime_type : undefined;
+  const mimeType = content.type === "output_file" ? content.mime_type : audioMimeTypeFromFilename(filename);
 
   // Determine file type from filename or data URI
   const isPdf = filename?.toLowerCase().endsWith(".pdf") || fileUrl?.includes("application/pdf");
-  const isAudioOutput = content.type === "output_file" && Boolean(
-    filename?.toLowerCase().match(/\.(mp3|wav|m4a|ogg|flac|aac)$/) ||
-      mimeType?.startsWith("audio/")
+  const isAudioFile = Boolean(
+    isAudioFilename(filename) ||
+      mimeType?.startsWith("audio/") ||
+      fileUrl?.startsWith("data:audio/")
   );
 
   // Convert base64 to blob URL for PDFs (better browser compatibility)
@@ -279,12 +329,25 @@ function FileContentRenderer({ content, className, autoPlayAudio }: ContentRende
   }
 
   // For audio files
-  if (isAudioOutput && fileUrl) {
+  if (isAudioFile && fileUrl) {
+    if (content.type === "output_file") {
+      return (
+        <OutputAudioFileRenderer
+          content={content as MessageOutputFile}
+          className={className}
+          autoPlay={autoPlayAudio}
+        />
+      );
+    }
+
+    const inputFile = content as MessageInputFile;
+    const sourceUrl = inputFile.file_url || fileDataSourceUrl(inputFile.file_data, mimeType) || fileUrl;
     return (
-      <OutputAudioFileRenderer
-        content={content as MessageOutputFile}
+      <NativeAudioFileRenderer
+        sourceUrl={sourceUrl}
+        mimeType={mimeType}
+        filename={filename}
         className={className}
-        autoPlay={autoPlayAudio}
       />
     );
   }
@@ -332,14 +395,11 @@ function getOutputAudioFormat(content: MessageOutputFile): SupportedAudioFormat 
 }
 
 function audioSourceUrl(content: MessageOutputFile): string | undefined {
+  if (content.file_data) {
+    return fileDataSourceUrl(content.file_data, content.mime_type || "audio/mpeg");
+  }
   if (content.file_url) {
     return content.file_url;
-  }
-  if (content.file_data) {
-    const mimeType = content.mime_type || "audio/mpeg";
-    return content.file_data.startsWith("data:")
-      ? content.file_data
-      : `data:${mimeType};base64,${content.file_data}`;
   }
   return undefined;
 }
@@ -374,8 +434,9 @@ function OutputAudioFileRenderer({
     setPreviewError(false);
 
     const preparePreview = async () => {
-      if (content.file_data || sourceUrl.startsWith("data:")) {
-        return createRecordedAudioFromBase64(sourceUrl, format);
+      const inlineAudioData = fileDataSourceUrl(content.file_data, content.mime_type);
+      if (inlineAudioData || sourceUrl.startsWith("data:")) {
+        return createRecordedAudioFromBase64(inlineAudioData || sourceUrl, format);
       }
 
       const response = await fetch(sourceUrl);
@@ -407,7 +468,9 @@ function OutputAudioFileRenderer({
         URL.revokeObjectURL(activePreview.blobUrl);
       }
     };
-  }, [content.file_data, format, sourceUrl]);
+  }, [content.file_data, content.mime_type, format, sourceUrl]);
+
+  const isPreparingPreview = Boolean(format && sourceUrl && !previewError && !audioPreview);
 
   if (audioPreview && !previewError) {
     return (
@@ -424,20 +487,27 @@ function OutputAudioFileRenderer({
     );
   }
 
-  return (
-    <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <Music className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">{label}</span>
+  if (isPreparingPreview) {
+    return (
+      <div className={`my-2 p-3 border rounded-lg ${className || ""}`}>
+        <div className="flex items-center gap-2">
+          <Music className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">{label}</span>
+          <span className="text-xs text-muted-foreground">Preparing audio preview...</span>
+        </div>
       </div>
-      {sourceUrl && (
-        <audio controls className="w-full">
-          <source src={sourceUrl} type={content.mime_type} />
-          Your browser does not support audio playback.
-        </audio>
-      )}
-    </div>
-  );
+    );
+  }
+
+  return sourceUrl ? (
+    <NativeAudioFileRenderer
+      sourceUrl={sourceUrl}
+      mimeType={content.mime_type}
+      filename={label}
+      className={className}
+      autoPlay={Boolean(autoPlay && autoPlayAgentAudio)}
+    />
+  ) : null;
 }
 
 function AudioContentRenderer({ content, className }: ContentRendererProps) {

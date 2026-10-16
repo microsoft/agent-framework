@@ -1745,6 +1745,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         const assistantContent: import("@/types/openai").MessageContent[] = [];
         const toolCalls: import("@/types/openai").ConversationFunctionCall[] = [];
         const toolResults: import("@/types/openai").ConversationFunctionCallOutput[] = [];
+        const appendOutputFile = (outputFile: import("@/types/openai").ResponseOutputFileItem | import("@/types/openai").MessageOutputFile) => {
+          assistantContent.push({
+            type: "output_file",
+            filename: outputFile.filename,
+            file_url: outputFile.file_url,
+            file_data: outputFile.file_data,
+            mime_type: outputFile.mime_type,
+            auto_play:
+              outputFile.mime_type.startsWith("audio/") &&
+              !assistantContent.some(
+                (existingContent) =>
+                  existingContent.type === "output_file" && existingContent.mime_type.startsWith("audio/")
+              ),
+          } as import("@/types/openai").MessageOutputFile);
+        };
 
         if (response.output) {
           for (const outputItem of response.output) {
@@ -1767,15 +1782,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
                   } else if (content.type === "output_file") {
                     const outputFile = content as unknown as import("@/types/openai").MessageOutputFile;
-                    assistantContent.push({
-                      ...outputFile,
-                      auto_play:
-                        outputFile.mime_type.startsWith("audio/") &&
-                        !assistantContent.some(
-                          (existingContent) =>
-                            existingContent.type === "output_file" && existingContent.mime_type.startsWith("audio/")
-                        ),
-                    });
+                    appendOutputFile(outputFile);
                   } else if (content.type === "output_data") {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputData);
                   }
@@ -1802,6 +1809,24 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 status: "completed",
                 created_at: messageTimestamp,
               });
+            } else if (outputItem.type === "output_file") {
+              appendOutputFile(outputItem as import("@/types/openai").ResponseOutputFileItem);
+            } else if (outputItem.type === "output_image") {
+              const imageItem = outputItem as import("@/types/openai").ResponseOutputImageItem;
+              assistantContent.push({
+                type: "output_image",
+                image_url: imageItem.image_url,
+                alt_text: imageItem.alt_text,
+                mime_type: imageItem.mime_type,
+              } as import("@/types/openai").MessageOutputImage);
+            } else if (outputItem.type === "output_data") {
+              const dataItem = outputItem as import("@/types/openai").ResponseOutputDataItem;
+              assistantContent.push({
+                type: "output_data",
+                data: dataItem.data,
+                mime_type: dataItem.mime_type,
+                description: dataItem.description,
+              } as import("@/types/openai").MessageOutputData);
             }
           }
         }
