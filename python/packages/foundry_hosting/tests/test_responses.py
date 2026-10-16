@@ -116,6 +116,7 @@ from agent_framework_foundry_hosting._state_store import (
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+_SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -568,7 +569,7 @@ class _FailingSessionStore(SessionStore):
     async def set(self, session_id: str, session: AgentSession) -> None:
         del session_id, session
         self.set_attempts += 1
-        raise OSError("session storage is full")
+        raise OSError(_SESSION_STORAGE_ERROR_DETAIL)
 
 
 class _ConflictingConversationStore(SessionStore):
@@ -1763,6 +1764,31 @@ class TestAgentSessionPersistence:
         assert "host-controlled" in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
+    async def test_prepare_options_failure_is_sanitized(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        private_error_detail = "prepare-options-secret at C:\\sensitive\\prepare_options.py"
+
+        def prepare_options(_request: Any, _options: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError(private_error_detail)
+
+        agent = _make_agent()
+        server = _make_server(agent, prepare_options=prepare_options)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            response = await _post_json(server, {"input": "one shot", "store": False})
+
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in response.text
+        assert private_error_detail not in caplog.text
+        assert "phase=request preparation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_nested_extra_body_cannot_override_unstored_openai_request(self) -> None:
         outbound: list[dict[str, Any]] = []
 
@@ -2632,7 +2658,7 @@ class TestAgentSessionPersistence:
                     context.shutdown.set()
                     if stage == "submit":
                         events = await asyncio.wait_for(task, timeout=3)
-                        assert _failure_message(events) == "An internal server error occurred."
+                        assert "cannot safely retry" in _failure_message(events)
                         exit_for_recovery.assert_not_awaited()
                     else:
                         with pytest.raises(ResponseExitForRecovery):
@@ -3337,7 +3363,8 @@ class TestAgentSessionPersistence:
         error = failed_events[0]["data"]["response"]["error"]
         assert error["message"] == "An internal server error occurred."
         assert "agent failed" not in str(failed_events)
-        assert "session storage is full" not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in caplog.text
         assert "phase=agent execution" in caplog.text
         assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
 
@@ -3941,7 +3968,7 @@ class TestNonStreaming:
             body = resp.json()
             assert body["status"] == "failed"
             error = body.get("error") or {}
-        assert error.get("message") == "An internal server error occurred."
+        assert error.get("message") == "A computer result requires a call_id and screenshot."
 
     async def test_computer_items_with_provider_ids_use_valid_host_ids(self) -> None:
         call_id = "provider-computer-call"
@@ -4507,7 +4534,7 @@ class TestStreaming:
         assert deltas == ["Hello world"]
         assert done["data"]["text"] == "Hello world"
         assert events[-1]["event"] == "response.failed"
-        assert events[-1]["data"]["response"]["error"]["message"] == "An internal server error occurred."
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
 
     async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
         resp = await _post(

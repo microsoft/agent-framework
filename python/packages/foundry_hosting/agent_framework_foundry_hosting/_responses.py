@@ -149,17 +149,28 @@ _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
 
 
-class _UnexpectedResponseFailure(Exception):
-    """Wrap an unexpected response failure so public serialization can redact it."""
+class _PublicResponseFailure(Exception):
+    """Mark a vetted failure message as safe for client-visible serialization."""
 
-    def __init__(self, error: Exception) -> None:
-        super().__init__(_PUBLIC_STREAM_FAILURE_MESSAGE)
+    def __init__(self, error: Exception, public_message: str | None = None) -> None:
+        super().__init__(public_message or str(error) or type(error).__name__)
         self.error = error
+        self.public_message = public_message or str(error) or type(error).__name__
+
+
+async def _set_agent_session(store: SessionStore, session_id: str, session: AgentSession) -> None:
+    """Persist a session while preserving the established public conflict contract."""
+    try:
+        await store.set(session_id, session)
+    except RuntimeError as exc:
+        if str(exc) == "Another request advanced this agent session; reload before writing.":
+            raise _PublicResponseFailure(exc) from None
+        raise
 
 
 def _log_response_failure(phase: str, response_id: str, exc: BaseException) -> None:
     """Log a correlated hosted response failure under the sensitive-data policy."""
-    diagnostic_exception = exc.error if isinstance(exc, _UnexpectedResponseFailure) else exc
+    diagnostic_exception = exc.error if isinstance(exc, _PublicResponseFailure) else exc
     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
         logger.error(
             "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
@@ -302,7 +313,7 @@ def _validate_checkpoint_context_id(context_id: str) -> None:
         or os.path.isabs(context_id)
         or os.path.splitdrive(context_id)[0]
     ):
-        raise RuntimeError(f"Invalid context id: {context_id!r}")
+        raise _PublicResponseFailure(RuntimeError(f"Invalid context id: {context_id!r}"))
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -319,10 +330,12 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
 
 def _reject_busy_conversation(session: AgentSession) -> None:
     if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
-        raise RuntimeError(
-            "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
-            "if it failed or was cancelled after dispatch, start a new conversation rather than "
-            "reusing a possibly changed provider thread."
+        raise _PublicResponseFailure(
+            RuntimeError(
+                "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
+                "if it failed or was cancelled after dispatch, start a new conversation rather than "
+                "reusing a possibly changed provider thread."
+            )
         )
 
 
@@ -357,17 +370,6 @@ def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> l
 
 
 _T = TypeVar("_T")
-
-
-async def _redact_unexpected_stream(stream: AsyncIterable[_T]) -> AsyncGenerator[_T]:
-    """Forward a stream while marking unexpected iteration failures for redaction."""
-    try:
-        async for item in stream:
-            yield item
-    except _UnexpectedResponseFailure:
-        raise
-    except Exception as exc:
-        raise _UnexpectedResponseFailure(exc) from None
 
 
 async def _await_before_signal(
@@ -1133,15 +1135,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         terminal_event: ResponseStreamEvent | None = None
         try:
-            scope = FoundryRequestScope.from_context(
-                self.config, get_request_context(), local_session_id=context.response_id
-            )
+            try:
+                scope = FoundryRequestScope.from_context(
+                    self.config, get_request_context(), local_session_id=context.response_id
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._agent_source is None:
                 raise RuntimeError("The hosted agent source is not configured.")
             agent = await resolve_agent(self._agent_source)
-            configuration = self._configuration or _validate_agent_configuration(
-                agent, self._history_source, self._host_options, background_source=self._background_source
-            )
+            try:
+                configuration = self._configuration or _validate_agent_configuration(
+                    agent, self._history_source, self._host_options, background_source=self._background_source
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
             if configuration.workflow:
@@ -1149,11 +1157,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
-                    raise ValueError("prepare_options is only supported for regular agents.")
+                    raise _PublicResponseFailure(ValueError("prepare_options is only supported for regular agents."))
             else:
-                hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                try:
+                    hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
                 await prepare_response_options(hosted_request, self._prepare_options)
-                validate_request_options(hosted_request.options)
+                try:
+                    validate_request_options(hosted_request.options)
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
         except Exception as exc:
             for event in self._emit_failure(
                 context.response_id,
@@ -1220,7 +1234,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "agent initialization",
                     response_event_stream,
                     None,
-                    _UnexpectedResponseFailure(ex),
+                    ex,
                 ):
                     yield event
                 return
@@ -1245,8 +1259,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "OAuth consent validation",
                     response_event_stream,
                     None,
-                    validation_error,
-                    public_message=str(validation_error),
+                    _PublicResponseFailure(validation_error),
                 ):
                     yield event
                 return
@@ -1258,8 +1271,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "OAuth consent validation",
                     response_event_stream,
                     None,
-                    validation_error,
-                    public_message=str(validation_error),
+                    _PublicResponseFailure(validation_error),
                 ):
                     yield event
                 return
@@ -1275,9 +1287,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     session = await session_storage.get(session_load_id) if session_load_id is not None else None
                     if session is None:
                         if previous_response_id is not None and context.conversation_id is None:
-                            raise RuntimeError(
-                                "Cannot find an existing agent session for "
-                                f"previous_response_id={previous_response_id}."
+                            raise _PublicResponseFailure(
+                                RuntimeError(
+                                    "Cannot find an existing agent session for "
+                                    f"previous_response_id={previous_response_id}."
+                                )
                             )
                         session = agent.create_session()
                     if context.conversation_id is not None:
@@ -1286,20 +1300,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if session.service_session_id is not None and session.state.get(
                             _HOSTED_SOURCE_CONVERSATION_KEY
                         ):
-                            raise ValueError("A service-managed downstream conversation cannot be forked.")
+                            raise _PublicResponseFailure(
+                                ValueError("A service-managed downstream conversation cannot be forked.")
+                            )
                         session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if context.conversation_id is not None:
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
                 except Exception as save_error:
                     for event in self._emit_failure(
                         context.response_id,
                         "OAuth consent session persistence",
                         response_event_stream,
                         None,
-                        _UnexpectedResponseFailure(save_error),
+                        save_error,
                     ):
                         yield event
                     return
@@ -1471,15 +1487,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         conversation_already_committed = False
         try:
             if isinstance(agent, RawAgent):
-                validate_default_transport_options(
-                    agent.default_options,
-                    allow_agent_store=self._history_source == "agent" and stored,
-                )
+                try:
+                    validate_default_transport_options(
+                        agent.default_options,
+                        allow_agent_store=self._history_source == "agent" and stored,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
             if not stored:
                 if not isinstance(agent, RawAgent):
-                    raise RuntimeError(
-                        "store=false cannot guarantee that a custom agent will disable inner storage; "
-                        "use a RawAgent or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot guarantee that a custom agent will disable inner storage; "
+                            "use a RawAgent or store=true."
+                        )
                     )
                 continuation_defaults = [
                     name
@@ -1503,9 +1524,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     and (provider.store_inputs or provider.store_context_messages or provider.store_outputs)
                     for provider in agent.context_providers
                 ):
-                    raise RuntimeError(
-                        "store=false cannot prevent an external HistoryProvider from persisting responses. "
-                        "Use an InMemoryHistoryProvider or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot prevent an external HistoryProvider from persisting responses. "
+                            "Use an InMemoryHistoryProvider or store=true."
+                        )
                     )
                 if self._history_source == "agent":
                     stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
@@ -1561,10 +1584,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             if session is None:
                 if context.is_recovery and provider_background:
-                    raise RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    raise _PublicResponseFailure(
+                        RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    )
                 if stored and previous_response_id is not None and context.conversation_id is None:
-                    raise RuntimeError(
-                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                        )
                     )
                 session = agent.create_session()
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
@@ -1583,16 +1610,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     if not conversation_already_committed and (
                         head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id
                     ):
-                        raise RuntimeError(
-                            "Cannot recover provider background: the service-backed conversation claim "
-                            "is no longer held by this response."
+                        raise _PublicResponseFailure(
+                            RuntimeError(
+                                "Cannot recover provider background: the service-backed conversation claim "
+                                "is no longer held by this response."
+                            )
                         )
                 else:
                     _reject_busy_conversation(session)
             if not stored and self._history_source == "agent" and session.service_session_id is not None:
-                raise ValueError(
-                    "store=false cannot continue agent-managed downstream service history; "
-                    "start a new one-shot request or use store=true."
+                raise _PublicResponseFailure(
+                    ValueError(
+                        "store=false cannot continue agent-managed downstream service history; "
+                        "start a new one-shot request or use store=true."
+                    )
                 )
             if (
                 not context.is_recovery
@@ -1602,17 +1633,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     or cast(Mapping[str, Any], provider_state).get("completed") is not True
                 )
             ):
-                raise ValueError("A provider background response must complete before the next turn.")
+                raise _PublicResponseFailure(
+                    ValueError("A provider background response must complete before the next turn.")
+                )
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
-                    raise ValueError("A service-managed downstream conversation cannot be forked.")
+                    raise _PublicResponseFailure(
+                        ValueError("A service-managed downstream conversation cannot be forked.")
+                    )
                 if (
                     stored
                     and self._history_source in ("service", "agent")
                     and session.service_session_id is not None
                     and session.state.get(_HOSTED_SERVICE_CHILD_KEY)
                 ):
-                    raise ValueError("A service-managed downstream response cannot be forked.")
+                    raise _PublicResponseFailure(ValueError("A service-managed downstream response cannot be forked."))
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1670,7 +1705,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
                 if self._unsupported_options == "error":
-                    raise TypeError("The hosted agent does not accept caller runtime options.")
+                    raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
                 if self._unsupported_options == "warn":
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
@@ -1680,7 +1715,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         raise RuntimeError("Service history requires agent session storage.")
                     session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
                     try:
-                        await session_storage.set(previous_response_id, session)
+                        await _set_agent_session(session_storage, previous_response_id, session)
                     finally:
                         session.state.pop(_HOSTED_SERVICE_CHILD_KEY, None)
                 session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
@@ -1701,7 +1736,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # mutate its linear thread; a losing turn never reaches agent.run().
                 session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
                 try:
-                    await session_storage.set(context.conversation_id, session)
+                    await _set_agent_session(session_storage, context.conversation_id, session)
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
@@ -1724,13 +1759,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     emitted_output_count=output_count,
                 )
                 async with aclosing(responses):
-                    async for response, output_count in _redact_unexpected_stream(responses):
+                    async for response, output_count in responses:
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in _redact_unexpected_stream(
-                                tracker.handle_update(update, approval_storage=approval_storage)
-                            ):
+                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
@@ -1741,28 +1774,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if self._resilient_background:
                             yield response_event_stream.checkpoint()
             else:
-                try:
-                    inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-                except Exception as ex:
-                    raise _UnexpectedResponseFailure(ex) from None
+                inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
                 updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
                 async with aclosing(updates):
-                    async for update in _redact_unexpected_stream(updates):
+                    async for update in updates:
                         if not stored and any(
                             content.type in ("function_approval_request", "oauth_consent_request")
                             or content.user_input_request
                             for content in update.contents
                         ):
                             raise ValueError("Approval and user-input continuation requires store=true.")
-                        async for event in _redact_unexpected_stream(
-                            tracker.handle_update(update, approval_storage=approval_storage)
-                        ):
+                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
                             yield event
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
-                try:
-                    final = await inner_stream.get_final_response()
-                except Exception as ex:
-                    raise _UnexpectedResponseFailure(ex) from None
+                final = await inner_stream.get_final_response()
                 if final.continuation_token is not None and final.finish_reason is None:
                     raise RuntimeError(
                         "The inner agent returned an unfinished provider response; "
@@ -1792,7 +1817,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
                 _log_response_failure("stored output validation", context.response_id, misconfigured)
                 if request_failure is None and not request_interrupted:
-                    request_failure = misconfigured
+                    request_failure = _PublicResponseFailure(misconfigured)
             if (
                 self._history_source == "service"
                 and stored
@@ -1825,7 +1850,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if stored and session_storage is not None and not stored_output_violation and final_provider_state:
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if (
                         context.conversation_id is not None
                         and not conversation_already_committed
@@ -1840,7 +1865,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if provider_background:
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                         session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1852,13 +1877,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _log_response_failure(message, context.response_id, save_error)
 
         if request_failure is not None and save_failure is not None:
-            combined_failure = RuntimeError(
+            raise RuntimeError(
                 f"Agent request failed: {str(request_failure) or type(request_failure).__name__}; "
                 f"session persistence also failed: {str(save_failure) or type(save_failure).__name__}"
             )
-            if isinstance(request_failure, _UnexpectedResponseFailure):
-                raise _UnexpectedResponseFailure(combined_failure) from None
-            raise combined_failure
         elif request_failure is not None:
             raise request_failure
         elif save_failure is not None:
@@ -1892,8 +1914,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await context.exit_for_recovery()
                 if has_token:
                     raise RuntimeError("Provider background recovery requires resilient_background=True.")
-                raise RuntimeError(
-                    "Provider background submission stopped before its token was saved; cannot safely retry it."
+                raise _PublicResponseFailure(
+                    RuntimeError(
+                        "Provider background submission stopped before its token was saved; cannot safely retry it."
+                    )
                 )
             if cancellation_signal.is_set():
                 raise RuntimeError("Provider background was interrupted without a client cancellation.")
@@ -1960,10 +1984,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if context.is_recovery:
             saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if not isinstance(saved, Mapping):
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             saved_payload = cast(Mapping[str, Any], saved)
             if saved_payload.get("outer_response_id") != context.response_id:
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             token = saved_payload.get("continuation_token")
             if not isinstance(token, Mapping):
                 raise RuntimeError("The stored provider continuation token is invalid.")
@@ -2146,14 +2174,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         logger.debug(
                             "Serving recovery request with no prior workflow checkpoint; replaying original input"
                         )
-                        try:
-                            run_stream = agent.run(
-                                input_messages,
-                                stream=True,
-                                checkpoint_storage=checkpoint_storage,
-                            )
-                        except Exception as exc:
-                            raise _UnexpectedResponseFailure(exc) from None
+                        run_stream = agent.run(
+                            input_messages,
+                            stream=True,
+                            checkpoint_storage=checkpoint_storage,
+                        )
             else:
                 # Determine the latest checkpoint (if any) so we can resume the
                 # workflow's prior state for this turn. The directory is keyed by
@@ -2175,8 +2200,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
                 if latest_checkpoint is None and previous_response_id is not None:
                     # A previous_response_id must have a prior workflow checkpoint to resume from
-                    raise RuntimeError(
-                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "Cannot find an existing workflow checkpoint for "
+                            f"previous_response_id={previous_response_id}."
+                        )
                     )
 
                 if latest_checkpoint is not None:
@@ -2194,21 +2222,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # ``run(input_messages, ...)`` call may contain ``function_call_output``
                     # items (carried as FunctionResult/FunctionApprovalResponse content)
                     # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                    try:
-                        restore_stream = agent.run(
+                    restore_iter = _SignalledIterator(
+                        agent.run(
                             stream=True,
                             checkpoint_id=latest_checkpoint.checkpoint_id,
                             checkpoint_storage=restore_checkpoint_storage,
-                        )
-                    except Exception as exc:
-                        raise _UnexpectedResponseFailure(exc) from None
-                    restore_iter = _SignalledIterator(
-                        restore_stream,
+                        ),
                         context.shutdown,
                         cancellation_signal,
                     )
                     async with aclosing(restore_iter):
-                        async for _ in _redact_unexpected_stream(restore_iter):
+                        async for _ in restore_iter:
                             pass
                     if restore_iter.signalled:
                         if context.shutdown.is_set():
@@ -2221,14 +2245,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if cancellation_signal.is_set():
                     return
 
-                try:
-                    run_stream = agent.run(
-                        input_messages,
-                        stream=True,
-                        checkpoint_storage=checkpoint_storage,
-                    )
-                except Exception as exc:
-                    raise _UnexpectedResponseFailure(exc) from None
+                run_stream = agent.run(
+                    input_messages,
+                    stream=True,
+                    checkpoint_storage=checkpoint_storage,
+                )
 
             workflow_name = agent.workflow.name
 
@@ -2261,7 +2282,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 stamp=latest_checkpoint_id if self._resilient_background else None,
             )
             async with aclosing(main_iter):
-                async for update in _redact_unexpected_stream(main_iter):
+                async for update in main_iter:
                     if self._resilient_background:
                         # Every update before this one belongs to the stamped checkpoint (or an
                         # earlier one), so the output so far can be snapshotted against it. If the
@@ -2270,9 +2291,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for event in snapshot_response(main_iter.stamp):
                             yield event
 
-                    async for event in _redact_unexpected_stream(
-                        tracker.handle_update(update, approval_storage=approval_storage)
-                    ):
+                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
                         yield event
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
@@ -2345,10 +2364,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             tracker.discard_pending_container_file_citations()
         if public_message is not None:
             message = public_message
-        elif isinstance(ex, _UnexpectedResponseFailure):
-            message = _PUBLIC_STREAM_FAILURE_MESSAGE
+        elif isinstance(ex, _PublicResponseFailure):
+            message = ex.public_message
         else:
-            message = str(ex) or type(ex).__name__
+            message = _PUBLIC_STREAM_FAILURE_MESSAGE
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 
@@ -2526,7 +2545,9 @@ class _OutputItemTracker:
         if not previous:
             self._accumulated[:] = [text]
             return text
-        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+        raise _PublicResponseFailure(
+            RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+        )
 
     async def handle_update(
         self,
@@ -2765,7 +2786,7 @@ class _OutputItemTracker:
 
         elif content.type == "computer_tool_result":
             if not content.call_id or content.screenshot is None:
-                raise ValueError("A computer result requires a call_id and screenshot.")
+                raise _PublicResponseFailure(ValueError("A computer result requires a call_id and screenshot."))
             for event in self._close():
                 yield event
             if content.id and IdGenerator.is_valid(content.id)[0]:
@@ -3349,7 +3370,10 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_request":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -3359,9 +3383,12 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_response":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(
-                item["approval_request_id"]
-            )
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(
+                    item["approval_request_id"]
+                )
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
