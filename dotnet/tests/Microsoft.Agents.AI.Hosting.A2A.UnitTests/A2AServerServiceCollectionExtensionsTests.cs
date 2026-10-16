@@ -289,7 +289,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         const string AgentName = "text-only-agent";
         var services = new ServiceCollection();
         var agentMock = CreateAgentMock(AgentName);
-        Action<A2AServerRegistrationOptions> configureOptions = options => options.ServerOptions = new A2AServerOptions
+        void configureOptions(A2AServerRegistrationOptions options) => options.ServerOptions = new A2AServerOptions
         {
             SupportsStreaming = false,
             SupportedInputModes = ["text/plain"]
