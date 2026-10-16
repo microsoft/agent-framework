@@ -50,7 +50,7 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     [InlineData("Value(Env.Setting)", VariableScopeNames.Environment)]
     [InlineData("Error(Env.Setting)", VariableScopeNames.Environment)]
     [InlineData("Error({Kind: ErrorKind.Custom, Message: Local.Setting})", VariableScopeNames.Local)]
-    public void ExpressionErrorOmitsSensitiveInput(string expression, string scope)
+    public void ExpressionErrorReturnsLabelledBlankForSensitiveInput(string expression, string scope)
     {
         // Arrange
         const string Value = "sample-setting";
@@ -58,12 +58,11 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.State.Bind();
 
         // Act
-        DeclarativeActionException exception = Assert.Throws<DeclarativeActionException>(
-            () => this.State.Evaluator.GetValue(ValueExpression.Expression(expression)));
+        EvaluationResult<DataValue> result = this.State.Evaluator.GetValue(ValueExpression.Expression(expression));
 
         // Assert
-        Assert.DoesNotContain(Value, exception.ToString(), StringComparison.Ordinal);
-        Assert.Null(exception.InnerException);
+        Assert.Equal(DataValue.Blank(), result.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
     }
 
     [Theory]
@@ -188,11 +187,14 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
             expectedSensitivity: SensitivityLevel.Sensitive);
     }
 
-    [Fact]
-    public void ConversionErrorDiagnosticUsesReferenceName()
+    [Theory]
+    [InlineData("Value(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error({Kind: ErrorKind.Custom, Message: Local.Setting})", VariableScopeNames.Local)]
+    public void ExpressionErrorDiagnosticUsesReferenceName(string expression, string scope)
     {
         // Arrange
-        this.State.Set("Setting", FormulaValue.New("not-a-number"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Set("Setting", FormulaValue.New("not-a-number"), scope, SensitivityLevel.Sensitive);
         this.State.Bind();
         using StringWriter output = new();
         using TextWriterTraceListener listener = new(output);
@@ -201,11 +203,11 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         try
         {
             // Act
-            this.State.Evaluator.GetValue(ValueExpression.Expression("Value(Env.Setting)"));
+            this.State.Evaluator.GetValue(ValueExpression.Expression(expression));
             listener.Flush();
 
             // Assert
-            Assert.Contains("Env.Setting", output.ToString());
+            Assert.Contains($"{scope}.Setting", output.ToString());
             Assert.DoesNotContain("not-a-number", output.ToString());
         }
         finally
