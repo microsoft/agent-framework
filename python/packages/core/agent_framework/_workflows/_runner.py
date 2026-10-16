@@ -402,6 +402,8 @@ class RunnerImpl:
     def _validate_checkpoint_tree(
         self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
     ) -> None:
+        from ._workflow_executor import SubWorkflowResponseMessage
+
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
                 "Workflow graph has changed since the checkpoint was created. "
@@ -418,9 +420,27 @@ class RunnerImpl:
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
         if EXECUTOR_STATE_KEY in checkpoint.state:
+            delegated_by_executor: defaultdict[str, list[WorkflowEvent]] = defaultdict(list)
+            for request in requests:
+                delegated_by_executor[request.source_executor_id].append(request)
+            # Wrapped replies retain child-local source IDs, so use the parent graph to route them.
+            for batch in checkpoint.messages.values():
+                for message in batch:
+                    if not isinstance(message.data, SubWorkflowResponseMessage):
+                        continue
+                    targets = {
+                        edge.target_id
+                        for runner in self._edge_runner_map.get(message.source_id, [])
+                        for edge in runner._edge_group.edges  # pyright: ignore[reportPrivateUsage]
+                        if edge.source_id == message.source_id
+                        and (message.target_id is None or edge.target_id == message.target_id)
+                    }
+                    for target_id in targets:
+                        delegated_by_executor[target_id].append(message.data.source_event)
             for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
-                delegated = [request for request in requests if request.source_executor_id == executor.id]
-                executor._validate_checkpoint_restore(state, delegated)  # pyright: ignore[reportPrivateUsage]
+                executor._validate_checkpoint_restore(  # pyright: ignore[reportPrivateUsage]
+                    state, delegated_by_executor[executor.id]
+                )
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""
