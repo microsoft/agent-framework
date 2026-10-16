@@ -66,7 +66,7 @@ connections do not publish the SDK Client's internal compatibility session throu
 
 Agent Framework owns:
 
-- transport construction, Client entry, and resource cleanup for framework-created connections;
+- transport and Client construction, Client entry, and resource cleanup for framework-created connections;
 - the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;
@@ -76,10 +76,10 @@ Agent Framework owns:
   cancellation, and recovery after a subscription ends or is lost;
 - security and approval policy.
 
-The caller owns:
+For **caller-supplied** connections, the caller owns:
 
-- entering and closing a supplied high-level `Client`;
-- constructing and closing a supplied low-level `ClientSession`;
+- entering and closing a **supplied** high-level `Client`;
+- constructing and closing a **supplied** low-level `ClientSession`;
 - the transport, authentication, callbacks, and other configuration already captured by either supplied object.
 
 The SDK `Client` owns:
@@ -97,8 +97,8 @@ The SDK `Client` owns:
 |---|---|---|---|
 | Connection lifecycle | Agent Framework constructs, enters, and closes the Client | Caller constructs, enters, and closes the Client | Caller constructs and closes the session |
 | Connection negotiation | Enter `Client` in automatic mode | Reuse the already-entered Client | Initialize only when required for legacy compatibility |
-| `tools/list`, `tools/call` | `_ClientMCPConnection` calls `Client` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
-| `prompts/list`, `prompts/get` | `_ClientMCPConnection` calls `Client` | `_ClientMCPConnection` calls `Client` | `_SessionMCPConnection` calls `ClientSession` |
+| `tools/list`, `tools/call` | High-level `Client` operation | High-level `Client` operation | Direct `ClientSession` operation |
+| `prompts/list`, `prompts/get` | High-level `Client` operation | High-level `Client` operation | Direct `ClientSession` operation |
 | Resource reads | `Client` with SDK cache behavior | `Client` with SDK cache behavior | Direct, uncached session call |
 | Catalog subscriptions | Agent Framework owns recovery around `Client.listen()` | Agent Framework owns recovery around `Client.listen()` | Legacy notification handling only |
 | `MCPTool.session` | `None` | `None` | The caller-supplied `ClientSession` |
