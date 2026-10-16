@@ -3462,10 +3462,6 @@ class SecureAgentConfig(ContextProvider):
             default_integrity=default_integrity,
             default_confidentiality=default_confidentiality,
         )
-        # A scoped invocation owns its quarantine client, including explicit None.
-        # These attributes survive the tracker copy in _clone_for_scope().
-        self.label_tracker._quarantine_client_bound = True
-        self.label_tracker._quarantine_client_override = quarantine_chat_client
         self.policy_enforcer = (
             PolicyEnforcementFunctionMiddleware(
                 allow_untrusted_tools=set(self._allow_untrusted_tools),
@@ -3493,14 +3489,23 @@ class SecureAgentConfig(ContextProvider):
             raise ValueError("Security provider state must be a dictionary.")
         return _SecurityScope(cast(dict[str, Any], provider_state), scope_id=session.session_id)
 
+    def _bind_quarantine_client_to_stack(self, middleware_stack: list[FunctionMiddleware]) -> list[FunctionMiddleware]:
+        """Bind this config's client to each active tracker, including replacements."""
+        for middleware in middleware_stack:
+            if isinstance(middleware, LabelTrackingFunctionMiddleware):
+                middleware._quarantine_client_bound = True
+                middleware._quarantine_client_override = self._quarantine_chat_client
+        return middleware_stack
+
     def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
         """Clone the current overridable middleware stack into one scope."""
-        return [
+        scoped = [
             middleware._clone_for_scope(scope)  # pyright: ignore[reportPrivateUsage]
             if isinstance(middleware, (LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware))
             else middleware
             for middleware in self.get_middleware()
         ]
+        return self._bind_quarantine_client_to_stack(scoped)
 
     def _function_middleware_for_approval_resolution(self, session: AgentSession) -> list[FunctionMiddleware]:
         """Return provider-customized middleware bound to one restored session scope."""
@@ -3558,7 +3563,7 @@ class SecureAgentConfig(ContextProvider):
         middleware: list[FunctionMiddleware] = [self.label_tracker]
         if self.policy_enforcer:
             middleware.append(self.policy_enforcer)
-        return middleware
+        return self._bind_quarantine_client_to_stack(middleware)
 
     def get_audit_log(self, session: AgentSession | None = None) -> list[dict[str, Any]]:
         """Get the audit log for an optional session.
