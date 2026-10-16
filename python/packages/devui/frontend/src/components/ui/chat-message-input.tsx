@@ -28,7 +28,8 @@ import {
 } from "@/hooks";
 import { useDevUIStore } from "@/stores";
 import { AudioMessagePreview, RecordingBar } from "@/components/ui/audio-message-preview";
-import type { ResponseInputContent, ResponseInputTextParam, ResponseInputImageParam, ResponseInputFileParam, ResponseInputAudioParam } from "@/types/agent-framework";
+import type { ResponseInputContent, ResponseInputTextParam, ResponseInputImageParam, ResponseInputFileParam } from "@/types/agent-framework";
+import type { ResponseInputAudioParam } from "@/types/agent-framework";
 
 const UNSUPPORTED_AUDIO_UPLOAD_MESSAGE = "Only WAV and MP3 audio uploads can be sent as agent audio input.";
 

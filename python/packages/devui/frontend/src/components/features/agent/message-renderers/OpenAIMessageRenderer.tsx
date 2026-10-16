@@ -24,6 +24,7 @@ export function OpenAIMessageRenderer({
     // Determine if message is actively streaming
     const isStreaming = item.status === "in_progress";
     const hasContent = item.content.length > 0;
+
     return (
       <div className={className}>
         {item.content.map((content, index) => (

@@ -42,21 +42,9 @@ export function SettingsModal({
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
   // OpenAI proxy mode, Azure deployment, auth status, server capabilities, streaming, and version from store
-  const {
-    oaiMode,
-    setOAIMode,
-    azureDeploymentEnabled,
-    setAzureDeploymentEnabled,
-    authRequired,
-    serverCapabilities,
-    serverVersion,
-    runtime,
-    uiMode,
-    streamingEnabled,
-    setStreamingEnabled,
-    audioInput,
-    setAudioInput,
-  } = useDevUIStore();
+  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode, streamingEnabled, setStreamingEnabled } = useDevUIStore();
+  const audioInput = useDevUIStore((state) => state.audioInput);
+  const setAudioInput = useDevUIStore((state) => state.setAudioInput);
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
