@@ -227,7 +227,7 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 # object is a reference to the owner of the headers, so we keep track which headers belong to which tool
-_mcp_call_headers: ContextVar[tuple[object, dict[str, str]]] = ContextVar("_mcp_call_headers")
+_mcp_call_headers: ContextVar[tuple[object, dict[str, str]] | None] = ContextVar("_mcp_call_headers")
 _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] = ContextVar(
     "_mcp_tool_runtime_context", default=None
 )
@@ -2011,10 +2011,14 @@ class MCPTool:
                 return
 
             self._lifecycle_queue = asyncio.Queue()
-            self._lifecycle_owner_task = asyncio.create_task(
-                self._run_lifecycle_owner(),
-                name=f"mcp-lifecycle:{self.name}",
-            )
+            token = _mcp_call_headers.set(None)
+            try:
+                self._lifecycle_owner_task = asyncio.create_task(
+                    self._run_lifecycle_owner(),
+                    name=f"mcp-lifecycle:{self.name}",
+                )
+            finally:
+                _mcp_call_headers.reset(token)
 
     async def _run_lifecycle_owner(self) -> None:
         queue = self._lifecycle_queue

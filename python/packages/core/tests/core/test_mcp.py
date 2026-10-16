@@ -10867,6 +10867,35 @@ async def _pending_lifecycle_task_names() -> list[str]:
     return names
 
 
+async def test_lifecycle_owner_does_not_inherit_call_headers():
+    """Connection-lifetime work must not inherit headers from the call that starts it."""
+    from agent_framework._mcp import _mcp_call_headers
+
+    tool = MCPStreamableHTTPTool(name="context-check", url="https://mcp.example/mcp")
+    observed_call_headers: list[Any] = []
+    observed_request_context: list[str | None] = []
+    request_context = ContextVar[str]("request_context")
+
+    async def record_owner_context(**_: Any) -> None:
+        observed_call_headers.append(_mcp_call_headers.get(None))
+        observed_request_context.append(request_context.get(None))
+        tool.is_connected = True
+
+    call_headers_token = _mcp_call_headers.set((tool._header_request_owner, {"Authorization": "principal-a"}))
+    request_context_token = request_context.set("request-a")
+    try:
+        with patch.object(tool, "_connect_on_owner", new=record_owner_context):
+            await tool.connect()
+
+        assert observed_call_headers == [None]
+        assert observed_request_context == ["request-a"]
+    finally:
+        request_context.reset(request_context_token)
+        _mcp_call_headers.reset(call_headers_token)
+        tool.is_connected = False
+        await tool.close()
+
+
 async def test_failed_connect_stops_the_lifecycle_owner():
     """A connect that fails must not leave its owner task blocked on the queue forever."""
     client = _unauthorized_http_client()
