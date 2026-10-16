@@ -104,6 +104,7 @@ agent-framework-hosting-responses = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-milvus = { workspace = true }
 agent-framework-mistral = { workspace = true }
 agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
