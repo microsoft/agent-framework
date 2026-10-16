@@ -12,7 +12,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
-from contextvars import ContextVar
+from contextvars import Context, ContextVar
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -2010,7 +2010,8 @@ class MCPTool:
                 return
 
             self._lifecycle_queue = asyncio.Queue()
-            self._lifecycle_owner_task = asyncio.create_task(
+            self._lifecycle_owner_task = Context().run(
+                asyncio.create_task,
                 self._run_lifecycle_owner(),
                 name=f"mcp-lifecycle:{self.name}",
             )
