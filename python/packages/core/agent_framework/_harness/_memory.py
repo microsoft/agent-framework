@@ -147,9 +147,11 @@ def _slugify_topic(topic: str) -> str:
         # stays byte-identical to what older versions wrote.
         return slug
     # The readable slug is a lossy projection (non-ASCII, accents, case,
-    # punctuation): two distinct topics can share it. Suffix a digest of the
-    # normalized topic so byte-distinct topics get distinct files.
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:8]
+    # punctuation): two distinct topics can share it. Suffix the full digest
+    # of the normalized topic so byte-distinct topics get distinct files; a
+    # truncated prefix still collides (e.g. "丮仑一一" and "仺价一一" share
+    # the 8-hex-char prefix 36749dfe).
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     return f"{slug}-{digest}" if slug else f"memory-topic-{digest}"
 
 
@@ -621,6 +623,14 @@ class MemoryStore(ABC):
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
 
+    def migrate_misfiled_legacy_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        """Move a different topic's legacy-addressed record off this topic's canonical address.
+
+        Only stores with lossy filename-derived addressing can hold misfiled
+        legacy records; the default store contract has nothing to migrate.
+        """
+        del session, source_id, topic
+
     @abstractmethod
     def rebuild_index(
         self,
@@ -820,6 +830,21 @@ class MemoryFileStore(MemoryStore):
         return record.topic == _normalize_topic(topic)
 
     @staticmethod
+    def _is_unmigrated_legacy_of_other_topic(path: Path, record: MemoryTopicRecord, *, topic: str) -> bool:
+        """True when ``path`` is a pre-digest file that belongs to a different topic.
+
+        The slug projection is lossy, so a legacy stem like ``caf`` can hold a
+        file whose stored topic is ``café`` while ``caf`` is requested. Such a
+        file must be migrated to its own derived name first, never read,
+        merged, or deleted as the requested topic.
+        """
+        return (
+            record.topic != _normalize_topic(topic)
+            and path.stem == _legacy_slugify_topic(record.topic)
+            and path.stem != record.slug
+        )
+
+    @staticmethod
     def _serialize_json(value: object, *, dumps: JsonDumps) -> str:
         serialized = dumps(value)
         return serialized.decode("utf-8") if isinstance(serialized, bytes) else serialized
@@ -902,13 +927,40 @@ class MemoryFileStore(MemoryStore):
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
-        candidates = [
-            path for path in self._topic_read_candidates(session, source_id=source_id, topic=topic) if path.exists()
-        ]
+        candidates: list[Path] = []
+        for topic_path in self._topic_read_candidates(session, source_id=source_id, topic=topic):
+            if not topic_path.exists():
+                continue
+            try:
+                record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+            except (OSError, UnicodeDecodeError, ValueError):
+                record = None
+            if record is not None and self._is_unmigrated_legacy_of_other_topic(topic_path, record, topic=topic):
+                # A different topic's pre-digest file sits at this stem: it is
+                # not this topic's file, so it must survive the delete.
+                continue
+            candidates.append(topic_path)
         if not candidates:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         for topic_path in candidates:
             topic_path.unlink()
+
+    def migrate_misfiled_legacy_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        """Move a different topic's pre-digest file off this topic's primary path.
+
+        The slug projection is lossy, so a legacy stem like ``caf`` can hold a
+        file whose stored topic is ``café``. A write for ``caf`` must migrate
+        that record to its derived name first instead of merging into it.
+        """
+        topic_path = self._topic_path(session, source_id=source_id, topic=topic)
+        if not topic_path.exists():
+            return
+        try:
+            record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            return
+        if self._is_unmigrated_legacy_of_other_topic(topic_path, record, topic=topic):
+            self.write_topic(session, record, source_id=source_id)
 
     def rebuild_index(
         self,
@@ -1590,6 +1642,11 @@ class MemoryContextProvider(HistoryProvider):
         normalized_topic = _normalize_topic(topic)
         normalized_memory = _normalize_memory_text(memory)
         async with self._topic_async_lock(session, normalized_topic):
+            # get_topic resolves loosely (slugs and legacy aliases included): a
+            # pre-digest file of another topic can sit at this topic's primary
+            # path. Migrate such a record first so this write never merges into
+            # or overwrites a different topic.
+            self.store.migrate_misfiled_legacy_topic(session, source_id=self.source_id, topic=normalized_topic)
             try:
                 existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
             except FileNotFoundError:

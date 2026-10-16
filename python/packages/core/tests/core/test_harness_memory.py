@@ -1081,6 +1081,58 @@ def test_memory_file_store_deletes_pre_digest_topic_file(tmp_path) -> None:
         store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="旅行计划")
 
 
+async def test_memory_context_provider_write_migrates_misfiled_legacy_first(tmp_path) -> None:
+    """``write_memory("caf")`` must not merge into a legacy ``caf.md`` that holds ``café``."""
+    store, session = _topic_store(tmp_path)
+    record = _record("café", ["legacy accent fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+    provider = MemoryContextProvider(store=store, recent_turns=0, max_extractions=0)
+
+    updated = await provider._merge_memory(
+        session=session,
+        topic="caf",
+        memory="ascii fact",
+        now=datetime(2026, 10, 16, tzinfo=timezone.utc),
+    )
+
+    # The write created a distinct `caf` record instead of appending to `café`.
+    assert updated.topic == "caf"
+    assert updated.memories == ["ascii fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf").memories == ["ascii fact"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["legacy accent fact"]
+
+
+def test_memory_file_store_delete_keeps_misfiled_legacy_file(tmp_path) -> None:
+    """Deleting ``caf`` must not delete a legacy ``caf.md`` that belongs to ``café``."""
+    store, session = _topic_store(tmp_path)
+    record = _record("café", ["legacy accent fact"])
+    legacy_path = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID) / "caf.md"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(f"{record.to_markdown()}\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError):
+        store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="caf")
+    assert legacy_path.exists()
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="café").memories == ["legacy accent fact"]
+
+
+def test_slugify_topic_uses_full_sha256_digest() -> None:
+    """Truncated digest prefixes collide; the storage key keeps the full SHA-256."""
+    import hashlib
+
+    from agent_framework._harness._memory import _slugify_topic
+
+    first, second = "丮仑一一", "仺价一一"
+    # Both topics share the former 8-hex-char prefix 36749dfe.
+    assert hashlib.sha256(first.encode("utf-8")).hexdigest()[:8] == hashlib.sha256(second.encode("utf-8")).hexdigest()[:8]
+    slug_first, slug_second = _slugify_topic(first), _slugify_topic(second)
+    assert slug_first != slug_second
+    assert slug_first == f"memory-topic-{hashlib.sha256(first.encode('utf-8')).hexdigest()}"
+    assert slug_second == f"memory-topic-{hashlib.sha256(second.encode('utf-8')).hexdigest()}"
+
+
 def test_slugify_topic_keeps_safe_stems_byte_identical() -> None:
     """Safe lowercase stems keep their pre-digest names; derived slugs are idempotent."""
     from agent_framework._harness._memory import _slugify_topic
