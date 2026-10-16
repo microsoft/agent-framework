@@ -8854,9 +8854,7 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
 
         async def get_response(self, *, messages: Any, **kwargs: Any) -> SimpleNamespace:
             value = "\n".join(
-                item.text or ""
-                for msg in messages for item in msg.contents
-                if getattr(item, "type", None) == "text"
+                item.text or "" for msg in messages for item in msg.contents if getattr(item, "type", None) == "text"
             )
             self.calls.append(value)
             await asyncio.sleep(0)
@@ -8870,14 +8868,21 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
         session = AgentSession(session_id="synthetic-" + marker)
         ctx = SessionContext(session_id=session.session_id, input_messages=[])
         await cfg.before_run(
-            agent=None, session=session, context=ctx,
+            agent=None,
+            session=session,
+            context=ctx,
             state=session.state.setdefault(cfg.source_id, {}),
         )
         tool = next(t for t in cfg.get_tools() if t.name == "quarantined_llm")
-        args = {"prompt": "Summarize", "labelled_data": {"record": {
-            "content": marker,
-            "security_label": {"integrity": "untrusted", "confidentiality": "private"},
-        }}}
+        args = {
+            "prompt": "Summarize",
+            "labelled_data": {
+                "record": {
+                    "content": marker,
+                    "security_label": {"integrity": "untrusted", "confidentiality": "private"},
+                }
+            },
+        }
         call = FunctionInvocationContext(function=tool, arguments=args, session=session)
 
         async def invoke(inner: FunctionInvocationContext) -> Any:
@@ -8899,10 +8904,15 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
 
         # Standalone calls retain the legacy process-global fallback.
         await quarantined_llm.invoke(
-            arguments={"prompt": "Direct", "labelled_data": {"record": {
-                "content": "STANDALONE_MARKER",
-                "security_label": {"integrity": "untrusted", "confidentiality": "public"},
-            }}},
+            arguments={
+                "prompt": "Direct",
+                "labelled_data": {
+                    "record": {
+                        "content": "STANDALONE_MARKER",
+                        "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+                    }
+                },
+            },
             skip_parsing=True,
         )
         assert any("STANDALONE_MARKER" in x for x in beta.calls)
