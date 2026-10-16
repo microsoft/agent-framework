@@ -148,6 +148,37 @@ and session into the corresponding scoped key using an application-owned
 migration process. After verifying the copied history, remove legacy keys
 separately according to the application's retention policy.
 
+## Isolate retrieved memories
+
+`RedisContextProvider` stores exact application, agent, user, and session
+identifiers as metadata, but indexes only deterministic versioned tokens for
+those values. Scope comparisons therefore preserve case and treat punctuation
+as ordinary identifier content. Values supplied inside documents cannot
+override the provider's configured scopes.
+
+Indexes created by earlier releases use a different scope schema. A provider
+using the current schema fails closed when it encounters such an index. During
+a coordinated deployment, stop older writers and rebuild the index once while
+preserving its hashes:
+
+```python
+context_provider = RedisContextProvider(
+    redis_url="redis://localhost:6379",
+    index_name="context",
+    prefix="context",
+    application_id="support-app",
+    user_id="user-123",
+    overwrite_index=True,
+)
+```
+
+The rebuild replaces the index definition first, then backfills the current
+scope tokens from the exact identifiers stored in each matching Redis hash.
+Existing memory content remains in place. After the migration completes,
+remove `overwrite_index=True`; leaving it enabled rebuilds the index whenever a
+new provider process initializes. Review or remove records whose historical
+scope metadata is not authoritative before migration.
+
 ## Store and search documents
 
 This example uses precomputed vectors, so no embedding service is needed.
