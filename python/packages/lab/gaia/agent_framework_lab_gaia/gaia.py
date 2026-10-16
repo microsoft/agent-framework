@@ -264,6 +264,36 @@ def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 yield record
 
 
+_SHARDED_PARQUET_RE = re.compile(r"(metadata(?:-[^-]+)?)-(\d{5})-of-(\d{5})\.parquet")
+
+
+def _has_complete_parquet_snapshot(data_dir: Path) -> bool:
+    """Whether every sharded metadata parquet group holds all of its declared shards.
+
+    An interrupted copy can leave only part of a ``metadata-XXXXX-of-NNNNN.parquet``
+    family in the directory. Treating any matching filename as ready would run the
+    benchmark over a silently truncated task set, so an incomplete family forces the
+    normal download path instead. Plain unsharded metadata parquet files count as
+    complete on their own.
+    """
+    sharded: dict[tuple[Path, str], tuple[set[int], int]] = {}
+    unsharded_seen = False
+    for path in data_dir.rglob("metadata*.parquet"):
+        match = _SHARDED_PARQUET_RE.fullmatch(path.name)
+        if match is None:
+            unsharded_seen = True
+            continue
+        key = (path.parent, match.group(1))
+        indexes, total = sharded.get(key, (set(), int(match.group(3))))
+        indexes.add(int(match.group(2)))
+        sharded[key] = (indexes, max(total, int(match.group(3))))
+    if not sharded:
+        return unsharded_seen
+    # The loader reads every matching parquet file, so a single incomplete sharded
+    # family disqualifies the directory even when unsharded files also exist.
+    return all(len(indexes) == total for indexes, total in sharded.values())
+
+
 def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max_n: int | None = None) -> list[Task]:
     """Load GAIA tasks from local repository directory."""
     tasks: list[Task] = []
@@ -405,7 +435,9 @@ class GAIA:
 
     def _ensure_data(self) -> Path:
         """Ensure GAIA data is available locally."""
-        if self.data_dir.exists() and any(self.data_dir.rglob("metadata.jsonl")):
+        if self.data_dir.exists() and (
+            any(self.data_dir.rglob("metadata.jsonl")) or _has_complete_parquet_snapshot(self.data_dir)
+        ):
             return self.data_dir
 
         # Download data if not available
