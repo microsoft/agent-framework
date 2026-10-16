@@ -266,12 +266,33 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
 
         return decode_from_dict
 
-    from pydantic import BaseModel
+    from pydantic import BaseModel, ValidationError
 
     if issubclass(cls, BaseModel):
 
         def decode_pydantic(payload: Mapping[str, Any]) -> Any:
-            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+            raw = {key: value for key, value in payload.items() if key != "type"}
+            try:
+                return cls.model_validate(raw)
+            except ValidationError as exc:
+                # The encoder's payload items went through _serialize_value,
+                # so a nested registered value (e.g. Message) sits in the
+                # payload as its tagged dict. Restore only the field(s) pydantic
+                # blames; fields that already validate raw keep their payload
+                # untouched, so a field that legitimately holds a tag-shaped
+                # dict (e.g. plain dict[str, Any] data) is never converted or
+                # rejected by the retry.
+                failed_fields = {
+                    error["loc"][0]
+                    for error in exc.errors()
+                    if error.get("loc") and isinstance(error["loc"][0], str)
+                }
+                if not failed_fields:
+                    raise
+                return cls.model_validate({
+                    key: _deserialize_value(value, path=f"{cls.__name__}.{key}") if key in failed_fields else value
+                    for key, value in raw.items()
+                })
 
         return decode_pydantic
 
