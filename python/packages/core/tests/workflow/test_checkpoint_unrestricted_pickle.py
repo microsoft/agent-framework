@@ -17,6 +17,7 @@ import enum
 import os
 import pickle
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -306,6 +307,23 @@ async def test_file_storage_rejects_unlisted_user_type_at_save():
         ):
             await storage.save(checkpoint)
         assert not await asyncio.to_thread(lambda: list(Path(tmpdir).glob("*.json")))
+
+
+async def test_file_storage_wraps_unencodable_state_at_save():
+    """save wraps an encoding failure in WorkflowCheckpointException and writes nothing."""
+    from agent_framework import WorkflowCheckpoint
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = FileCheckpointStorage(tmpdir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test",
+            graph_signature_hash="hash",
+            state={"lock": threading.Lock()},
+        )
+        with pytest.raises(WorkflowCheckpointException, match="cannot be encoded") as exc_info:
+            await storage.save(checkpoint)
+        assert isinstance(exc_info.value.__cause__, TypeError)
+        assert not await asyncio.to_thread(lambda: list(Path(tmpdir).iterdir()))
 
 
 async def test_file_storage_allows_listed_user_type():

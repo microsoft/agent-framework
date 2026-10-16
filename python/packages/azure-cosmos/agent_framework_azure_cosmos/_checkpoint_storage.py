@@ -9,8 +9,12 @@ from typing import Any, TypedDict
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
-from agent_framework._workflows._checkpoint import CheckpointID, WorkflowCheckpoint
-from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from agent_framework._workflows._checkpoint import (
+    CheckpointID,
+    WorkflowCheckpoint,
+    _encode_checkpoint_for_storage,  # pyright: ignore[reportPrivateUsage]
+)
+from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
 from agent_framework.exceptions import WorkflowCheckpointException
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -218,12 +222,16 @@ class CosmosCheckpointStorage:
 
         Returns:
             The unique ID of the saved checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+                fail to decode under this storage's ``allowed_checkpoint_types``.
         """
         mark_feature_used(FeatureIndex.AZURE_COSMOS)
-        await self._ensure_container_proxy()
 
-        checkpoint_dict = checkpoint.to_dict()
-        encoded = encode_checkpoint_value(checkpoint_dict)
+        # Validate before resolving the container, so a refused save creates no Cosmos resources.
+        encoded = _encode_checkpoint_for_storage(checkpoint, self._allowed_types)
+        await self._ensure_container_proxy()
 
         document: dict[str, Any] = {
             "id": self._make_document_id(checkpoint.workflow_name, checkpoint.checkpoint_id),
