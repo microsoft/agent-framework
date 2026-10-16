@@ -336,6 +336,36 @@ public class LoopAgentTests
         // Assert
         Assert.Equal(3, capture.CallCount);
         Assert.Equal(["working", "working", "working"], response.Messages.Select(static m => m.Text));
+        Assert.NotNull(response.AdditionalProperties);
+        Assert.Equal(LoopExitReason.IterationCapReached, response.AdditionalProperties[LoopExitReason.AdditionalPropertiesKey]);
+    }
+
+    /// <summary>
+    /// Verify that an exit reason stamped during an earlier iteration is not copied onto the final response when a later
+    /// iteration stops without any evaluator supplying a reason.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_StaleExitReasonFromEarlierIteration_IsNotReturnedAsync()
+    {
+        // Arrange
+        // Iteration 1 emits a signal (stamping "completed") but a second evaluator still requests another iteration.
+        // Iteration 2 is signal-free and every evaluator stops, so no exit reason should be reported.
+        var capture = new InnerAgentCapture(call => new AgentResponse([new ChatMessage(ChatRole.Assistant, call == 1 ? "TASK_COMPLETE: done" : "working")]));
+        var signal = new SignalProtocolLoopEvaluator();
+        var signalOrStop = new DelegateLoopEvaluator(async (context, ct) =>
+        {
+            LoopEvaluation evaluation = await signal.EvaluateAsync(context, ct);
+            return evaluation.ShouldReinvoke ? LoopEvaluation.Stop() : evaluation;
+        });
+        var evaluators = new LoopEvaluator[] { signalOrStop, While(static context => context.Iteration == 1) };
+        var agent = new LoopAgent(capture.Agent, evaluators);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(2, capture.CallCount);
+        Assert.False(response.AdditionalProperties?.ContainsKey(LoopExitReason.AdditionalPropertiesKey) ?? false);
     }
 
     /// <summary>
