@@ -906,13 +906,13 @@ class DefaultMCPToolHandler:
                     else None
                 ),
             )
+            cleanup_outcome: asyncio.Future[None] = asyncio.get_running_loop().create_future()
             try:
-                if self._client_provider is not None:
-                    await self._close_invocation_entry(failed_entry)
-                else:
-                    await self._close_entry(failed_entry)
+                await self._close_invocation_entry(failed_entry, cleanup_outcome)
             except BaseException as cleanup_exception:
-                if self._client_provider is not None:
+                if self._client_provider is not None or (
+                    cleanup_outcome.done() and cleanup_outcome.exception() is None
+                ):
                     raise
                 raise _EntryCreationCleanupFailure(creation_exception, cleanup_exception) from cleanup_exception
             raise

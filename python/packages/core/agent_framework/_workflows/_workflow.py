@@ -1150,6 +1150,15 @@ class Workflow(DictConvertible):
         if self._response_batch_validator is not None:
             self._response_batch_validator(requests)
 
+    async def _validate_response_requests(self, requests: Sequence[WorkflowEvent]) -> None:
+        queued_requests = await self._runner.context.get_queued_response_info_events()
+        batch = [*queued_requests, *requests]
+        self._validate_response_batch(batch)
+        for executor in self.executors.values():
+            delegated = [request for request in batch if request.source_executor_id == executor.id]
+            if delegated:
+                await executor._validate_response_batch(delegated)  # pyright: ignore[reportPrivateUsage]
+
     async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
         """Validate responses before a run can consume pending requests."""
         from ._agent_executor import _validate_computer_tool_result  # pyright: ignore[reportPrivateUsage]
@@ -1168,12 +1177,7 @@ class Workflow(DictConvertible):
             if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
                 _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
-        if self._response_batch_validator is not None:
-            queued_requests = await self._runner.context.get_queued_response_info_events()
-            self._response_batch_validator([
-                *queued_requests,
-                *(pending_requests[request_id] for request_id in coerced_responses),
-            ])
+        await self._validate_response_requests([pending_requests[request_id] for request_id in coerced_responses])
         return coerced_responses
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:

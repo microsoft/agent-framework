@@ -7,7 +7,7 @@ import functools
 import inspect
 import logging
 import types
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar, overload
 
 from ..observability import create_processing_span
@@ -533,9 +533,13 @@ class Executor(RequestInfoMixin, DictConvertible):
         """Release executor-owned state for a cancelled workflow request."""
         del request_id, ctx
 
-    def _validate_checkpoint_restore(self, state: dict[str, Any]) -> None:
+    async def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
+        """Validate delegated responses before the parent consumes pending requests."""
+        del requests
+
+    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
         """Validate a checkpoint snapshot without changing live executor state."""
-        del state
+        del state, requests
 
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.

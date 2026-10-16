@@ -1426,6 +1426,140 @@ class TestRequestScopeContinuations:
 
     @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
     @pytest.mark.parametrize("depth", [1, 2])
+    @pytest.mark.parametrize("mode", ["missing", "invalid", "migrate", "valid"])
+    async def test_parent_queued_child_response_preflight_preserves_state(
+        self, tmp_path: Path, restore_kind: str, depth: int, mode: str
+    ) -> None:
+        from copy import deepcopy
+
+        from agent_framework import WorkflowBuilder, WorkflowExecutor
+        from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
+        from agent_framework._workflows._const import EXECUTOR_STATE_KEY
+        from agent_framework.exceptions import WorkflowCheckpointException
+
+        storage = _scope_checkpoint_storage(tmp_path)
+        mcp_handler = StubMcpHandler(_ok())
+        child = WorkflowFactory(
+            mcp_tool_handler=mcp_handler, migrate_legacy_request_scopes=mode == "migrate"
+        ).create_workflow_from_definition(_yaml(_action(require_approval=True)))
+        workflows = [child]
+        parent = child
+        for level in range(depth):
+            wrapper = WorkflowExecutor(parent, id=f"nested_{level}", propagate_request=True)
+            parent = WorkflowBuilder(start_executor=wrapper, checkpoint_storage=storage).build()
+            workflows.append(parent)
+        await parent.run({})
+        [request] = (await parent._runner_context.get_pending_request_info_events()).values()
+        await parent._runner_context.send_request_info_response(
+            request.request_id, _scope_pause_response("InvokeMcpTool")
+        )
+        checkpoint = deepcopy(await parent._runner.build_checkpoint())
+        # The child's pending request, not the parent's copy, owns the response policy.
+        for batch in checkpoint.messages.values():
+            for message in batch:
+                message.original_request_info_event = deepcopy(message.original_request_info_event)
+        child_checkpoint = checkpoint
+        for level in reversed(range(depth)):
+            child_checkpoint = child_checkpoint.state[EXECUTOR_STATE_KEY][f"nested_{level}"]["sub_workflow_checkpoint"]
+        original_scope = child_checkpoint.pending_request_info_events[request.request_id].data.workflow_session_id
+        if mode != "valid":
+            child_checkpoint.pending_request_info_events[request.request_id].data.workflow_session_id = (
+                42 if mode == "invalid" else None
+            )
+        checkpoint_before = encode_checkpoint_value(checkpoint.to_dict())
+        await storage.save(checkpoint)
+
+        for workflow in workflows:
+            workflow._runner.state.set("restore_marker", "live")
+            workflow._runner.state.commit()
+            workflow._runner.state.set("uncommitted", "keep")
+
+        async def snapshots() -> list[Any]:
+            result: list[Any] = []
+            for workflow in workflows:
+                snapshot = await workflow._runner_context.build_checkpoint(
+                    workflow.name, workflow.graph_signature_hash, workflow._runner.state, None, 0
+                )
+                result.append(
+                    encode_checkpoint_value({
+                        "state": snapshot.state,
+                        "messages": snapshot.messages,
+                        "requests": snapshot.pending_request_info_events,
+                    })
+                )
+            return result
+
+        before = await snapshots()
+
+        async def restore() -> None:
+            if restore_kind == "embedded":
+                await parent._runner.restore_checkpoint(checkpoint)
+            else:
+                await parent._runner.restore_from_checkpoint(checkpoint.checkpoint_id)
+
+        if mode in {"missing", "invalid"}:
+            with pytest.raises(WorkflowCheckpointException):
+                await restore()
+            assert await snapshots() == before
+            for workflow in workflows:
+                assert workflow._runner.state.get("restore_marker") == "live"
+                assert workflow._runner.state.get("uncommitted") == "keep"
+        else:
+            await restore()
+            _ = [event async for event in parent._runner.run_until_convergence()]
+            assert mcp_handler.call_count == 1
+            assert mcp_handler.invocations[0].workflow_session_id == (
+                f"legacy-request:{request.request_id}" if mode == "migrate" else original_scope
+            )
+        assert encode_checkpoint_value(checkpoint.to_dict()) == checkpoint_before
+        assert mcp_handler.call_count == (1 if mode in {"migrate", "valid"} else 0)
+
+    @pytest.mark.parametrize("depth", [1, 2])
+    @pytest.mark.parametrize("mode", ["missing", "invalid", "queued"])
+    async def test_parent_child_response_rejection_preserves_pending_request(self, depth: int, mode: str) -> None:
+        from copy import deepcopy
+
+        from agent_framework import WorkflowBuilder, WorkflowExecutor
+
+        mcp_handler = StubMcpHandler(_ok())
+        child = WorkflowFactory(mcp_tool_handler=mcp_handler).create_workflow_from_definition(
+            _yaml(_action(require_approval=True))
+        )
+        parent = child
+        for level in range(depth):
+            parent = WorkflowBuilder(
+                start_executor=WorkflowExecutor(parent, id=f"nested_{level}", propagate_request=True)
+            ).build()
+        await parent.run({})
+        if mode == "queued":
+            await parent.run({})
+        pending = await parent._runner_context.get_pending_request_info_events()
+        child_pending = await child._runner_context.get_pending_request_info_events()
+        request_ids = list(pending)
+        request_id = request_ids[-1]
+        original_scope = child_pending[request_id].data.workflow_session_id
+        if mode == "queued":
+            await child._runner_context.send_request_info_response(
+                request_ids[0], _scope_pause_response("InvokeMcpTool")
+            )
+        else:
+            pending[request_id].data = deepcopy(pending[request_id].data)
+            child_pending[request_id].data.workflow_session_id = None if mode == "missing" else 42
+
+        with pytest.raises(DeclarativeWorkflowError):
+            await parent.run(responses={request_id: _scope_pause_response("InvokeMcpTool")})
+
+        assert set(await parent._runner_context.get_pending_request_info_events()) == set(request_ids)
+        assert request_id in await child._runner_context.get_pending_request_info_events()
+        assert mcp_handler.call_count == 0
+        if mode != "queued":
+            child_pending[request_id].data.workflow_session_id = original_scope
+            await parent.run(responses={request_id: _scope_pause_response("InvokeMcpTool")})
+            assert not await parent._runner_context.get_pending_request_info_events()
+            assert mcp_handler.call_count == 1
+
+    @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
+    @pytest.mark.parametrize("depth", [1, 2])
     @pytest.mark.parametrize("mode", ["missing", "mixed", "valid", "pending"])
     async def test_nested_checkpoint_preflight_preserves_live_state(
         self, tmp_path: Path, restore_kind: str, depth: int, mode: str

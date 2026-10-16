@@ -3,7 +3,7 @@
 import logging
 import sys
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -591,10 +591,17 @@ class WorkflowExecutor(Executor):
         }
 
     @override
-    def _validate_checkpoint_restore(self, state: dict[str, Any]) -> None:
+    async def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
+        pending = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
+        await self.workflow._validate_response_requests([  # pyright: ignore[reportPrivateUsage]
+            pending[request.request_id] for request in requests if request.request_id in pending
+        ])
+
+    @override
+    def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
         sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
         if sub_workflow_checkpoint is not None:
-            self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+            self.workflow._runner._validate_checkpoint_tree(sub_workflow_checkpoint, requests)  # pyright: ignore[reportPrivateUsage]
 
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:

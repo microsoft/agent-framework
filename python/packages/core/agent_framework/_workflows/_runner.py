@@ -399,18 +399,28 @@ class RunnerImpl:
             logger.error(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}: {e}")
             raise WorkflowCheckpointException(f"Failed to restore from checkpoint {checkpoint.checkpoint_id}") from e
 
-    def _validate_checkpoint_tree(self, checkpoint: WorkflowCheckpoint) -> None:
+    def _validate_checkpoint_tree(
+        self, checkpoint: WorkflowCheckpoint, delegated_requests: Sequence[WorkflowEvent] = ()
+    ) -> None:
         if self._graph_signature_hash != checkpoint.graph_signature_hash:
             raise WorkflowCheckpointException(
                 "Workflow graph has changed since the checkpoint was created. "
                 "Please rebuild the original workflow before resuming."
             )
-        requests = _get_queued_response_info_events(checkpoint.messages)
+        requests = [
+            *_get_queued_response_info_events(checkpoint.messages),
+            *(
+                checkpoint.pending_request_info_events[request.request_id]
+                for request in delegated_requests
+                if request.request_id in checkpoint.pending_request_info_events
+            ),
+        ]
         if requests and self._response_batch_validator is not None:
             self._response_batch_validator(requests)
         if EXECUTOR_STATE_KEY in checkpoint.state:
             for _, executor, state in self._get_executor_states(checkpoint.state[EXECUTOR_STATE_KEY]):
-                executor._validate_checkpoint_restore(state)  # pyright: ignore[reportPrivateUsage]
+                delegated = [request for request in requests if request.source_executor_id == executor.id]
+                executor._validate_checkpoint_restore(state, delegated)  # pyright: ignore[reportPrivateUsage]
 
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors."""

@@ -1388,6 +1388,58 @@ class TestCache:
         assert FakeTool.instances[1].connect_count == 1
 
     @pytest.mark.asyncio
+    async def test_repeated_connect_cancellation_retains_slot_until_cleanup(self) -> None:
+        handler = DefaultMCPToolHandler(cache_max_size=1)
+        connect_started = asyncio.Event()
+        close_started = asyncio.Event()
+        release_close = asyncio.Event()
+        close_finished = asyncio.Event()
+        close_tasks: list[asyncio.Task[None]] = []
+
+        async def connect(_tool: FakeTool) -> None:
+            connect_started.set()
+            await asyncio.Event().wait()
+
+        async def finish_close() -> None:
+            close_started.set()
+            await release_close.wait()
+            close_finished.set()
+
+        async def close(_tool: FakeTool) -> None:
+            task = asyncio.create_task(finish_close())
+            close_tasks.append(task)
+            await asyncio.shield(task)
+
+        with _patch_tool(), patch.object(FakeTool, "connect", connect), patch.object(FakeTool, "close", close):
+            creator = asyncio.create_task(handler.invoke_tool(_invocation(workflow_session_id="first")))
+            shutdown: asyncio.Task[None] | None = None
+            try:
+                await connect_started.wait()
+                creator.cancel()
+                await close_started.wait()
+                creator.cancel()
+                for _ in range(10):
+                    await asyncio.sleep(0)
+
+                assert not creator.done()
+                result = await handler.invoke_tool(_invocation(workflow_session_id="second"))
+                assert result.is_error
+                assert len(FakeTool.instances) == 1
+                shutdown = asyncio.create_task(handler.aclose())
+                await asyncio.sleep(0)
+                assert not shutdown.done()
+                assert not close_finished.is_set()
+            finally:
+                release_close.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await creator
+                await asyncio.gather(*close_tasks)
+                if shutdown is not None:
+                    await shutdown
+                else:
+                    await handler.aclose()
+
+    @pytest.mark.asyncio
     async def test_repeated_creator_cancellation_completes_inflight_failure(self) -> None:
         handler = DefaultMCPToolHandler()
 
