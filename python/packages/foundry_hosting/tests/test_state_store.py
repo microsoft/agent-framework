@@ -327,6 +327,28 @@ async def test_get_latest_resolves_timestamp_ties_through_lineage(
     assert latest.checkpoint_id == "grandchild"
 
 
+@pytest.mark.parametrize("list_order", [("leaf-a", "leaf-b"), ("leaf-b", "leaf-a")])
+async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
+    monkeypatch: pytest.MonkeyPatch, list_order: tuple[str, ...]
+) -> None:
+    storage = FoundryCheckpointStore("context-1", _platform_context())
+    timestamp = "2026-01-02T00:00:00+00:00"
+    checkpoints = {
+        "leaf-a": _checkpoint("leaf-a", timestamp=timestamp, previous_checkpoint_id="older"),
+        "leaf-b": _checkpoint("leaf-b", timestamp=timestamp, previous_checkpoint_id="older"),
+    }
+    listed = [
+        _checkpoint("older", timestamp="2026-01-01T00:00:00+00:00"),
+        *(checkpoints[checkpoint_id] for checkpoint_id in list_order),
+    ]
+    monkeypatch.setattr(storage, "list_checkpoints", AsyncMock(return_value=listed))
+
+    latest = await storage.get_latest(workflow_name="workflow")
+
+    assert latest is not None
+    assert latest.checkpoint_id == "leaf-b"
+
+
 async def test_get_latest_returns_none_when_no_checkpoints_exist(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = FoundryCheckpointStore("context-1", _platform_context())
     monkeypatch.setattr(storage, "list_checkpoints", AsyncMock(return_value=[]))

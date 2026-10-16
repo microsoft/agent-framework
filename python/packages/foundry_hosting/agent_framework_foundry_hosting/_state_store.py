@@ -41,11 +41,14 @@ def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> Workflow
     same superstep boundary can share a timestamp. Among the checkpoints with the newest
     timestamp, one that another of them names as its ``previous_checkpoint_id`` is
     superseded, so the result does not depend on the order the store lists keys in.
+    If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
+    is returned, so the choice among them is stable too.
     """
     newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
     candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
     superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
-    return next((cp for cp in candidates if cp.checkpoint_id not in superseded_ids), candidates[0])
+    leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
+    return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
 
 
 def _store_scope(config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FoundryRequestScope | None:

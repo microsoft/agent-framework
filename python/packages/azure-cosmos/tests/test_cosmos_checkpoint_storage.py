@@ -427,6 +427,28 @@ async def test_get_latest_resolves_timestamp_ties_through_lineage(
     assert result.checkpoint_id == "grandchild"
 
 
+@pytest.mark.parametrize("row_order", [("leaf-a", "leaf-b"), ("leaf-b", "leaf-a")])
+async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
+    mock_container: MagicMock, row_order: tuple[str, ...]
+) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    _mock_get_latest_queries(
+        mock_container,
+        [
+            _checkpoint_to_cosmos_document(
+                _make_checkpoint(checkpoint_id=checkpoint_id, previous_checkpoint_id="parent", timestamp=timestamp)
+            )
+            for checkpoint_id in row_order
+        ],
+    )
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert result.checkpoint_id == "leaf-b"
+
+
 # --- Tests for list_checkpoint_ids ---
 
 

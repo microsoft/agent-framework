@@ -325,6 +325,30 @@ async def test_get_latest_resolves_timestamp_ties_through_lineage(
     assert latest.checkpoint_id == "grandchild"
 
 
+@pytest.mark.parametrize("storage_kind", ["memory", "file"])
+@pytest.mark.parametrize("save_order", [("leaf-a", "leaf-b"), ("leaf-b", "leaf-a")])
+async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
+    tmp_path: Path, storage_kind: str, save_order: tuple[str, ...]
+) -> None:
+    storage = InMemoryCheckpointStorage() if storage_kind == "memory" else FileCheckpointStorage(tmp_path)
+    timestamp = "2026-10-11T12:00:00+00:00"
+    for checkpoint_id in save_order:
+        await storage.save(
+            WorkflowCheckpoint(
+                workflow_name="w",
+                graph_signature_hash="h",
+                checkpoint_id=checkpoint_id,
+                previous_checkpoint_id="parent",
+                timestamp=timestamp,
+            )
+        )
+
+    latest = await storage.get_latest(workflow_name="w")
+
+    assert latest is not None
+    assert latest.checkpoint_id == "leaf-b"
+
+
 async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
     """Test that consecutive checkpoints created by a workflow are properly chained via previous_checkpoint_id."""
     from typing_extensions import Never
