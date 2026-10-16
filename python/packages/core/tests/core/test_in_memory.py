@@ -9,6 +9,7 @@ import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
+from uuid import UUID
 
 import pytest
 
@@ -51,6 +52,12 @@ with warnings.catch_warnings():
             list[float] | None,
             VectorStoreField("vector", dimensions=2, distance_function="cosine_similarity"),
         ] = None
+
+    @vectorstoremodel(collection_name="uuid_documents")
+    @dataclass
+    class UUIDDocument:
+        id: Annotated[UUID, VectorStoreField("key")]
+        text: Annotated[str, VectorStoreField("data")]
 
 
 DOCUMENTS = (
@@ -124,6 +131,34 @@ async def test_in_memory_collection_requires_creation() -> None:
 
     with pytest.raises(IntegrationException, match="does not exist"):
         await collection.get()
+
+
+@pytest.mark.parametrize("as_strings", [False, True])
+async def test_in_memory_get_uuid_keys(as_strings: bool) -> None:
+    collection: InMemoryCollection[UUID | str, UUIDDocument] = InMemoryCollection(UUIDDocument)
+    records = [UUIDDocument(UUID(int=1), "first"), UUIDDocument(UUID(int=2), "second")]
+    await collection.ensure_collection_exists()
+    await collection.upsert(records, generate_vectors=False)
+    requested: list[UUID | str] = [records[1].id, UUID(int=3), records[0].id]
+    if as_strings:
+        requested = [str(key) for key in requested]
+
+    assert await collection.get(requested) == [records[1], records[0]]
+
+
+@pytest.mark.parametrize("as_strings", [False, True])
+async def test_in_memory_delete_uuid_keys(as_strings: bool) -> None:
+    collection: InMemoryCollection[UUID | str, UUIDDocument] = InMemoryCollection(UUIDDocument)
+    records = [UUIDDocument(UUID(int=1), "first"), UUIDDocument(UUID(int=2), "second")]
+    await collection.ensure_collection_exists()
+    await collection.upsert(records, generate_vectors=False)
+    requested: list[UUID | str] = [records[0].id, UUID(int=3)]
+    if as_strings:
+        requested = [str(key) for key in requested]
+
+    await collection.delete(requested)
+
+    assert await collection.get() == [records[1]]
 
 
 async def test_in_memory_crud_listing_ordering_and_defensive_copies() -> None:

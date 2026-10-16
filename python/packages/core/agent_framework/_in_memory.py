@@ -303,7 +303,9 @@ class InMemoryCollection(
     ) -> Sequence[Any] | None:
         self._require_collection()
         if keys is not None:
-            return [deepcopy(self._state.records[key]) for key in keys if key in self._state.records]
+            # Shared record serialization stores UUID keys as strings.
+            normalized_keys = (str(key) if isinstance(key, UUID) else key for key in keys)
+            return [deepcopy(self._state.records[key]) for key in normalized_keys if key in self._state.records]
         records = list(self._state.records.values())
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
@@ -333,7 +335,7 @@ class InMemoryCollection(
     ) -> None:
         self._require_collection()
         for key in keys:
-            self._state.records.pop(key, None)
+            self._state.records.pop(str(key) if isinstance(key, UUID) else key, None)
 
     async def _inner_search(
         self,
