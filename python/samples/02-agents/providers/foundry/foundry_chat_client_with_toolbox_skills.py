@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import Generator
 
-import httpx
+import httpx2
 from agent_framework import Agent, MCPSkillsSource, SkillsProvider, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import TokenCredential
@@ -34,13 +34,13 @@ Prerequisites:
 """
 
 
-class _BearerAuth(httpx.Auth):
+class _BearerAuth(httpx2.Auth):
     """Attach a fresh Foundry bearer token to every request."""
 
     def __init__(self, credential: TokenCredential) -> None:
         self._get_token = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
 
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+    def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
         request.headers["Authorization"] = f"Bearer {self._get_token()}"
         yield request
 
@@ -53,15 +53,15 @@ async def main() -> None:
     # and advertises the toolbox preview feature flag, plus the MCP streamable
     # HTTP transport that uses it.
     async with (
-        httpx.AsyncClient(
+        httpx2.AsyncClient(
             auth=_BearerAuth(credential),
-            timeout=httpx.Timeout(30.0, read=300.0),
+            timeout=httpx2.Timeout(30.0, read=300.0),
             follow_redirects=True,
         ) as http_client,
         streamable_http_client(
             url=os.environ["FOUNDRY_TOOLBOX_MCP_SERVER_URL"],
             http_client=http_client,
-        ) as (read, write, _),
+        ) as (read, write),
         ClientSession(read, write) as session,
     ):
         await session.initialize()

@@ -92,6 +92,10 @@ Do not list:
   should document that setup on their own site.
 - Observability providers that only accept standard OpenTelemetry or OTLP
   configuration. Those providers should document that setup on their own site.
+- MCP servers or gateways that only require Agent Framework's standard MCP
+  client or tool configuration. MCP compatibility is protocol-level
+  interoperability, not an Agent Framework-specific integration, so those
+  projects should document that setup on their own site.
 - Official Microsoft-owned integrations.
 - Unpublished, planned, proposed, or otherwise unavailable projects.
 - Projects that direct support or issue reports to a Microsoft repository,

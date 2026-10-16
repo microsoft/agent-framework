@@ -173,7 +173,8 @@ class DeclarativeWorkflowBuilder:
         self._checkpoint_storage = checkpoint_storage
         self._pending_gotos: list[tuple[Any, str]] = []  # (goto_executor, target_id)
         self._validate = validate
-        self._seen_explicit_ids: set[str] = set()  # Track explicit IDs for duplicate detection
+        self._seen_explicit_ids: set[str] = set()
+        self._generated_ids: set[str] = set()
         self._http_request_handler = http_request_handler
         self._mcp_tool_handler = mcp_tool_handler
         self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else DeclarativeEnvConfig()
@@ -200,6 +201,9 @@ class DeclarativeWorkflowBuilder:
         # Validate workflow definition before building
         if self._validate:
             self._validate_workflow(actions)
+
+        # Reserve nested and forward-declared executor IDs before naming internal nodes.
+        self._collect_explicit_ids(actions)
 
         # Create a stable entry node as the start executor, then wire it to the first action.
         # This avoids needing a placeholder since the entry executor isn't known until after
@@ -237,6 +241,39 @@ class DeclarativeWorkflowBuilder:
                 executor.set_declarative_env_config(self._env_config)
 
         return builder.build()
+
+    def _collect_explicit_ids(self, actions: list[dict[str, Any]] | None) -> None:
+        """Reserve authored executor IDs, excluding virtual structures and skipped actions."""
+        if not actions:
+            return
+        for action_def in actions:
+            kind = action_def.get("kind", "")
+            creates_executor = (
+                kind in ALL_ACTION_EXECUTORS
+                or kind in ("BreakLoop", "ContinueLoop")
+                or (kind == "GotoAction" and bool(action_def.get("target") or action_def.get("actionId")))
+            )
+            if creates_executor and (explicit_id := action_def.get("id")):
+                self._seen_explicit_ids.add(explicit_id)
+            if kind == "If":
+                self._collect_explicit_ids(action_def.get("then", action_def.get("actions", [])))
+                self._collect_explicit_ids(action_def.get("else", []))
+            elif kind == "ConditionGroup":
+                for branch in action_def.get("conditions", []):
+                    self._collect_explicit_ids(branch.get("actions", []))
+                self._collect_explicit_ids(action_def.get("elseActions", []))
+            elif kind == "Foreach":
+                self._collect_explicit_ids(action_def.get("actions", []))
+
+    def _allocate_generated_id(self, preferred_id: str) -> str:
+        """Retain the existing ID unless an authored or generated ID already uses it."""
+        candidate = preferred_id
+        suffix = 2
+        while candidate in self._seen_explicit_ids or candidate in self._generated_ids or candidate in self._executors:
+            candidate = f"{preferred_id}_{suffix}"
+            suffix += 1
+        self._generated_ids.add(candidate)
+        return candidate
 
     def _validate_workflow(self, actions: list[dict[str, Any]]) -> None:
         """Validate the workflow definition before building.
@@ -489,7 +526,8 @@ class DeclarativeWorkflowBuilder:
             action_id = explicit_id
         else:
             parent_id = (parent_context or {}).get("parent_id")
-            action_id = f"{parent_id}_{kind}_{self._action_index}" if parent_id else f"{kind}_{self._action_index}"
+            preferred_id = f"{parent_id}_{kind}_{self._action_index}" if parent_id else f"{kind}_{self._action_index}"
+            action_id = self._allocate_generated_id(preferred_id)
         self._action_index += 1
 
         # Pass agents/tools to specialized executors
@@ -574,7 +612,7 @@ class DeclarativeWorkflowBuilder:
         evaluator = IfConditionEvaluatorExecutor(
             action_def,
             condition_expr,
-            id=f"{action_id}_eval",
+            id=self._allocate_generated_id(f"{action_id}_eval"),
         )
         self._executors[evaluator.id] = evaluator
 
@@ -588,7 +626,9 @@ class DeclarativeWorkflowBuilder:
         else_passthrough = None
         if not else_entry:
             # No else branch - create a passthrough for continuation when condition is false
-            else_passthrough = JoinExecutor({"kind": "ElsePassthrough"}, id=f"{action_id}_else_pass")
+            else_passthrough = JoinExecutor(
+                {"kind": "ElsePassthrough"}, id=self._allocate_generated_id(f"{action_id}_else_pass")
+            )
             self._executors[else_passthrough.id] = else_passthrough
 
         # Wire evaluator to branches with conditions that check ConditionResult.branch_index
@@ -673,7 +713,7 @@ class DeclarativeWorkflowBuilder:
         evaluator: DeclarativeActionExecutor = ConditionGroupEvaluatorExecutor(
             action_def,
             conditions,
-            id=f"{action_id}_eval",
+            id=self._allocate_generated_id(f"{action_id}_eval"),
         )
 
         self._executors[evaluator.id] = evaluator
@@ -708,7 +748,9 @@ class DeclarativeWorkflowBuilder:
         else:
             # No else actions - create a passthrough for the "no match" case
             # This allows the workflow to continue to the next action when no condition matches
-            default_passthrough = JoinExecutor({"kind": "DefaultPassthrough"}, id=f"{action_id}_default")
+            default_passthrough = JoinExecutor(
+                {"kind": "DefaultPassthrough"}, id=self._allocate_generated_id(f"{action_id}_default")
+            )
             self._executors[default_passthrough.id] = default_passthrough
             branch_exits.append(default_passthrough)
 
@@ -781,15 +823,17 @@ class DeclarativeWorkflowBuilder:
         self._action_index += 1
 
         # Create foreach init executor
-        init_executor = ForeachInitExecutor(action_def, id=f"{action_id}_init")
+        init_executor = ForeachInitExecutor(action_def, id=self._allocate_generated_id(f"{action_id}_init"))
         self._executors[init_executor.id] = init_executor
 
         # Create foreach next executor (for advancing to next item)
-        next_executor = ForeachNextExecutor(action_def, init_executor.id, id=f"{action_id}_next")
+        next_executor = ForeachNextExecutor(
+            action_def, init_executor.id, id=self._allocate_generated_id(f"{action_id}_next")
+        )
         self._executors[next_executor.id] = next_executor
 
         # Create join node for loop exit
-        join_executor = JoinExecutor({"kind": "Join"}, id=f"{action_id}_exit")
+        join_executor = JoinExecutor({"kind": "Join"}, id=self._allocate_generated_id(f"{action_id}_exit"))
         self._executors[join_executor.id] = join_executor
 
         # Create loop body
@@ -865,7 +909,7 @@ class DeclarativeWorkflowBuilder:
             return None
 
         # Create a pass-through executor for the goto
-        action_id = action_def.get("id") or f"goto_{target_id}_{self._action_index}"
+        action_id = action_def.get("id") or self._allocate_generated_id(f"goto_{target_id}_{self._action_index}")
         self._action_index += 1
 
         # Use JoinExecutor as a simple pass-through node
@@ -892,7 +936,7 @@ class DeclarativeWorkflowBuilder:
 
         if parent_context and "loop_next_executor" in parent_context:
             loop_next = parent_context["loop_next_executor"]
-            action_id = action_def.get("id") or f"Break_{self._action_index}"
+            action_id = action_def.get("id") or self._allocate_generated_id(f"Break_{self._action_index}")
             self._action_index += 1
 
             executor = BreakLoopExecutor(action_def, loop_next.id, id=action_id)
@@ -920,7 +964,7 @@ class DeclarativeWorkflowBuilder:
 
         if parent_context and "loop_next_executor" in parent_context:
             loop_next = parent_context["loop_next_executor"]
-            action_id = action_def.get("id") or f"Continue_{self._action_index}"
+            action_id = action_def.get("id") or self._allocate_generated_id(f"Continue_{self._action_index}")
             self._action_index += 1
 
             executor = ContinueLoopExecutor(action_def, loop_next.id, id=action_id)

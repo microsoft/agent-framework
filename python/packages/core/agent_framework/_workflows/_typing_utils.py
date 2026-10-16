@@ -492,6 +492,21 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     if target_origin is not None and not target_args and isinstance(target_origin, type):
         target_type, target_origin = target_origin, None
 
+    # Case 1b: source is Literal[...] - it only holds its listed values, so it is compatible when every value fits
+    # the target or one of its union members: a Literal member by value (is_instance_of), any other member through
+    # the value's own type.
+    if source_origin is Literal:
+        targets = target_args if target_origin is Union or target_origin is UnionType else (target_type,)
+        return all(
+            any(
+                is_instance_of(value, target)
+                if get_origin(target) is Literal
+                else is_type_compatible(type(value), target)
+                for target in targets
+            )
+            for value in cast(tuple[object, ...], source_args)
+        )
+
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
         # Special case: if source is also a Union, check that each source member

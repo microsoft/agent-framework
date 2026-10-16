@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
+from boto3.session import Session as Boto3Session
 
 from agent_framework_bedrock import BedrockEmbeddingClient, BedrockEmbeddingOptions
 
@@ -140,6 +141,76 @@ async def test_bedrock_embedding_default_region() -> None:
         model="amazon.titan-embed-text-v2:0",
         client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
+    assert client.region == "us-east-1"
+
+
+class _FakeSession:
+    def __init__(self, region_name: str | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.region_name = region_name
+
+    def client(self, service_name: str, *, region_name: str, config: Any) -> _StubBedrockEmbeddingRuntime:
+        self.calls.append({"service_name": service_name, "region_name": region_name})
+        return _StubBedrockEmbeddingRuntime()
+
+
+@pytest.mark.parametrize(
+    ("region", "env_region", "session_region", "expected_region"),
+    [
+        (None, None, "eu-west-1", "eu-west-1"),
+        ("us-west-2", None, "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        (None, None, None, "us-east-1"),
+    ],
+    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+)
+async def test_bedrock_embedding_resolves_region_with_boto3_session(
+    monkeypatch: pytest.MonkeyPatch,
+    region: str | None,
+    env_region: str | None,
+    session_region: str | None,
+    expected_region: str,
+) -> None:
+    """A configured region wins, then the provided session's region, then the default region."""
+    if env_region:
+        monkeypatch.setenv("BEDROCK_REGION", env_region)
+    else:
+        monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name=session_region)
+
+    client = BedrockEmbeddingClient(
+        model="amazon.titan-embed-text-v2:0", region=region, boto3_session=cast(Boto3Session, session)
+    )
+
+    assert session.calls == [{"service_name": "bedrock-runtime", "region_name": expected_region}]
+    assert client.region == expected_region
+
+
+async def test_bedrock_embedding_reports_boto3_default_region(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a region or session, the region boto3 resolves is used and reported."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-central-1")
+
+    client = BedrockEmbeddingClient(model="amazon.titan-embed-text-v2:0")
+
+    assert client.service_url() == "https://bedrock-runtime.eu-central-1.amazonaws.com"
+    assert client.region == "eu-central-1"
+
+
+async def test_bedrock_embedding_ignores_boto3_session_when_runtime_client_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preconfigured runtime client wins, so the unused session should not change the reported region."""
+    monkeypatch.delenv("BEDROCK_REGION", raising=False)
+    session = _FakeSession(region_name="eu-west-1")
+
+    client = BedrockEmbeddingClient(
+        model="amazon.titan-embed-text-v2:0",
+        client=_StubBedrockEmbeddingRuntime(),  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+        boto3_session=cast(Boto3Session, session),
+    )
+
+    assert session.calls == []
     assert client.region == "us-east-1"
 
 

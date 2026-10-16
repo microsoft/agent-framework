@@ -2925,6 +2925,71 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
     assert hasattr(server, "name")
     assert hasattr(server, "version")
 
+    from mcp import Client
+
+    async with Client(server) as mcp_client:  # auto -> 2026-07-28; aka V2
+        tools_result = await mcp_client.list_tools()
+        call_result = await mcp_client.call_tool("TestAgent", {"task": "hello"})
+
+        assert [tool.name for tool in tools_result.tools] == ["TestAgent"]
+        assert call_result.result_type == "complete"
+        assert not call_result.is_error
+        assert mcp_client.protocol_version == "2026-07-28"
+
+    async with Client(server, mode="legacy") as mcp_client:  # 2025-11-25; aka legacy
+        tools_result = await mcp_client.list_tools()
+        call_result = await mcp_client.call_tool("TestAgent", {"task": "hello"})
+
+        assert [tool.name for tool in tools_result.tools] == ["TestAgent"]
+        assert call_result.result_type == "complete"
+        assert not call_result.is_error
+        assert mcp_client.protocol_version == "2025-11-25"
+
+
+async def test_agent_as_mcp_server_registers_and_forwards_logging(client: SupportsChatGetResponse) -> None:
+    from mcp import types
+
+    server = Agent(client=client, name="TestAgent").as_mcp_server()
+    context = MagicMock()
+    context.session.send_log_message = AsyncMock()
+
+    assert "logging/setLevel" in server._request_handlers
+
+    with (
+        patch("agent_framework._agents.logger.setLevel") as set_level,
+        patch("agent_framework._agents.logger.log") as local_log,
+    ):
+        result = await server._request_handlers["logging/setLevel"].handler(
+            context,
+            types.SetLevelRequestParams(level="warning"),
+        )
+
+    assert isinstance(result, types.EmptyResult)
+    set_level.assert_called_once_with(logging.WARNING)
+    local_log.assert_called_once_with(logging.WARNING, "Log level set to warning")
+    context.session.send_log_message.assert_awaited_once_with(
+        level="warning",
+        data="Log level set to warning",
+    )
+
+
+async def test_agent_as_mcp_server_legacy_client_receives_log_messages(client: SupportsChatGetResponse) -> None:
+    from mcp import Client
+
+    received: list[Any] = []
+
+    async def logging_callback(params: Any) -> None:
+        received.append(params)
+
+    server = Agent(client=client, name="TestAgent").as_mcp_server()
+    with patch("agent_framework._agents.logger.setLevel"):
+        async with Client(server, mode="legacy", logging_callback=logging_callback) as mcp_client:
+            await mcp_client.set_logging_level("notice")  # ty: ignore[deprecated]
+            await mcp_client.list_tools()
+
+    assert any(item.level == "notice" and item.data == "Log level set to notice" for item in received)
+    assert any(item.level == "debug" and str(item.data).startswith("Agent tool:") for item in received)
+
 
 async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
     captured_options: list[dict[str, Any]] = []

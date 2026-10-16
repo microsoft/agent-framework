@@ -1003,20 +1003,21 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
-    def telemetry_test_tool(x: int, y: int) -> int:
-        """A function that adds two numbers for telemetry testing."""
-        return x + y
+    def telemetry_test_tool(expression: str) -> str:
+        """A function that echoes an expression for telemetry testing."""
+        return expression
 
     # Mock the histogram
     mock_histogram = Mock()
     telemetry_test_tool._invocation_duration_histogram = mock_histogram
     span_exporter.clear()
+    expression = "(12345 + 67890) / 3"
     # Call invoke
-    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    result = await telemetry_test_tool.invoke(expression=expression, tool_call_id="test_call_id")
 
     # Verify result
     assert isinstance(result, list)
-    assert result[0].text == "3"
+    assert result[0].text == expression
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -1028,8 +1029,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"expression": "(12345 + 67890) / 3"}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == expression  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
@@ -1038,6 +1039,9 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert OtelAttr.TOOL_ARGUMENTS not in attributes
+    assert OtelAttr.TOOL_RESULT not in attributes
+    assert expression not in attributes.values()
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -1167,10 +1171,14 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_tool_invoke_telemetry_with_exception(
-    span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
-):
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test the tool invoke method with telemetry when an exception occurs."""
+    private_error_detail = "founder-secret-token"
 
     @tool(
         name="exception_test_tool",
@@ -1178,7 +1186,7 @@ async def test_tool_invoke_telemetry_with_exception(
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
-        raise ValueError("Test exception for telemetry")
+        raise ValueError(f"Test exception for telemetry: {private_error_detail}")
 
     mock_histogram = Mock()
     exception_test_tool._invocation_duration_histogram = mock_histogram
@@ -1186,26 +1194,43 @@ async def test_tool_invoke_telemetry_with_exception(
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
-    assert "Function failed. Error: Test exception for telemetry" in caplog.text
+    if enable_sensitive_data:
+        assert f"Function failed. Error: Test exception for telemetry: {private_error_detail}" in caplog.text
+    else:
+        assert "Function exception_test_tool failed (ValueError)." in caplog.text
+        assert private_error_detail not in caplog.text
     assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "exception_test_tool" in span.name
+    assert span.attributes is not None
     assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    else:
+        assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
     assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.status.status_code == trace.StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
     # Verify histogram was called with error attributes
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert OtelAttr.TOOL_ARGUMENTS not in attributes
+    assert OtelAttr.TOOL_RESULT not in attributes
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
@@ -1304,6 +1329,29 @@ def test_tool_serialization():
     assert restored_tool_2.description == "A test tool for serialization"
     assert restored_tool_2.parameters() == serialize_test_tool.parameters()
     assert restored_tool_2(10, 4) == 6
+
+
+@pytest.mark.parametrize("with_func", [True, False])
+def test_tool_serialization_with_json_schema_input_model(with_func: bool):
+    """Test that a tool declared with a JSON schema keeps its parameters through serialization."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
+
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    func = get_weather if with_func else None
+    weather_tool = FunctionTool(name="get_weather", description="Get the weather", func=func, input_model=schema)
+
+    tool_dict = weather_tool.to_dict()
+    assert tool_dict["input_model"] == schema
+
+    restored_tool = FunctionTool.from_dict(tool_dict, dependencies={"function_tool": {"func": func}})
+    assert restored_tool.parameters() == schema
+    assert restored_tool.func is func
 
 
 # region _parse_inputs tests

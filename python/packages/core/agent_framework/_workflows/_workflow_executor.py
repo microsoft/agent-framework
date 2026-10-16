@@ -567,6 +567,7 @@ class WorkflowExecutor(Executor):
     @override
     async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
         """Propagate cancellation into the wrapped workflow."""
+        pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
         fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx, preserve_empty=True)
         result = await self.workflow.cancel_pending_requests(
             [request_id],
@@ -574,6 +575,7 @@ class WorkflowExecutor(Executor):
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
         )
+        self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)
 
     @override
@@ -624,6 +626,18 @@ class WorkflowExecutor(Executor):
                 for event in request_info_events
             )
         )
+
+    @staticmethod
+    def _remove_reemitted_pending_requests(
+        result: WorkflowRunResult,
+        pending_requests: Mapping[str, WorkflowEvent[Any]],
+    ) -> None:
+        """Remove restored request event instances that the parent already received."""
+        result[:] = [
+            event
+            for event in result
+            if event.type != "request_info" or event is not pending_requests.get(event.request_id)
+        ]
 
     async def _process_workflow_result(
         self,
@@ -742,4 +756,5 @@ class WorkflowExecutor(Executor):
             responses={request_id: response},
             tools=ctx.get_runtime_tools(),
         )
+        self._remove_reemitted_pending_requests(result, pending_requests)
         await self._process_workflow_result(result, ctx)
