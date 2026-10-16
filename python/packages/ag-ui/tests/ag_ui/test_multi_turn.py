@@ -35,7 +35,7 @@ def _build_app_with_agent(updates: list[AgentResponseUpdate], **kwargs: Any) -> 
     stub = StubAgent(updates=updates)
     agent = AgentFrameworkAgent(agent=stub, **kwargs)
     app = FastAPI()
-    add_agent_framework_fastapi_endpoint(app, agent)
+    add_agent_framework_fastapi_endpoint(app, agent, single_user=True)
     return app
 
 

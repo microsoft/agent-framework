@@ -538,6 +538,9 @@ class FlowState:
     waiting_for_approval: bool = False
     current_state: dict[str, Any] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     accumulated_text: str = ""
+    # Number of text deltas emitted for the currently open message. Used to tell a
+    # genuine repeated token apart from a full-message replay chunk (#9336).
+    text_delta_count: int = 0
     pending_tool_calls: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     tool_calls_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
@@ -642,10 +645,18 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if not flow.message_id:
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         _open_text_segment(flow, flow.message_id)
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
-    elif flow.accumulated_text and content.text == flow.accumulated_text:
+    elif flow.accumulated_text and content.text == flow.accumulated_text and (
+        flow.text_delta_count > 1
+    ):
         # Guard against full-message replay chunks that can appear after streaming deltas.
+        # A duplicate equal to the whole accumulated text is only a safe replay signal when
+        # the text already streamed in more than one chunk. With a single prior chunk the
+        # duplicate is indistinguishable from a genuine repeated token, annotated or not,
+        # so the one-chunk policy stays the same as the unannotated path: keep the text
+        # (issue #9336) and let the annotation emission reconcile occurrences.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         if not content.annotations:
             return []
@@ -661,6 +672,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     ):
         flow.message_id = generate_event_id()
         flow.accumulated_text = ""
+        flow.text_delta_count = 0
         events.append(TextMessageEndEvent(message_id=current_message_id))
         events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
 
@@ -675,6 +687,7 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
     if content.text and not duplicate_text:
         events.append(TextMessageContentEvent(message_id=flow.message_id, delta=content.text))
         flow.accumulated_text += content.text
+        flow.text_delta_count += 1
     segment["text"] = flow.accumulated_text
     if content.annotations:
         annotations = cast(
@@ -922,6 +935,7 @@ def _emit_tool_result_common(
         events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None
     flow.accumulated_text = ""
+    flow.text_delta_count = 0
 
     return events
 

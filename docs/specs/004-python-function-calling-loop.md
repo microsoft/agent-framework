@@ -501,6 +501,10 @@ that manually replay messages own the equivalent rule: do not resend an approval
   observable warning/log. A nested `call_id` is never accepted as an occurrence-identity alias.
 - Session-backed pending snapshots are trusted host state and require tenant-scoped, authorized storage. Consume-on-bind
   does not claim durable exactly-once behavior across crashes or concurrent workers.
+- HTTP adapters that retain approval authority across requests must require an authenticated authorization scope or an
+  explicit single-user declaration. Client-owned conversation or thread identifiers never establish approval
+  ownership. A configured scope resolver that fails or returns an invalid value must fail before accessing pending
+  approval state and must not fall back to unscoped operation.
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.

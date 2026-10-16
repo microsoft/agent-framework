@@ -656,16 +656,32 @@ def test_emit_text_continues_existing_message():
 
 
 def test_emit_text_skips_duplicate_full_message_delta():
-    """Test _emit_text skips replayed full-message chunks on an open message."""
+    """Test _emit_text skips a replay of the full text after multi-chunk streaming."""
     flow = FlowState()
-    flow.message_id = "existing-id"
-    flow.accumulated_text = "Case complete."
+    _emit_text(Content.from_text("Case"), flow)
+    _emit_text(Content.from_text(" complete."), flow)
     content = Content.from_text("Case complete.")
 
     events = _emit_text(content, flow)
 
     assert events == []
     assert flow.accumulated_text == "Case complete."
+
+
+def test_emit_text_keeps_repeated_single_chunk_delta():
+    """A repeated token equal to the whole short text streams as a real delta (#9336)."""
+    flow = FlowState()
+    first = _emit_text(Content.from_text("2"), flow)
+    second = _emit_text(Content.from_text("2"), flow)
+    assert len(first) == 2  # message start + first delta
+    assert len(second) == 1
+    assert flow.accumulated_text == "22"
+
+    fresh_flow = FlowState()
+    _emit_text(Content.from_text("ha"), fresh_flow)
+    repeated = _emit_text(Content.from_text("ha"), fresh_flow)
+    assert len(repeated) == 1
+    assert fresh_flow.accumulated_text == "haha"
 
 
 def test_emit_text_skips_when_waiting_for_approval():
@@ -777,7 +793,12 @@ def test_emit_text_annotation_only_update_starts_a_message_without_an_empty_delt
 
 
 def test_emit_text_replay_emits_only_new_annotations() -> None:
-    """Suppress repeated text and citations without dropping final-only citations."""
+    """A one-chunk duplicate keeps its text and emits only new citation occurrences.
+
+    After a single streamed chunk a duplicate equal to the whole text is treated as a
+    genuine delta, matching the unannotated policy from issue #9336. The annotation
+    emission still reconciles occurrences, so a re-sent citation is not duplicated.
+    """
     flow = FlowState()
     first = Annotation(type="citation", url="https://example.com/first")
     second = Annotation(type="citation", url="https://example.com/second")
@@ -786,11 +807,15 @@ def test_emit_text_replay_emits_only_new_annotations() -> None:
     events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
     replay_events = _emit_text(Content.from_text("Answer", annotations=[first, second]), flow)
 
-    assert len(events) == 1
-    assert isinstance(events[0], CustomEvent)
-    assert events[0].value == {"messageId": flow.message_id, "annotations": [second]}
-    assert replay_events == []
-    assert flow.accumulated_text == "Answer"
+    text_events = [event for event in events if isinstance(event, TextMessageContentEvent)]
+    citation_events = [event for event in events if isinstance(event, CustomEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    assert [event.value["annotations"] for event in citation_events] == [[first, second]]
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[first, second]]
+    assert flow.accumulated_text == "AnswerAnswerAnswer"
 
 
 def test_emit_text_preserves_identical_annotation_occurrences() -> None:
@@ -805,7 +830,11 @@ def test_emit_text_preserves_identical_annotation_occurrences() -> None:
 
     assert len(first_events) == len(second_events) == 1
     assert all(isinstance(event, CustomEvent) for event in [*first_events, *second_events])
-    assert replay_events == []
+    # One prior text chunk: the duplicate streams as genuine text with its annotations.
+    replay_text_events = [event for event in replay_events if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in replay_text_events] == ["Answer"]
+    replay_citation_events = [event for event in replay_events if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in replay_citation_events] == [[annotation, annotation]]
 
 
 @pytest.mark.parametrize("suppression", ["skip_text", "waiting_for_approval"])
@@ -3964,3 +3993,75 @@ async def test_request_state_cannot_assign_service_session_id():
         ]
 
         assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"
+
+
+def test_emit_text_keeps_repeated_annotated_single_chunk_delta() -> None:
+    """A genuine repeated token with NEW annotations is kept (#9336 review round).
+
+    An equal delta after one chunk is only a replay when its annotations re-send the
+    recorded ones. A second identical token carrying a fresh citation streams normally.
+    """
+    flow = FlowState()
+    first = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/a")]), flow
+    )
+    second = _emit_text(
+        Content.from_text("ha", annotations=[Annotation(type="citation", url="https://example.com/b")]), flow
+    )
+
+    assert flow.accumulated_text == "haha"
+    text_events = [event for event in [*first, *second] if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha", "ha"]
+    citation_events = [event for event in [*first, *second] if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 2
+
+
+def test_emit_text_suppresses_cumulative_annotated_replay_after_one_chunk() -> None:
+    """A one-chunk cumulative duplicate keeps its text and emits only the new citation.
+
+    Suppression of an equal duplicate needs more than one prior chunk; with one chunk
+    the policy matches the unannotated path and the text streams as a genuine delta.
+    """
+    flow = FlowState()
+    first_citation = Annotation(type="citation", url="https://example.com/first")
+    _emit_text(Content.from_text("Answer", annotations=[first_citation]), flow)
+
+    replay = _emit_text(
+        Content.from_text(
+            "Answer",
+            annotations=[
+                first_citation,
+                Annotation(type="citation", url="https://example.com/second"),
+            ],
+        ),
+        flow,
+    )
+
+    assert flow.accumulated_text == "AnswerAnswer"
+    text_events = [event for event in replay if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["Answer"]
+    citation_events = [event for event in replay if isinstance(event, CustomEvent)]
+    assert len(citation_events) == 1
+    assert [a["url"] for a in citation_events[0].value["annotations"]] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
+
+    # A later multi-chunk message still suppresses full-text replays.
+    multi_flow = FlowState()
+    _emit_text(Content.from_text("Pre "), multi_flow)
+    _emit_text(Content.from_text("fix"), multi_flow)
+    replay_events = _emit_text(Content.from_text("Pre fix"), multi_flow)
+    assert replay_events == []
+    assert multi_flow.accumulated_text == "Pre fix"
+
+    # The exact case from the review: two genuine identical annotated tokens.
+    same_flow = FlowState()
+    same = Annotation(type="citation", url="https://example.com/same")
+    _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    repeat = _emit_text(Content.from_text("ha", annotations=[same]), same_flow)
+    assert same_flow.accumulated_text == "haha"
+    text_events = [event for event in repeat if isinstance(event, TextMessageContentEvent)]
+    assert [event.delta for event in text_events] == ["ha"]
+    repeat_citations = [event for event in repeat if isinstance(event, CustomEvent)]
+    assert [event.value["annotations"] for event in repeat_citations] == [[same]]
