@@ -53,6 +53,7 @@ from agent_framework import (
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -142,9 +143,42 @@ _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 _PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
 _CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
+_PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
+
+
+class _UnexpectedResponseFailure(Exception):
+    """Wrap an unexpected response failure so public serialization can redact it."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(_PUBLIC_STREAM_FAILURE_MESSAGE)
+        self.error = error
+
+
+def _log_response_failure(phase: str, response_id: str, exc: BaseException) -> None:
+    """Log a correlated hosted response failure under the sensitive-data policy."""
+    diagnostic_exception = exc.error if isinstance(exc, _UnexpectedResponseFailure) else exc
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+            exc_info=(
+                type(diagnostic_exception),
+                diagnostic_exception,
+                diagnostic_exception.__traceback__,
+            ),
+        )
+    else:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+        )
 
 
 @dataclass(frozen=True)
@@ -323,6 +357,17 @@ def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> l
 
 
 _T = TypeVar("_T")
+
+
+async def _redact_unexpected_stream(stream: AsyncIterable[_T]) -> AsyncGenerator[_T]:
+    """Forward a stream while marking unexpected iteration failures for redaction."""
+    try:
+        async for item in stream:
+            yield item
+    except _UnexpectedResponseFailure:
+        raise
+    except Exception as exc:
+        raise _UnexpectedResponseFailure(exc) from None
 
 
 async def _await_before_signal(
@@ -1110,8 +1155,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 await prepare_response_options(hosted_request, self._prepare_options)
                 validate_request_options(hosted_request.options)
         except Exception as exc:
-            logger.error("Failed to prepare hosted Responses request", exc_info=(type(exc), exc, exc.__traceback__))
-            for event in self._emit_failure(response_event_stream, None, exc):
+            for event in self._emit_failure(
+                context.response_id,
+                "request preparation",
+                response_event_stream,
+                None,
+                exc,
+            ):
                 yield event
             return
 
@@ -1165,8 +1215,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except AgentFrameworkException as ex:
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
-                logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-                for event in self._emit_failure(response_event_stream, None, ex):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "agent initialization",
+                    response_event_stream,
+                    None,
+                    _UnexpectedResponseFailure(ex),
+                ):
                     yield event
                 return
 
@@ -1185,14 +1240,26 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
                     "consent link."
                 )
-                logger.error("%s", validation_error)
-                for event in self._emit_failure(response_event_stream, None, validation_error):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    validation_error,
+                    public_message=str(validation_error),
+                ):
                     yield event
                 return
 
             if request.get("store") is False:
+                validation_error = ValueError("OAuth consent continuation requires store=true.")
                 for event in self._emit_failure(
-                    response_event_stream, None, ValueError("OAuth consent continuation requires store=true.")
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    validation_error,
+                    public_message=str(validation_error),
                 ):
                     yield event
                 return
@@ -1227,11 +1294,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     if context.conversation_id is not None:
                         await session_storage.set(context.conversation_id, session)
                 except Exception as save_error:
-                    logger.error(
-                        "Failed to persist the Agent Framework session for OAuth consent",
-                        exc_info=(type(save_error), save_error, save_error.__traceback__),
-                    )
-                    for event in self._emit_failure(response_event_stream, None, save_error):
+                    for event in self._emit_failure(
+                        context.response_id,
+                        "OAuth consent session persistence",
+                        response_event_stream,
+                        None,
+                        _UnexpectedResponseFailure(save_error),
+                    ):
                         yield event
                     return
 
@@ -1314,11 +1383,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
-            logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
                 yield event
 
-            for event in self._emit_failure(response_event_stream, tracker, ex):
+            for event in self._emit_failure(
+                context.response_id,
+                "response production",
+                response_event_stream,
+                tracker,
+                ex,
+            ):
                 yield event
 
     async def _load_request_messages(
@@ -1548,7 +1622,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 with suppress(BaseException):
                     await request_messages_task
             if isinstance(ex, Exception):
-                logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+                _log_response_failure("state storage preparation", context.response_id, ex)
             raise
 
         request_failure: Exception | None = None
@@ -1650,11 +1724,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     emitted_output_count=output_count,
                 )
                 async with aclosing(responses):
-                    async for response, output_count in responses:
+                    async for response, output_count in _redact_unexpected_stream(responses):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            async for event in _redact_unexpected_stream(
+                                tracker.handle_update(update, approval_storage=approval_storage)
+                            ):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
@@ -1665,20 +1741,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if self._resilient_background:
                             yield response_event_stream.checkpoint()
             else:
-                inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+                try:
+                    inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+                except Exception as ex:
+                    raise _UnexpectedResponseFailure(ex) from None
                 updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
                 async with aclosing(updates):
-                    async for update in updates:
+                    async for update in _redact_unexpected_stream(updates):
                         if not stored and any(
                             content.type in ("function_approval_request", "oauth_consent_request")
                             or content.user_input_request
                             for content in update.contents
                         ):
                             raise ValueError("Approval and user-input continuation requires store=true.")
-                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        async for event in _redact_unexpected_stream(
+                            tracker.handle_update(update, approval_storage=approval_storage)
+                        ):
                             yield event
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
-                final = await inner_stream.get_final_response()
+                try:
+                    final = await inner_stream.get_final_response()
+                except Exception as ex:
+                    raise _UnexpectedResponseFailure(ex) from None
                 if final.continuation_token is not None and final.finish_reason is None:
                     raise RuntimeError(
                         "The inner agent returned an unfinished provider response; "
@@ -1689,10 +1773,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise
         except Exception as ex:
             request_failure = ex
-            logger.error(
-                "Failed to produce response for agent",
-                exc_info=(type(ex), ex, ex.__traceback__),
-            )
+            _log_response_failure("agent execution", context.response_id, ex)
         finally:
             if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
@@ -1709,7 +1790,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "The agent's chat client stored this turn server-side despite store=False for the inner model. "
                     "Configure the client to honor store=False, or use history_source='service' with store=true."
                 )
-                logger.error("%s", misconfigured)
+                _log_response_failure("stored output validation", context.response_id, misconfigured)
                 if request_failure is None and not request_interrupted:
                     request_failure = misconfigured
             if (
@@ -1768,13 +1849,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     message = "Failed to persist the Agent Framework session after an agent failure"
                 else:
                     message = "Failed to persist the Agent Framework session after a successful request"
-                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+                _log_response_failure(message, context.response_id, save_error)
 
         if request_failure is not None and save_failure is not None:
-            raise RuntimeError(
+            combined_failure = RuntimeError(
                 f"Agent request failed: {str(request_failure) or type(request_failure).__name__}; "
                 f"session persistence also failed: {str(save_failure) or type(save_failure).__name__}"
             )
+            if isinstance(request_failure, _UnexpectedResponseFailure):
+                raise _UnexpectedResponseFailure(combined_failure) from None
+            raise combined_failure
         elif request_failure is not None:
             raise request_failure
         elif save_failure is not None:
@@ -2062,11 +2146,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         logger.debug(
                             "Serving recovery request with no prior workflow checkpoint; replaying original input"
                         )
-                        run_stream = agent.run(
-                            input_messages,
-                            stream=True,
-                            checkpoint_storage=checkpoint_storage,
-                        )
+                        try:
+                            run_stream = agent.run(
+                                input_messages,
+                                stream=True,
+                                checkpoint_storage=checkpoint_storage,
+                            )
+                        except Exception as exc:
+                            raise _UnexpectedResponseFailure(exc) from None
             else:
                 # Determine the latest checkpoint (if any) so we can resume the
                 # workflow's prior state for this turn. The directory is keyed by
@@ -2107,17 +2194,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # ``run(input_messages, ...)`` call may contain ``function_call_output``
                     # items (carried as FunctionResult/FunctionApprovalResponse content)
                     # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                    restore_iter = _SignalledIterator(
-                        agent.run(
+                    try:
+                        restore_stream = agent.run(
                             stream=True,
                             checkpoint_id=latest_checkpoint.checkpoint_id,
                             checkpoint_storage=restore_checkpoint_storage,
-                        ),
+                        )
+                    except Exception as exc:
+                        raise _UnexpectedResponseFailure(exc) from None
+                    restore_iter = _SignalledIterator(
+                        restore_stream,
                         context.shutdown,
                         cancellation_signal,
                     )
                     async with aclosing(restore_iter):
-                        async for _ in restore_iter:
+                        async for _ in _redact_unexpected_stream(restore_iter):
                             pass
                     if restore_iter.signalled:
                         if context.shutdown.is_set():
@@ -2130,11 +2221,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if cancellation_signal.is_set():
                     return
 
-                run_stream = agent.run(
-                    input_messages,
-                    stream=True,
-                    checkpoint_storage=checkpoint_storage,
-                )
+                try:
+                    run_stream = agent.run(
+                        input_messages,
+                        stream=True,
+                        checkpoint_storage=checkpoint_storage,
+                    )
+                except Exception as exc:
+                    raise _UnexpectedResponseFailure(exc) from None
 
             workflow_name = agent.workflow.name
 
@@ -2167,7 +2261,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 stamp=latest_checkpoint_id if self._resilient_background else None,
             )
             async with aclosing(main_iter):
-                async for update in main_iter:
+                async for update in _redact_unexpected_stream(main_iter):
                     if self._resilient_background:
                         # Every update before this one belongs to the stamped checkpoint (or an
                         # earlier one), so the output so far can be snapshotted against it. If the
@@ -2176,7 +2270,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for event in snapshot_response(main_iter.stamp):
                             yield event
 
-                    async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                    async for event in _redact_unexpected_stream(
+                        tracker.handle_update(update, approval_storage=approval_storage)
+                    ):
                         yield event
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
@@ -2187,8 +2283,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # recovery after this point does not replay the last superstep.
                 for event in snapshot_response(await latest_checkpoint_id()):
                     yield event
-        except Exception:
-            logger.exception("Failed to produce response for workflow agent")
+        except Exception as exc:
+            _log_response_failure("workflow execution", context.response_id, exc)
             raise
 
     async def _resume_workflow_from_checkpoint(
@@ -2223,26 +2319,36 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     @staticmethod
     def _emit_failure(
+        response_id: str,
+        phase: str,
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker | None,
         ex: BaseException,
+        *,
+        public_message: str | None = None,
     ) -> Generator[ResponseStreamEvent]:
-        """Yield a terminal ``response.failed`` event for ``ex``.
+        """Log ``ex`` and yield a terminal ``response.failed`` event.
 
         Drains any in-progress streaming output item first so the resulting
-        SSE stream stays well-formed, then emits ``response.failed`` carrying
-        the exception's message (falling back to the exception type name when
-        ``str(ex)`` is empty). Any error raised while draining the tracker is
-        logged and otherwise ignored so that the original failure is always
-        what the client sees.
+        SSE stream stays well-formed, then emits ``response.failed`` carrying a
+        stable public message unless the caller explicitly supplies a safe
+        validation message. Any error raised while draining the tracker is
+        logged and otherwise ignored so that the original failure remains the
+        terminal failure.
         """
+        _log_response_failure(phase, response_id, ex)
         if tracker is not None:
             try:
                 yield from tracker.close()
-            except Exception:
-                logger.exception("Error while closing streaming tracker after failure")
+            except Exception as close_error:
+                _log_response_failure("failed tracker cleanup", response_id, close_error)
             tracker.discard_pending_container_file_citations()
-        message = str(ex) or type(ex).__name__
+        if public_message is not None:
+            message = public_message
+        elif isinstance(ex, _UnexpectedResponseFailure):
+            message = _PUBLIC_STREAM_FAILURE_MESSAGE
+        else:
+            message = str(ex) or type(ex).__name__
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 

@@ -60,6 +60,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
@@ -2631,7 +2632,7 @@ class TestAgentSessionPersistence:
                     context.shutdown.set()
                     if stage == "submit":
                         events = await asyncio.wait_for(task, timeout=3)
-                        assert "cannot safely retry" in _failure_message(events)
+                        assert _failure_message(events) == "An internal server error occurred."
                         exit_for_recovery.assert_not_awaited()
                     else:
                         with pytest.raises(ResponseExitForRecovery):
@@ -2971,7 +2972,7 @@ class TestAgentSessionPersistence:
             failed = await collect("failed-dispatch")
             blocked = await collect("retry-after-failure")
 
-        assert "provider timed out" in _failure_message(failed)
+        assert _failure_message(failed) == "An internal server error occurred."
         assert "in-flight turn" in _failure_message(blocked)
         agent.run.assert_called_once()
         head = await store.get(conversation_id)
@@ -3191,7 +3192,10 @@ class TestAgentSessionPersistence:
             response = await _post(server, input_text="first")
 
         assert response.json()["status"] == "failed"
-        assert "stored this turn server-side" in caplog.text
+        assert "stored this turn server-side" not in caplog.text
+        assert "phase=stored output validation" in caplog.text
+        assert f"response_id={response.json()['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
         assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
@@ -3331,9 +3335,10 @@ class TestAgentSessionPersistence:
         assert event_types.count("response.failed") == 1
         assert "response.completed" not in event_types
         error = failed_events[0]["data"]["response"]["error"]
-        assert "agent failed" in error["message"]
-        assert "session storage is full" in error["message"]
-        assert "Failed to produce response for agent" in caplog.text
+        assert error["message"] == "An internal server error occurred."
+        assert "agent failed" not in str(failed_events)
+        assert "session storage is full" not in str(failed_events)
+        assert "phase=agent execution" in caplog.text
         assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
 
     async def test_cancellation_is_preserved_when_best_effort_save_fails(
@@ -3936,7 +3941,7 @@ class TestNonStreaming:
             body = resp.json()
             assert body["status"] == "failed"
             error = body.get("error") or {}
-        assert error.get("message") == "A computer result requires a call_id and screenshot."
+        assert error.get("message") == "An internal server error occurred."
 
     async def test_computer_items_with_provider_ids_use_valid_host_ids(self) -> None:
         call_id = "provider-computer-call"
@@ -4502,7 +4507,7 @@ class TestStreaming:
         assert deltas == ["Hello world"]
         assert done["data"]["text"] == "Hello world"
         assert events[-1]["event"] == "response.failed"
-        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+        assert events[-1]["data"]["response"]["error"]["message"] == "An internal server error occurred."
 
     async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
         resp = await _post(
@@ -7808,7 +7813,11 @@ class TestOAuthConsentSurfacing:
 
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
-        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        assert "must include an allowed safe HTTPS consent link" in body["error"]["message"]
+        assert "must include an allowed safe HTTPS consent link" not in caplog.text
+        assert "phase=OAuth consent validation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=ValueError" in caplog.text
         agent.run.assert_not_called()
 
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
@@ -8247,13 +8256,12 @@ class TestIncompleteFinishReasonSurfacing:
 
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
-    terminal ``response.failed`` events carrying the exception message,
-    rather than propagating as 5xx HTTP errors or being replaced by the
-    orchestrator's generic ``"An internal server error occurred."``
-    fallback.
+    terminal ``response.failed`` events carrying a stable public message,
+    rather than propagating as 5xx HTTP errors or exposing exception details.
     """
 
     async def test_non_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "non-stream-secret at C:\\sensitive\\non_stream.py"
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
@@ -8261,7 +8269,7 @@ class TestResponseFailedSurfacing:
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("non-stream kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8274,12 +8282,15 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "non-stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "stream-secret at C:\\sensitive\\stream.py"
+
         async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
-            raise RuntimeError("stream kaboom")
+            raise RuntimeError(private_error_detail)
 
         agent = _RawAgentMock()
         agent.id = "test-agent"
@@ -8318,7 +8329,9 @@ class TestResponseFailedSurfacing:
         assert len(failed) == 1
         response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
         error: dict[str, Any] = response_payload.get("error") or {}
-        assert error.get("message") == "stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert response_payload["id"] == events[0]["data"]["response"]["id"]
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
         """If a streaming output item was open when the failure happens, the
@@ -8411,11 +8424,12 @@ class TestResponseFailedSurfacing:
         agent path.
         """
         workflow_agent = _build_text_workflow_agent("ignored")
+        private_error_detail = "workflow-secret at C:\\sensitive\\workflow.py"
 
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("workflow kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8430,7 +8444,52 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "workflow kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "foundry-diagnostic-secret at C:\\sensitive\\foundry.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("unused")])])
+        )
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates(private_error_detail),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            resp = await _post(server, input_text="hello", stream=True)
+
+        body = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "phase=response production" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_foundry_hosting._responses"
+            and "phase=response production" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data
 
 
 # endregion
