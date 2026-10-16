@@ -936,6 +936,32 @@ class TestStateTypeRegistry:
         assert isinstance(restored.state["value"], PydanticDictState)
         assert restored.state["value"].data == {"type": "message", "note": "plain data"}
 
+    def test_registered_pydantic_state_restores_only_failed_fields(self) -> None:
+        """A mixed model restores the broken nested field and keeps valid tag-shaped data raw."""
+        from pydantic import BaseModel, ConfigDict
+
+        class PydanticMixedState(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            message: Message
+            data: dict[str, Any]
+
+        register_state_type(PydanticMixedState, type_id="pydantic_mixed_state_test")
+        session = AgentSession(session_id="mixed-restore")
+        # `message` fails raw validation (its payload is the tagged dict), while
+        # `data` validates raw; the retry must restore only `message`.
+        session.state["value"] = PydanticMixedState(
+            message=Message(role="user", contents=["persisted"]),
+            data={"type": "message", "note": "plain data"},
+        )
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], PydanticMixedState)
+        assert isinstance(restored.state["value"].message, Message)
+        assert restored.state["value"].message.text == "persisted"
+        assert restored.state["value"].data == {"type": "message", "note": "plain data"}
+
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
             def to_dict(self) -> dict[str, Any]:
