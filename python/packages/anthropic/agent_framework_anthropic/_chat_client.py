@@ -1733,40 +1733,16 @@ class RawAnthropicClient(
                     cit["snippet"] = citation.cited_text
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
-                    cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
-                        TextSpanRegion(
-                            type="text_span",
-                            start_index=citation.start_char_index,
-                            end_index=citation.end_char_index,
-                        )
-                    )
                 case "page_location":
                     cit["title"] = citation.document_title
                     cit["snippet"] = citation.cited_text
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
-                    cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
-                        TextSpanRegion(
-                            type="text_span",
-                            start_index=citation.start_page_number,
-                            end_index=citation.end_page_number,
-                        )
-                    )
                 case "content_block_location":
                     cit["title"] = citation.document_title
                     cit["snippet"] = citation.cited_text
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
-                    cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
-                        TextSpanRegion(
-                            type="text_span",
-                            start_index=citation.start_block_index,
-                            end_index=citation.end_block_index,
-                        )
-                    )
                 case "web_search_result_location":
                     cit["title"] = citation.title
                     cit["snippet"] = citation.cited_text
@@ -1775,14 +1751,6 @@ class RawAnthropicClient(
                     cit["title"] = citation.title
                     cit["snippet"] = citation.cited_text
                     cit["url"] = citation.source
-                    cit.setdefault("annotated_regions", [])
-                    cit["annotated_regions"].append(  # type: ignore[attr-defined]
-                        TextSpanRegion(
-                            type="text_span",
-                            start_index=citation.start_block_index,
-                            end_index=citation.end_block_index,
-                        )
-                    )
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")
             annotations.append(cit)

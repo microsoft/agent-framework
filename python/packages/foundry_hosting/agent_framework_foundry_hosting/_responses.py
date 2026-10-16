@@ -50,6 +50,9 @@ from agent_framework import (
     add_usage_details,
     get_namespaced_value,
 )
+from agent_framework import (
+    Annotation as FrameworkAnnotation,
+)
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
@@ -63,11 +66,16 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    Annotation as ResponsesAnnotation,
+)
+from azure.ai.agentserver.responses.models import (
     ComputerAction,
     ComputerCallSafetyCheckParam,
     ComputerScreenshotImage,
     ContainerFileCitationBody,
     CreateResponse,
+    FileCitationBody,
+    FilePath,
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
@@ -87,6 +95,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseUsage,
     ResponseUsageInputTokensDetails,
     ResponseUsageOutputTokensDetails,
+    UrlCitationBody,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -225,6 +234,92 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
             )
 
     return citations
+
+
+def _annotations_to_output_text(
+    annotations: Sequence[FrameworkAnnotation] | None,
+) -> list[ResponsesAnnotation]:
+    """Convert framework citations into Responses output-text annotations."""
+    if not annotations or isinstance(annotations, (str, bytes)):
+        return []
+
+    output_annotations: list[ResponsesAnnotation] = []
+    for annotation in annotations:
+        if not isinstance(annotation, Mapping):
+            continue
+        annotation_mapping = cast("Mapping[str, Any]", annotation)
+        if annotation_mapping.get("type") != "citation":
+            continue
+
+        raw_properties = annotation_mapping.get("additional_properties")
+        properties: Mapping[str, Any] = (
+            cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
+        )
+        raw_regions = annotation_mapping.get("annotated_regions")
+        regions: list[Mapping[str, Any]] = []
+        if isinstance(raw_regions, Sequence) and not isinstance(raw_regions, (str, bytes)):
+            for raw_region in cast("Sequence[Any]", raw_regions):
+                if not isinstance(raw_region, Mapping):
+                    continue
+                region = cast("Mapping[str, Any]", raw_region)
+                if region.get("type") == "text_span":
+                    regions.append(region)
+        file_id = annotation_mapping.get("file_id")
+        url = annotation_mapping.get("url")
+        title = annotation_mapping.get("title")
+        container_id = properties.get("container_id")
+        index = properties.get("index")
+
+        if isinstance(container_id, str) and container_id and isinstance(file_id, str) and file_id:
+            for region in regions:
+                start_index = region.get("start_index")
+                end_index = region.get("end_index")
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    continue
+                output_annotations.append(
+                    ContainerFileCitationBody(
+                        type="container_file_citation",
+                        container_id=container_id,
+                        file_id=file_id,
+                        filename=url or "",
+                        start_index=start_index,
+                        end_index=end_index,
+                    )
+                )
+        elif isinstance(url, str) and url and not file_id:
+            for region in regions:
+                start_index = region.get("start_index")
+                end_index = region.get("end_index")
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    continue
+                output_annotations.append(
+                    UrlCitationBody(
+                        type="url_citation",
+                        url=url,
+                        title=title or "",
+                        start_index=start_index,
+                        end_index=end_index,
+                    )
+                )
+        elif isinstance(file_id, str) and file_id and isinstance(url, str) and url and isinstance(index, int):
+            output_annotations.append(
+                FileCitationBody(
+                    type="file_citation",
+                    file_id=file_id,
+                    filename=url,
+                    index=index,
+                )
+            )
+        elif isinstance(file_id, str) and file_id and isinstance(index, int):
+            output_annotations.append(
+                FilePath(
+                    type="file_path",
+                    file_id=file_id,
+                    index=index,
+                )
+            )
+
+    return output_annotations
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -2298,7 +2393,8 @@ class _OutputItemTracker:
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
-        self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
+        self._text_annotations: list[ResponsesAnnotation] = []
+        self._message_text_annotations: dict[int, list[ResponsesAnnotation]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
         # can tell a cut-short turn from a successful one. Mirrored into the stream's
@@ -2469,6 +2565,9 @@ class _OutputItemTracker:
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
+            for annotation in _annotations_to_output_text(content.annotations):
+                if annotation not in self._text_annotations:
+                    self._text_annotations.append(annotation)
             if delta and self._text_content is not None:
                 yield self._text_content.emit_delta(delta)
 
@@ -2810,6 +2909,7 @@ class _OutputItemTracker:
             yield self._refusal_content.emit_added()
         else:
             self._text_content = self._message_item.add_text_content()
+            self._text_annotations.clear()
             yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -2919,7 +3019,10 @@ class _OutputItemTracker:
     def _close_message_content(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
-            annotations = self._container_file_annotations_for_text(accumulated)
+            annotations = list(self._text_annotations)
+            for annotation in self._container_file_annotations_for_text(accumulated):
+                if annotation not in annotations:
+                    annotations.append(annotation)
             yield self._text_content.emit_text_done(accumulated)
             for annotation in annotations:
                 yield self._text_content.emit_annotation_added(annotation)
@@ -2931,6 +3034,7 @@ class _OutputItemTracker:
                 self._message_text_annotations[self._text_content.content_index] = annotations
             yield content_done
             self._text_content = None
+            self._text_annotations.clear()
         elif self._active_type == "refusal" and self._refusal_content is not None:
             yield self._refusal_content.emit_refusal_done(accumulated)
             yield self._refusal_content.emit_done()
