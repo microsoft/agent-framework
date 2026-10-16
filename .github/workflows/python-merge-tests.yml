@@ -894,9 +894,11 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
-      - name: Test Redis HASH and JSON vector collections
+      - name: Test Redis integrations
         run: >
-          uv run --no-sync pytest packages/redis/tests/test_vector_store.py
+          uv run --no-sync pytest
+          packages/redis/tests/test_vector_store.py
+          packages/redis/tests/test_context_provider_integration.py
           -m integration --timeout=120 --junitxml=pytest-redis.xml
       - name: Upload test results
         if: always()

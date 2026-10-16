@@ -14,7 +14,13 @@ from agent_framework.exceptions import IntegrationInvalidRequestException
 from redisvl.redis.utils import buffer_to_array
 from redisvl.utils.vectorize import BaseVectorizer
 
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._context_provider import (
+    _SCOPE_FIELDS,
+    _SCOPE_TAG_SEPARATOR,
+    RedisContextProvider,
+    _scope_token,
+    _scope_token_field,
+)
 
 
 @pytest.fixture
@@ -38,15 +44,31 @@ def patch_index(mock_index: AsyncMock) -> Generator[MagicMock]:
 def test_build_filter_from_dict_combines_multiple_tags(
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
-    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    provider = RedisContextProvider(source_id="ctx", user_id="user|1")
     combined = provider._build_filter_from_dict({
-        "application_id": "app-1",
+        "application_id": "App,1",
         "agent_id": None,
-        "user_id": "user-1",
+        "user_id": "user|1",
     })
 
     assert combined is not None
-    assert str(combined) == "(@application_id:{app\\-1} @user_id:{user\\-1})"
+    assert str(combined) == (
+        f"(@{_scope_token_field('application_id')}:{{{_scope_token('application_id', 'App,1')}}} "
+        f"@{_scope_token_field('user_id')}:{{{_scope_token('user_id', 'user|1')}}})"
+    )
+    assert "App,1" not in str(combined)
+    assert "user|1" not in str(combined)
+
+
+def test_scope_tokens_preserve_identity_and_field_domain() -> None:
+    assert _scope_token("user_id", "Alice") != _scope_token("user_id", "alice")
+    assert _scope_token("user_id", "same") != _scope_token("agent_id", "same")
+    assert set(_scope_token("user_id", r"a,b|c\ d{}*")) <= set("0123456789abcdef")
+
+
+def test_scope_token_field_rejects_unknown_names() -> None:
+    with pytest.raises(ValueError, match="Unsupported Redis context scope field"):
+        _scope_token_field("content")
 
 
 def test_schema_dict_includes_vector_configuration(
@@ -74,6 +96,21 @@ def test_schema_dict_includes_vector_configuration(
         "distance_metric": "l2",
         "datatype": "float16",
     }
+
+
+def test_schema_uses_versioned_identity_preserving_scope_tags(
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    fields = {field["name"]: field for field in provider.schema_dict["fields"]}
+
+    for name in _SCOPE_FIELDS:
+        assert name not in fields
+        assert fields[_scope_token_field(name)] == {
+            "name": _scope_token_field(name),
+            "type": "tag",
+            "attrs": {"case_sensitive": True, "separator": _SCOPE_TAG_SEPARATOR},
+        }
 
 
 async def test_ensure_index_short_circuits_after_first_initialization(
@@ -104,6 +141,21 @@ async def test_ensure_index_validates_existing_schema_before_create(
     assert provider._index_initialized is True
 
 
+async def test_ensure_index_rebuilds_and_migrates_when_explicitly_enabled(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    mock_index.exists.return_value = True
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1", overwrite_index=True)
+
+    with patch.object(provider, "_migrate_scope_tokens", AsyncMock()) as migrate:
+        await provider._ensure_index()
+
+    mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
+    migrate.assert_awaited_once()
+    assert provider._index_initialized is True
+
+
 async def test_validate_schema_compatibility_raises_for_significant_mismatch(
     patch_index: MagicMock,
 ) -> None:
@@ -117,7 +169,7 @@ async def test_validate_schema_compatibility_raises_for_significant_mismatch(
     )
     patch_index.from_existing = AsyncMock(return_value=existing_index)
 
-    with pytest.raises(ValueError, match="overwrite_index=True"):
+    with pytest.raises(ValueError, match="coordinated migration"):
         await provider._validate_schema_compatibility()
 
 
@@ -154,8 +206,16 @@ async def test_add_vectorizes_documents_and_applies_defaults(
     with patch.object(provider, "_ensure_index", AsyncMock()):
         await provider._add(
             data=[
-                {"content": "first"},
-                {"content": "second", "conversation_id": "custom-conversation"},
+                {
+                    "content": "first",
+                    "application_id": "caller-app",
+                    "agent_id": "caller-agent",
+                    "user_id": "caller-user",
+                    "thread_id": "caller-thread",
+                    "conversation_id": "caller-conversation",
+                    _scope_token_field("user_id"): "caller-token",
+                },
+                {"content": "second"},
             ],
             session_id="session-1",
         )
@@ -167,9 +227,64 @@ async def test_add_vectorizes_documents_and_applies_defaults(
     assert loaded_docs[0]["user_id"] == "user-1"
     assert loaded_docs[0]["thread_id"] == "session-1"
     assert loaded_docs[0]["conversation_id"] == "session-1"
+    for name, value in {
+        "application_id": "app-1",
+        "agent_id": "agent-1",
+        "user_id": "user-1",
+        "thread_id": "session-1",
+        "conversation_id": "session-1",
+    }.items():
+        assert loaded_docs[0][_scope_token_field(name)] == _scope_token(name, value)
     assert isinstance(loaded_docs[0]["embedding"], bytes)
     assert isinstance(loaded_docs[1]["embedding"], bytes)
     vectorizer.aembed_many.assert_awaited_once_with(["first", "second"], batch_size=2)
+
+
+async def test_migrate_scope_tokens_backfills_preserved_hashes(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    client = MagicMock()
+
+    async def scan_iter(**kwargs: Any) -> AsyncIterator[bytes]:
+        assert kwargs == {"_type": "hash"}
+        yield b"context:one"
+        yield b"other:two"
+
+    client.scan_iter = scan_iter
+    client.hgetall = AsyncMock(
+        side_effect=[
+            {
+                b"application_id": b"App",
+                b"agent_id": b"Agent",
+                b"user_id": b"Alice",
+                b"thread_id": b"Thread",
+                b"conversation_id": b"Conversation",
+            }
+        ]
+    )
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock(return_value=False)
+    pipeline.hset = MagicMock()
+    pipeline.execute = AsyncMock(return_value=[1])
+    client.pipeline.return_value = pipeline
+    mock_index.client = client
+    mock_index.info = AsyncMock(return_value={"num_docs": 1})
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+
+    await provider._migrate_scope_tokens()
+
+    mapping = pipeline.hset.call_args.kwargs["mapping"]
+    for name, value in {
+        "application_id": "App",
+        "agent_id": "Agent",
+        "user_id": "Alice",
+        "thread_id": "Thread",
+        "conversation_id": "Conversation",
+    }.items():
+        assert mapping[_scope_token_field(name)] == _scope_token(name, value)
+    mock_index.info.assert_awaited_once()
 
 
 @pytest.mark.parametrize("dtype, expected_size", [("float16", 4), ("float32", 8), ("float64", 16), ("bfloat16", 4)])
@@ -257,12 +372,18 @@ async def test_search_all_collects_paginated_batches(
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
     provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    captured_query: list[Any] = []
 
-    async def paginate(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, str]]]:  # noqa: ARG001
-        yield [{"content": "first"}]
-        yield [{"content": "second"}, {"content": "third"}]
+    def paginate(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, str]]]:  # noqa: ARG001
+        captured_query.append(args[0])
 
-    mock_index.paginate = MagicMock(return_value=paginate())
+        async def batches() -> AsyncIterator[list[dict[str, str]]]:
+            yield [{"content": "first"}]
+            yield [{"content": "second"}, {"content": "third"}]
+
+        return batches()
+
+    mock_index.paginate = MagicMock(side_effect=paginate)
 
     results = await provider.search_all(page_size=2)
 
@@ -271,3 +392,5 @@ async def test_search_all_collects_paginated_batches(
         {"content": "second"},
         {"content": "third"},
     ]
+    assert _scope_token_field("user_id") in str(captured_query[0]._filter_expression)
+    assert "user-1" not in str(captured_query[0]._filter_expression)

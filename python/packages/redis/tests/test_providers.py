@@ -14,7 +14,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 from redis.asyncio import Redis
 
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._context_provider import _SCOPE_FIELDS, RedisContextProvider, _scope_token_field
 from agent_framework_redis._feature_usage import FeatureIndex
 from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
 
@@ -136,8 +136,11 @@ class TestRedisContextProviderSchema:
         provider = RedisContextProvider(source_id="ctx", user_id="u1")
         schema = provider.schema_dict
         field_names = [f["name"] for f in schema["fields"]]
-        for expected in ("role", "content", "conversation_id", "message_id", "application_id", "agent_id", "user_id"):
+        for expected in ("role", "content", "message_id"):
             assert expected in field_names
+        for scope_field in _SCOPE_FIELDS:
+            assert scope_field not in field_names
+            assert _scope_token_field(scope_field) in field_names
         assert schema["index"]["name"] == "context"
         assert schema["index"]["prefix"] == "context"
 
