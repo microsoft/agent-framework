@@ -2,8 +2,6 @@
 
 YAML/JSON-based declarative agent and workflow definitions.
 
-Requires Core 1.22.1 or later for workflow run initialization and continuation hooks.
-
 ## Main Classes
 
 - **`AgentFactory`** - Creates agents from declarative definitions

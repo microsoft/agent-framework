@@ -86,18 +86,6 @@ jobs:
         run: |
           uv venv --python "${{ matrix.python-version }}" --seed .meta-venv
           & ".meta-venv\Scripts\python.exe" --version
-      - name: Test built-wheel selection
-        shell: pwsh
-        run: |
-          uv venv --python "${{ matrix.python-version }}" --seed .meta-test-venv
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          uv pip install --python ".meta-test-venv\Scripts\python.exe" pytest pyyaml
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-          & ".meta-test-venv\Scripts\python.exe" -m pytest -o addopts= python/scripts/dependencies/tests/test_meta_package_install.py -q
       - name: Build release wheelhouse
         shell: bash
         run: |
@@ -116,17 +104,6 @@ jobs:
             --no-build-logs \
             --no-create-gitignore \
             --out-dir "${{ github.workspace }}/wheelhouse"
-      - name: Constrain workspace packages to built wheels
-        shell: pwsh
-        run: |
-          $wheels = @(Get-ChildItem wheelhouse -Filter *.whl)
-          if ($wheels.Count -eq 0) {
-            throw "No built workspace wheels were found."
-          }
-          $wheels | Sort-Object Name | ForEach-Object {
-            $name = ($_.Name -split "-")[0]
-            "$name @ $([System.Uri]::new($_.FullName).AbsoluteUri)"
-          } | Set-Content wheelhouse-constraints.txt -Encoding utf8
       - name: Resolve the end-user install
         timeout-minutes: 6
         shell: pwsh
@@ -141,7 +118,6 @@ jobs:
             --dry-run `
             --ignore-installed `
             --find-links wheelhouse `
-            --constraint wheelhouse-constraints.txt `
             --report "pip-resolution-${{ matrix.python-version }}.json" `
             "agent-framework==$version" `
             azure-identity
@@ -162,8 +138,5 @@ jobs:
         run: |
           $python = ".meta-venv\Scripts\python.exe"
           $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
-          & $python -m pip install --find-links wheelhouse --constraint wheelhouse-constraints.txt "agent-framework==$version" azure-identity
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
+          & $python -m pip install --find-links wheelhouse "agent-framework==$version" azure-identity
           & $python -c "import agent_framework; import azure.identity"

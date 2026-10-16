@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.22.1"
+version = "1.22.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -48,7 +48,7 @@ all = [
     "agent-framework-chatkit>=1.0.0b261015,<2",
     "agent-framework-claude>=1.0.0b261015,<2",
     "agent-framework-copilotstudio>=1.0.0b261015,<2",
-    "agent-framework-declarative>=1.3.1,<2",
+    "agent-framework-declarative>=1.3.0,<2",
     "agent-framework-devui>=1.0.0b261015,<2",
     "agent-framework-durabletask>=1.0.0b260922,<2",
     "agent-framework-foundry>=1.15.0,<2",
