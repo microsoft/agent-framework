@@ -29,6 +29,10 @@ public sealed class AgentMcpListedSkillsSerializationTests
     [InlineData("""{"resultType":[],"skills":[]}""")]
     [InlineData("""{"ResultType":"complete","skills":[]}""")]
     [InlineData("""{"resultType":"complete","Skills":[]}""")]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":42}""")]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":true}""")]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":[]}""")]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":{}}""")]
     public void Deserialize_InvalidResult_Throws(string json)
     {
         // Arrange
@@ -36,6 +40,28 @@ public sealed class AgentMcpListedSkillsSerializationTests
 
         // Act & Assert
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, context.McpSkillsListResult));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("opaque cursor:+/=\u00e9")]
+    public void Deserialize_NextCursor_PreservesValue(string? cursor)
+    {
+        // Arrange
+        JsonObject node = new()
+        {
+            ["resultType"] = "complete",
+            ["skills"] = new JsonArray(),
+            ["nextCursor"] = cursor,
+        };
+
+        // Act
+        var result = node.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(cursor, result.NextCursor);
     }
 
     [Theory]
@@ -168,6 +194,7 @@ public sealed class AgentMcpListedSkillsSerializationTests
         Assert.NotNull(result);
         Assert.Equal("complete", result.ResultType);
         Assert.Empty(result.Skills);
+        Assert.Null(result.NextCursor);
     }
 
     [Theory]

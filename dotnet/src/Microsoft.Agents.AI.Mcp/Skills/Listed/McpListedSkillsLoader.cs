@@ -28,74 +28,136 @@ internal sealed partial class McpListedSkillsLoader
 {
     private const string CompleteResultType = "complete";
 
+    private const int DefaultMaxPageCount = 10;
+    private const int DefaultMaxSkillCount = 100;
+
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly long _maxResourceSizeBytes;
+    private readonly int _maxPageCount;
+    private readonly int _maxSkillCount;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
     /// </summary>
     /// <param name="client">The MCP client used to discover skills and fetch their content.</param>
     /// <param name="logger">Optional logger for frontmatter parsing diagnostics.</param>
-    /// <param name="options">Optional size limit for listed resources.</param>
+    /// <param name="options">Optional discovery limits and size limit for listed resources.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">A configured size limit is not positive.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
     public McpListedSkillsLoader(McpClient client, ILogger? logger = null, AgentMcpSkillsSourceOptions? options = null)
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
         this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpListedSkill.DefaultMaxResourceSizeBytes;
+        this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
+        this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
     }
 
     /// <summary>
-    /// Gets the server's listed skills without fetching their instructions or resources.
+    /// Gets the server's listed skills across all pages without fetching their instructions or resources.
     /// </summary>
     /// <param name="cancellationToken">The token used to cancel discovery.</param>
     /// <returns>The skills discovered through <c>skills/list</c>.</returns>
     /// <exception cref="JsonException">The response cannot be deserialized into a skill list.</exception>
     /// <exception cref="InvalidOperationException">The response is missing or contains an unsupported result type,
-    /// invalid skill metadata or resource manifests, or a resource exceeding the configured size limit.</exception>
+    /// invalid skill metadata or resource manifests, a repeated pagination cursor, or a configured limit is exceeded.</exception>
     /// <exception cref="McpException">The MCP request fails.</exception>
     /// <exception cref="OperationCanceledException">Discovery is canceled.</exception>
     public async Task<IList<AgentSkill>> DiscoverAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        JsonRpcResponse response = await this._client.SendRequestAsync(new JsonRpcRequest
-        {
-            Method = "skills/list",
-            Params = new JsonObject(),
-        }, cancellationToken).ConfigureAwait(false);
-
-        McpSkillsListResult result = response.Result?.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult)
-            ?? throw new InvalidOperationException("The server returned no skills/list result.");
-
-        if (result.ResultType != CompleteResultType)
-        {
-            throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
-        }
-
+        List<McpListedSkillEntry> skillEntries = await this.ListSkillEntriesAsync(cancellationToken).ConfigureAwait(false);
         List<AgentSkill> skills = [];
 
-        foreach (McpListedSkillEntry? entry in result.Skills)
+        foreach (McpListedSkillEntry entry in skillEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Nullable annotations do not reject null collection elements during deserialization.
-            if (entry is null)
-            {
-                throw new InvalidOperationException("The skills/list result contains a null skill entry.");
-            }
-
             AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
-
             List<McpListedSkillResourceEntry> resources = this.CreateSupportingResources(entry);
 
             skills.Add(new AgentMcpListedSkill(frontmatter, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes));
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         return skills;
+    }
+
+    private async Task<List<McpListedSkillEntry>> ListSkillEntriesAsync(CancellationToken cancellationToken)
+    {
+        List<McpListedSkillEntry> skillEntries = [];
+        HashSet<string> cursors = new(StringComparer.Ordinal);
+        string? cursor = null;
+        int pageCount = 0;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (pageCount >= this._maxPageCount)
+            {
+                throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed page count ({this._maxPageCount}).");
+            }
+
+            JsonObject parameters = new();
+            if (cursor is not null)
+            {
+                parameters["cursor"] = cursor;
+            }
+
+            JsonRpcResponse response = await this._client.SendRequestAsync(new JsonRpcRequest
+            {
+                Method = "skills/list",
+                Params = parameters,
+            }, cancellationToken).ConfigureAwait(false);
+
+            pageCount++;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            JsonNode resultNode = response.Result
+                ?? throw new InvalidOperationException("The server returned no skills/list result.");
+
+            // Reject excessive catalogs before deserializing their typed metadata or constructing skills.
+            if (resultNode is JsonObject resultObject && resultObject["skills"] is JsonArray entries && entries.Count > this._maxSkillCount - skillEntries.Count)
+            {
+                throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed skill count ({this._maxSkillCount}).");
+            }
+
+            McpSkillsListResult result = resultNode.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult)
+                ?? throw new InvalidOperationException("The server returned no skills/list result.");
+
+            if (result.ResultType != CompleteResultType)
+            {
+                throw new InvalidOperationException($"A skills/list result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
+            }
+
+            cursor = result.NextCursor;
+            if (cursor is not null && !cursors.Add(cursor))
+            {
+                throw new InvalidOperationException("The skills/list result contains a repeated pagination cursor.");
+            }
+
+            foreach (McpListedSkillEntry? entry in result.Skills)
+            {
+                // Nullable annotations do not reject null collection elements during deserialization.
+                if (entry is null)
+                {
+                    throw new InvalidOperationException("The skills/list result contains a null skill entry.");
+                }
+
+                skillEntries.Add(entry);
+            }
+        }
+        while (cursor is not null);
+
+        return skillEntries;
     }
 
     private static AgentSkillFrontmatter CreateFrontmatter(McpListedSkillEntry entry)
