@@ -34,7 +34,7 @@ def regular_tool() -> str:
 
 
 def _create_chat_agent_with_tool(tool_name: str = "regular_tool") -> Agent:
-    """Create a Agent with a mocked chat client and a simple tool.
+    """Create an Agent with a mocked chat client and a simple tool.
 
     Note: tool_name parameter is kept for API compatibility but the tool
     will always be named 'regular_tool' since tool uses the function name.

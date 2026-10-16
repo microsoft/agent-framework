@@ -48,7 +48,9 @@ from agent_framework import (
     Workflow,
     WorkflowAgent,
     add_usage_details,
+    get_namespaced_value,
 )
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
@@ -64,6 +66,7 @@ from azure.ai.agentserver.responses.models import (
     ComputerAction,
     ComputerCallSafetyCheckParam,
     ComputerScreenshotImage,
+    ContainerFileCitationBody,
     CreateResponse,
     FunctionShellAction,
     FunctionShellCallOutputContent,
@@ -95,7 +98,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
+from mcp import MCPError
 from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
@@ -137,13 +140,121 @@ _HOSTED_CONVERSATION_CLAIM_KEY = "_foundry_conversation_claim"
 _HOSTED_CONVERSATION_COMMITTED_KEY = "_foundry_conversation_committed"
 _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
+_PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
+_CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
 
 
+@dataclass(frozen=True)
+class _ContainerFileCitation:
+    container_id: str
+    file_id: str
+    filename: str
+
+
+def _has_container_filename_boundaries(text: str, start_index: int, end_index: int) -> bool:
+    """Return whether a filename match is not embedded in another filename-like token."""
+    before = text[start_index - 1] if start_index > 0 else None
+    after = text[end_index] if end_index < len(text) else None
+    return (before is None or not (before.isalnum() or before in "._-")) and (
+        after is None or not (after.isalnum() or after in "._-")
+    )
+
+
+def _container_file_citations_from_function_result(content: Content) -> list[_ContainerFileCitation]:
+    """Extract validated container file citations from a core-preserved MCP Host payload."""
+    raw_payload = content.additional_properties.get(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY)
+    if not isinstance(raw_payload, Mapping):
+        return []
+    payload = cast(Mapping[str, Any], raw_payload)
+
+    metadata_blocks: list[Mapping[str, Any]] = []
+    raw_result_meta = payload.get("_meta")
+    if isinstance(raw_result_meta, Mapping):
+        metadata_blocks.append(cast(Mapping[str, Any], raw_result_meta))
+
+    raw_content = payload.get("content")
+    if isinstance(raw_content, Sequence) and not isinstance(raw_content, (str, bytes, bytearray)):
+        for raw_item in cast(Sequence[Any], raw_content):
+            if not isinstance(raw_item, Mapping):
+                continue
+            item = cast(Mapping[str, Any], raw_item)
+            raw_item_meta = item.get("_meta")
+            if isinstance(raw_item_meta, Mapping):
+                metadata_blocks.append(cast(Mapping[str, Any], raw_item_meta))
+
+    citations: list[_ContainerFileCitation] = []
+    for metadata in metadata_blocks:
+        raw_citations = metadata.get(_CONTAINER_FILE_CITATIONS_KEY)
+        if isinstance(raw_citations, str):
+            try:
+                raw_citations = json.loads(raw_citations)
+            except (json.JSONDecodeError, RecursionError):
+                continue
+
+        citation_values: list[Any]
+        if isinstance(raw_citations, Mapping):
+            citation_values = [cast(Mapping[str, Any], raw_citations)]
+        elif isinstance(raw_citations, Sequence) and not isinstance(raw_citations, (str, bytes, bytearray)):
+            citation_values = list(cast(Sequence[Any], raw_citations))
+        else:
+            continue
+
+        fallback_container_id = metadata.get("container_id")
+        for raw_citation in citation_values:
+            if not isinstance(raw_citation, Mapping):
+                continue
+            citation = cast(Mapping[str, Any], raw_citation)
+            container_id = citation.get("container_id") or fallback_container_id
+            file_id = citation.get("file_id")
+            filename = citation.get("filename")
+            if not isinstance(container_id, str) or not container_id:
+                continue
+            if not isinstance(file_id, str) or not file_id:
+                continue
+            if not isinstance(filename, str) or not filename:
+                continue
+            citations.append(
+                _ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                )
+            )
+
+    return citations
+
+
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
+
+
+def _openai_value(content: Content, key: str, *legacy_keys: str, default: Any = None) -> Any:
+    value = get_namespaced_value(content.additional_properties, "openai", key, None)
+    if value is not None:
+        return value
+    for legacy_key in legacy_keys:
+        if legacy_key in content.additional_properties:
+            return content.additional_properties[legacy_key]
+    return default
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -490,8 +601,8 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     Returns:
         The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
-    inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
-    if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
+    inner_exception = next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    if inner_exception is not None and inner_exception.code == CONSENT_ERROR_CODE:
         # Parse the error message
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
@@ -690,6 +801,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Args:
             agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
                 each request. Use a callable for agents that keep mutable state outside `AgentSession`.
+                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
+                must never serve requests from different users or conversations. Use `workflow=` instead.
             workflow: A built, unrun native workflow for one-shot execution, or a request-aware
                 sync/async factory returning fresh built graphs, executors, agents, clients, tools,
                 and providers with stable graph/executor IDs. Cannot be combined with ``agent``.
@@ -911,13 +1024,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     def _warn_legacy_workflow(self) -> None:
         if not self._warned_workflow_agent:
             self._warned_workflow_agent = True
-            warnings.warn(
-                "Hosting WorkflowAgent through agent= is deprecated for this beta release. "
+            message = (
+                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
+                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
+                "never serve requests from different users or conversations. "
                 "Use workflow=a_request_aware_factory with an explicit parse_response. "
-                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped.",
-                DeprecationWarning,
-                stacklevel=3,
+                "Until you migrate, pass a factory that builds a new WorkflowAgent for every request. "
+                "Wrapper history, context providers, approvals, and event semantics are not automatically unwrapped."
             )
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
+            # warning there; log it as well.
+            logger.warning("DEPRECATION: %s", message)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -1189,6 +1307,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # selecting the terminal event. Same ``client_cancelled`` gate as above.
                 return
 
+            tracker.discard_pending_container_file_citations()
             incomplete_reason = tracker.incomplete_reason
             if tracker.oauth_consent_requested or incomplete_reason is not None:
                 yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
@@ -2122,6 +2241,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield from tracker.close()
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
+            tracker.discard_pending_container_file_citations()
         message = str(ex) or type(ex).__name__
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
@@ -2177,6 +2297,8 @@ class _OutputItemTracker:
         self._outstanding_function_calls: dict[str, str | None] = {}
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
+        self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
+        self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
         # can tell a cut-short turn from a successful one. Mirrored into the stream's
@@ -2187,6 +2309,33 @@ class _OutputItemTracker:
         if isinstance(persisted_reason, str):
             with suppress(ValueError):
                 self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
+        persisted_citations = stream.internal_metadata.get(_PENDING_CONTAINER_FILE_CITATIONS_KEY)
+        if persisted_citations is not None:
+            if not isinstance(persisted_citations, Sequence) or isinstance(
+                persisted_citations, (str, bytes, bytearray)
+            ):
+                raise RuntimeError("The persisted container file citations are invalid.")
+            for raw_citation in cast(Sequence[Any], persisted_citations):
+                if not isinstance(raw_citation, Mapping):
+                    raise RuntimeError("The persisted container file citations are invalid.")
+                citation = cast(Mapping[str, Any], raw_citation)
+                container_id = citation.get("container_id")
+                file_id = citation.get("file_id")
+                filename = citation.get("filename")
+                if (
+                    not isinstance(container_id, str)
+                    or not container_id
+                    or not isinstance(file_id, str)
+                    or not file_id
+                    or not isinstance(filename, str)
+                    or not filename
+                ):
+                    raise RuntimeError("The persisted container file citations are invalid.")
+                self._pending_container_file_citations[filename] = _ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                )
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -2258,6 +2407,21 @@ class _OutputItemTracker:
             return
         self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
+    def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
+        """Update the authoritative text buffer and return the wire delta still needed."""
+        if merge_mode != "replace":
+            self._accumulated.append(text)
+            return text
+
+        previous = "".join(self._accumulated)
+        if text.startswith(previous):
+            self._accumulated[:] = [text]
+            return text[len(previous) :]
+        if not previous:
+            self._accumulated[:] = [text]
+            return text
+        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+
     async def handle_update(
         self,
         update: AgentResponseUpdate,
@@ -2296,17 +2460,17 @@ class _OutputItemTracker:
             for event in self._ensure_message_content("refusal", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._refusal_content is not None:
-                yield self._refusal_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
             for event in self._ensure_message_content("text", message_id):
                 yield event
             self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._text_content is not None:
-                yield self._text_content.emit_delta(content.text)
+            delta = self._consume_text_update(content.text, content.merge_mode)
+            if delta and self._text_content is not None:
+                yield self._text_content.emit_delta(delta)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -2317,9 +2481,9 @@ class _OutputItemTracker:
             if encrypted_content := _reasoning_encrypted_content(content):
                 self._reasoning_encrypted_content = encrypted_content
             if content.text:
-                self._accumulated.append(content.text)
-                if self._summary_part is not None:
-                    yield self._summary_part.emit_text_delta(content.text)
+                delta = self._consume_text_update(content.text, content.merge_mode)
+                if delta and self._summary_part is not None:
+                    yield self._summary_part.emit_text_delta(delta)
 
         elif content.type == "function_call" and content.call_id is not None:
             # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
@@ -2344,6 +2508,11 @@ class _OutputItemTracker:
         elif content.type == "function_result":
             for event in self._close():
                 yield event
+            citations = _container_file_citations_from_function_result(content)
+            if citations:
+                for citation in citations:
+                    self._pending_container_file_citations[citation.filename] = citation
+                self._persist_pending_container_file_citations()
             async for event in self._stream.output_item_function_call_output(
                 content.call_id,  # type: ignore[arg-type]
                 _json_safe_to_str(content.result),
@@ -2479,7 +2648,7 @@ class _OutputItemTracker:
                 pending_safety_checks=cast(list[ComputerCallSafetyCheckParam], content.pending_safety_checks or []),
                 status=status,
             )
-            if content.additional_properties.get("computer_action_format") == "single":
+            if _openai_value(content, "computer_action_format", "computer_action_format") == "single":
                 if len(content.actions) != 1:
                     raise ValueError("A preview computer call requires exactly one action.")
                 item.pop("actions")
@@ -2521,7 +2690,7 @@ class _OutputItemTracker:
             for event in self._close():
                 yield event
             function_call: Content = content.function_call  # type: ignore
-            server_label = function_call.additional_properties.get("server_label", "agent_framework")
+            server_label = function_call.server_name or "agent_framework"
             request_saved = False
             async for event in self._stream.output_item_mcp_approval_request(
                 server_label,
@@ -2556,7 +2725,12 @@ class _OutputItemTracker:
             if not _is_allowed_oauth_consent_link(consent_link, self._allowed_oauth_consent_origins):
                 raise ValueError("OAuth consent request content must include an allowed safe HTTPS consent link.")
 
-            server_label = content.additional_properties.get("server_label")
+            server_label = get_namespaced_value(
+                content.additional_properties,
+                "openai",
+                "server_label",
+                content.additional_properties.get("server_label"),
+            )
             if not isinstance(server_label, str) or not server_label:
                 server_label = getattr(content.raw_representation, "server_label", None)
             if not isinstance(server_label, str) or not server_label:
@@ -2590,8 +2764,13 @@ class _OutputItemTracker:
             logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
     def close(self) -> Generator[ResponseStreamEvent]:
-        """Close any remaining active builder."""
+        """Flush any remaining active builder without discarding recoverable state."""
         yield from self._close()
+
+    def discard_pending_container_file_citations(self) -> None:
+        """Discard unmatched citations immediately before a terminal response event."""
+        self._pending_container_file_citations.clear()
+        self._persist_pending_container_file_citations()
 
     # -- Private open/close helpers --
 
@@ -2613,6 +2792,7 @@ class _OutputItemTracker:
         yield from self._open_message(content_type)
 
     def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
+        self._message_text_annotations.clear()
         self._message_item = self._stream.add_output_item_message()
         yield self._message_item.emit_added()
         yield from self._open_message_content(content_type)
@@ -2680,8 +2860,27 @@ class _OutputItemTracker:
         if self._active_type in {"text", "refusal"}:
             yield from self._close_message_content()
             if self._message_item is not None:
-                yield self._message_item.emit_done()
+                message_done = self._message_item.emit_done()
+                if self._message_text_annotations:
+                    message_done_dict = cast(dict[str, Any], message_done)
+                    item = cast(dict[str, Any], message_done_dict["item"])
+                    content_parts = cast(list[dict[str, Any]], item["content"])
+                    for content_index, annotations in self._message_text_annotations.items():
+                        if content_index >= len(content_parts):
+                            raise RuntimeError("Container file citation content index is out of range.")
+                        content_parts[content_index]["annotations"] = annotations
+
+                    response_output = self._stream.response.get("output")
+                    output_index = self._message_item.output_index
+                    if not isinstance(response_output, list):
+                        raise RuntimeError("Container file citation output index is out of range.")
+                    response_output_items = cast(list[Any], response_output)
+                    if output_index >= len(response_output_items):
+                        raise RuntimeError("Container file citation output index is out of range.")
+                    response_output_items[output_index] = item
+                yield message_done
             self._message_item = None
+            self._message_text_annotations.clear()
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
             accumulated = "".join(self._accumulated)
@@ -2720,8 +2919,17 @@ class _OutputItemTracker:
     def _close_message_content(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
+            annotations = self._container_file_annotations_for_text(accumulated)
             yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
+            for annotation in annotations:
+                yield self._text_content.emit_annotation_added(annotation)
+            content_done = self._text_content.emit_done()
+            if annotations:
+                content_done_dict = cast(dict[str, Any], content_done)
+                part = cast(dict[str, Any], content_done_dict["part"])
+                part["annotations"] = annotations
+                self._message_text_annotations[self._text_content.content_index] = annotations
+            yield content_done
             self._text_content = None
         elif self._active_type == "refusal" and self._refusal_content is not None:
             yield self._refusal_content.emit_refusal_done(accumulated)
@@ -2730,6 +2938,64 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._accumulated.clear()
+
+    def _container_file_annotations_for_text(self, text: str) -> list[ContainerFileCitationBody]:
+        candidates: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        for filename, citation in self._pending_container_file_citations.items():
+            search_index = 0
+            while True:
+                start_index = text.find(filename, search_index)
+                if start_index < 0:
+                    break
+                end_index = start_index + len(filename)
+                if _has_container_filename_boundaries(text, start_index, end_index):
+                    candidates.append((start_index, end_index, filename, citation))
+                search_index = start_index + 1
+
+        candidates.sort(key=lambda match: (-(match[1] - match[0]), match[0], match[2]))
+        selected: list[tuple[int, int, str, _ContainerFileCitation]] = []
+        selected_filenames: set[str] = set()
+        for candidate in candidates:
+            start_index, end_index, filename, _ = candidate
+            if filename in selected_filenames:
+                continue
+            if any(
+                start_index < selected_end and selected_start < end_index
+                for selected_start, selected_end, _, _ in selected
+            ):
+                continue
+            selected.append(candidate)
+            selected_filenames.add(filename)
+
+        annotations: list[ContainerFileCitationBody] = []
+        for start_index, end_index, filename, citation in sorted(selected, key=lambda match: match[0]):
+            annotations.append(
+                ContainerFileCitationBody(
+                    type="container_file_citation",
+                    container_id=citation.container_id,
+                    file_id=citation.file_id,
+                    filename=citation.filename,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+            )
+            del self._pending_container_file_citations[filename]
+        if annotations:
+            self._persist_pending_container_file_citations()
+        return annotations
+
+    def _persist_pending_container_file_citations(self) -> None:
+        if not self._pending_container_file_citations:
+            self._stream.internal_metadata.pop(_PENDING_CONTAINER_FILE_CITATIONS_KEY, None)
+            return
+        self._stream.internal_metadata[_PENDING_CONTAINER_FILE_CITATIONS_KEY] = [
+            {
+                "container_id": citation.container_id,
+                "file_id": citation.file_id,
+                "filename": citation.filename,
+            }
+            for citation in self._pending_container_file_citations.values()
+        ]
 
 
 # endregion
@@ -2832,13 +3098,24 @@ def _computer_screenshot_from_output(output: Mapping[str, Any]) -> Content:
         raise ValueError("Computer call output must contain a computer screenshot.")
     image_url = output.get("image_url")
     file_id = output.get("file_id")
-    additional_properties: dict[str, Any] = {}
+    openai_properties: dict[str, Any] = {}
+    legacy_properties: dict[str, Any] = {}
     if detail := output.get("detail"):
-        additional_properties["detail"] = detail
+        openai_properties["image_detail"] = detail
+        legacy_properties["detail"] = detail
+    additional_properties = {
+        "openai": openai_properties,
+        **legacy_properties,
+    }
     if isinstance(image_url, str) and image_url:
-        if file_id is not None:
-            additional_properties["file_id"] = file_id
-        return Content.from_uri(image_url, additional_properties=additional_properties)
+        return Content.from_uri(
+            image_url,
+            file_id=file_id if isinstance(file_id, str) else None,
+            additional_properties={
+                **additional_properties,
+                **({"file_id": file_id} if isinstance(file_id, str) else {}),
+            },
+        )
     if isinstance(file_id, str) and file_id:
         return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     raise ValueError("Computer screenshot is missing its image URL or file ID.")
@@ -2848,13 +3125,13 @@ def _computer_screenshot_to_output(screenshot: Content) -> dict[str, Any]:
     output: dict[str, Any] = {"type": "computer_screenshot"}
     if screenshot.type in ("data", "uri") and screenshot.uri:
         output["image_url"] = screenshot.uri
-        if file_id := screenshot.additional_properties.get("file_id"):
+        if file_id := screenshot.file_id or screenshot.additional_properties.get("file_id"):
             output["file_id"] = file_id
     elif screenshot.type == "hosted_file" and screenshot.file_id:
         output["file_id"] = screenshot.file_id
     else:
         raise ValueError("A computer screenshot requires image data, a URI, or a hosted file.")
-    if detail := screenshot.additional_properties.get("detail"):
+    if detail := _openai_value(screenshot, "image_detail", "detail"):
         output["detail"] = detail
     return output
 
@@ -2899,6 +3176,14 @@ async def _item_to_message(
         return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
 
     if item["type"] == "function_call":
+        item_data = cast("Mapping[str, Any]", item)
+        item_id = item_data.get("id")
+        status = item_data.get("status")
+        additional_properties: dict[str, Any] = {}
+        if isinstance(item_id, str):
+            additional_properties.update({"openai": {"item_id": item_id}, "fc_id": item_id})
+        if status is not None:
+            additional_properties["status"] = status
         return Message(
             role="assistant",
             contents=[
@@ -2906,6 +3191,8 @@ async def _item_to_message(
                     item["call_id"],
                     item["name"],
                     arguments=item["arguments"],
+                    status=status if isinstance(status, str) else None,
+                    additional_properties=additional_properties,
                 )
             ],
         )
@@ -2914,9 +3201,25 @@ async def _item_to_message(
         call_id = item.get("call_id")
         if call_id is None:
             raise ValueError("Function call output item is missing a call_id.")
+        item_id = item.get("id")
+        result_additional_properties = (
+            {
+                "openai": {"item_id": item_id},
+                "item_id": item_id,
+            }
+            if isinstance(item_id, str) and item_id
+            else None
+        )
         return Message(
             role="tool",
-            contents=[Content.from_function_result(call_id, result=_json_safe_to_str(item["output"]))],
+            contents=[
+                Content.from_function_result(
+                    call_id,
+                    result=_json_safe_to_str(item["output"]),
+                    status=item.get("status"),
+                    additional_properties=result_additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "reasoning":
@@ -3033,6 +3336,7 @@ async def _item_to_message(
                     "file_search",
                     arguments=_json_safe_to_str({"queries": item["queries"]}),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3040,7 +3344,7 @@ async def _item_to_message(
     if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True, hosted=True)],
         )
 
     if item["type"] == "computer_call":
@@ -3049,7 +3353,14 @@ async def _item_to_message(
         actions = plural_actions or ([singular_action] if singular_action is not None else [])
         if not actions:
             raise ValueError("Computer call is missing its ordered actions.")
-        props = {"computer_action_format": "single"} if not plural_actions and singular_action is not None else None
+        props = (
+            {
+                "openai": {"computer_action_format": "single"},
+                "computer_action_format": "single",
+            }
+            if not plural_actions and singular_action is not None
+            else None
+        )
         return Message(
             role="assistant",
             contents=[
@@ -3087,6 +3398,7 @@ async def _item_to_message(
                     item["name"],
                     arguments=item["input"],
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3119,6 +3431,7 @@ async def _item_to_message(
                     "apply_patch",
                     arguments=_json_safe_to_str(item["operation"]),
                     informational_only=True,
+                    hosted=True,
                 )
             ],
         )
@@ -3170,9 +3483,24 @@ async def _output_item_to_message(
         ValueError: If the OutputItem type is not supported.
     """
     if item["type"] == "oauth_consent_request":
+        item_data = cast("Mapping[str, Any]", item)
+        server_label = item_data.get("server_label")
+        additional_properties = (
+            {
+                "openai": {"server_label": server_label},
+                "server_label": server_label,
+            }
+            if isinstance(server_label, str) and server_label
+            else None
+        )
         return Message(
             role="assistant",
-            contents=[Content.from_oauth_consent_request(item["consent_link"])],
+            contents=[
+                Content.from_oauth_consent_request(
+                    item["consent_link"],
+                    additional_properties=additional_properties,
+                )
+            ],
         )
 
     if item["type"] == "structured_outputs":
@@ -3202,7 +3530,7 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
@@ -3231,8 +3559,19 @@ def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
             else:
                 prefix = f"[File: {filename}]\n" if filename else ""
                 return Content.from_text(f"{prefix}{decoded_text}")
-    additional_properties = {"filename": filename} if filename else None
-    return Content.from_uri(data_uri, additional_properties=additional_properties)
+    additional_properties = (
+        {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            "filename": filename,
+        }
+        if filename
+        else {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+        }
+    )
+    return Content.from_uri(data_uri, name=filename, additional_properties=additional_properties)
 
 
 def _convert_message_content(content: MessageContent) -> Content:
@@ -3258,22 +3597,45 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "refusal":
         return Content.from_text(
             content["refusal"],
-            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            additional_properties=_refusal_additional_properties(),
         )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":
+        detail = content.get("detail")
+        additional_properties = {
+            "openai": {
+                "content_type": "input_image",
+                **({"image_detail": detail} if isinstance(detail, str) else {}),
+            },
+            "openai_content_type": "input_image",
+            **({"detail": detail} if isinstance(detail, str) else {}),
+        }
         if image_url := content.get("image_url"):
             if image_url.startswith("data:"):
-                return Content.from_uri(image_url)
-            return Content.from_uri(image_url, media_type="image/*")
+                return Content.from_uri(image_url, additional_properties=additional_properties)
+            return Content.from_uri(image_url, media_type="image/*", additional_properties=additional_properties)
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id)
+            return Content.from_hosted_file(file_id, additional_properties=additional_properties)
     if content["type"] == "input_file":
+        filename = content.get("filename")
+        additional_properties = {
+            "openai": {"content_type": "input_file"},
+            "openai_content_type": "input_file",
+            **({"filename": filename} if isinstance(filename, str) else {}),
+        }
         if file_url := content.get("file_url"):
-            return Content.from_uri(file_url)
+            return Content.from_uri(
+                file_url,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_id := content.get("file_id"):
-            return Content.from_hosted_file(file_id, name=content.get("filename"))
+            return Content.from_hosted_file(
+                file_id,
+                name=filename if isinstance(filename, str) else None,
+                additional_properties=additional_properties,
+            )
         if file_data := content.get("file_data"):
             return _convert_file_data(file_data, content.get("filename"))
     if content["type"] == "computer_screenshot":

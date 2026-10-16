@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import inspect
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Generic, Protocol, TypedDict, TypeVar, cast, runtime_checkable
 
@@ -113,7 +114,7 @@ class AgentState(Generic[AgentT]):
         if not callable(target) and not inspect.isawaitable(target):
             self._cached_target = target
         self._session_store: SessionStore = session_store if session_store is not None else SessionStore()
-        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         mark_feature_used(FeatureIndex.HOSTING)
 
     async def get_target(self) -> AgentT:

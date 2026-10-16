@@ -188,16 +188,16 @@ def test_turn_rejects_invalid_shape(values: dict[str, Any]) -> None:
 
 async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     shared = _workflow()
-    resolver = WorkflowResolver(lambda request: shared)
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: shared)
     assert await resolver.resolve(object()) is shared
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
 
     executor = _Counter()
-    resolver = WorkflowResolver(lambda request: _workflow(executor))
-    first = await resolver.resolve(object())
+    executor_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: _workflow(executor))
+    first = await executor_resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
-        await resolver.resolve(object())
+        await executor_resolver.resolve(object())
     assert first.get_start_executor() is executor
 
     def zero_argument_factory() -> Workflow:
@@ -209,13 +209,14 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     def builder_factory(request: object) -> Any:
         return WorkflowBuilder(start_executor=_Counter())
 
-    resolver = WorkflowResolver(builder_factory)
+    builder_resolver: WorkflowResolver[object] = WorkflowResolver(builder_factory)
     with pytest.raises(TypeError, match="built Workflow"):
-        await resolver.resolve(object())
+        await builder_resolver.resolve(object())
+    stored_resolver: WorkflowResolver[object] = WorkflowResolver(
+        WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
+    )
     with pytest.raises(RuntimeError, match="without a store"):
-        await WorkflowResolver(
-            WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
-        ).resolve(object())
+        await stored_resolver.resolve(object())
 
 
 async def test_request_aware_async_factory() -> None:
@@ -225,7 +226,7 @@ async def test_request_aware_async_factory() -> None:
         requests.append(request)
         return _workflow()
 
-    resolver = WorkflowResolver(create)
+    resolver: WorkflowResolver[object] = WorkflowResolver(create)
     one, two = object(), object()
     first, second = await resolver.resolve(one), await resolver.resolve(two)
     assert first is not second
@@ -250,7 +251,7 @@ async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
         agent = Agent(client=_UnusedClient(), name="agent", tools=[shared])
         return _workflow(AgentExecutor(agent, id="agent"))
 
-    resolver = WorkflowResolver(create)
+    resolver: WorkflowResolver[object] = WorkflowResolver(create)
     first = await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
@@ -263,7 +264,7 @@ async def test_resolver_rejects_reused_registry_backed_agent_resources() -> None
             raise AssertionError("Ownership validation must not call the model.")
 
     shared = Agent(client=_UnusedClient(), name="registered")
-    resolver = WorkflowResolver(lambda request: _workflow(_RegistryExecutor(shared)))
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: _workflow(_RegistryExecutor(shared)))
 
     await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
@@ -288,11 +289,11 @@ async def test_resolver_tracks_non_weak_referenceable_resources_without_rejectin
         )
         return _workflow(AgentExecutor(agent, id="registered"))
 
-    fresh_resolver = WorkflowResolver(lambda request: create(SlottedProvider()))
+    fresh_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: create(SlottedProvider()))
     await fresh_resolver.resolve(object())
     await fresh_resolver.resolve(object())
 
-    shared_resolver = WorkflowResolver(lambda request: create(shared))
+    shared_resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: create(shared))
     await shared_resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await shared_resolver.resolve(object())
