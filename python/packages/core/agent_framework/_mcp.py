@@ -725,6 +725,11 @@ _MCP_SAMPLING_DEPRECATION_MESSAGE = (
     "it remains supported for at least twelve months before becoming eligible for removal. "
     "MCP servers should call LLM provider APIs directly."
 )
+_MCP_SESSION_DEPRECATION_MESSAGE = (
+    "`MCPTool.session` is deprecated and will be removed in vNext. "
+    "Use a high-level `mcp.Client` via `mcp_client=`. "
+    "See https://github.com/microsoft/agent-framework/issues/9452."
+)
 
 # A user-supplied gate invoked before each server-initiated sampling request is
 # forwarded to the chat client. It receives the raw ``CreateMessageRequestParams``
@@ -1222,17 +1227,28 @@ class MCPTool:
 
     @property
     def session(self) -> ClientSession | None:
-        """Return the low-level session for compatibility and advanced use."""
+        """Return the deprecated caller-supplied low-level session.
+
+        .. deprecated::
+            Use a high-level ``mcp.Client`` via ``mcp_client=``.
+        """
+        warnings.warn(_MCP_SESSION_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         return self._connection.session if self._connection is not None else None
 
     @session.setter
     def session(self, value: ClientSession | None) -> None:
-        """Replace the connection with a caller-owned session compatibility path."""
+        """Replace the deprecated caller-owned low-level session compatibility path.
+
+        .. deprecated::
+            Use a high-level ``mcp.Client`` via ``mcp_client=``.
+        """
         connection = self._connection
-        if connection is not None and connection.is_framework_owned:
-            if value is connection.session:
-                return
-            raise RuntimeError("Cannot replace the session while its framework-owned MCP Client is connected.")
+        if connection is not None and connection.client is not None:
+            raise ValueError(
+                "Cannot assign `MCPTool.session` while the tool uses a high-level MCP Client. "
+                "Create a separate tool for the deprecated ClientSession compatibility path."
+            )
+        warnings.warn(_MCP_SESSION_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         self._connection = _SessionMCPConnection(value) if value is not None else None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
@@ -4274,7 +4290,8 @@ class MCPStreamableHTTPTool(MCPTool):
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
         self._session_headers = dict(headers)
         self._session_header_identity = _mcp_header_identity(headers)
-        self._session_header_session = self.session
+        connection = self._connection
+        self._session_header_session = connection.session if connection is not None else None
 
     def _stage_session_headers(self, headers: Mapping[str, str], kwargs: Mapping[str, Any]) -> None:
         self._pending_session_headers = dict(headers)
@@ -4323,8 +4340,8 @@ class MCPStreamableHTTPTool(MCPTool):
     ) -> None:
         identity = _mcp_header_identity(headers)
         connection = self._connection
-        if connection is not None and not connection.is_framework_owned:
-            if self._session_header_identity is None or self._session_header_session is not self.session:
+        if isinstance(connection, _SessionMCPConnection):
+            if self._session_header_identity is None or self._session_header_session is not connection.session:
                 raise _mcp_tool_execution_exception(
                     "MCP header identity is unknown for a caller-supplied session; "
                     "use a separate framework-managed tool instance."

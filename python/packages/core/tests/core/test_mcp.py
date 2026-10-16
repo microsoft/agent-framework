@@ -5424,20 +5424,25 @@ async def test_connect_retains_and_close_clears_sdk_client() -> None:
         await tool.connect()
         try:
             connection = tool._connection
-            tool.session = tool.session
+            with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+                assert tool.session is None
             assert tool._connection is connection
-            with pytest.raises(RuntimeError, match="framework-owned MCP Client"):
+            with pytest.raises(ValueError, match="uses a high-level MCP Client"):
                 tool.session = sdk_client.session
+            with pytest.raises(ValueError, match="uses a high-level MCP Client"):
+                tool.session = None
             await tool.connect(reset=True)
             reset_connection = tool._connection
             assert reset_connection is not None
             assert reset_connection.client is sdk_client
-            assert tool.session is None
+            with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+                assert tool.session is None
         finally:
             await tool.close()
 
     assert tool._connection is None
-    assert tool.session is None
+    with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+        assert tool.session is None
 
 
 async def test_call_tool_uses_sdk_client_for_framework_owned_connection() -> None:
@@ -8170,6 +8175,52 @@ def test_mcp_transport_tools_preserve_supplied_client_ownership() -> None:
         assert tool._connection.is_framework_owned is False
 
 
+def test_mcp_session_getter_warns_for_low_level_compatibility_path() -> None:
+    session = Mock(spec=ClientSession)
+    tool = MCPStdioTool(
+        name="test",
+        command="unused",
+        session=session,
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+        assert tool.session is session
+
+
+@pytest.mark.parametrize("replacement", [None, Mock(spec=ClientSession)])
+def test_mcp_session_setter_rejects_client_backed_connection_without_mutating_state(
+    replacement: ClientSession | None,
+) -> None:
+    client = Mock()
+    tool = MCPStdioTool(
+        name="test",
+        command="unused",
+        mcp_client=client,
+        load_tools=False,
+        load_prompts=False,
+    )
+    connection = tool._connection
+    subscription_task = Mock()
+    reload_task = Mock()
+    tool.is_connected = True
+    tool._tools_loaded = True
+    tool._prompts_loaded = True
+    tool._capability_list_subscription_task = subscription_task
+    tool._pending_reload_tasks = {reload_task}
+
+    with pytest.raises(ValueError, match="uses a high-level MCP Client"):
+        tool.session = replacement
+
+    assert tool._connection is connection
+    assert tool.is_connected is True
+    assert tool._tools_loaded is True
+    assert tool._prompts_loaded is True
+    assert tool._capability_list_subscription_task is subscription_task
+    assert tool._pending_reload_tasks == {reload_task}
+
+
 def test_mcp_streamable_http_rejects_header_provider_with_supplied_client() -> None:
     with pytest.raises(ValueError, match="header_provider.*mcp_client"):
         MCPStreamableHTTPTool(
@@ -8346,19 +8397,22 @@ async def test_replacing_supplied_session_preserves_caller_ownership() -> None:
         load_prompts=False,
     )
 
-    tool.session = None
-    tool.session = replacement_session
+    with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+        tool.session = None
+    with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+        tool.session = replacement_session
 
     with patch.object(tool, "get_mcp_client", side_effect=AssertionError("Unexpected transport")):
         await tool.connect(reset=True)
         assert tool._connection is not None
         assert tool._connection.is_framework_owned is False
-        assert tool.session is replacement_session
+        with pytest.warns(DeprecationWarning, match=r"MCPTool\.session.*removed in vNext"):
+            assert tool.session is replacement_session
         await tool.close()
 
     assert tool._connection is not None
     assert tool._connection.is_framework_owned is False
-    assert tool.session is replacement_session
+    assert tool._connection.session is replacement_session
 
 
 async def test_connect_reinitializes_existing_session_and_loads_tools_and_prompts() -> None:
