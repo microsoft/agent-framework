@@ -32,6 +32,13 @@ internal sealed class AgentHooksConfiguration
 
     public Action<InterceptionRecord>? RecordSink { get; init; }
 
+    /// <summary>Declaration path: when set with <see cref="Registry"/>, each per-run emitter is built from
+    /// this document (spec §7.7) and the code-path members above (except <see cref="RecordSink"/>) are unused.</summary>
+    public HostDeclaration? Declaration { get; init; }
+
+    /// <summary>Declaration path: the registry the document resolves against.</summary>
+    public HostRegistry? Registry { get; init; }
+
     /// <summary>Host-owned session: when set, the middleware emits only the per-run points on this emitter.</summary>
     public InterceptionEmitter? Emitter { get; init; }
 
