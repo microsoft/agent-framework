@@ -872,8 +872,14 @@ def _to_eval_item(
     all_msgs = list(input_msgs) + list(response.messages or [])
 
     typed_tools: list[FunctionTool] = []
-    if tools:
+    if tools is not None:
         typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
+    elif (response_tools := response._get_evaluation_tools()) is not None:  # pyright: ignore[reportPrivateUsage]
+        seen: set[str] = set()
+        for tool in response_tools:
+            if tool.name not in seen:
+                typed_tools.append(tool)
+                seen.add(tool.name)
     elif agent:
         raw_tools = getattr(agent, "default_options", {}).get("tools", [])
         typed_tools = [tool for tool in normalize_tools(raw_tools) if isinstance(tool, FunctionTool)]
@@ -1604,6 +1610,7 @@ async def evaluate_agent(
     expected_output: str | Sequence[str] | None = None,
     expected_tool_calls: Sequence[ExpectedToolCall] | Sequence[Sequence[ExpectedToolCall]] | None = None,
     responses: AgentResponse[Any] | Sequence[AgentResponse[Any]] | None = None,
+    tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
     evaluators: Evaluator | Callable[..., Any] | Sequence[Evaluator | Callable[..., Any]],
     eval_name: str | None = None,
     context: str | None = None,
@@ -1621,8 +1628,12 @@ async def evaluate_agent(
     or a list for convenience.
 
     If ``responses`` is provided, skips running the agent and evaluates those
-    responses directly — but still extracts tool definitions from the agent.
-    In this mode ``queries`` is required to construct the conversation.
+    responses directly. Tool definitions come from the original run when
+    available, including schema-only snapshots retained through JSON or pickle
+    serialization. Responses without captured definitions fall back to the
+    agent's configured tools; supply ``tools`` when those definitions are
+    unavailable or need to be overridden. In this mode ``queries`` is required
+    to construct the conversation.
 
     Args:
         agent: An agent-framework agent instance.
@@ -1642,6 +1653,9 @@ async def evaluate_agent(
             running the agent. A single response is wrapped into a one-element
             list. When provided, ``queries`` must also be provided to
             construct the conversation for evaluation.
+        tools: Tool definitions for evaluation, overriding automatic discovery
+            for every item. These are not passed to ``agent.run``. An empty
+            sequence disables tool definitions.
         evaluators: One or more ``Evaluator`` instances.
         eval_name: Display name (defaults to agent name).
         context: Optional context for groundedness evaluation.
@@ -1746,6 +1760,7 @@ async def evaluate_agent(
                         query=q,
                         response=r,
                         agent=agent,
+                        tools=tools,
                         context=context,
                     )
                 )
@@ -1766,6 +1781,7 @@ async def evaluate_agent(
                         query=query,
                         response=response,
                         agent=agent,
+                        tools=tools,
                         context=context,
                     )
                 )

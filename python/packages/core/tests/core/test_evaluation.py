@@ -4,15 +4,31 @@
 
 from __future__ import annotations
 
+import asyncio
+import pickle
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent_framework import AgentEvalConverter as ExportedAgentEvalConverter
-from agent_framework._evaluation import AgentEvalConverter, ConversationSplit, EvalItem, _to_eval_item
+from agent_framework._agents import Agent, SupportsAgentRun
+from agent_framework._evaluation import (
+    AgentEvalConverter,
+    ConversationSplit,
+    EvalItem,
+    LocalEvaluator,
+    _to_eval_item,
+    evaluate_agent,
+    evaluator,
+)
+from agent_framework._harness._loop import AgentLoopMiddleware
+from agent_framework._mcp import MCPTool
+from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
+from agent_framework._skills import InlineSkill, SkillFrontmatter, SkillsProvider
 from agent_framework._tools import FunctionTool
-from agent_framework._types import AgentResponse, Content, Message
+from agent_framework._types import AgentResponse, ChatResponse, ChatResponseUpdate, Content, Message
 
 
 class TestAgentEvalConverterCompatibility:
@@ -128,6 +144,398 @@ class TestToEvalItem:
         )
 
         assert item.tools == [explicit_tool]
+
+    def test_explicit_empty_tools_override_agent(self) -> None:
+        agent = MagicMock()
+        agent.default_options = {"tools": [FunctionTool(name="unused", func=lambda: "")]}
+
+        item = _to_eval_item(query="Test", response=AgentResponse(), agent=agent, tools=[])
+
+        assert item.tools is None
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_with_agent_context_provider_tools(self, chat_client_base: Any, stream: bool) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        provider = SkillsProvider(skill, disable_load_skill_approval=True)
+        provider.before_run = AsyncMock(wraps=provider.before_run)  # type: ignore[method-assign]
+        default_tool = FunctionTool(name="calculate", description="Calculate", func=lambda: "42")
+        mcp_tool = FunctionTool(name="search", description="Search", func=lambda: "Found it")
+        mcp = MagicMock(spec=MCPTool)
+        mcp.functions = [mcp_tool]
+        mcp.is_connected = True
+        mcp._prepare_for_run = AsyncMock()
+        agent = Agent(client=chat_client_base, tools=[default_tool, mcp], context_providers=[provider])
+        call = Content.from_function_call("call_1", "load_skill", arguments={"skill_name": "test-skill"})
+        if stream:
+            chat_client_base.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[call])],
+                [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done")])],
+            ]
+            response = await agent.run("Use the skill", stream=True).get_final_response()
+        else:
+            chat_client_base.run_responses = [
+                ChatResponse(messages=[Message("assistant", [call])]),
+                ChatResponse(messages=[Message("assistant", ["Done"])]),
+            ]
+            response = await agent.run("Use the skill")
+
+        item = _to_eval_item(query="Use the skill", response=response, agent=agent)
+
+        assert item.tools is not None
+        definitions = {tool.name: tool for tool in item.tools}
+        assert set(definitions) == {
+            "calculate",
+            "search",
+            "load_skill",
+            "read_skill_resource",
+            "run_skill_script",
+        }
+        assert len(item.tools) == len(definitions)
+        assert definitions["calculate"].parameters() == default_tool.parameters()
+        assert definitions["search"].parameters() == mcp_tool.parameters()
+        assert all(tool.declaration_only for tool in item.tools)
+        assert definitions["load_skill"].parameters()["required"] == ["skill_name"]
+        expected_content = await skill.get_content()
+        assert any(
+            content.type == "function_result" and content.result == expected_content
+            for message in response.messages
+            for content in message.contents
+        )
+        provider.before_run.assert_awaited_once()
+
+        # Post-hoc evaluation must use the original run, not the agent's current configuration.
+        agent.context_providers.clear()
+        agent.default_options["tools"] = []
+        agent.mcp_tools.clear()
+        assert _to_eval_item(query="Use the skill", response=response).tools == item.tools
+        assert _to_eval_item(query="Use the skill", response=response, agent=agent).tools == item.tools
+        explicit_tool = FunctionTool(name="explicit", func=lambda: "")
+        assert _to_eval_item(query="Test", response=response, tools=[explicit_tool]).tools == [explicit_tool]
+        assert _to_eval_item(query="Test", response=response, tools=[]).tools is None
+        serialized = response.to_dict()
+        assert "tools" not in serialized
+        assert "_evaluation_tools" not in serialized
+        assert AgentResponse.from_json(response.to_json()).messages[0].contents[0].name == "load_skill"
+        restored = pickle.loads(pickle.dumps(response))
+        assert restored._evaluation_tools is None
+        for restored_response in [
+            AgentResponse.from_dict(serialized),
+            AgentResponse.from_json(response.to_json()),
+            restored,
+        ]:
+            restored_item = _to_eval_item(query="Use the skill", response=restored_response)
+            assert restored_item.tools is not None
+            assert {tool.name: (tool.description, tool.parameters()) for tool in restored_item.tools} == {
+                tool.name: (tool.description, tool.parameters()) for tool in item.tools
+            }
+            assert all(tool.declaration_only for tool in restored_item.tools)
+
+    async def test_context_provider_tools_are_isolated_per_run(self, chat_client_base: Any) -> None:
+        class QueryToolsProvider(ContextProvider):
+            async def before_run(
+                self,
+                *,
+                agent: SupportsAgentRun,
+                session: AgentSession,
+                context: SessionContext,
+                state: dict[str, Any],
+            ) -> None:
+                name = context.input_messages[0].text
+                context.extend_tools(self.source_id, [FunctionTool(name=name, func=lambda: name)])
+                await asyncio.sleep(0)
+
+        provider = QueryToolsProvider("query-tools")
+        provider.before_run = AsyncMock(wraps=provider.before_run)  # type: ignore[method-assign]
+        agent = Agent(client=chat_client_base, context_providers=[provider])
+        first, second = await asyncio.gather(agent.run("first"), agent.run("second"))
+
+        for name, response in [("first", first), ("second", second)]:
+            item = _to_eval_item(query=name, response=response, agent=agent)
+            assert item.tools is not None
+            assert [tool.name for tool in item.tools] == [name]
+        assert provider.before_run.await_count == 2
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_progressively_exposed_tools_are_retained(self, chat_client_base: Any, stream: bool) -> None:
+        def finish(ctx: FunctionInvocationContext) -> str:
+            ctx.remove_tools(["finish"])
+            return "Finished"
+
+        finish_tool = FunctionTool(name="finish", func=finish)
+
+        def load(ctx: FunctionInvocationContext) -> str:
+            ctx.add_tools([finish_tool])
+            return "Loaded"
+
+        loader = FunctionTool(name="load", func=load)
+        calls = [
+            Content.from_function_call("call_1", "load", arguments={}),
+            Content.from_function_call("call_2", "finish", arguments={}),
+        ]
+        agent = Agent(client=chat_client_base, tools=[loader])
+        if stream:
+            chat_client_base.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[call])] for call in calls
+            ]
+            response = await agent.run("Test", stream=True).get_final_response()
+        else:
+            chat_client_base.run_responses = [ChatResponse(messages=[Message("assistant", [call])]) for call in calls]
+            response = await agent.run("Test")
+
+        item = _to_eval_item(query="Test", response=response)
+
+        assert item.tools is not None
+        assert [tool.name for tool in item.tools] == ["load", "finish"]
+        assert all(tool.declaration_only for tool in item.tools)
+        assert any(
+            content.type == "function_result" and content.result == "Finished"
+            for message in response.messages
+            for content in message.contents
+        )
+
+    @pytest.mark.parametrize("serialization", ["dict", "json", "pickle"])
+    async def test_schema_snapshots_do_not_retain_runtime_objects(
+        self,
+        chat_client_base: Any,
+        serialization: str,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
+            "required": ["city"],
+            "additionalProperties": False,
+        }
+        tool = FunctionTool(
+            name="weather",
+            description="Original description",
+            func=lambda city: city,
+            input_model=schema,
+            additional_properties={"runtime_marker": "not-in-snapshot"},
+        )
+        agent = Agent(client=chat_client_base, tools=[tool])
+        response = await agent.run("Weather?")
+        tool.description = "Changed description"
+        tool.parameters()["properties"]["city"]["enum"].append("London")
+        agent.default_options["tools"] = []
+        if serialization == "dict":
+            restored = AgentResponse.from_dict(response.to_dict())
+        elif serialization == "json":
+            restored = AgentResponse.from_json(response.to_json())
+        else:
+            restored = pickle.loads(pickle.dumps(response))
+
+        item = _to_eval_item(query="Weather?", response=restored, agent=agent)
+
+        assert item.tools is not None
+        assert len(item.tools) == 1
+        captured = item.tools[0]
+        assert captured.name == "weather"
+        assert captured.description == "Original description"
+        assert captured.parameters()["properties"]["city"]["enum"] == ["Seattle", "Paris"]
+        assert captured.parameters()["additionalProperties"] is False
+        assert captured.func is None
+        assert captured.additional_properties is None
+        metadata = response.to_dict()["additional_properties"]["agent_framework.evaluation"]
+        assert metadata == {
+            "version": 1,
+            "tools": [
+                {
+                    "name": "weather",
+                    "description": "Original description",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string", "enum": ["Seattle", "Paris"]}},
+                        "required": ["city"],
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        }
+        assert "not-in-snapshot" not in response.to_json()
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            None,
+            {},
+            {"version": 2, "tools": []},
+            {"version": True, "tools": []},
+            {"version": 1, "tools": {}},
+            {"version": 1, "tools": [None]},
+            {"version": 1, "tools": [{"name": "", "description": "", "input_schema": {}}]},
+            {"version": 1, "tools": [{"name": "weather", "description": None, "input_schema": {}}]},
+            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": []}]},
+            {"version": 1, "tools": [{"name": "weather", "description": "", "input_schema": {"default": object()}}]},
+            {
+                "version": 1,
+                "tools": [
+                    {"name": "weather", "description": "", "input_schema": {}},
+                    {"name": "weather", "description": "", "input_schema": {}},
+                ],
+            },
+        ],
+    )
+    def test_invalid_serialized_tool_metadata_raises(self, metadata: Any) -> None:
+        response = AgentResponse(additional_properties={"agent_framework.evaluation": metadata})
+
+        with pytest.raises(ValueError, match="agent_framework.evaluation"):
+            _to_eval_item(query="Weather?", response=response)
+
+        explicit = FunctionTool(name="explicit", func=lambda: "")
+        assert _to_eval_item(query="Weather?", response=response, tools=[explicit]).tools == [explicit]
+
+    def test_serialized_empty_definitions_do_not_fall_back_to_agent_tools(self) -> None:
+        response = AgentResponse(
+            additional_properties={
+                "agent_framework.evaluation": {"version": 1, "tools": []},
+            }
+        )
+        agent = MagicMock()
+        agent.default_options = {"tools": [FunctionTool(name="unused", func=lambda: "")]}
+
+        assert _to_eval_item(query="Test", response=response, agent=agent).tools is None
+
+
+class TestEvaluateAgentTools:
+    @pytest.mark.parametrize("return_final_only", [False, True])
+    async def test_loop_response_retains_skill_tools(self, chat_client_base: Any, return_final_only: bool) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        agent = Agent(
+            client=chat_client_base,
+            context_providers=[SkillsProvider(skill)],
+            middleware=[
+                AgentLoopMiddleware(
+                    lambda iteration, **kwargs: iteration < 2,
+                    return_final_only=return_final_only,
+                )
+            ],
+        )
+        response = await agent.run("Test")
+
+        item = _to_eval_item(query="Test", response=response)
+
+        assert item.tools is not None
+        assert {tool.name for tool in item.tools} == {"load_skill", "read_skill_resource", "run_skill_script"}
+        assert len(item.tools) == 3
+        assert chat_client_base.call_count == 2
+        restored_item = _to_eval_item(query="Test", response=AgentResponse.from_json(response.to_json()))
+        assert restored_item.tools is not None
+        assert {tool.name for tool in restored_item.tools} == {"load_skill", "read_skill_resource", "run_skill_script"}
+
+    async def test_evaluate_agent_includes_skill_tools(self, chat_client_base: Any) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        agent = Agent(client=chat_client_base, context_providers=[SkillsProvider(skill)])
+
+        @evaluator
+        def has_skill_tools(tools: list[FunctionTool]) -> bool:
+            return "load_skill" in {tool.name for tool in tools}
+
+        results = await evaluate_agent(
+            agent=agent,
+            queries="Test",
+            evaluators=LocalEvaluator(has_skill_tools),
+        )
+
+        assert results[0].passed == 1
+
+    async def test_evaluate_existing_response_includes_skill_tools(self, chat_client_base: Any) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        agent = Agent(client=chat_client_base, context_providers=[SkillsProvider(skill)])
+        response = await agent.run("Test")
+
+        @evaluator
+        def has_skill_tools(tools: list[FunctionTool]) -> bool:
+            return "load_skill" in {tool.name for tool in tools}
+
+        results = await evaluate_agent(
+            queries="Test",
+            responses=response,
+            evaluators=LocalEvaluator(has_skill_tools),
+        )
+
+        assert results[0].passed == 1
+        assert chat_client_base.call_count == 1
+
+    @pytest.mark.parametrize("serialization", ["json", "pickle"])
+    async def test_evaluate_restored_response_discovers_skill_tools(
+        self,
+        chat_client_base: Any,
+        serialization: str,
+    ) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="test-skill", description="A test skill."),
+            instructions="Skill instructions.",
+        )
+        provider = SkillsProvider(skill)
+        provider.before_run = AsyncMock(wraps=provider.before_run)  # type: ignore[method-assign]
+        agent = Agent(client=chat_client_base, context_providers=[provider])
+        response = await agent.run("Test")
+        restored = (
+            AgentResponse.from_json(response.to_json())
+            if serialization == "json"
+            else pickle.loads(pickle.dumps(response))
+        )
+
+        @evaluator
+        def has_skill_tools(tools: list[FunctionTool]) -> bool:
+            return all(tool.declaration_only for tool in tools) and "load_skill" in {tool.name for tool in tools}
+
+        results = await evaluate_agent(
+            queries="Test",
+            responses=restored,
+            evaluators=LocalEvaluator(has_skill_tools),
+        )
+
+        assert results[0].passed == 1
+        assert chat_client_base.call_count == 1
+        provider.before_run.assert_awaited_once()
+
+    async def test_explicit_tools_override_fresh_run(self, chat_client_base: Any) -> None:
+        configured_tool = FunctionTool(name="configured", func=lambda: "")
+        explicit_tool = FunctionTool(name="explicit", func=lambda: "")
+        agent = Agent(client=chat_client_base, tools=[configured_tool])
+
+        @evaluator
+        def has_explicit_tools(tools: list[FunctionTool]) -> bool:
+            return tools == [explicit_tool]
+
+        results = await evaluate_agent(
+            agent=agent,
+            queries="Test",
+            tools=[explicit_tool],
+            evaluators=LocalEvaluator(has_explicit_tools),
+        )
+
+        assert results[0].passed == 1
+
+    async def test_explicit_tools_for_restored_response(self) -> None:
+        response = AgentResponse.from_json(AgentResponse(messages=[Message("assistant", ["Done"])]).to_json())
+        tool = FunctionTool(name="load_skill", func=lambda skill_name: skill_name)
+
+        @evaluator
+        def has_explicit_tools(tools: list[FunctionTool]) -> bool:
+            return tools == [tool]
+
+        results = await evaluate_agent(
+            queries="Test",
+            responses=response,
+            tools=[tool],
+            evaluators=LocalEvaluator(has_explicit_tools),
+        )
+
+        assert results[0].passed == 1
 
 
 class TestEvalItemSplitting:
