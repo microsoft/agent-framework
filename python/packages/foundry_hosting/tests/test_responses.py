@@ -359,20 +359,20 @@ def test_framework_annotations_convert_all_responses_citation_variants() -> None
         ),
     ]
 
-    assert _annotations_to_output_text(annotations, text_offset=4) == [
+    assert _annotations_to_output_text(annotations) == [
         {
             "type": "url_citation",
             "url": "https://example.com/source",
             "title": "Source",
-            "start_index": 4,
-            "end_index": 10,
+            "start_index": 0,
+            "end_index": 6,
         },
         {
             "type": "url_citation",
             "url": "https://example.com/source",
             "title": "Source",
-            "start_index": 16,
-            "end_index": 22,
+            "start_index": 12,
+            "end_index": 18,
         },
         _expected_file_citation(),
         {
@@ -385,10 +385,47 @@ def test_framework_annotations_convert_all_responses_citation_variants() -> None
             "container_id": "container_123",
             "file_id": "container_file_123",
             "filename": "report.csv",
-            "start_index": 24,
-            "end_index": 34,
+            "start_index": 20,
+            "end_index": 30,
         },
     ]
+
+
+def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
+    annotations = cast(
+        Any,
+        [
+            None,
+            "not-an-annotation",
+            {
+                "type": "citation",
+                "url": "https://example.com/mixed",
+                "title": "Mixed",
+                "additional_properties": "not-a-mapping",
+                "annotated_regions": [
+                    None,
+                    "not-a-region",
+                    {"type": "source_block", "start_index": 0, "end_index": 5},
+                    {"type": "text_span", "start_index": 2, "end_index": 7},
+                ],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/string-regions",
+                "annotated_regions": "not-a-sequence-of-regions",
+            },
+        ],
+    )
+
+    assert _annotations_to_output_text(annotations) == [
+        _expected_url_citation(
+            url="https://example.com/mixed",
+            title="Mixed",
+            start_index=2,
+            end_index=7,
+        )
+    ]
+    assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
 
 
 def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None:
@@ -4719,7 +4756,12 @@ class TestStreaming:
                     message_id="msg_citation",
                 ),
                 AgentResponseUpdate(
-                    contents=[Content.from_text("Python", annotations=[_url_citation()])],
+                    contents=[
+                        Content.from_text(
+                            "Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                        )
+                    ],
                     role="assistant",
                     message_id="msg_citation",
                 ),

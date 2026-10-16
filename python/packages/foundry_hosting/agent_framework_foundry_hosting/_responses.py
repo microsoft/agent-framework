@@ -238,23 +238,35 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
 
 def _annotations_to_output_text(
     annotations: Sequence[FrameworkAnnotation] | None,
-    *,
-    text_offset: int = 0,
 ) -> list[ResponsesAnnotation]:
     """Convert framework citations into Responses output-text annotations."""
-    if not annotations:
+    if not annotations or isinstance(annotations, (str, bytes)):
         return []
 
     output_annotations: list[ResponsesAnnotation] = []
     for annotation in annotations:
-        if annotation.get("type") != "citation":
+        if not isinstance(annotation, Mapping):
+            continue
+        annotation_mapping = cast("Mapping[str, Any]", annotation)
+        if annotation_mapping.get("type") != "citation":
             continue
 
-        properties = annotation.get("additional_properties") or {}
-        regions = annotation.get("annotated_regions") or []
-        file_id = annotation.get("file_id")
-        url = annotation.get("url")
-        title = annotation.get("title")
+        raw_properties = annotation_mapping.get("additional_properties")
+        properties: Mapping[str, Any] = (
+            cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
+        )
+        raw_regions = annotation_mapping.get("annotated_regions")
+        regions: list[Mapping[str, Any]] = []
+        if isinstance(raw_regions, Sequence) and not isinstance(raw_regions, (str, bytes)):
+            for raw_region in cast("Sequence[Any]", raw_regions):
+                if not isinstance(raw_region, Mapping):
+                    continue
+                region = cast("Mapping[str, Any]", raw_region)
+                if region.get("type") == "text_span":
+                    regions.append(region)
+        file_id = annotation_mapping.get("file_id")
+        url = annotation_mapping.get("url")
+        title = annotation_mapping.get("title")
         container_id = properties.get("container_id")
         index = properties.get("index")
 
@@ -270,8 +282,8 @@ def _annotations_to_output_text(
                         container_id=container_id,
                         file_id=file_id,
                         filename=url or "",
-                        start_index=start_index + text_offset,
-                        end_index=end_index + text_offset,
+                        start_index=start_index,
+                        end_index=end_index,
                     )
                 )
         elif isinstance(url, str) and url and not file_id:
@@ -285,8 +297,8 @@ def _annotations_to_output_text(
                         type="url_citation",
                         url=url,
                         title=title or "",
-                        start_index=start_index + text_offset,
-                        end_index=end_index + text_offset,
+                        start_index=start_index,
+                        end_index=end_index,
                     )
                 )
         elif isinstance(file_id, str) and file_id and isinstance(url, str) and url and isinstance(index, int):
@@ -2552,9 +2564,8 @@ class _OutputItemTracker:
             for event in self._ensure_message_content("text", message_id):
                 yield event
             self._active_message_id = message_id
-            text_offset = len("".join(self._accumulated)) if content.text and content.merge_mode != "replace" else 0
             delta = self._consume_text_update(content.text, content.merge_mode)
-            for annotation in _annotations_to_output_text(content.annotations, text_offset=text_offset):
+            for annotation in _annotations_to_output_text(content.annotations):
                 if annotation not in self._text_annotations:
                     self._text_annotations.append(annotation)
             if delta and self._text_content is not None:
