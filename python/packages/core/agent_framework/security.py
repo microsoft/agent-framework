@@ -1379,6 +1379,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
         self._standing_guidance_cache: WeakKeyDictionary[Any, tuple[str, ...]] = WeakKeyDictionary()
+        self._quarantine_client_bound = False
+        self._quarantine_client_override: SupportsChatGetResponse | None = None
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -3364,15 +3366,11 @@ class SecureAgentConfig(ContextProvider):
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
     Note:
-        The quarantine chat client is stored per-instance (see ``get_quarantine_client``)
-        but is *also* registered in a single process-global slot via
-        ``set_quarantine_client``. The ``quarantined_llm`` tool always reads that global
-        slot, so the behavior is **last-writer-wins**: when multiple ``SecureAgentConfig``
-        instances are constructed in the same process with different ``quarantine_chat_client``
-        values, the most recently constructed instance's client is the one every agent's
-        ``quarantined_llm`` tool will use. Running multiple instances is supported, but they
-        share this one global quarantine client rather than each using their own. If you need
-        distinct quarantine clients per agent, run them in separate processes.
+        During calls mediated by this config's label-tracking middleware,
+        ``quarantined_llm`` uses this config's ``quarantine_chat_client``.
+        An explicitly missing client cannot inherit one from another config.
+        Direct standalone calls without an active config retain the legacy
+        process-global fallback configured by ``set_quarantine_client``.
 
     Examples:
         .. code-block:: python
@@ -3433,9 +3431,8 @@ class SecureAgentConfig(ContextProvider):
                 If provided, the quarantined_llm tool will make actual isolated LLM calls
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
-                processes untrusted content. Note: this client is registered in a
-                process-global slot shared by all instances (last-writer-wins); see the
-                class docstring for details on running multiple instances.
+                processes untrusted content. Scoped agent calls use this client;
+                standalone calls retain the legacy process-global fallback.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
 
@@ -3465,6 +3462,10 @@ class SecureAgentConfig(ContextProvider):
             default_integrity=default_integrity,
             default_confidentiality=default_confidentiality,
         )
+        # A scoped invocation owns its quarantine client, including explicit None.
+        # These attributes survive the tracker copy in _clone_for_scope().
+        self.label_tracker._quarantine_client_bound = True
+        self.label_tracker._quarantine_client_override = quarantine_chat_client
         self.policy_enforcer = (
             PolicyEnforcementFunctionMiddleware(
                 allow_untrusted_tools=set(self._allow_untrusted_tools),
@@ -3974,7 +3975,12 @@ async def quarantined_llm(
     actual_metadata = metadata or {}
 
     # Build the response - use real LLM if quarantine client is configured
-    quarantine_client = get_quarantine_client()
+    # Scoped security middleware wins, including an explicitly missing client.
+    quarantine_client = (
+        middleware._quarantine_client_override
+        if middleware is not None and middleware._quarantine_client_bound
+        else get_quarantine_client()
+    )
 
     if quarantine_client is not None:
         # Build the quarantined prompt with retrieved content
