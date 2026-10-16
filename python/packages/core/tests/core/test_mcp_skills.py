@@ -675,6 +675,37 @@ class TestMCPSkillsSource:
         assert calls[1][0] is not None
         assert calls[0][0] != calls[1][0]
 
+    async def test_connection_provider_follows_replacement_high_level_client(self) -> None:
+        from mcp import Client
+        from mcp.server import Server, ServerRequestContext
+        from mcp.types import ReadResourceRequestParams
+
+        def server_with_body(name: str, body: str) -> Server:
+            async def read_resource(
+                _ctx: ServerRequestContext[Any],
+                params: ReadResourceRequestParams,
+            ) -> ReadResourceResult:
+                uri = str(params.uri)
+                if uri == "skill://index.json":
+                    return _make_text_result(SAMPLE_SKILL_INDEX, uri=uri)
+                return _make_text_result(f"# {name}\n{body}", uri=uri)
+
+            return Server(name, on_read_resource=read_resource)
+
+        async with (
+            Client(server_with_body("old-skills", "old body")) as old_client,
+            Client(server_with_body("new-skills", "new body")) as new_client,
+        ):
+            current = {"client": old_client}
+            source = MCPSkillsSource(session_provider=lambda: current["client"])
+            skill = (await source.get_skills(_SOURCE_CTX))[0]
+
+            current["client"] = new_client
+            content = await skill.get_content()
+
+        assert "new body" in content
+        assert "old body" not in content
+
     @pytest.mark.parametrize(
         "uri",
         [
