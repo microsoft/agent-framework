@@ -229,6 +229,9 @@ internal sealed class UppercaseStringExecutor(string name = "UppercaseStringExec
 
 public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
+    private const string ToolCallText = "Before tool call.";
+    private const string FinalText = "Final answer.";
+
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
         private sealed class Session : AgentSession
@@ -276,6 +279,38 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         return new WorkflowBuilder(agent).Build();
     }
 
+    private static Workflow CreateToolCallWorkflow()
+    {
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant,
+            [
+                new TextContent(ToolCallText),
+                new FunctionCallContent("call_1", "get_data"),
+            ])
+            {
+                MessageId = "tool-call-message",
+            },
+            new(ChatRole.Tool, [new FunctionResultContent("call_1", "tool result")])
+            {
+                MessageId = "tool-result-message",
+            },
+            new(ChatRole.Assistant, [new TextContent(FinalText)])
+            {
+                MessageId = "final-message",
+            },
+        ];
+
+        TestReplayAgent agent = new(messages, TestAgentId, TestAgentName);
+        ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions
+        {
+            EmitAgentUpdateEvents = true,
+            EmitAgentResponseEvents = true,
+        });
+
+        return new WorkflowBuilder(binding).Build();
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]
@@ -309,6 +344,59 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         }
 
         Assert.True(hadErrorContent);
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_DefaultPreservesToolCallMessagesAsync()
+    {
+        // Arrange
+        Workflow workflow = CreateToolCallWorkflow();
+        AIAgent workflowAgent = workflow.AsAIAgent("WorkflowAgent");
+
+        // Act
+        AgentResponse response = await workflowAgent.RunAsync(new ChatMessage(ChatRole.User, "Hello"));
+
+        // Assert
+        List<AIContent> contents = [.. response.Messages.SelectMany(message => message.Contents)];
+        Assert.Contains(contents, content => content is FunctionCallContent);
+        Assert.Contains(contents, content => content is FunctionResultContent);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Test_AsAgent_FilterToolCallMessagesRemovesToolCallContentsAsync(bool runStreaming, bool redirectCheckpointing)
+    {
+        // Arrange
+        Workflow workflow = CreateToolCallWorkflow();
+        AIAgent workflowAgent = workflow.AsAIAgent(filterToolCallMessages: true, id: "WorkflowAgent");
+        if (redirectCheckpointing)
+        {
+            workflowAgent = workflowAgent.WithCheckpointing(CheckpointManager.CreateInMemory());
+        }
+
+        // Act
+        List<AIContent> contents;
+        if (runStreaming)
+        {
+            List<AgentResponseUpdate> updates = await workflowAgent.RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello")).ToListAsync();
+            contents = [.. updates.SelectMany(update => update.Contents)];
+        }
+        else
+        {
+            AgentResponse response = await workflowAgent.RunAsync(new ChatMessage(ChatRole.User, "Hello"));
+            contents = [.. response.Messages.SelectMany(message => message.Contents)];
+        }
+
+        // Assert
+        Assert.DoesNotContain(contents, content => content is FunctionCallContent);
+        Assert.DoesNotContain(contents, content => content is FunctionResultContent);
+
+        List<string> textContents = [.. contents.OfType<TextContent>().Select(content => content.Text)];
+        Assert.Contains(ToolCallText, textContents);
+        Assert.Contains(FinalText, textContents);
     }
 
     /// <summary>
