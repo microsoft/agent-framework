@@ -12,7 +12,7 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
-from contextvars import Context, ContextVar
+from contextvars import ContextVar, copy_context
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -227,7 +227,7 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 # object is a reference to the owner of the headers, so we keep track which headers belong to which tool
-_mcp_call_headers: ContextVar[tuple[object, dict[str, str]]] = ContextVar("_mcp_call_headers")
+_mcp_call_headers: ContextVar[tuple[object, dict[str, str]] | None] = ContextVar("_mcp_call_headers")
 _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] = ContextVar(
     "_mcp_tool_runtime_context", default=None
 )
@@ -2010,7 +2010,9 @@ class MCPTool:
                 return
 
             self._lifecycle_queue = asyncio.Queue()
-            self._lifecycle_owner_task = Context().run(
+            owner_context = copy_context()
+            owner_context.run(_mcp_call_headers.set, None)
+            self._lifecycle_owner_task = owner_context.run(
                 asyncio.create_task,
                 self._run_lifecycle_owner(),
                 name=f"mcp-lifecycle:{self.name}",
