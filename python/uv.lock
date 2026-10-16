@@ -152,7 +152,7 @@ requires-dist = [{ name = "agent-framework-core", extras = ["all"], editable = "
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "agent-hooks-sdk", specifier = ">=0.1.0a4,<0.2" },
+    { name = "agent-hooks-sdk", specifier = ">=0.1.0b2,<0.2" },
     { name = "azure-monitor-opentelemetry", specifier = ">=1.8.10,<2" },
     { name = "mcp" },
     { name = "opentelemetry-sdk" },
@@ -1086,15 +1086,15 @@ requires-dist = [
 
 [[package]]
 name = "agent-hooks-sdk"
-version = "0.1.0a5"
+version = "0.1.0b2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/33/f4/191de0300a73b9a78f2914e0e497c96e6ac38db457e20f74fdd6251792c4/agent_hooks_sdk-0.1.0a5.tar.gz", hash = "sha256:4ae452b0a1d51540a1b74b0005b0a51f75fd4b80e9aca1a7403dece4dd6f9e46", size = 130183, upload-time = "2026-08-07T06:14:41.89Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/8c/bec0b70f321398acf05758fa267ee9dd4abc19c15ddf7e87c4530ccb48bb/agent_hooks_sdk-0.1.0b2.tar.gz", hash = "sha256:65a09039b7674e304df45aaffbbb4b2bc670faa35dd025885efba1f9954a8a92", size = 224367, upload-time = "2026-10-13T07:58:41.675Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/50/a6bea9691ef69be1c9c70420e84f773ee721c7e60dafc76069564ba88cc9/agent_hooks_sdk-0.1.0a5-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d63893d94ccfbdc6422dd217663ed88aedec0ffd560ecfa105187fa9bda79063", size = 598919, upload-time = "2026-08-07T06:14:35.276Z" },
-    { url = "https://files.pythonhosted.org/packages/14/ad/fe8885b3f3f203d48dba46034d3c92dfd207a9bc504d4ba1356bf57f9234/agent_hooks_sdk-0.1.0a5-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:fb1d714ed6baf884525a153821d909fb23c2fe27e63f61ae254f06ee6ec351d4", size = 570529, upload-time = "2026-08-07T06:14:36.612Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/6d/169997cb8ad39fc295854ed25f21171e800298e73e5a12123d3b008149f7/agent_hooks_sdk-0.1.0a5-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:a0946af422eadeb3a192a7a856bc40e2b74435ab540dd3586c3cb7939157c91b", size = 626188, upload-time = "2026-08-07T06:14:37.98Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/22/ab5cf6e7fd26e8157637eea4b72a903d1b98dad11872857f32ead29ddcd0/agent_hooks_sdk-0.1.0a5-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a4b53cce9dabf1ee8ffffa4b5f6c6d34d269daa699d468e49fad286f0070d23f", size = 649025, upload-time = "2026-08-07T06:14:39.218Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/c2/d2bb3772abe3b04fc841bc6c667f49adf9ae037c945cbe0d6a8739d419c4/agent_hooks_sdk-0.1.0a5-cp310-abi3-win_amd64.whl", hash = "sha256:777a4cd3803710277e77d9c6abb6d1a2c9d6ce8977167fe47fc57b8e4ff8bc75", size = 479891, upload-time = "2026-08-07T06:14:40.697Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/60/db0afa1fc87a0ab21669085a5d1f7dfa05dba2c1ce7a8e4eb54e3d99ae4c/agent_hooks_sdk-0.1.0b2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:41a941d014baeaa9a1a2851264bba9ee72492d70800a741cc3ad688eabe933cf", size = 777424, upload-time = "2026-10-13T07:58:33.791Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/dc/9da81e5e1ce44314cf6817b111e07db1df2934e5cc680384183fd088e200/agent_hooks_sdk-0.1.0b2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:04174e1045e8142086f358e4023229cbf36a25594fd4c4b9f49d7c54e48a668c", size = 738082, upload-time = "2026-10-13T07:58:35.372Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/1a/d26203019c0ec167552c9a2770e2e03fffc851eb74578592de2dca5f1c1b/agent_hooks_sdk-0.1.0b2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ad927aa9c0a9a8c523fd2bfa2d331b51c5cef2a4c5c3a7a8f0a0d313a456d3c2", size = 797985, upload-time = "2026-10-13T07:58:36.959Z" },
+    { url = "https://files.pythonhosted.org/packages/44/6b/a47e684d828ad0e1fbd8db729b7cd215858cfa30d4307e750b19a25e45d0/agent_hooks_sdk-0.1.0b2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:6f074282bafe9f470141aff9b92d82986f0cdfd2d56056754ff42ae0e0c916f5", size = 837037, upload-time = "2026-10-13T07:58:38.734Z" },
+    { url = "https://files.pythonhosted.org/packages/75/56/b56f9f2531792d5dc4f0a5fbcff6ac96223b5cca7eedb94981f89eefda33/agent_hooks_sdk-0.1.0b2-cp310-abi3-win_amd64.whl", hash = "sha256:30ff4fcc9c532ac018e6d9c13a6750f3029312fe4e953849dae40f177c78a6ef", size = 655970, upload-time = "2026-10-13T07:58:40.431Z" },
 ]
 
 [[package]]
