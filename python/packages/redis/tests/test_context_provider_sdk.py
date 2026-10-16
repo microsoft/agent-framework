@@ -18,6 +18,7 @@ from redisvl.redis.utils import array_to_buffer
 from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis import RedisContextProvider
+from agent_framework_redis._context_provider import _scope_token, _scope_token_field
 
 
 class _TransportConnection(Connection):
@@ -122,10 +123,14 @@ async def test_after_run_encodes_messages_with_optional_fields_omitted(
     assert record["user_id"] == "user-1"
     assert record["conversation_id"] == "session-1"
     assert record["thread_id"] == "session-1"
+    assert record[_scope_token_field("user_id")] == _scope_token("user_id", "user-1")
+    assert record[_scope_token_field("conversation_id")] == _scope_token("conversation_id", "session-1")
+    assert record[_scope_token_field("thread_id")] == _scope_token("thread_id", "session-1")
     assert "message_id" not in record
     assert "author_name" not in record
     for key, value in scopes.items():
         assert record[key] == value
+        assert record[_scope_token_field(key)] == _scope_token(key, value)
     if not all_scopes:
         assert "application_id" not in record
         assert "agent_id" not in record
@@ -163,11 +168,13 @@ async def test_borrowed_index_omits_null_values_without_changing_nonnull_values_
     await provider._add(data=document)
 
     record = write.call_args.args[2]
-    assert "application_id" not in record
+    assert record["application_id"] == "configured-app"
+    assert record["agent_id"] == "configured-agent"
+    assert record[_scope_token_field("application_id")] == _scope_token("application_id", "configured-app")
+    assert record[_scope_token_field("agent_id")] == _scope_token("agent_id", "configured-agent")
     assert "thread_id" not in record
     assert "optional_metadata" not in record
-    assert record["agent_id"] == "0"
-    assert record["conversation_id"] == "0"
+    assert "conversation_id" not in record
     assert record["message_id"] == "0"
     assert record["author_name"] == ""
     assert record["mime_type"] == 0
