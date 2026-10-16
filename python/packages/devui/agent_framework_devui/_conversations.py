@@ -719,7 +719,13 @@ class InMemoryConversationStore(ConversationStore):
         )
 
         if content_type in ("data", "uri"):
-            if content.media_type and content.media_type.startswith("audio/"):
+            if (
+                content.media_type
+                and content.media_type.startswith("audio/")
+                and openai_content_type != "input_file"
+                and content.uri
+                and content.uri.startswith("data:")
+            ):
                 audio_format = input_audio_format_for_media_type(content.media_type)
 
                 if audio_format is not None:
