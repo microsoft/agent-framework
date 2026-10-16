@@ -706,16 +706,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
-        # Get JSON schema from the pydantic model or the JSON schema the tool was declared with
+        # Pass the full JSON schema through (from the pydantic model or the schema the tool was declared with), so
+        # keywords such as additionalProperties and $defs reach Claude. The SDK only uses a dict as a JSON schema when
+        # it has a string "type" and "properties", so both are always set.
         schema: dict[str, Any] = func_tool.parameters()
-        input_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
-        # Preserve $defs for nested type references (Pydantic uses $defs for nested models)
-        if "$defs" in schema:
-            input_schema["$defs"] = schema["$defs"]
+        input_schema: dict[str, Any] = {**schema, "type": "object", "properties": schema.get("properties") or {}}
 
         return SdkMcpTool(
             name=func_tool.name,
