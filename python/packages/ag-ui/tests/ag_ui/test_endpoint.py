@@ -13,7 +13,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
 from pathlib import Path
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -62,7 +62,7 @@ from agent_framework.security import (
     SecureAgentConfig,
 )
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.params import Depends
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
@@ -74,7 +74,9 @@ from agent_framework_ag_ui import (
     AGUIRequest,
     AGUIThreadSnapshot,
     InMemoryAGUIThreadSnapshotStore,
-    add_agent_framework_fastapi_endpoint,
+)
+from agent_framework_ag_ui import (
+    add_agent_framework_fastapi_endpoint as _add_agent_framework_fastapi_endpoint,
 )
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._approval_lifecycle import (
@@ -84,11 +86,25 @@ from agent_framework_ag_ui._approval_lifecycle import (
     ResumeDecision,
 )
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
+from agent_framework_ag_ui._snapshots import _session_id_for_thread
 from agent_framework_ag_ui._workflow import (
     _CHECKPOINT_REQUEST_OWNER_KEY,
     AgentFrameworkWorkflow,
     _OwnedWorkflowCheckpointStorage,
 )
+
+_DEFAULT_AUTHORIZATION_SCOPE = "test-single-user"
+
+
+def add_agent_framework_fastapi_endpoint(*args: Any, **kwargs: Any) -> None:
+    """Register a test endpoint as intentionally single-user unless the test supplies a scope."""
+    if (
+        kwargs.get("authorization_scope_resolver") is None
+        and kwargs.get("snapshot_scope_resolver") is None
+        and not kwargs.get("single_user", False)
+    ):
+        kwargs["snapshot_scope_resolver"] = lambda _request: _DEFAULT_AUTHORIZATION_SCOPE
+    _add_agent_framework_fastapi_endpoint(*args, **kwargs)
 
 
 def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
@@ -96,8 +112,12 @@ def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
     return [json.loads(line[6:]) for line in content.splitlines() if line.startswith("data: ")]
 
 
-def _unscoped_approval_thread_id(thread_id: str) -> str:
-    return approval_state_thread_id(scope=None, thread_id=thread_id)
+def _default_approval_thread_id(thread_id: str) -> str:
+    return approval_state_thread_id(scope=_DEFAULT_AUTHORIZATION_SCOPE, thread_id=thread_id)
+
+
+def _default_session_id(thread_id: str) -> str:
+    return _session_id_for_thread(scope=_DEFAULT_AUTHORIZATION_SCOPE, thread_id=thread_id)
 
 
 async def _post_until_sse_event_then_disconnect(
@@ -1331,21 +1351,21 @@ async def test_add_endpoint_accepts_transport_options_for_supported_runners(buil
 
 def test_add_endpoint_keepalive_default_is_enabled() -> None:
     """Keepalive defaults to the endpoint-owned enabled interval."""
-    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
+    parameter = signature(_add_agent_framework_fastapi_endpoint).parameters["keepalive_seconds"]
 
     assert parameter.default == 15
 
 
 def test_add_endpoint_detached_runs_default_is_disabled() -> None:
     """Detached execution is opt-in so current disconnect cancellation semantics remain the default."""
-    parameter = signature(add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
+    parameter = signature(_add_agent_framework_fastapi_endpoint).parameters["detached_runs"]
 
     assert parameter.default is False
 
 
 def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
     """Detached producers have finite admission and post-disconnect lifetime defaults."""
-    parameters = signature(add_agent_framework_fastapi_endpoint).parameters
+    parameters = signature(_add_agent_framework_fastapi_endpoint).parameters
 
     assert parameters["max_detached_runs"].default == 32
     assert parameters["detached_run_timeout_seconds"].default == 3600
@@ -1353,14 +1373,16 @@ def test_add_endpoint_detached_run_limits_have_bounded_defaults() -> None:
 
 def test_add_endpoint_detached_runs_preserves_existing_positional_parameter_order() -> None:
     """The new option is appended after existing parameters so positional a2ui_config callers do not shift."""
-    parameters = list(signature(add_agent_framework_fastapi_endpoint).parameters)
+    parameters = list(signature(_add_agent_framework_fastapi_endpoint).parameters)
 
     assert parameters.index("detached_runs") > parameters.index("a2ui_config")
+    assert parameters.index("authorization_scope_resolver") > parameters.index("detached_run_timeout_seconds")
+    assert parameters.index("single_user") > parameters.index("authorization_scope_resolver")
 
 
 def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None:
     """The public endpoint docs describe keepalive as transport comments, not AG-UI events."""
-    docstring = add_agent_framework_fastapi_endpoint.__doc__
+    docstring = _add_agent_framework_fastapi_endpoint.__doc__
 
     assert docstring is not None
     normalized_docstring = " ".join(docstring.split())
@@ -1373,7 +1395,7 @@ def test_add_endpoint_docstring_describes_keepalive_transport_behavior() -> None
 
 def test_add_endpoint_docstring_describes_detached_run_behavior() -> None:
     """The public endpoint docs distinguish detached completion from resumable replay."""
-    docstring = add_agent_framework_fastapi_endpoint.__doc__
+    docstring = _add_agent_framework_fastapi_endpoint.__doc__
 
     assert docstring is not None
     normalized_docstring = " ".join(docstring.split())
@@ -1652,7 +1674,8 @@ async def test_endpoint_detached_run_completes_when_response_stream_never_starts
                 "threadId": "unstarted-thread",
                 "messages": [{"role": "user", "content": "Start"}],
             }
-        )
+        ),
+        Request({"type": "http", "method": "POST", "path": "/unstarted-reader", "headers": []}),
     )
     assert isinstance(response, StreamingResponse)
 
@@ -1714,7 +1737,8 @@ async def test_endpoint_exactly_full_unstarted_stream_releases_detached_capacity
                 "threadId": "unstarted-thread",
                 "messages": [{"role": "user", "content": "Start"}],
             }
-        )
+        ),
+        Request({"type": "http", "method": "POST", "path": "/exact-capacity", "headers": []}),
     )
     assert isinstance(response, StreamingResponse)
     await asyncio.wait_for(first_completed.wait(), timeout=5)
@@ -3313,7 +3337,12 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
         keepalive_seconds=None,
     )
     add_agent_framework_fastapi_endpoint(
-        app, agent, path="/unscoped-memory", dependencies=[Depends(authorize)], keepalive_seconds=None
+        app,
+        agent,
+        path="/unscoped-memory",
+        dependencies=[Depends(authorize)],
+        keepalive_seconds=None,
+        single_user=True,
     )
     client = TestClient(app)
     request_number = 0
@@ -3505,7 +3534,8 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
     assert all(victim_description not in context for context in model_contexts[collision_start:])
     assert {path: path.read_bytes() for path in victim_files} == victim_files
 
-    # No resolver is intentionally unscoped, unlike a configured resolver returning None.
+    # Explicit single-user mode gets one registration-local scope and retains continuity within that registration.
+    single_user_session_id: str | None = None
     for tool_name, arguments in [
         ("file_memory_write", {"file_name": "unscoped.md", "content": "unscoped continuity"}),
         ("file_memory_read", {"file_name": "unscoped.md"}),
@@ -3519,7 +3549,11 @@ async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revoc
             public_thread_id="ordinary-unscoped-thread",
         )
         assert response.status_code == 200
-        assert chat_client.last_session.session_id == "ordinary-unscoped-thread"
+        assert chat_client.last_session.session_id != "ordinary-unscoped-thread"
+        if single_user_session_id is None:
+            single_user_session_id = chat_client.last_session.session_id
+        else:
+            assert chat_client.last_session.session_id == single_user_session_id
         if tool_name == "file_memory_read":
             result = next(
                 event["content"] for event in _decode_sse_events(response) if event["type"] == "TOOL_CALL_RESULT"
@@ -4057,7 +4091,7 @@ async def test_endpoint_agent_approval_resume_preserves_agent_function_policy(
     assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == ["MiddlewareFailure"]
     assert not [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert executed == []
-    assert policy_observations == [(f"thread-policy-{a2ui_mode}", None)]
+    assert policy_observations == [(_default_session_id(f"thread-policy-{a2ui_mode}"), None)]
 
     state["phase"] = "pause"
     direct_session = AgentSession(session_id=f"direct-policy-{a2ui_mode}")
@@ -4204,7 +4238,7 @@ async def test_endpoint_a2ui_mixed_batch_preserves_agent_function_policy(
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
     assert executed == []
     assert render_calls == []
-    assert policy_sessions == [f"thread-mixed-policy-{a2ui_mode}"]
+    assert policy_sessions == [_default_session_id(f"thread-mixed-policy-{a2ui_mode}")]
 
     state["direct"] = True
     with pytest.raises(MiddlewareFailure):
@@ -4581,7 +4615,7 @@ async def test_endpoint_agent_approval_batch_keeps_distinct_occurrences_for_reus
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-shared-call")
+    approval_thread_id = _default_approval_thread_id("thread-shared-call")
     first = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -4634,7 +4668,7 @@ async def test_endpoint_agent_unavailable_local_executor_releases_every_unstarte
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-unavailable-batch")
+    approval_thread_id = _default_approval_thread_id("thread-unavailable-batch")
     local = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -4754,6 +4788,7 @@ def _build_tool_approval_queue_endpoint(
     streaming_chat_client_stub: Any,
     *,
     lifecycle: ApprovalLifecycle | None = None,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str], AgentFrameworkAgent]:
     executed: list[str] = []
     messages_received: list[Message] = []
@@ -4805,6 +4840,8 @@ def _build_tool_approval_queue_endpoint(
         app,
         wrapped_agent,
         path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "test") if snapshot_store is not None else None,
     )
     return TestClient(app), executed, messages_received, state, wrapped_agent
 
@@ -5638,7 +5675,7 @@ async def test_endpoint_agent_legacy_tool_message_reuses_historical_confirm_chan
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-reused-confirm-id"),
+        thread_id=_default_approval_thread_id("thread-reused-confirm-id"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="guarded_tool",
@@ -5709,7 +5746,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-legacy-reused")
+    approval_thread_id = _default_approval_thread_id("thread-legacy-reused")
     lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -5778,7 +5815,7 @@ async def test_endpoint_agent_legacy_tool_message_cannot_collide_with_interrupt_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-legacy-collision"),
+        thread_id=_default_approval_thread_id("thread-legacy-collision"),
         interrupt_id="af-call-secret",
         call_id="provider-real",
         name="guarded_tool",
@@ -5835,7 +5872,7 @@ async def test_endpoint_agent_legacy_tool_message_rejects_duplicate_decisions() 
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-legacy-duplicate"),
+        thread_id=_default_approval_thread_id("thread-legacy-duplicate"),
         interrupt_id="af-call-current",
         call_id="provider-call",
         name="guarded_tool",
@@ -5889,7 +5926,7 @@ async def test_endpoint_agent_historical_legacy_approval_cannot_authorize_newer_
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     wrapped_agent._approval_state_store.lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_id=_unscoped_approval_thread_id("thread-historical-legacy"),
+        thread_id=_default_approval_thread_id("thread-historical-legacy"),
         interrupt_id="af-call-current",
         call_id="provider-reused",
         name="dangerous_tool",
@@ -6648,7 +6685,7 @@ async def test_endpoint_agent_mixed_retry_reprojects_completed_sibling_without_r
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     lifecycle = wrapped_agent._approval_state_store.lifecycle
-    approval_thread_id = _unscoped_approval_thread_id("thread-completed-sibling")
+    approval_thread_id = _default_approval_thread_id("thread-completed-sibling")
     completed = lifecycle.register(
         owner=ApprovalExecutionOwner.LOCAL,
         thread_id=approval_thread_id,
@@ -6769,10 +6806,12 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
 
 
-async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with_reused_call_id(
-    streaming_chat_client_stub,
-) -> None:
-    """Distinct hidden occurrences sharing a provider call ID resume and execute once."""
+def _build_reused_provider_call_id_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
+) -> tuple[TestClient, list[str], dict[str, str], AgentFrameworkAgent]:
+    """Pause on one guarded call whose two safe siblings reuse its provider call ID."""
     executed: list[str] = []
     state = {"phase": "pause"}
 
@@ -6838,8 +6877,21 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     )
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     app = FastAPI()
-    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
-    client = TestClient(app)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "test") if snapshot_store is not None else None,
+    )
+    return TestClient(app), executed, state, wrapped_agent
+
+
+async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with_reused_call_id(
+    streaming_chat_client_stub,
+) -> None:
+    """Distinct hidden occurrences sharing a provider call ID resume and execute once."""
+    client, executed, state, wrapped_agent = _build_reused_provider_call_id_endpoint(streaming_chat_client_stub)
     thread_id = "thread-shared-provider-call"
 
     pause_response = client.post(
@@ -6890,7 +6942,7 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {event["toolCallId"] for event in tool_results} == {"provider-shared"}
 
     occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(
-        thread_id=_unscoped_approval_thread_id(thread_id)
+        thread_id=_default_approval_thread_id(thread_id)
     )
     assert {occurrence.identity.interrupt_id for occurrence in occurrences} == {
         "guarded-occurrence",
@@ -6900,6 +6952,52 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {occurrence.identity.call_id for occurrence in occurrences} == {"provider-shared"}
     assert len({occurrence.identity.occurrence_id for occurrence in occurrences}) == 3
     assert {occurrence.status for occurrence in occurrences} == {ApprovalStatus.SETTLED}
+
+
+async def test_endpoint_approval_snapshot_keeps_every_result_for_reused_call_id(streaming_chat_client_stub) -> None:
+    """Results of distinct occurrences sharing a provider call ID all survive the snapshot round trip."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, executed, state, _ = _build_reused_provider_call_id_endpoint(
+        streaming_chat_client_stub, snapshot_store=store
+    )
+    thread_id = "thread-shared-provider-call-snapshot"
+    expected_results = ["guarded result", "first safe result", "second safe result"]
+
+    def post(run_id: str, *, text: str | None = None, interrupt_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if interrupt_id:
+            payload["resume"] = [{"interruptId": interrupt_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def tool_results(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        return [
+            (str(message.get("toolCallId") or message.get("tool_call_id")), message["content"])
+            for message in messages
+            if message.get("role") == "tool"
+        ]
+
+    post("run-pause", text="Run all three tools")
+    state["phase"] = "resume"
+    resume_events = post("run-resume", interrupt_id="guarded-occurrence")
+    assert Counter(executed) == {"guarded": 1, "first-safe": 1, "second-safe": 1}
+
+    snapshot_events = [event for event in resume_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    event_messages = snapshot_events[-1]["messages"]
+    assert tool_results(event_messages) == [("provider-shared", result) for result in expected_results]
+    assert [message["role"] for message in event_messages] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert tool_results(saved.messages) == [("provider-shared", result) for result in expected_results]
 
 
 def _build_fides_policy_approval_endpoint(
@@ -7458,6 +7556,278 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     assert [content.call_id for content in replayed_results] == ["call_first", "call_second"]
 
 
+async def test_endpoint_queued_approval_snapshot_retains_every_released_result(streaming_chat_client_stub):
+    """Results for decisions collected in earlier requests survive the snapshot round trip (#8789)."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    client, executed, messages_received, state, _ = _build_tool_approval_queue_endpoint(
+        streaming_chat_client_stub, snapshot_store=store
+    )
+    thread_id = "thread-queued-snapshot"
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def next_approval_id(events: list[dict[str, Any]]) -> str:
+        finished = [event for event in events if event["type"] == "RUN_FINISHED"]
+        return _run_finished_interrupts(finished[-1])[0]["id"]
+
+    def tool_result_call_ids(messages: list[dict[str, Any]]) -> list[str]:
+        return [
+            str(message.get("toolCallId") or message.get("tool_call_id"))
+            for message in messages
+            if message.get("role") == "tool"
+        ]
+
+    pause_events = post("run-pause", text="Run both tools")
+    state["phase"] = "resume"
+    first_resume_events = post("run-resume-first", approval_id=next_approval_id(pause_events))
+    final_events = post("run-resume-second", approval_id=next_approval_id(first_resume_events))
+    assert executed == ["first", "second"]
+
+    snapshot_events = [event for event in final_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    event_messages = snapshot_events[-1]["messages"]
+    assert tool_result_call_ids(event_messages) == ["call_first", "call_second"]
+    # Both results follow the call message and precede the model's reply.
+    assert [message["role"] for message in event_messages] == ["user", "assistant", "tool", "tool", "assistant"]
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert tool_result_call_ids(saved.messages) == ["call_first", "call_second"]
+
+    post("run-next-turn", text="What happened?")
+    replayed_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.call_id for content in replayed_results] == ["call_first", "call_second"]
+
+
+async def test_endpoint_approval_snapshot_pairs_result_with_later_turn_reusing_call_id(streaming_chat_client_stub):
+    """A later approved call reusing an earlier completed call ID keeps both pairs in place."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    executed: list[str] = []
+    messages_received: list[Message] = []
+    turn = {"number": 0}
+
+    def lookup() -> str:
+        executed.append(f"turn-{turn['number']}")
+        return f"result {turn['number']}"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        messages_received[:] = list(messages)
+        if messages[-1].role == "user":
+            turn["number"] += 1
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="lookup", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"Done {turn['number']}.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="lookup", description="Lookup", func=lookup, approval_mode="always_require")],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    client = TestClient(app)
+    thread_id = "thread-reused-call-id-across-turns"
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    def approval_id(events: list[dict[str, Any]]) -> str:
+        finished = [event for event in events if event["type"] == "RUN_FINISHED"]
+        return _run_finished_interrupts(finished[-1])[0]["id"]
+
+    def transcript(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        entries: list[tuple[str, str]] = []
+        for message in messages:
+            role = message["role"]
+            if role == "tool":
+                entries.append(
+                    ("tool", f"{message.get('toolCallId') or message.get('tool_call_id')}={message['content']}")
+                )
+            elif role == "assistant" and (tool_calls := message.get("toolCalls") or message.get("tool_calls")):
+                entries.append(("call", ",".join(tool_call["id"] for tool_call in tool_calls)))
+            else:
+                entries.append((role, message.get("content") or ""))
+        return entries
+
+    expected = [
+        ("user", "First"),
+        ("call", "call_reused"),
+        ("tool", "call_reused=result 1"),
+        ("assistant", "Done 1."),
+        ("user", "Second"),
+        ("call", "call_reused"),
+        ("tool", "call_reused=result 2"),
+        ("assistant", "Done 2."),
+    ]
+
+    post("run-first-resume", approval_id=approval_id(post("run-first", text="First")))
+    final_events = post("run-second-resume", approval_id=approval_id(post("run-second", text="Second")))
+    assert executed == ["turn-1", "turn-2"]
+
+    snapshot_events = [event for event in final_events if event["type"] == "MESSAGES_SNAPSHOT"]
+    assert snapshot_events
+    assert transcript(snapshot_events[-1]["messages"]) == expected
+
+    saved = await store.get(scope="test", thread_id=thread_id)
+    assert saved is not None
+    assert transcript(saved.messages) == expected
+
+    post("run-third", text="Third")
+    replayed = [
+        (content.type, content.call_id, content.result if content.type == "function_result" else None)
+        for message in messages_received
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ]
+    assert replayed == [
+        ("function_call", "call_reused", None),
+        ("function_result", "call_reused", "result 1"),
+        ("function_call", "call_reused", None),
+        ("function_result", "call_reused", "result 2"),
+    ]
+
+
+async def test_endpoint_skips_abandoned_later_call_reusing_settled_approval_call_id(streaming_chat_client_stub):
+    """A settled approval retained for replay does not protect a later abandoned call that reuses its ID."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    executed: list[str] = []
+    messages_received: list[Message] = []
+
+    def lookup() -> str:
+        executed.append("lookup")
+        return "result 1"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        messages_received[:] = list(messages)
+        last = messages[-1]
+        if last.role == "user" and last.text == "First":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="lookup", arguments="{}")],
+                role="assistant",
+            )
+            return
+        if last.role == "user" and last.text == "Second":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_reused", name="pick_color", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="lookup", description="Lookup", func=lookup, approval_mode="always_require")],
+        middleware=[ToolApprovalMiddleware()],
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+    )
+    client = TestClient(app)
+    thread_id = "thread-reused-call-id-abandoned"
+    client_tool = {"name": "pick_color", "description": "Pick a color", "parameters": {"type": "object"}}
+
+    def post(run_id: str, *, text: str | None = None, approval_id: str | None = None) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": text}] if text else [],
+            "tools": [client_tool],
+        }
+        if approval_id:
+            payload["resume"] = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+        response = client.post("/approval", json=payload)
+        assert response.status_code == 200
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        return events
+
+    first_events = post("run-first", text="First")
+    first_finished = [event for event in first_events if event["type"] == "RUN_FINISHED"]
+    post("run-first-resume", approval_id=_run_finished_interrupts(first_finished[-1])[0]["id"])
+    assert executed == ["lookup"]
+
+    # The settled approval stays in the lifecycle for replay while the next turn reuses its call ID.
+    occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(
+        thread_id=approval_state_thread_id(scope="test", thread_id=thread_id)
+    )
+    assert [(occurrence.identity.call_id, occurrence.status.is_terminal) for occurrence in occurrences] == [
+        ("call_reused", True)
+    ]
+
+    post("run-second", text="Second")
+    # The client never answers the client tool call and moves on.
+    post("run-third", text="Never mind")
+
+    replayed = [
+        (content.type, content.call_id, content.result if content.type == "function_result" else None)
+        for message in messages_received
+        for content in message.contents
+        if content.type in {"function_call", "function_result"}
+    ]
+    assert [entry[:2] for entry in replayed] == [
+        ("function_call", "call_reused"),
+        ("function_result", "call_reused"),
+        ("function_call", "call_reused"),
+        ("function_result", "call_reused"),
+    ]
+    assert replayed[1][2] == "result 1"
+    assert "Tool execution skipped" in str(replayed[3][2])
+
+
 @pytest.mark.parametrize("retry_time", [25.0, 33.0])
 async def test_endpoint_collected_approval_preserves_original_expiration(
     streaming_chat_client_stub, retry_time: float
@@ -7590,7 +7960,7 @@ async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_e
     approval_id = interrupts[0]["id"]
     assert approval_id.startswith("af-call-")
     assert interrupts[0]["toolCallId"] == "call_first"
-    approval_thread_id = _unscoped_approval_thread_id("thread-queued-cancel-evicted")
+    approval_thread_id = _default_approval_thread_id("thread-queued-cancel-evicted")
     stored_state = wrapped_agent._approval_state_store.get_tool_approval_state(approval_thread_id)
     assert stored_state is not None
     assert "call_second" in json.dumps(stored_state)
@@ -7875,9 +8245,8 @@ async def test_endpoint_agent_approval_resume_wrong_thread_emits_run_error():
 
 
 async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_without_snapshot_store():
-    """Approval State is scoped independently of AG-UI Thread Snapshots."""
+    """Authenticated callers with the same Thread id cannot consume each other's pending approval."""
     executed_cities: list[str] = []
-    scope = {"value": "tenant-a"}
 
     def get_weather(city: str) -> str:
         executed_cities.append(city)
@@ -7901,17 +8270,24 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
         updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")],
         default_options={"tools": [weather_tool]},
     )
+
+    async def resolve_authorization_scope(x_principal: str = Header()) -> str:
+        if x_principal not in {"tenant-a", "tenant-b"}:
+            raise HTTPException(status_code=403, detail="Unknown principal.")
+        return x_principal
+
     app = FastAPI()
     add_agent_framework_fastapi_endpoint(
         app,
         AgentFrameworkAgent(agent=agent, require_confirmation=False),
         path="/approval-scoped",
-        snapshot_scope_resolver=lambda _request: scope["value"],
+        authorization_scope_resolver=resolve_authorization_scope,
     )
     client = TestClient(app)
 
     pause_response = client.post(
         "/approval-scoped",
+        headers={"x-principal": "tenant-a"},
         json={
             "runId": "run-pause",
             "threadId": "thread-weather",
@@ -7922,10 +8298,10 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
     assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "call_get_weather"
 
-    scope["value"] = "tenant-b"
     agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Should not run.")], role="assistant")]
     response = client.post(
         "/approval-scoped",
+        headers={"x-principal": "tenant-b"},
         json={
             "runId": "run-wrong-scope",
             "threadId": "thread-weather",
@@ -7941,6 +8317,21 @@ async def test_endpoint_agent_approval_resume_wrong_scope_emits_run_error_withou
     assert run_errors[0]["code"] == "APPROVAL_RESUME_NOT_FOUND"
     assert executed_cities == []
     assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+
+    owner_response = client.post(
+        "/approval-scoped",
+        headers={"x-principal": "tenant-a"},
+        json={
+            "runId": "run-owner-resume",
+            "threadId": "thread-weather",
+            "messages": [],
+            "resume": [{"interruptId": "call_get_weather", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+
+    assert owner_response.status_code == 200
+    assert executed_cities == ["Seattle"]
+    assert not [event for event in _decode_sse_events(owner_response) if event.get("type") == "RUN_ERROR"]
 
 
 async def test_endpoint_agent_approval_function_name_mismatch_message_does_not_execute_tool():
@@ -9794,7 +10185,7 @@ async def test_endpoint_builder_checkpoint_storage_rejects_different_thread_afte
     assert pending_checkpoints
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": "victim-thread",
     }
 
@@ -9854,7 +10245,7 @@ async def test_endpoint_builder_checkpoint_storage_ignores_stale_runtime_owner()
     assert pending_checkpoints
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": "current-thread",
     }
 
@@ -9879,7 +10270,7 @@ async def test_endpoint_workflow_checkpoint_resume_with_reported_thread_id():
     pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
     checkpoint = max(pending_checkpoints, key=lambda item: item.timestamp)
     assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == {
-        "snapshot_scope": None,
+        "snapshot_scope": _DEFAULT_AUTHORIZATION_SCOPE,
         "thread_id": None,
         "generated_thread_id": thread_id,
     }
@@ -10481,12 +10872,11 @@ async def test_endpoint_with_multiple_dependencies(build_chat_client):
 
 
 async def test_endpoint_without_dependencies_is_accessible(build_chat_client):
-    """Test that endpoint without dependencies remains accessible (backward compatibility)."""
+    """An explicitly single-user endpoint remains accessible without authentication dependencies."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
 
-    # No dependencies parameter - should be accessible without auth
-    add_agent_framework_fastapi_endpoint(app, agent, path="/open")
+    add_agent_framework_fastapi_endpoint(app, agent, path="/open", single_user=True)
 
     client = TestClient(app)
     response = client.post("/open", json={"messages": [{"role": "user", "content": "Hello"}]})
@@ -10503,24 +10893,151 @@ async def test_endpoint_invalid_agent_type_raises_typeerror():
         add_agent_framework_fastapi_endpoint(app, agent="not_an_agent")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
-async def test_endpoint_requires_snapshot_scope_resolver_when_store_configured(build_chat_client):
-    """Snapshot persistence setup must require an explicit Snapshot Scope resolver."""
+async def test_endpoint_requires_explicit_authorization_mode(build_chat_client):
+    """Endpoint registration must choose authenticated scoping or explicit single-user operation."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, agent, path="/unconfigured")
+
+
+async def test_endpoint_snapshot_store_requires_explicit_authorization_mode(build_chat_client):
+    """Snapshot persistence cannot bypass the endpoint's explicit authorization-mode requirement."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
     store = InMemoryAGUIThreadSnapshotStore()
 
-    with pytest.raises(ValueError, match="snapshot_scope_resolver is required"):
-        add_agent_framework_fastapi_endpoint(app, agent, path="/snapshots", snapshot_store=store)
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, agent, path="/snapshots", snapshot_store=store)
 
 
-async def test_endpoint_requires_snapshot_scope_resolver_when_wrapped_runner_has_store(build_chat_client):
-    """Pre-wrapped runners with snapshot stores must also provide a Snapshot Scope resolver."""
+async def test_endpoint_wrapped_snapshot_store_requires_explicit_authorization_mode(build_chat_client):
+    """A pre-wrapped snapshot store cannot bypass the explicit authorization-mode requirement."""
+    app = FastAPI()
+    runner = AgentFrameworkAgent(
+        agent=Agent(name="test", instructions="Test agent", client=build_chat_client()),
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="authorization must be explicit"):
+        _add_agent_framework_fastapi_endpoint(app, runner, path="/wrapped-snapshots")
+
+
+async def test_endpoint_rejects_conflicting_authorization_modes(build_chat_client):
+    """An endpoint cannot silently choose between authenticated and single-user ownership."""
     app = FastAPI()
     agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
-    wrapped_agent = AgentFrameworkAgent(agent=agent, snapshot_store=InMemoryAGUIThreadSnapshotStore())
 
-    with pytest.raises(ValueError, match="snapshot_scope_resolver is required"):
-        add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/snapshots")
+    with pytest.raises(ValueError, match="exactly one AG-UI authorization mode"):
+        _add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/conflicting",
+            authorization_scope_resolver=lambda: "tenant-a",
+            single_user=True,
+        )
+
+
+async def test_endpoint_rejects_non_boolean_single_user_mode(build_chat_client):
+    """The explicit single-user escape hatch cannot be enabled by a truthy non-boolean value."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+
+    with pytest.raises(TypeError, match="single_user must be a bool"):
+        _add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path="/invalid-single-user",
+            single_user="yes",  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        )
+
+
+async def test_endpoint_authorization_scope_resolver_uses_fastapi_dependencies(build_chat_client):
+    """The authorization resolver can consume normal FastAPI authentication dependencies."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    authenticated: list[str] = []
+
+    async def authenticate(x_api_key: str | None = Header(None)) -> str:
+        if x_api_key != "secret-key":
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        authenticated.append("principal-a")
+        return "principal-a"
+
+    async def resolve_authorization_scope(principal: Annotated[str, Depends(authenticate)]) -> str:
+        return principal
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/scoped",
+        authorization_scope_resolver=resolve_authorization_scope,
+    )
+    client = TestClient(app)
+
+    unauthorized = client.post("/scoped", json={"messages": [{"role": "user", "content": "Hello"}]})
+    authorized = client.post(
+        "/scoped",
+        headers={"x-api-key": "secret-key"},
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert authenticated == ["principal-a"]
+
+
+async def test_endpoint_authorization_scope_resolver_awaits_sync_dependency_result(build_chat_client):
+    """A synchronous FastAPI dependency may return an awaitable scope."""
+    app = FastAPI()
+    agent = Agent(name="test", instructions="Test agent", client=build_chat_client())
+    completed: list[str] = []
+
+    async def resolve_later() -> str:
+        completed.append("tenant-a")
+        return "tenant-a"
+
+    def resolve_authorization_scope() -> Awaitable[str]:
+        return resolve_later()
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/awaitable-scope",
+        authorization_scope_resolver=resolve_authorization_scope,
+    )
+    client = TestClient(app)
+
+    response = client.post("/awaitable-scope", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert completed == ["tenant-a"]
+
+
+async def test_endpoint_invalid_authorization_scope_fails_before_runner(build_chat_client):
+    """A configured resolver cannot fall back to unscoped operation."""
+    app = FastAPI()
+    runner = AgentFrameworkAgent(agent=Agent(name="test", instructions="Test agent", client=build_chat_client()))
+    run_spy = AsyncMock(wraps=runner.run)
+
+    async def invalid_scope() -> str:
+        return ""
+
+    runner.run = run_spy  # type: ignore[method-assign]
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        path="/invalid-scope",
+        authorization_scope_resolver=invalid_scope,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/invalid-scope", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "An internal error has occurred."}
+    run_spy.assert_not_called()
 
 
 async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_client):
@@ -10545,6 +11062,55 @@ async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_cl
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+async def test_endpoint_accepts_snapshot_store_in_single_user_mode(build_chat_client):
+    """Single-user scopes remain stable per registration and distinct across equal route paths."""
+    observed_scopes: list[str] = []
+
+    class RecordingStore(InMemoryAGUIThreadSnapshotStore):
+        async def save(
+            self,
+            *,
+            scope: str,
+            thread_id: str,
+            snapshot: AGUIThreadSnapshot,
+        ) -> None:
+            observed_scopes.append(scope)
+            await super().save(scope=scope, thread_id=thread_id, snapshot=snapshot)
+
+    store = RecordingStore()
+    app_a = FastAPI()
+    app_b = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app_a,
+        Agent(name="agent-a", instructions="Test agent", client=build_chat_client("A")),
+        path="/",
+        snapshot_store=store,
+        single_user=True,
+    )
+    add_agent_framework_fastapi_endpoint(
+        app_b,
+        Agent(name="agent-b", instructions="Test agent", client=build_chat_client("B")),
+        path="/",
+        snapshot_store=store,
+        single_user=True,
+    )
+    client_a = TestClient(app_a)
+    client_b = TestClient(app_b)
+    payload = {
+        "messages": [{"role": "user", "content": "Hello"}],
+        "thread_id": "shared-thread",
+    }
+
+    assert client_a.post("/", json=payload).status_code == 200
+    scope_a = observed_scopes[-1]
+    assert client_b.post("/", json=payload).status_code == 200
+    scope_b = observed_scopes[-1]
+    assert client_a.post("/", json=payload).status_code == 200
+
+    assert scope_a != scope_b
+    assert observed_scopes[-1] == scope_a
 
 
 @pytest.mark.parametrize("async_resolver", [False, True], ids=["sync", "async"])
@@ -13240,7 +13806,7 @@ async def test_endpoint_canonical_resume_preserves_hosted_approval_for_provider(
     assert not [event for event in _decode_sse_events(resume_response) if event.get("type") == "RUN_ERROR"]
     assert local_executions == []
     assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
-        thread_id=_unscoped_approval_thread_id("thread-hosted-approval")
+        thread_id=_default_approval_thread_id("thread-hosted-approval")
     )
     approval_responses = [
         content
@@ -13468,7 +14034,7 @@ async def test_endpoint_does_not_forward_resolved_local_approval_control_to_chat
     assert resume_response.status_code == 200
     assert local_executions == ["Approved draft"]
     assert not wrapped_agent._approval_state_store.lifecycle.pending_interrupt_ids(
-        thread_id=_unscoped_approval_thread_id("thread-local-approval")
+        thread_id=_default_approval_thread_id("thread-local-approval")
     )
     state_snapshots = [
         event["snapshot"] for event in _decode_sse_events(resume_response) if event.get("type") == "STATE_SNAPSHOT"

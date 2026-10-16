@@ -4,7 +4,7 @@ description = "A2A integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b261002"
+version = "1.0.0b261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,7 +24,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.19.0,<2",
+    "agent-framework-core>=1.22.0,<2",
     "a2a-sdk>=1.0.0,<2",
 ]
 

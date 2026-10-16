@@ -60,7 +60,7 @@ internal sealed class ConditionGroupExecutor : DeclarativeActionExecutor<Conditi
             }
 
             EvaluationResult<bool> expressionResult = this.Evaluator.GetValue(conditionItem.Condition);
-            if (expressionResult.Value)
+            if (this.GetNonSensitiveValue(expressionResult, "condition"))
             {
                 return Steps.Item(this.Model, conditionItem);
             }

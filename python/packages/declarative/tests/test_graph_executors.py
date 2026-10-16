@@ -2077,7 +2077,7 @@ class TestExecutorKwargsForwarding:
                 tools=[
                     types.Tool(
                         name="record",
-                        inputSchema={
+                        input_schema={
                             "type": "object",
                             "properties": {"client_kwargs": {"type": "object"}, "tool_marker": {"type": "string"}},
                         },
