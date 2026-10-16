@@ -11,8 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from openai.types.responses import ResponseError, ResponseUsage
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 # Custom Agent Framework OpenAI event types for structured data
 
@@ -80,55 +79,6 @@ class CustomResponseOutputItemDoneEvent(BaseModel):
     sequence_number: int
     item: dict[str, Any] | ExecutorActionItem | Any  # Flexible item type
     created_at: float | None = None  # Unix timestamp; used by frontend for accurate workflow timings
-
-
-class OpenAIResponse(BaseModel):
-    """OpenAI-compatible response that permits DevUI extension output items."""
-
-    id: str
-    object: Literal["response"] = "response"
-    created_at: float
-    model: str
-    output: list[Any]
-    status: str
-    error: ResponseError | None = None
-    usage: ResponseUsage | None = None
-    parallel_tool_calls: bool = False
-    tool_choice: str = "none"
-    tools: list[Any] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="allow")
-
-    @property
-    def output_text(self) -> str:
-        """Return concatenated text from response message output items."""
-        parts: list[str] = []
-        for item in self.output:
-            if getattr(item, "type", None) != "message":
-                continue
-            for content in getattr(item, "content", []) or []:
-                content_type = getattr(content, "type", None)
-                if content_type == "output_text":
-                    parts.append(str(getattr(content, "text", "")))
-                elif content_type == "refusal":
-                    parts.append(str(getattr(content, "refusal", "")))
-        return "".join(parts)
-
-
-class CustomResponseCompletedEvent(BaseModel):
-    """OpenAI-compatible response.completed event for DevUI extension output items."""
-
-    type: Literal["response.completed"] = "response.completed"
-    response: OpenAIResponse
-    sequence_number: int
-
-
-class CustomResponseFailedEvent(BaseModel):
-    """OpenAI-compatible response.failed event for DevUI extension output items."""
-
-    type: Literal["response.failed"] = "response.failed"
-    response: OpenAIResponse
-    sequence_number: int
 
 
 class ResponseWorkflowEventComplete(BaseModel):
@@ -451,13 +401,10 @@ class MetaResponse(BaseModel):
 # Export all custom types
 __all__ = [
     "AgentFrameworkRequest",
-    "CustomResponseCompletedEvent",
-    "CustomResponseFailedEvent",
     "CustomResponseOutputItemAddedEvent",
     "CustomResponseOutputItemDoneEvent",
     "MetaResponse",
     "OpenAIError",
-    "OpenAIResponse",
     "ResponseFunctionResultComplete",
     "ResponseOutputData",
     "ResponseOutputFile",

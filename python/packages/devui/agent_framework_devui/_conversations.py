@@ -30,7 +30,12 @@ from openai.types.responses import (
     ResponseOutputRefusal,
 )
 
-from ._audio import input_audio_data_uri, input_audio_format_for_media_type, media_type_for_input_audio_format
+from ._audio import (
+    input_audio_data_uri,
+    input_audio_format_for_media_type,
+    media_type_for_input_audio_format,
+    parse_input_audio_param,
+)
 from ._utils import infer_media_type
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
@@ -60,15 +65,7 @@ _ConversationMessageContent = (
 
 def _is_input_audio_content(content: object) -> bool:
     """Return True when content is the Responses input_audio shape."""
-    if not isinstance(content, dict):
-        return False
-    input_audio = content.get("input_audio")
-    return (
-        content.get("type") == "input_audio"
-        and isinstance(input_audio, dict)
-        and isinstance(input_audio.get("data"), str)
-        and input_audio.get("format") in ("wav", "mp3")
-    )
+    return parse_input_audio_param(content) is not None
 
 
 # Checkpoint item type constants
@@ -576,7 +573,7 @@ class InMemoryConversationStore(ConversationStore):
             id=item_id,
             type="message",
             role=role,
-            content=cast(MutableSequence[OpenAIContent], content),
+            content=cast(list[OpenAIContent], list(content)),
             status="completed",
         )
 
@@ -623,13 +620,12 @@ class InMemoryConversationStore(ConversationStore):
             return None
 
         if content_type == "input_audio":
-            input_audio = content.get("input_audio")
-            if not isinstance(input_audio, dict):
+            audio_content = parse_input_audio_param(content)
+            if audio_content is None:
                 return None
-            audio_data = input_audio.get("data")
-            audio_format = input_audio.get("format")
-            if not isinstance(audio_data, str) or not audio_data:
-                return None
+            input_audio = audio_content["input_audio"]
+            audio_data = input_audio["data"]
+            audio_format = input_audio["format"]
             media_type = media_type_for_input_audio_format(audio_format)
             if media_type is None:
                 return None

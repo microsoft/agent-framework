@@ -17,6 +17,7 @@ from uuid import uuid4
 from agent_framework import Content, Message, UsageDetails, add_usage_details, get_namespaced_value
 from openai.types.responses import (
     Response,
+    ResponseCompletedEvent,
     ResponseContentPartAddedEvent,
     ResponseCreatedEvent,
     ResponseError,
@@ -26,8 +27,6 @@ from openai.types.responses import (
 
 from .models import (
     AgentFrameworkRequest,
-    CustomResponseCompletedEvent,
-    CustomResponseFailedEvent,
     CustomResponseOutputItemAddedEvent,
     CustomResponseOutputItemDoneEvent,
     ExecutorActionItem,
@@ -483,7 +482,7 @@ class MessageMapper:
 
             usage = _response_usage(usage_data) if usage_data is not None else None
 
-            return OpenAIResponse(
+            return OpenAIResponse.model_construct(
                 id=context["response_id"],
                 object="response",
                 created_at=datetime.now().timestamp(),
@@ -510,7 +509,7 @@ class MessageMapper:
 
     async def finalize_stream(
         self, events: Sequence[Any], request: AgentFrameworkRequest
-    ) -> CustomResponseCompletedEvent | CustomResponseFailedEvent:
+    ) -> ResponseCompletedEvent | ResponseFailedEvent:
         """Create the single terminal event for a mapped response stream."""
         final_response = await self.aggregate_to_response(events, request)
 
@@ -524,13 +523,13 @@ class MessageMapper:
                 break
 
         if final_response.status == "failed":
-            return CustomResponseFailedEvent(
+            return ResponseFailedEvent(
                 type="response.failed",
                 response=final_response,
                 sequence_number=last_sequence_number + 1,
             )
 
-        return CustomResponseCompletedEvent(
+        return ResponseCompletedEvent(
             type="response.completed",
             response=final_response,
             sequence_number=last_sequence_number + 1,
@@ -1986,7 +1985,7 @@ class MessageMapper:
         self, error_message: str, request: AgentFrameworkRequest, response_id: str
     ) -> OpenAIResponse:
         """Create error response."""
-        return OpenAIResponse(
+        return OpenAIResponse.model_construct(
             id=response_id,
             object="response",
             created_at=datetime.now().timestamp(),
