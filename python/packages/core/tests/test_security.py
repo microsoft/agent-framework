@@ -8841,3 +8841,70 @@ def test_rewritten_arguments_fail_closed_when_keys_differ():
     )
 
     assert rewritten_arguments(context) == {"files": {0, 1}}
+
+
+async def test_quarantine_client_uses_its_own_security_config() -> None:
+    """Scoped quarantine calls must never inherit another agent's configured client."""
+    from agent_framework.security import quarantined_llm, set_quarantine_client
+
+    class FakeClient:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.calls: list[str] = []
+
+        async def get_response(self, *, messages: Any, **kwargs: Any) -> SimpleNamespace:
+            value = "\n".join(
+                item.text or ""
+                for msg in messages for item in msg.contents
+                if getattr(item, "type", None) == "text"
+            )
+            self.calls.append(value)
+            await asyncio.sleep(0)
+            return SimpleNamespace(text=self.name + " response")
+
+    alpha, beta = FakeClient("A"), FakeClient("B")
+    a, b = SecureAgentConfig(quarantine_chat_client=alpha), SecureAgentConfig(quarantine_chat_client=beta)
+    empty = SecureAgentConfig(quarantine_chat_client=None)
+
+    async def execute(cfg: SecureAgentConfig, marker: str) -> None:
+        session = AgentSession(session_id="synthetic-" + marker)
+        ctx = SessionContext(session_id=session.session_id, input_messages=[])
+        await cfg.before_run(
+            agent=None, session=session, context=ctx,
+            state=session.state.setdefault(cfg.source_id, {}),
+        )
+        tool = next(t for t in cfg.get_tools() if t.name == "quarantined_llm")
+        args = {"prompt": "Summarize", "labelled_data": {"record": {
+            "content": marker,
+            "security_label": {"integrity": "untrusted", "confidentiality": "private"},
+        }}}
+        call = FunctionInvocationContext(function=tool, arguments=args, session=session)
+
+        async def invoke(inner: FunctionInvocationContext) -> Any:
+            return await tool.invoke(arguments=inner.arguments, context=inner, skip_parsing=True)
+
+        await FunctionMiddlewarePipeline(*ctx.middleware[cfg.source_id]).execute(call, invoke)
+
+    try:
+        await asyncio.gather(execute(a, "ALPHA_MARKER"), execute(b, "BETA_MARKER"))
+        assert any("ALPHA_MARKER" in x for x in alpha.calls)
+        assert not any("ALPHA_MARKER" in x for x in beta.calls)
+        assert any("BETA_MARKER" in x for x in beta.calls)
+        assert not any("BETA_MARKER" in x for x in alpha.calls)
+        await execute(empty, "NO_CLIENT_MARKER")
+        assert not any("NO_CLIENT_MARKER" in x for x in beta.calls)
+        await execute(a, "ALPHA_SECOND_MARKER")
+        assert any("ALPHA_SECOND_MARKER" in x for x in alpha.calls)
+        assert not any("ALPHA_SECOND_MARKER" in x for x in beta.calls)
+
+        # Standalone calls retain the legacy process-global fallback.
+        await quarantined_llm.invoke(
+            arguments={"prompt": "Direct", "labelled_data": {"record": {
+                "content": "STANDALONE_MARKER",
+                "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+            }}},
+            skip_parsing=True,
+        )
+        assert any("STANDALONE_MARKER" in x for x in beta.calls)
+    finally:
+        set_quarantine_client(None)
