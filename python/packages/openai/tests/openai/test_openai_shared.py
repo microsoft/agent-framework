@@ -18,6 +18,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from openai._models import FinalRequestOptions
 
+from agent_framework_openai import OpenAIChatClient, OpenAIChatCompletionClient, OpenAIEmbeddingClient
 from agent_framework_openai._feature_usage import create_feature_usage_http_client
 from agent_framework_openai._shared import (
     AZURE_OPENAI_TOKEN_SCOPE,
@@ -243,6 +244,80 @@ async def test_prebuilt_client_preserves_metadata_configuration(monkeypatch) -> 
         assert request.headers["X-Gateway-Token"] == "prebuilt-gateway-token"
     finally:
         await sdk_client.close()
+
+
+@pytest.mark.parametrize(
+    ("explicit", "environment", "expected"),
+    [
+        (None, None, "2024-12-01-preview"),
+        (None, "2025-04-01-preview", "2025-04-01-preview"),
+        ("2024-10-21", "2025-04-01-preview", "2024-10-21"),
+    ],
+    ids=["default", "environment_over_default", "explicit_over_environment"],
+)
+async def test_azure_api_version_precedence(
+    monkeypatch, explicit: str | None, environment: str | None, expected: str
+) -> None:
+    monkeypatch.delenv("AZURE_OPENAI_API_VERSION", raising=False)
+    if environment is not None:
+        monkeypatch.setenv("AZURE_OPENAI_API_VERSION", environment)
+
+    settings, sdk_client, use_azure = load_openai_service_settings(
+        model="test-model",
+        api_key="test-key",
+        credential=None,
+        org_id=None,
+        base_url=None,
+        endpoint="https://test.openai.azure.com",
+        api_version=explicit,
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=None,
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert use_azure
+        assert settings["api_version"] == expected
+        assert request.url.params["api-version"] == expected
+    finally:
+        await sdk_client.close()
+
+
+async def test_azure_api_version_from_env_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("AZURE_OPENAI_API_VERSION", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("AZURE_OPENAI_API_VERSION=2025-04-01-preview\n", encoding="utf-8")
+
+    settings, sdk_client, _ = load_openai_service_settings(
+        model="test-model",
+        api_key="test-key",
+        credential=None,
+        org_id=None,
+        base_url=None,
+        endpoint="https://test.openai.azure.com",
+        api_version=None,
+        default_azure_api_version="2024-12-01-preview",
+        env_file_path=str(env_file),
+        env_file_encoding=None,
+    )
+    try:
+        request = await _build_request(sdk_client)
+
+        assert settings["api_version"] == "2025-04-01-preview"
+        assert request.url.params["api-version"] == "2025-04-01-preview"
+    finally:
+        await sdk_client.close()
+
+
+@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_API_VERSION": "2025-04-01-preview"}], indirect=True)
+@pytest.mark.parametrize("client_type", [OpenAIChatClient, OpenAIChatCompletionClient, OpenAIEmbeddingClient])
+def test_azure_clients_read_api_version_from_environment(
+    azure_openai_unit_test_env: dict[str, str], client_type: type[Any]
+) -> None:
+    client = client_type()
+
+    assert client.api_version == "2025-04-01-preview"
 
 
 def test_resolve_azure_async_credential_wraps_provider() -> None:

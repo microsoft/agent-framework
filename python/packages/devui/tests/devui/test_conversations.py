@@ -299,9 +299,20 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
 
     stored_messages = store._conversations[conversation.id]["messages"]
     assert stored_messages[1].contents[0].media_type == "image/jpeg"
+    assert stored_messages[1].contents[0].additional_properties["openai"] == {
+        "content_type": "input_image",
+        "image_detail": "high",
+    }
+    assert stored_messages[1].contents[1].additional_properties["openai"] == {
+        "content_type": "input_image",
+        "image_detail": "low",
+    }
     assert stored_messages[1].contents[2].media_type == "application/pdf"
+    assert stored_messages[1].contents[2].additional_properties["openai"]["content_type"] == "input_file"
     assert stored_messages[1].contents[3].media_type == "audio/mpeg"
+    assert stored_messages[1].contents[3].additional_properties["openai"]["content_type"] == "input_file"
     assert stored_messages[1].contents[4].media_type == "image/jpeg"
+    assert stored_messages[1].contents[4].additional_properties["openai"]["content_type"] == "input_file"
 
     assert has_more is False
     listed_system, listed_user = listed_items

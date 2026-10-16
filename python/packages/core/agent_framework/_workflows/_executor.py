@@ -312,8 +312,14 @@ class Executor(RequestInfoMixin, DictConvertible):
                     await handler(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
+                    from ..observability import OBSERVABILITY_SETTINGS
+
+                    details = WorkflowErrorDetails.from_exception(
+                        exc,
+                        include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                    )
                     with _framework_event_origin():
-                        failure_event = WorkflowEvent.executor_failed(self.id, WorkflowErrorDetails.from_exception(exc))
+                        failure_event = WorkflowEvent.executor_failed(self.id, details)
                     await context.add_event(failure_event)
                     raise
                 with _framework_event_origin():

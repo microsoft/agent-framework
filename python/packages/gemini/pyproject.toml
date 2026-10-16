@@ -4,7 +4,7 @@ description = "Google Gemini integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b261008"
+version = "1.0.0b261015"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -20,11 +20,12 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.20.0,<2",
+    "agent-framework-core>=1.22.0,<2",
     "google-genai>=2.25.0,<3.0.0",
 ]
 
@@ -101,5 +102,5 @@ cmd = 'pytest -m "not integration" --cov=agent_framework_gemini --cov-report=ter
 name = "agent_framework_gemini"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

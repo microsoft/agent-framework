@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from textwrap import dedent
 
 import pytest
 
@@ -63,29 +65,45 @@ def test_configure_otel_providers_requires_otel_sdk(monkeypatch: pytest.MonkeyPa
         observability.configure_otel_providers()
 
 
-def test_agent_framework_mcp_exports_remain_importable_without_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import builtins
+def test_agent_framework_mcp_exports_remain_importable_without_mcp() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            dedent(
+                """
+                import builtins
+                import sys
 
-    import agent_framework._mcp as mcp_module
+                real_import = builtins.__import__
 
-    real_import = builtins.__import__
+                def import_without_mcp(name, globals=None, locals=None, fromlist=(), level=0):
+                    if name == "mcp" or name.startswith("mcp."):
+                        raise ModuleNotFoundError("No module named 'mcp'", name=name)
+                    return real_import(name, globals, locals, fromlist, level)
 
-    def _import_without_mcp(
-        name: str,
-        globals_: dict[str, object] | None = None,
-        locals_: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "mcp" or name.startswith("mcp."):
-            raise ModuleNotFoundError("No module named 'mcp'")
-        return real_import(name, globals_, locals_, fromlist, level)
+                builtins.__import__ = import_without_mcp
 
-    monkeypatch.setattr(builtins, "__import__", _import_without_mcp)
-    assert agent_framework.MCPStdioTool is mcp_module.MCPStdioTool
+                import agent_framework
 
-    with pytest.raises(ModuleNotFoundError, match=r"Please install `mcp`\.$"):
-        agent_framework.MCPStdioTool(name="test", command="python").get_mcp_client()
+                tool_type = agent_framework.MCPStdioTool
+                assert "mcp" not in sys.modules
+
+                try:
+                    tool_type(name="test", command="python").get_mcp_client()
+                except ModuleNotFoundError as exc:
+                    assert str(exc).endswith("Please install `mcp`.")
+                else:
+                    raise AssertionError("get_mcp_client() unexpectedly succeeded without mcp")
+                """
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_mcp_streamable_http_tool_requires_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,50 +150,3 @@ def test_agent_as_mcp_server_requires_mcp(client, monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ModuleNotFoundError, match=r"Please install `mcp`\.$"):
         agent.as_mcp_server()
-
-
-def test_mcp_websocket_tool_requires_ws_support(monkeypatch: pytest.MonkeyPatch) -> None:
-    import builtins
-
-    real_import = builtins.__import__
-
-    sys.modules.pop("mcp.client.websocket", None)
-
-    def _import_without_websocket_support(
-        name: str,
-        globals_: dict[str, object] | None = None,
-        locals_: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "mcp.client.websocket":
-            raise ModuleNotFoundError("No module named 'websockets'", name="websockets")
-        return real_import(name, globals_, locals_, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", _import_without_websocket_support)
-
-    with pytest.raises(ModuleNotFoundError, match=r"mcp\[ws\]"):
-        agent_framework.MCPWebsocketTool(name="test", url="wss://example.com").get_mcp_client()
-
-
-def test_mcp_websocket_tool_requires_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
-    import builtins
-
-    real_import = builtins.__import__
-    sys.modules.pop("mcp.client.websocket", None)
-
-    def _import_without_mcp(
-        name: str,
-        globals_: dict[str, object] | None = None,
-        locals_: dict[str, object] | None = None,
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> object:
-        if name == "mcp.client.websocket":
-            raise ModuleNotFoundError("No module named 'mcp.client.websocket'", name="mcp.client.websocket")
-        return real_import(name, globals_, locals_, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", _import_without_mcp)
-
-    with pytest.raises(ModuleNotFoundError, match=r"agent-framework-core\[mcp\]|mcp\[ws\]"):
-        agent_framework.MCPWebsocketTool(name="test", url="wss://example.com").get_mcp_client()

@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
 from typing import Any, Literal, cast
 
-from agent_framework import AgentSession, Content, Message
+from agent_framework import AgentSession, Content, Message, get_namespaced_value
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
@@ -35,6 +35,14 @@ from ._utils import infer_media_type
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _refusal_additional_properties() -> dict[str, Any]:
+    return {
+        "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        _MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL,
+    }
+
 
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
@@ -586,12 +594,16 @@ class InMemoryConversationStore(ConversationStore):
                 return None
             return Content.from_text(
                 text=refusal,
-                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                additional_properties=_refusal_additional_properties(),
             )
 
         if content_type == "input_image":
             detail = content.get("detail", "auto")
             image_properties = {
+                "openai": {
+                    "content_type": "input_image",
+                    "image_detail": detail if isinstance(detail, str) else "auto",
+                },
                 "openai_content_type": "input_image",
                 "detail": detail if isinstance(detail, str) else "auto",
             }
@@ -628,7 +640,10 @@ class InMemoryConversationStore(ConversationStore):
             filename = content.get("filename")
             filename = filename if isinstance(filename, str) else ""
             detail = content.get("detail")
-            file_properties: dict[str, Any] = {"openai_content_type": "input_file"}
+            file_properties: dict[str, Any] = {
+                "openai": {"content_type": "input_file"},
+                "openai_content_type": "input_file",
+            }
             if filename:
                 file_properties["filename"] = filename
             if isinstance(detail, str):
@@ -645,6 +660,7 @@ class InMemoryConversationStore(ConversationStore):
                 return Content.from_uri(
                     uri=uri,
                     media_type=media_type,
+                    name=filename or None,
                     additional_properties=file_properties,
                 )
 
@@ -652,6 +668,7 @@ class InMemoryConversationStore(ConversationStore):
             if isinstance(file_url, str) and file_url:
                 return Content.from_uri(
                     uri=file_url,
+                    name=filename or None,
                     media_type=infer_media_type(
                         filename=filename,
                         uri=file_url,
@@ -678,12 +695,25 @@ class InMemoryConversationStore(ConversationStore):
         """Convert one supported Agent Framework message part."""
         content_type = content.type
         if content_type == "text":
-            if content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL:
+            if (
+                get_namespaced_value(
+                    content.additional_properties,
+                    "core",
+                    _MODEL_OUTPUT_KIND_KEY,
+                    content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+                )
+                == _MODEL_OUTPUT_REFUSAL
+            ):
                 return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
             return TextContent(type="text", text=content.text or "")
 
         additional_properties = content.additional_properties or {}
-        openai_content_type = additional_properties.get("openai_content_type")
+        openai_content_type = get_namespaced_value(
+            additional_properties,
+            "openai",
+            "content_type",
+            additional_properties.get("openai_content_type"),
+        )
         is_image = openai_content_type == "input_image" or (
             openai_content_type is None and bool(content.media_type and content.media_type.startswith("image/"))
         )
@@ -706,7 +736,12 @@ class InMemoryConversationStore(ConversationStore):
                     return audio_content
 
             if is_image:
-                detail = additional_properties.get("detail", "auto")
+                detail = get_namespaced_value(
+                    additional_properties,
+                    "openai",
+                    "image_detail",
+                    additional_properties.get("detail", "auto"),
+                )
                 if detail not in ("low", "high", "auto", "original"):
                     detail = "auto"
                 return ResponseInputImage(
@@ -715,8 +750,13 @@ class InMemoryConversationStore(ConversationStore):
                     detail=detail,
                 )
 
-            filename = additional_properties.get("filename")
-            detail = additional_properties.get("detail")
+            filename = content.name or additional_properties.get("filename")
+            detail = get_namespaced_value(
+                additional_properties,
+                "openai",
+                "image_detail",
+                additional_properties.get("detail"),
+            )
             if detail not in ("low", "high", "auto"):
                 detail = None
             return ResponseInputFile(
@@ -728,7 +768,12 @@ class InMemoryConversationStore(ConversationStore):
 
         if content_type == "hosted_file":
             if is_image:
-                detail = additional_properties.get("detail", "auto")
+                detail = get_namespaced_value(
+                    additional_properties,
+                    "openai",
+                    "image_detail",
+                    additional_properties.get("detail", "auto"),
+                )
                 if detail not in ("low", "high", "auto", "original"):
                     detail = "auto"
                 return ResponseInputImage(
@@ -738,7 +783,12 @@ class InMemoryConversationStore(ConversationStore):
                 )
 
             filename = content.name or additional_properties.get("filename")
-            detail = additional_properties.get("detail")
+            detail = get_namespaced_value(
+                additional_properties,
+                "openai",
+                "image_detail",
+                additional_properties.get("detail"),
+            )
             if detail not in ("low", "high", "auto"):
                 detail = None
             return ResponseInputFile(

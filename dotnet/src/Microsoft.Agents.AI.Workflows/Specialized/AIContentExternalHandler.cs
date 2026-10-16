@@ -72,8 +72,11 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
 
     public bool MarkRequestAsHandled(string id)
     {
-        return this._pendingRequests.TryRemove(id, out _);
+        return this.MarkRequestAsHandled(id, out _);
     }
+
+    public bool MarkRequestAsHandled(string id, [NotNullWhen(true)] out TRequestContent? request)
+        => this._pendingRequests.TryRemove(id, out request);
 
     [MemberNotNullWhen(false, nameof(_portBinding))]
     private bool IsIntercepted => this._portBinding == null;
