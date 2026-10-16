@@ -8170,6 +8170,18 @@ def test_mcp_transport_tools_preserve_supplied_client_ownership() -> None:
         assert tool._connection.is_framework_owned is False
 
 
+def test_mcp_streamable_http_rejects_header_provider_with_supplied_client() -> None:
+    with pytest.raises(ValueError, match="header_provider.*mcp_client"):
+        MCPStreamableHTTPTool(
+            name="test",
+            url="https://example.com/mcp",
+            mcp_client=Mock(),
+            header_provider=lambda _: {"Authorization": "Bearer token"},
+            load_tools=False,
+            load_prompts=False,
+        )
+
+
 def test_mcp_tool_rejects_supplied_client_and_session() -> None:
     with pytest.raises(ValueError, match="mutually exclusive"):
         MCPStdioTool(

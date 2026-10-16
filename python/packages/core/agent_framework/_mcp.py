@@ -3656,6 +3656,8 @@ class MCPStdioTool(MCPTool):
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
+                The supplied Client also owns its transport and authentication configuration, so it cannot be
+                combined with this wrapper's ``header_provider``.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -4009,6 +4011,12 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
+        if mcp_client is not None and header_provider is not None:
+            raise ValueError(
+                "`header_provider` cannot be used with `mcp_client`; "
+                "configure per-request headers on the supplied Client's transport."
+            )
+
         super().__init__(
             name=name,
             description=description,
