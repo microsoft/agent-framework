@@ -238,8 +238,9 @@ async def test_audio_data_content_is_preserved_in_final_response(
 
     output_files = [item for item in response.output if getattr(item, "type", None) == "output_file"]
     assert len(output_files) == 1
-    assert output_files[0].mime_type == "audio/mpeg"
-    assert output_files[0].file_data == "bXAzLWJ5dGVz"
+    output_file = output_files[0]
+    assert getattr(output_file, "mime_type") == "audio/mpeg"
+    assert getattr(output_file, "file_data") == "bXAzLWJ5dGVz"
 
 
 async def test_streaming_function_call_mapping_adds_item_once(

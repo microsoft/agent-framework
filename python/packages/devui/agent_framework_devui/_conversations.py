@@ -53,16 +53,6 @@ def _refusal_additional_properties() -> dict[str, Any]:
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
 
 
-_ConversationMessageContent = (
-    OpenAIContent
-    | TextContent
-    | ResponseOutputRefusal
-    | ResponseInputImage
-    | ResponseInputFile
-    | ResponseInputAudioParam
-)
-
-
 def _is_input_audio_content(content: object) -> bool:
     """Return True when content is the Responses input_audio shape."""
     return parse_input_audio_param(content) is not None
@@ -369,14 +359,38 @@ class InMemoryConversationStore(ConversationStore):
             item_id = f"item_{uuid.uuid4().hex}"
 
             # Convert Message contents to OpenAI TextContent format
-            message_content: MutableSequence[_ConversationMessageContent] = []
+            message_content: MutableSequence[OpenAIContent] = []
+            raw_message_content: list[OpenAIContent | ResponseInputAudioParam] = []
+            has_input_audio_content = False
             for content_item in msg.contents:
                 openai_content = self._to_openai_content(content_item)
                 if openai_content is not None:
-                    message_content.append(openai_content)
+                    raw_message_content.append(openai_content)
+                    if _is_input_audio_content(openai_content):
+                        has_input_audio_content = True
+                        continue
+                    message_content.append(cast(OpenAIContent, openai_content))
 
             # Create Message object (concrete type from ConversationItem union)
-            message = self._make_message_item(item_id, cast(MessageRole, msg.role), message_content)
+            if has_input_audio_content:
+                message = cast(
+                    ConversationItem,
+                    {
+                        "id": item_id,
+                        "type": "message",
+                        "role": cast(MessageRole, msg.role),
+                        "content": raw_message_content,
+                        "status": "completed",
+                    },
+                )
+            else:
+                message = OpenAIMessage(
+                    id=item_id,
+                    type="message",  # Required discriminator for union
+                    role=cast(MessageRole, msg.role),  # Safe: Agent Framework roles match OpenAI roles,
+                    content=message_content,
+                    status="completed",  # Required field
+                )
             conv_items.append(message)
 
         # Cache items
@@ -385,7 +399,6 @@ class InMemoryConversationStore(ConversationStore):
         # Update item index for O(1) lookup
         if conversation_id not in self._item_index:
             self._item_index[conversation_id] = {}
-
         for conv_item in conv_items:
             item_id = cast(dict[str, Any], conv_item).get("id") if isinstance(conv_item, dict) else conv_item.id
             if item_id:  # Guard against None
@@ -422,9 +435,11 @@ class InMemoryConversationStore(ConversationStore):
             # Process each content item in the message
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
-            message_contents: list[
+            message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
+            raw_message_contents: list[
                 TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | ResponseInputAudioParam
             ] = []
+            has_input_audio_content = False
             function_calls: list[ResponseFunctionToolCallItem] = []
             function_results: list[ResponseFunctionToolCallOutputItem] = []
 
@@ -433,7 +448,15 @@ class InMemoryConversationStore(ConversationStore):
                 mapped_content = self._to_openai_content(content)
 
                 if mapped_content is not None:
-                    message_contents.append(mapped_content)
+                    raw_message_contents.append(mapped_content)
+                    if _is_input_audio_content(mapped_content):
+                        has_input_audio_content = True
+                        continue
+                    message_contents.append(
+                        cast(
+                            TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile, mapped_content
+                        )
+                    )
                 elif content_type == "function_call":
                     # Function call - create separate ConversationItem
                     call_id = getattr(content, "call_id", None)
@@ -483,8 +506,26 @@ class InMemoryConversationStore(ConversationStore):
 
             # Create ConversationItems based on what we found
             # If message has text/images/files, create a Message item
-            if message_contents:
-                message = self._make_message_item(item_id, role, message_contents)
+            if raw_message_contents:
+                if has_input_audio_content:
+                    message = cast(
+                        ConversationItem,
+                        {
+                            "id": item_id,
+                            "type": "message",
+                            "role": role,
+                            "content": raw_message_contents,
+                            "status": "completed",
+                        },
+                    )
+                else:
+                    message = OpenAIMessage(
+                        id=item_id,
+                        type="message",
+                        role=role,
+                        content=message_contents,  # type: ignore
+                        status="completed",
+                    )
                 items.append(message)
 
             # Add function call items
@@ -548,34 +589,6 @@ class InMemoryConversationStore(ConversationStore):
         has_more = len(items) > start_idx + limit
 
         return paginated_items, has_more
-
-    @staticmethod
-    def _make_message_item(
-        item_id: str,
-        role: MessageRole,
-        content: MutableSequence[_ConversationMessageContent]
-        | list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | ResponseInputAudioParam],
-    ) -> ConversationItem:
-        """Build an OpenAI conversation message, preserving Responses input_audio parts."""
-        if any(_is_input_audio_content(content_item) for content_item in content):
-            return cast(
-                ConversationItem,
-                {
-                    "id": item_id,
-                    "type": "message",
-                    "role": role,
-                    "content": list(content),
-                    "status": "completed",
-                },
-            )
-
-        return OpenAIMessage(
-            id=item_id,
-            type="message",
-            role=role,
-            content=cast(list[OpenAIContent], list(content)),
-            status="completed",
-        )
 
     @staticmethod
     def _to_agent_content(content: dict[str, Any]) -> Content | None:

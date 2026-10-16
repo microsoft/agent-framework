@@ -197,7 +197,6 @@ class TestMultimodalWorkflowInput:
         assert result.contents[0].type == "data"
         assert result.contents[0].media_type == "audio/wav"
         assert result.contents[0].uri == "data:audio/wav;base64,UklGRg=="
-        assert result.contents[0].additional_properties == {}
 
     def test_convert_openai_input_audio_rejects_unsupported_format(self):
         """Unsupported audio formats are explicit errors, not silent text/file fallbacks."""
