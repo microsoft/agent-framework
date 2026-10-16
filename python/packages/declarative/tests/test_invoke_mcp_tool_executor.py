@@ -1580,11 +1580,10 @@ class TestRequestScopeContinuations:
         ]
         wrappers: list[WorkflowExecutor] = []
         for index, leaf in enumerate(leaves):
-            child = leaf
-            for level in range(depth):
+            wrapper = WorkflowExecutor(leaf, id=f"child_{index}_0", propagate_request=True)
+            for level in range(1, depth):
+                child = WorkflowBuilder(start_executor=wrapper).build()
                 wrapper = WorkflowExecutor(child, id=f"child_{index}_{level}", propagate_request=True)
-                if level + 1 < depth:
-                    child = WorkflowBuilder(start_executor=wrapper).build()
             wrappers.append(wrapper)
         start = Start(id="start")
         parent = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
