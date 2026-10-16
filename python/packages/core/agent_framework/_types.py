@@ -2321,7 +2321,7 @@ class Message(SerializationMixin):
             # Create a message with mixed content types
             assistant_msg = Message(
                 "assistant",
-                ["The weather is sunny!", Content.from_image_uri("https://...")],
+                ["The weather is sunny!", Content.from_uri("https://example.com/image.png", media_type="image/png")],
             )
             print(assistant_msg.text)  # "The weather is sunny!"
 
@@ -5253,7 +5253,7 @@ def normalize_tools(
             tools = normalize_tools(my_tool)
 
             # List of tools
-            tools = normalize_tools([my_tool, another_tool])
+            tools = normalize_tools([my_tool])
     """
     from ._tools import normalize_tools as _normalize_tools
 
@@ -5289,7 +5289,7 @@ async def validate_tools(
             tools = await validate_tools(my_tool)
 
             # List of tools
-            tools = await validate_tools([my_tool, another_tool])
+            tools = await validate_tools([my_tool])
     """
     # Use normalize_tools for common sync logic (converts callables to FunctionTool)
     normalized = normalize_tools(tools)
