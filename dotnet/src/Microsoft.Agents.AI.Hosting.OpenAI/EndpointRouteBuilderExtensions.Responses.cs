@@ -38,6 +38,9 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="path">Custom route path for the OpenAI Responses endpoint.</param>
     /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
     /// <remarks>
+    /// Singleton registrations are resolved once when the endpoint is mapped. Scoped and transient registrations are
+    /// resolved for each validation or execution operation. The keyed session store is always resolved for each operation,
+    /// and persisted sessions are partitioned by the registration name.
     /// See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/> for endpoint authorization
     /// and caller isolation requirements.
     /// </remarks>
@@ -46,21 +49,24 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentBuilder);
 
-        ValidateAgentName(agentBuilder.Name);
-        path ??= $"/{agentBuilder.Name}/v1/responses";
+        string agentName = agentBuilder.Name;
+        ValidateAgentName(agentName);
+        path ??= $"/{agentName}/v1/responses";
 
-        // Defer agent and session-store resolution so their registered lifetimes are owned by
-        // each validation or execution operation rather than by the application root.
         var scopeFactory = endpoints.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
-        var executor = new AIAgentResponseExecutor(
-            agentBuilder.Name,
-            scopeFactory,
-            mapOptions);
+        var executor = agentBuilder.Lifetime == ServiceLifetime.Singleton
+            ? new AIAgentResponseExecutor(
+                endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName),
+                agentName,
+                scopeFactory,
+                mapOptions,
+                sessionStorageIdentity: agentName)
+            : new AIAgentResponseExecutor(agentName, scopeFactory, mapOptions);
         return MapOpenAIResponses(
             endpoints,
             executor,
             path,
-            agentBuilder.Name);
+            agentName);
     }
 
     /// <summary>
@@ -114,11 +120,72 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             agent.Name);
     }
 
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints that select the <see cref="AIAgent"/> for each request.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="responsesPath">The route path for the responses endpoint.</param>
+    /// <param name="agentSelector">
+    /// A delegate invoked once per request that returns the agent to serve, or <see langword="null"/> when
+    /// no agent matches the request. The delegate can use route values, claims, headers, and
+    /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
+    /// </param>
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// <para>
+    /// The selector applies to every operation: creation, retrieval, cancellation, deletion, and input item listing.
+    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the operation responds with
+    /// <c>404 Not Found</c> before any response, session, or conversation state is loaded.
+    /// </para>
+    /// <para>
+    /// The selected agent's <see cref="AIAgent.Name"/> is its stable logical identity: it is used to resolve the
+    /// keyed <see cref="AgentSessionStore"/>, to partition persisted sessions, and to bind stored responses to the
+    /// agent that created them, so a response can only be retrieved, canceled, or deleted through requests that select
+    /// the same agent name. Conversations continue across requests even when the selector returns a new agent instance
+    /// each time. The selected agent must therefore have a non-empty name. Background responses keep running the
+    /// selected agent after the HTTP request completes, so agents used for background responses must not depend on
+    /// request-scoped services.
+    /// </para>
+    /// <para>
+    /// Selection is not an authorization boundary. See <see cref="MapOpenAIResponses(IEndpointRouteBuilder, string)"/>
+    /// for endpoint authorization and caller isolation requirements.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapOpenAIResponses(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("Route")] string responsesPath,
+        Func<HttpContext, AIAgent?> agentSelector,
+        OpenAIResponsesMapOptions? mapOptions = null)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(responsesPath);
+        ArgumentNullException.ThrowIfNull(agentSelector);
+
+        var scopeFactory = endpoints.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
+        return MapOpenAIResponses(
+            endpoints,
+            executor: null,
+            responsesPath,
+            endpointAgentName: null,
+            context =>
+            {
+                if (agentSelector(context) is not { } agent)
+                {
+                    return null;
+                }
+
+                string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
+                return (agentName, new AIAgentResponseExecutor(agent, agentName, scopeFactory, mapOptions, sessionStorageIdentity: agentName));
+            });
+    }
+
     private static RouteGroupBuilder MapOpenAIResponses(
         IEndpointRouteBuilder endpoints,
-        IResponseExecutor executor,
+        IResponseExecutor? executor,
         string responsesPath,
-        string endpointAgentName)
+        string? endpointAgentName,
+        Func<HttpContext, (string AgentName, IResponseExecutor Executor)?>? agentSelector = null)
     {
         // Resolve the response storage settings and optional conversation storage.
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
@@ -132,37 +199,45 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
 
         // Create the response service so response and conversation operations are scoped by the caller's isolation key.
         var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage, isolationKeyResolver);
-        var handlers = new ResponsesHttpHandler(responsesService);
+        var handlers = new ResponsesHttpHandler(responsesService, agentSelector is null ? null : SelectAgent);
         var group = endpoints.MapGroup(responsesPath);
 
         // Create response endpoint
         group.MapPost("/", handlers.CreateResponseAsync)
-            .WithName(endpointAgentName + "/CreateResponse")
+            .WithEndpointName(endpointAgentName, "CreateResponse")
             .WithSummary("Creates a model response for the given input");
 
         // Get response endpoint
         group.MapGet("{responseId}", handlers.GetResponseAsync)
-            .WithName(endpointAgentName + "/GetResponse")
+            .WithEndpointName(endpointAgentName, "GetResponse")
             .WithSummary("Retrieves a response by ID");
 
         // Cancel response endpoint
         group.MapPost("{responseId}/cancel", handlers.CancelResponseAsync)
-            .WithName(endpointAgentName + "/CancelResponse")
+            .WithEndpointName(endpointAgentName, "CancelResponse")
             .WithSummary("Cancels an in-progress response");
 
         // Delete response endpoint
         group.MapDelete("{responseId}", handlers.DeleteResponseAsync)
-            .WithName(endpointAgentName + "/DeleteResponse")
+            .WithEndpointName(endpointAgentName, "DeleteResponse")
             .WithSummary("Deletes a response");
 
         // List response input items endpoint
         group.MapGet("{responseId}/input_items", handlers.ListResponseInputItemsAsync)
-            .WithName(endpointAgentName + "/ListResponseInputItems")
+            .WithEndpointName(endpointAgentName, "ListResponseInputItems")
             .WithSummary("Lists the input items for a response");
 
         MarkFeatureUsed();
         return group;
+
+        (IResponsesService, IResponseExecutor)? SelectAgent(HttpContext context) =>
+            agentSelector(context) is { } selection
+                ? (responsesService.ForAgent(selection.AgentName), selection.Executor)
+                : null;
     }
+
+    private static RouteHandlerBuilder WithEndpointName(this RouteHandlerBuilder builder, string? endpointAgentName, string operationName)
+        => endpointAgentName is null ? builder : builder.WithName(endpointAgentName + "/" + operationName);
 
     /// <summary>
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.

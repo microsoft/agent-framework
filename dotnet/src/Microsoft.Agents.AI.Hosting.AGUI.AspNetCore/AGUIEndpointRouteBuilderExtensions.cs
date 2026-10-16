@@ -40,8 +40,16 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
     /// <remarks>
+    /// <para>
+    /// Singleton registrations are resolved once when the endpoint is mapped. Scoped and transient registrations are
+    /// resolved for each request as described in <see cref="MapAGUIServer(IEndpointRouteBuilder, string, string)"/>.
+    /// In both cases, the session store is resolved for each request and persisted sessions are partitioned by the
+    /// registration name.
+    /// </para>
+    /// <para>
     /// See <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/> for authentication,
     /// authorization, and caller-scoped session isolation requirements.
+    /// </para>
     /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(
         this IEndpointRouteBuilder endpoints,
@@ -50,7 +58,16 @@ public static class AGUIEndpointRouteBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentBuilder);
-        return endpoints.MapAGUIServer(agentBuilder.Name, pattern);
+
+        if (agentBuilder.Lifetime != ServiceLifetime.Singleton)
+        {
+            return endpoints.MapAGUIServer(agentBuilder.Name, pattern);
+        }
+
+        string agentName = agentBuilder.Name;
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        return MapAGUIServerCore(endpoints, pattern, context =>
+            CreateHostAgent(context.RequestServices, agent, agentName, sessionStorageIdentity: agentName));
     }
 
     /// <summary>
@@ -61,8 +78,17 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
     /// <remarks>
+    /// <para>
+    /// The keyed <see cref="AIAgent"/>, its keyed <see cref="AgentSessionStore"/>, and the
+    /// <see cref="AgentIsolationKeyProvider"/> are resolved from <see cref="HttpContext.RequestServices"/>
+    /// for each request, so the configured DI lifetime of the agent registration is honored.
+    /// Persisted sessions are partitioned by <paramref name="agentName"/>, which remains stable across
+    /// scoped or transient agent instances.
+    /// </para>
+    /// <para>
     /// See <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/> for authentication,
     /// authorization, and caller-scoped session isolation requirements.
+    /// </para>
     /// </remarks>
     public static IEndpointConventionBuilder MapAGUIServer(
         this IEndpointRouteBuilder endpoints,
@@ -72,8 +98,63 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentName);
 
-        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        return endpoints.MapAGUIServer(pattern, agent);
+        HostedAgentResolution.EnsureAgentRegistered(endpoints.ServiceProvider, agentName);
+
+        return MapAGUIServerCore(endpoints, pattern, context =>
+        {
+            var agent = context.RequestServices.GetRequiredKeyedService<AIAgent>(agentName);
+            return CreateHostAgent(context.RequestServices, agent, agentName, sessionStorageIdentity: agentName);
+        });
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint that selects the agent to invoke for each request.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The URL pattern for the endpoint.</param>
+    /// <param name="agentSelector">
+    /// A delegate invoked once per request that returns the agent to invoke, or <see langword="null"/> when
+    /// no agent matches the request. The delegate can use route values, claims, headers, and
+    /// <see cref="HttpContext.RequestServices"/> to select or resolve the agent.
+    /// </param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    /// <remarks>
+    /// <para>
+    /// When <paramref name="agentSelector"/> returns <see langword="null"/>, the endpoint responds with
+    /// <c>404 Not Found</c> without loading session state.
+    /// </para>
+    /// <para>
+    /// The selected agent's <see cref="AIAgent.Name"/> is its stable logical identity: it is used to resolve the
+    /// keyed <see cref="AgentSessionStore"/> from <see cref="HttpContext.RequestServices"/> and to partition
+    /// persisted sessions, so conversations continue across requests even when the selector returns a new agent
+    /// instance each time. The selected agent must therefore have a non-empty name, and agents that must not
+    /// share persisted sessions must have different names.
+    /// </para>
+    /// <para>
+    /// Selection is not an authorization boundary. Enforce authorization with ASP.NET Core authorization
+    /// policies, or return <see langword="null"/> from <paramref name="agentSelector"/> for agents the caller must
+    /// not reach. See <see cref="MapAGUIServer(IEndpointRouteBuilder, string, AIAgent)"/> for authentication,
+    /// authorization, and caller-scoped session isolation requirements.
+    /// </para>
+    /// </remarks>
+    public static IEndpointConventionBuilder MapAGUIServer(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("route")] string pattern,
+        Func<HttpContext, AIAgent?> agentSelector)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentSelector);
+
+        return MapAGUIServerCore(endpoints, pattern, context =>
+        {
+            if (agentSelector(context) is not { } agent)
+            {
+                return null;
+            }
+
+            string agentName = HostedAgentResolution.GetSelectedAgentName(agent);
+            return CreateHostAgent(context.RequestServices, agent, agentName, sessionStorageIdentity: agentName);
+        });
     }
 
     /// <summary>
@@ -88,6 +169,8 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// If an <see cref="AgentSessionStore"/> is registered in dependency injection keyed by the agent's name,
     /// it will be used to persist conversation sessions across requests using the AG-UI thread ID as the
     /// conversation identifier. If no session store is registered, sessions are ephemeral (not persisted).
+    /// The supplied agent instance is used for every request, while the session store is resolved from
+    /// <see cref="HttpContext.RequestServices"/> for each request.
     /// </para>
     /// <para>
     /// <strong>Trust model.</strong> The AG-UI <c>RunAgentInput.ThreadId</c> arrives
@@ -125,18 +208,15 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(aiAgent);
 
-        var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(aiAgent.Name);
+        return MapAGUIServerCore(endpoints, pattern, context =>
+            CreateHostAgent(context.RequestServices, aiAgent, aiAgent.Name, sessionStorageIdentity: null));
+    }
 
-        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-        var isolationKeyProvider = endpoints.ServiceProvider.GetService<AgentIsolationKeyProvider>();
-        if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
-        {
-            agentSessionStore ??= new NoopAgentSessionStore();
-            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
-        }
-
-        var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
-
+    private static IEndpointConventionBuilder MapAGUIServerCore(
+        IEndpointRouteBuilder endpoints,
+        string pattern,
+        Func<HttpContext, AIHostAgent?> hostAgentFactory)
+    {
         IEndpointConventionBuilder endpoint = endpoints.MapPost(pattern, async (
             [FromBody] RunAgentInput? input,
             [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
@@ -146,6 +226,12 @@ public static class AGUIEndpointRouteBuilderExtensions
             if (input is null)
             {
                 return Results.BadRequest();
+            }
+
+            // Resolve the agent before any session state is loaded so an unmatched selection never touches storage.
+            if (hostAgentFactory(context) is not { } hostAgent)
+            {
+                return Results.NotFound();
             }
 
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
@@ -188,6 +274,25 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         MarkFeatureUsed();
         return endpoint;
+    }
+
+    private static AIHostAgent CreateHostAgent(
+        IServiceProvider services,
+        AIAgent agent,
+        string? sessionStoreKey,
+        string? sessionStorageIdentity)
+    {
+        var agentSessionStore = services.GetKeyedService<AgentSessionStore>(sessionStoreKey);
+
+        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+        var isolationKeyProvider = services.GetService<AgentIsolationKeyProvider>();
+        if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+        {
+            agentSessionStore ??= new NoopAgentSessionStore();
+            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
+        }
+
+        return new AIHostAgent(agent, agentSessionStore, sessionStorageIdentity);
     }
 
     private static void MarkFeatureUsed()

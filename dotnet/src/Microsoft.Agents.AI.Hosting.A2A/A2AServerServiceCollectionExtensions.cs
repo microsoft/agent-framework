@@ -30,6 +30,11 @@ public static class A2AServerServiceCollectionExtensions
     /// <returns>The <paramref name="agentBuilder"/> for chaining.</returns>
     /// <remarks>
     /// <para>
+    /// Singleton agent registrations are resolved once when the server is created. Scoped and transient registrations
+    /// are resolved for each A2A operation as described in
+    /// <see cref="AddA2AServer(IServiceCollection, string, Action{A2AServerRegistrationOptions}?)"/>.
+    /// </para>
+    /// <para>
     /// <strong>Trust model.</strong> The A2A <c>contextId</c> and <c>taskId</c> arrive
     /// from the wire and are treated as chain-resume identifiers — <em>not</em> as
     /// authorization tokens. <see cref="AgentSessionStore"/> accepts an explicit user partition,
@@ -55,7 +60,7 @@ public static class A2AServerServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(agentBuilder);
 
-        agentBuilder.ServiceCollection.AddA2AServer(agentBuilder.Name, configureOptions);
+        AddA2AServer(agentBuilder.ServiceCollection, agentBuilder.Name, agentBuilder.Lifetime, configureOptions);
 
         return agentBuilder;
     }
@@ -121,13 +126,25 @@ public static class A2AServerServiceCollectionExtensions
     /// <param name="configureOptions">An optional callback to configure <see cref="A2AServerRegistrationOptions"/>.</param>
     /// <returns>The <paramref name="services"/> for chaining.</returns>
     /// <remarks>
+    /// <para>
+    /// The server and its task store are singletons shared by all requests. The keyed <see cref="AIAgent"/>, its keyed
+    /// <see cref="AgentSessionStore"/>, and an optional keyed <see cref="IAgentHandler"/> are resolved from a new
+    /// service scope for each A2A operation, so the configured DI lifetimes of these registrations are honored and
+    /// operations that continue in the background keep their services alive until they complete. Persisted sessions
+    /// are partitioned by <paramref name="agentName"/>, which remains stable across scoped or transient agent instances.
+    /// </para>
+    /// <para>
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
     /// supply a trusted user partition via <c>UseClaimsBasedAgentIsolation(...)</c> or
     /// a custom <see cref="AgentIsolationKeyProvider"/>).
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
+        => AddA2AServer(services, agentName, agentLifetime: null, configureOptions);
+
+    private static IServiceCollection AddA2AServer(IServiceCollection services, string agentName, ServiceLifetime? agentLifetime, Action<A2AServerRegistrationOptions>? configureOptions)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
@@ -141,8 +158,19 @@ public static class A2AServerServiceCollectionExtensions
 
         services.AddKeyedSingleton(agentName, (sp, _) =>
         {
-            var agent = sp.GetRequiredKeyedService<AIAgent>(agentName);
-            return CreateA2AServer(sp, agent, options);
+            // Custom handlers replace the agent, so the agent registration is only required without one.
+            bool hasCustomHandler = sp.GetService<IServiceProviderIsKeyedService>()?.IsKeyedService(typeof(IAgentHandler), agentName) ?? false;
+            AIAgent? agent = null;
+            if (!hasCustomHandler)
+            {
+                HostedAgentResolution.EnsureAgentRegistered(sp, agentName);
+                if (agentLifetime == ServiceLifetime.Singleton)
+                {
+                    agent = sp.GetRequiredKeyedService<AIAgent>(agentName);
+                }
+            }
+
+            return CreateA2AServer(sp, agentName, agent, sessionStorageIdentity: agentName, options);
         });
 
         return services;
@@ -178,39 +206,45 @@ public static class A2AServerServiceCollectionExtensions
             configureOptions(options);
         }
 
-        services.AddKeyedSingleton(agent.Name, (sp, _) => CreateA2AServer(sp, agent, options));
+        services.AddKeyedSingleton(agent.Name, (sp, _) => CreateA2AServer(sp, agent.Name, agent, sessionStorageIdentity: null, options));
 
         return services;
     }
 
-    private static A2AServer CreateA2AServer(IServiceProvider serviceProvider, AIAgent agent, A2AServerRegistrationOptions? options)
+    private static A2AServer CreateA2AServer(
+        IServiceProvider serviceProvider,
+        string agentName,
+        AIAgent? agent,
+        string? sessionStorageIdentity,
+        A2AServerRegistrationOptions? options)
+    {
+        // The server owns task state shared across requests, while the agent and its session services are
+        // resolved for each operation so that scoped and transient registrations keep their lifetimes.
+        var agentHandler = new ScopedA2AAgentHandler(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            agentName,
+            agent,
+            sessionStorageIdentity,
+            options?.AgentRunMode ?? AgentRunMode.ReturnMessage);
+
+        return CreateA2AServer(serviceProvider, agentName, agentHandler, options);
+    }
+
+    /// <summary>
+    /// Creates an <see cref="A2AServer"/> for the specified agent name with its keyed or default task store.
+    /// </summary>
+    /// <param name="serviceProvider">The application service provider.</param>
+    /// <param name="agentName">The name that keys the agent's hosted services.</param>
+    /// <param name="agentHandler">The handler that executes A2A operations.</param>
+    /// <param name="options">The optional registration options.</param>
+    /// <returns>The created server.</returns>
+    internal static A2AServer CreateA2AServer(IServiceProvider serviceProvider, string agentName, IAgentHandler agentHandler, A2AServerRegistrationOptions? options)
     {
         var isolationKeyProvider = serviceProvider.GetService<AgentIsolationKeyProvider>();
-
-        var agentHandler = serviceProvider.GetKeyedService<IAgentHandler>(agent.Name);
-        if (agentHandler is null)
-        {
-            var agentSessionStore = serviceProvider.GetKeyedService<AgentSessionStore>(agent.Name);
-            var runMode = options?.AgentRunMode ?? AgentRunMode.ReturnMessage;
-
-            // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-            if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
-            {
-                agentSessionStore ??= new NoopAgentSessionStore();
-                agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
-            }
-
-            var hostAgent = new AIHostAgent(
-                innerAgent: agent,
-                sessionStore: agentSessionStore);
-
-            agentHandler = new A2AAgentHandler(hostAgent, runMode);
-        }
-
         var loggerFactory = serviceProvider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
-        ITaskStore taskStore = serviceProvider.GetKeyedService<ITaskStore>(agent.Name) ?? new InMemoryTaskStore();
+        ITaskStore taskStore = serviceProvider.GetKeyedService<ITaskStore>(agentName) ?? new InMemoryTaskStore();
 
-        // Wrap the task store with isolation key scoping, same as the session store above.
+        // Wrap the task store with isolation key scoping, same as the session store.
         if (taskStore is not IsolationKeyScopedTaskStore)
         {
             taskStore = new IsolationKeyScopedTaskStore(taskStore, isolationKeyProvider, strict: isolationKeyProvider != null);
@@ -222,5 +256,30 @@ public static class A2AServerServiceCollectionExtensions
             new ChannelEventNotifier(),
             loggerFactory.CreateLogger<A2AServer>(),
             options?.ServerOptions);
+    }
+
+    /// <summary>
+    /// Creates the hosting wrapper that persists the sessions of an agent served over A2A.
+    /// </summary>
+    /// <param name="services">The service provider that owns the agent's session services.</param>
+    /// <param name="agent">The agent to host.</param>
+    /// <param name="agentName">The name that keys the agent's session store.</param>
+    /// <param name="sessionStorageIdentity">
+    /// The stable logical identity that partitions persisted sessions, or <see langword="null"/> to use the agent instance identity.
+    /// </param>
+    /// <returns>The hosting wrapper for <paramref name="agent"/>.</returns>
+    internal static AIHostAgent CreateHostAgent(IServiceProvider services, AIAgent agent, string agentName, string? sessionStorageIdentity)
+    {
+        var isolationKeyProvider = services.GetService<AgentIsolationKeyProvider>();
+        var agentSessionStore = services.GetKeyedService<AgentSessionStore>(agentName);
+
+        // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
+        if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+        {
+            agentSessionStore ??= new NoopAgentSessionStore();
+            agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });
+        }
+
+        return new AIHostAgent(agent, agentSessionStore, sessionStorageIdentity);
     }
 }

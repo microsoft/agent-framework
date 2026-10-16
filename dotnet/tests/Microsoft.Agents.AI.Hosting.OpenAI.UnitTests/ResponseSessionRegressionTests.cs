@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -74,6 +75,188 @@ public sealed class ResponseSessionRegressionTests
         Assert.True(response.IsSuccessStatusCode, responseBody);
         Assert.Equal(1, toolCalls);
         Assert.Equal(2, modelCalls);
+    }
+
+    [Fact]
+    public async Task ApprovalContinuation_AgentSelectorReturningNewInstances_UsesStableAgentNameAsync()
+    {
+        // Arrange
+        int modelCalls = 0;
+        int toolCalls = 0;
+        int selectedAgents = 0;
+        AIFunction function = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
+            () =>
+            {
+                Interlocked.Increment(ref toolCalls);
+                return "Sunny";
+            },
+            ToolName));
+        Mock<IChatClient> chatClient = CreateApprovalChatClient(() => Interlocked.Increment(ref modelCalls));
+
+        WebApplicationBuilder builder = CreateBuilder(validateScopes: true);
+        builder.Services.AddKeyedSingleton<AgentSessionStore>(AgentName, new InMemoryAgentSessionStore());
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses("/agents/{agentId}/v1/responses", context =>
+        {
+            Interlocked.Increment(ref selectedAgents);
+            return context.GetRouteValue("agentId") as string == AgentName
+                ? new ChatClientAgent(chatClient.Object, name: AgentName, tools: [function])
+                : null;
+        });
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+        string path = $"/agents/{AgentName}/v1/responses";
+
+        (string responseId, JsonElement approvalEvent) = await CreatePendingApprovalAsync(
+            client,
+            path,
+            includeAgentName: false);
+        using StringContent approvalContent = JsonContent(CreateApprovalResponseJson(
+            responseId,
+            approvalEvent,
+            includeAgentName: false));
+
+        // Act
+        using HttpResponseMessage response = await client.PostAsync(
+            new Uri(path, UriKind.Relative),
+            approvalContent);
+        string responseBody = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.True(response.IsSuccessStatusCode, responseBody);
+        Assert.Equal(2, selectedAgents);
+        Assert.Equal(1, toolCalls);
+        Assert.Equal(2, modelCalls);
+    }
+
+    [Fact]
+    public async Task AgentSelector_ReturningNull_ReturnsNotFoundAsync()
+    {
+        // Arrange
+        WebApplicationBuilder builder = CreateBuilder();
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses("/agents/{agentId}/v1/responses", _ => null);
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpResponseMessage response = await PostJsonAsync(
+            client,
+            "/agents/unknown/v1/responses",
+            """{"input":"hello"}""");
+        string responseBody = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Contains("agent_not_found", responseBody, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("GET", "/agents/unknown/v1/responses/resp_1")]
+    [InlineData("POST", "/agents/unknown/v1/responses/resp_1/cancel")]
+    [InlineData("DELETE", "/agents/unknown/v1/responses/resp_1")]
+    [InlineData("GET", "/agents/unknown/v1/responses/resp_1/input_items")]
+    public async Task AgentSelector_ReturningNull_ReturnsNotFoundForStoredResponseOperationsAsync(string method, string path)
+    {
+        // Arrange
+        int selections = 0;
+        WebApplicationBuilder builder = CreateBuilder();
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses("/agents/{agentId}/v1/responses", _ =>
+        {
+            Interlocked.Increment(ref selections);
+            return null;
+        });
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpRequestMessage request = new(new HttpMethod(method), new Uri(path, UriKind.Relative));
+        using HttpResponseMessage response = await client.SendAsync(request);
+        string responseBody = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Contains("agent_not_found", responseBody, StringComparison.Ordinal);
+        Assert.Equal(1, selections);
+    }
+
+    [Fact]
+    public async Task AgentSelector_BindsStoredResponsesToSelectedAgentAsync()
+    {
+        // Arrange
+        Dictionary<string, AIAgent> agents = new(StringComparer.Ordinal)
+        {
+            ["alpha"] = new ChatClientAgent(new TestHelpers.SimpleMockChatClient("Alpha response"), name: "alpha"),
+            ["beta"] = new ChatClientAgent(new TestHelpers.SimpleMockChatClient("Beta response"), name: "beta"),
+        };
+        WebApplicationBuilder builder = CreateBuilder();
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses(
+            "/agents/{agentId}/v1/responses",
+            context => context.GetRouteValue("agentId") is string agentId ? agents.GetValueOrDefault(agentId) : null);
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        using HttpResponseMessage createResponse = await PostJsonAsync(
+            client,
+            "/agents/alpha/v1/responses",
+            """{"input":"hello"}""");
+        string createBody = await createResponse.Content.ReadAsStringAsync();
+        Assert.True(createResponse.IsSuccessStatusCode, createBody);
+        string responseId = JsonDocument.Parse(createBody).RootElement.GetProperty("id").GetString()!;
+
+        // Act
+        using HttpResponseMessage otherAgentGet = await client.GetAsync(new Uri($"/agents/beta/v1/responses/{responseId}", UriKind.Relative));
+        using HttpResponseMessage otherAgentInputItems = await client.GetAsync(new Uri($"/agents/beta/v1/responses/{responseId}/input_items", UriKind.Relative));
+        using HttpResponseMessage otherAgentDelete = await client.DeleteAsync(new Uri($"/agents/beta/v1/responses/{responseId}", UriKind.Relative));
+        using HttpResponseMessage ownerGet = await client.GetAsync(new Uri($"/agents/alpha/v1/responses/{responseId}", UriKind.Relative));
+        string ownerBody = await ownerGet.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, otherAgentGet.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, otherAgentInputItems.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, otherAgentDelete.StatusCode);
+        Assert.True(ownerGet.IsSuccessStatusCode, ownerBody);
+        Assert.Contains("Alpha response", ownerBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AgentSelector_ResolvesScopedAgentFromRequestServicesAsync()
+    {
+        // Arrange
+        WebApplicationBuilder builder = CreateBuilder(validateScopes: true);
+        builder.AddAIAgent(
+            AgentName,
+            (_, name) => new ChatClientAgent(new TestHelpers.SimpleMockChatClient("Scoped response"), name: name),
+            ServiceLifetime.Scoped);
+        builder.AddOpenAIResponses();
+
+        await using WebApplication app = builder.Build();
+        app.MapOpenAIResponses(
+            "/agents/{agentId}/v1/responses",
+            context => context.RequestServices.GetKeyedService<AIAgent>(context.GetRouteValue("agentId")));
+        await app.StartAsync();
+        using HttpClient client = app.GetTestClient();
+
+        // Act
+        using HttpResponseMessage response = await PostJsonAsync(
+            client,
+            $"/agents/{AgentName}/v1/responses",
+            """{"input":"hello"}""");
+        string responseBody = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.True(response.IsSuccessStatusCode, responseBody);
+        Assert.Contains("Scoped response", responseBody, StringComparison.Ordinal);
     }
 
     [Theory]
