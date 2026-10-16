@@ -2125,4 +2125,57 @@ def test_to_json_schema_spec_canonicalizes_nested_and_defs_deterministically() -
     assert list(params["properties"]["metadata"]["properties"].keys()) == ["tag_a", "tag_z"]
 
 
+def test_parameters_canonicalizes_schema_deterministically() -> None:
+    """Verify that FunctionTool.parameters() directly canonicalizes schemas deterministically.
+
+    This ensures providers that serialize tool.parameters() directly (such as Anthropic,
+    Bedrock, Gemini, and Mistral) obtain deterministic wire-level outputs without cache churn.
+    """
+    schema_1 = {
+        "title": "Config",
+        "description": "Provider tool",
+        "type": "object",
+        "properties": {
+            "z_param": {"type": "string"},
+            "a_param": {"type": "integer"},
+        },
+    }
+    schema_2 = {
+        "properties": {
+            "a_param": {"type": "integer"},
+            "z_param": {"type": "string"},
+        },
+        "type": "object",
+        "description": "Provider tool",
+        "title": "Config",
+    }
+
+    tool_1 = FunctionTool(name="config_tool", description="tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="config_tool", description="tool", input_model=schema_2)
+
+    params_1 = tool_1.parameters()
+    params_2 = tool_2.parameters()
+
+    # Direct parameters() must be sorted deterministically
+    assert list(params_1.keys()) == ["description", "properties", "title", "type"]
+    assert list(params_2.keys()) == ["description", "properties", "title", "type"]
+    assert list(params_1["properties"].keys()) == ["a_param", "z_param"]
+    assert list(params_2["properties"].keys()) == ["a_param", "z_param"]
+
+    # Provider wire simulation: Anthropic tool definition shape
+    anthropic_wire_1 = json.dumps({
+        "type": "custom",
+        "name": tool_1.name,
+        "description": tool_1.description,
+        "input_schema": tool_1.parameters(),
+    })
+    anthropic_wire_2 = json.dumps({
+        "type": "custom",
+        "name": tool_2.name,
+        "description": tool_2.description,
+        "input_schema": tool_2.parameters(),
+    })
+    assert anthropic_wire_1 == anthropic_wire_2
+
+
 # endregion

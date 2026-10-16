@@ -1257,11 +1257,14 @@ class FunctionTool(SerializationMixin):
         """Create the JSON schema of the parameters.
 
         Returns:
-            A dictionary containing the JSON schema for the function's parameters.
+            A dictionary containing the JSON schema for the function's parameters,
+            with deterministic recursive sorting to preserve prompt cache stability.
             The result is cached after the first call for performance.
         """
         if self._cached_parameters is None:
-            self._cached_parameters = self._input_schema
+            raw_schema = self._input_schema
+            canonical = _canonicalize_schema(raw_schema) if isinstance(raw_schema, dict) else raw_schema
+            self._cached_parameters = canonical if isinstance(canonical, dict) else {}
         return self._cached_parameters
 
     @staticmethod
@@ -1331,19 +1334,14 @@ class FunctionTool(SerializationMixin):
         """Convert a FunctionTool to the JSON Schema function specification format.
 
         Returns:
-            A dictionary containing the function specification in JSON Schema format,
-            with canonicalized deterministic schema sorting to preserve LLM prompt caching.
+            A dictionary containing the function specification in JSON Schema format.
         """
-        raw_parameters = self.parameters()
-        canonical_parameters = (
-            _canonicalize_schema(raw_parameters) if isinstance(raw_parameters, dict) else raw_parameters
-        )
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": canonical_parameters,
+                "parameters": self.parameters(),
             },
         }
 
