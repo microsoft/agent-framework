@@ -13,6 +13,7 @@ import warnings
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import aclosing
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -50,7 +51,10 @@ from ._events import (
     WorkflowRunState,
     _framework_event_origin,  # type: ignore
 )
-from ._executor import Executor
+from ._executor import (
+    Executor,
+    _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
+)
 from ._model_utils import DictConvertible
 from ._runner import RunnerImpl
 from ._runner_context import RunnerContext, WorkflowMessage
@@ -1151,13 +1155,29 @@ class Workflow(DictConvertible):
             self._response_batch_validator(requests)
 
     async def _validate_response_requests(self, requests: Sequence[WorkflowEvent]) -> None:
+        validations = await self._get_response_validation_batches(requests)
+        # Preserve shared request data while preflighting the whole tree before live migrations.
+        detached_batches = deepcopy([batch for _, batch in validations])
+        for (validator, _), batch in zip(validations, detached_batches, strict=True):
+            validator(batch)
+        for validator, batch in validations:
+            validator(batch)
+
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
         queued_requests = await self._runner.context.get_queued_response_info_events()
         batch = [*queued_requests, *requests]
-        self._validate_response_batch(batch)
+        validations: list[_ResponseBatchValidation] = []
+        if self._response_batch_validator is not None:
+            validations.append((self._validate_response_batch, batch))
         for executor in self.executors.values():
             delegated = [request for request in batch if request.source_executor_id == executor.id]
             if delegated:
-                await executor._validate_response_batch(delegated)  # pyright: ignore[reportPrivateUsage]
+                validations.extend(
+                    await executor._get_response_validation_batches(delegated)  # pyright: ignore[reportPrivateUsage]
+                )
+        return validations
 
     async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
         """Validate responses before a run can consume pending requests."""

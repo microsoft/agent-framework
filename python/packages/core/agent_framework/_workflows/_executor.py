@@ -31,6 +31,8 @@ from ._workflow_context import WorkflowContext, validate_workflow_context_annota
 
 logger = logging.getLogger(__name__)
 
+_ResponseBatchValidation = tuple[Callable[[Sequence[WorkflowEvent]], None], Sequence[WorkflowEvent]]
+
 
 # region Executor
 class Executor(RequestInfoMixin, DictConvertible):
@@ -533,9 +535,12 @@ class Executor(RequestInfoMixin, DictConvertible):
         """Release executor-owned state for a cancelled workflow request."""
         del request_id, ctx
 
-    async def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
-        """Validate delegated responses before the parent consumes pending requests."""
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
+        """Collect delegated response policies without changing pending requests."""
         del requests
+        return []
 
     def _validate_checkpoint_restore(self, state: dict[str, Any], requests: Sequence[WorkflowEvent] = ()) -> None:
         """Validate a checkpoint snapshot without changing live executor state."""

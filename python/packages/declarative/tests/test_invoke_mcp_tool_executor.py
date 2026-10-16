@@ -1558,6 +1558,71 @@ class TestRequestScopeContinuations:
             assert not await parent._runner_context.get_pending_request_info_events()
             assert mcp_handler.call_count == 1
 
+    @pytest.mark.parametrize("depth", [1, 2])
+    @pytest.mark.parametrize("queued", [False, True])
+    @pytest.mark.parametrize("origin", [None, 42])
+    async def test_sibling_response_rejection_preserves_unmigrated_origins(
+        self, depth: int, queued: bool, origin: Any
+    ) -> None:
+        from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowExecutor, handler
+
+        class Start(Executor):
+            @handler
+            async def forward(self, message: dict[str, Any], ctx: WorkflowContext[dict[str, Any]]) -> None:
+                await ctx.send_message(message)
+
+        mcp_handler = StubMcpHandler(_ok())
+        leaves = [
+            WorkflowFactory(
+                mcp_tool_handler=mcp_handler, migrate_legacy_request_scopes=index == 0
+            ).create_workflow_from_definition(_yaml(_action(require_approval=True)))
+            for index in range(2)
+        ]
+        wrappers: list[WorkflowExecutor] = []
+        for index, leaf in enumerate(leaves):
+            child = leaf
+            for level in range(depth):
+                wrapper = WorkflowExecutor(child, id=f"child_{index}_{level}", propagate_request=True)
+                if level + 1 < depth:
+                    child = WorkflowBuilder(start_executor=wrapper).build()
+            wrappers.append(wrapper)
+        start = Start(id="start")
+        parent = WorkflowBuilder(start_executor=start).add_fan_out_edges(start, wrappers).build()
+        await parent.run({})
+        requests = [
+            next(iter((await leaf._runner_context.get_pending_request_info_events()).values())) for leaf in leaves
+        ]
+        first, second = requests
+        second_scope = second.data.workflow_session_id
+        first.data.workflow_session_id = None
+        second.data.workflow_session_id = origin
+        if queued:
+            await parent._runner_context.send_request_info_response(
+                first.request_id, _scope_pause_response("InvokeMcpTool")
+            )
+        pending_ids = set(await parent._runner_context.get_pending_request_info_events())
+        responses = {request_id: _scope_pause_response("InvokeMcpTool") for request_id in pending_ids}
+
+        with pytest.raises(DeclarativeWorkflowError):
+            await parent.run(responses=responses)
+
+        assert first.data.workflow_session_id is None
+        assert second.data.workflow_session_id == origin
+        assert set(await parent._runner_context.get_pending_request_info_events()) == pending_ids
+        for leaf, request in zip(leaves, requests, strict=True):
+            assert set(await leaf._runner_context.get_pending_request_info_events()) == {request.request_id}
+        assert mcp_handler.call_count == 0
+
+        second.data.workflow_session_id = second_scope
+        await parent.run(responses=responses)
+        assert not await parent._runner_context.get_pending_request_info_events()
+        assert first.data.workflow_session_id == f"legacy-request:{first.request_id}"
+        assert {invocation.workflow_session_id for invocation in mcp_handler.invocations} == {
+            f"legacy-request:{first.request_id}",
+            second_scope,
+        }
+        assert mcp_handler.call_count == 2
+
     @pytest.mark.parametrize("restore_kind", ["file", "embedded"])
     @pytest.mark.parametrize("depth", [1, 2])
     @pytest.mark.parametrize("mode", ["missing", "mixed", "valid", "pending"])

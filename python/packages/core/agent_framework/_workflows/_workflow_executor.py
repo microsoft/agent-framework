@@ -24,7 +24,11 @@ from ._events import (
     WorkflowRunState,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._executor import Executor, handler
+from ._executor import (
+    Executor,
+    _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
+    handler,
+)
 from ._request_info_mixin import response_handler
 from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
@@ -591,9 +595,11 @@ class WorkflowExecutor(Executor):
         }
 
     @override
-    async def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
+    async def _get_response_validation_batches(
+        self, requests: Sequence[WorkflowEvent]
+    ) -> list[_ResponseBatchValidation]:
         pending = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
-        await self.workflow._validate_response_requests([  # pyright: ignore[reportPrivateUsage]
+        return await self.workflow._get_response_validation_batches([  # pyright: ignore[reportPrivateUsage]
             pending[request.request_id] for request in requests if request.request_id in pending
         ])
 
