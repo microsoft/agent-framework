@@ -1180,13 +1180,19 @@ class MCPTool:
         self.sampling_max_tokens = sampling_max_tokens
         self.sampling_max_requests = sampling_max_requests
         self._sampling_deprecation_warned = False
-        if (
+        wrapper_sampling_configured = (
             client is not None
             or sampling_approval_callback is not None
             or sampling_max_tokens != _DEFAULT_SAMPLING_MAX_TOKENS
             or sampling_max_requests != _DEFAULT_SAMPLING_MAX_REQUESTS
-        ):
+        )
+        if wrapper_sampling_configured:
             self._warn_sampling_deprecated(stacklevel=4)
+            if mcp_client is not None or session is not None:
+                logger.warning(
+                    "MCPTool sampling options are ignored for a caller-owned connection; "
+                    "configure sampling policy on the supplied Client or ClientSession."
+                )
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self._function_load_callback: _MCPFunctionLoadCallback | None = None
@@ -1797,12 +1803,19 @@ class MCPTool:
             return
 
         # v2 introduces `mcp_client.listen`, but messages are teed via the message_handler passed in
-        # in the constructor anyway, so we check for the feature availability an fallback to legacy behaviour
+        # during Client construction, so framework-owned Clients can fall back to legacy notifications.
         initial_context = mcp_client.listen(tools_list_changed=tools_changed, prompts_list_changed=prompts_changed)
         try:
             initial_subscription = await initial_context.__aenter__()
         except ListenNotSupportedError:
-            logger.debug("Listen not supported, falling back to legacy behaviour.")
+            connection = self._connection
+            if connection is not None and connection.client is mcp_client and not connection.is_framework_owned:
+                logger.warning(
+                    "Automatic legacy catalog refresh is unavailable for a caller-owned Client; "
+                    "configure legacy notification handling when constructing the Client."
+                )
+            else:
+                logger.debug("Listen not supported, falling back to legacy behaviour.")
             return
 
         async def refresh_catalogs() -> None:
@@ -3642,10 +3655,10 @@ class MCPStdioTool(MCPTool):
             request_timeout: The default timeout in seconds for all requests.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``.
+                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
-                that session.
+                that session. Sampling options configured on this wrapper do not modify the supplied session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3858,10 +3871,10 @@ class MCPStreamableHTTPTool(MCPTool):
             request_timeout: The default timeout in seconds for all requests.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``.
+                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
-                that session.
+                that session. Sampling options configured on this wrapper do not modify the supplied session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.

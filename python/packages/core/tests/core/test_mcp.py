@@ -4370,6 +4370,36 @@ async def test_mcp_tool_uses_legacy_catalog_notifications_when_subscription_is_u
     assert prompt_load_count == 2
 
 
+async def test_caller_owned_client_warns_when_legacy_catalog_refresh_is_caller_managed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from mcp.client.subscriptions import ListenNotSupportedError
+
+    @contextlib.asynccontextmanager
+    async def unsupported_listen() -> AsyncGenerator[Any]:
+        raise ListenNotSupportedError("2025-11-25")
+        yield None  # pragma: no cover
+
+    capabilities = types.ServerCapabilities(tools=types.ToolsCapability(list_changed=True))
+    sdk_client = _mock_sdk_client(capabilities=capabilities, protocol_version="2025-11-25")
+    sdk_client.listen = Mock(return_value=unsupported_listen())
+    sdk_client.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+    tool = MCPStdioTool(
+        name="test",
+        command="unused",
+        mcp_client=sdk_client,
+        load_prompts=False,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        await tool.connect()
+
+    assert "Automatic legacy catalog refresh is unavailable for a caller-owned Client" in caplog.text
+    assert tool._capability_list_subscription_task is None
+
+    await tool.close()
+
+
 async def test_mcp_tool_cleans_up_when_catalog_subscription_setup_fails() -> None:
     @contextlib.asynccontextmanager
     async def rejected_listen() -> AsyncGenerator[Any]:
@@ -4640,6 +4670,34 @@ def test_mcp_tool_each_sampling_option_warns(sampling_option: dict[str, Any]):
         MCPStdioTool(name="test_tool", command="python", **sampling_option)
 
     assert len(warning_info) == 1
+
+
+@pytest.mark.parametrize(
+    "connection",
+    [
+        {"mcp_client": Mock()},
+        {"session": Mock(spec=ClientSession)},
+    ],
+)
+def test_mcp_tool_warns_when_sampling_options_are_ignored_for_caller_owned_connection(
+    connection: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.WARNING, logger="agent_framework"),
+        pytest.warns(DeprecationWarning, match="MCP sampling"),
+    ):
+        MCPStdioTool(
+            name="test",
+            command="unused",
+            client=AsyncMock(),
+            sampling_approval_callback=_approve,
+            sampling_max_tokens=512,
+            sampling_max_requests=2,
+            **connection,
+        )
+
+    assert "sampling options are ignored for a caller-owned connection" in caplog.text
 
 
 async def test_mcp_tool_sampling_callback_denies_by_default():
