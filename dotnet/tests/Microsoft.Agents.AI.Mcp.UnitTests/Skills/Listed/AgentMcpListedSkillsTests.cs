@@ -308,54 +308,34 @@ public sealed class AgentMcpListedSkillsTests
     }
 
     [Theory]
-    [InlineData(-1)]
-    [InlineData(0)]
     [InlineData(1)]
-    public async Task DiscoverAsync_ResultSizeLimit_CountsAllPagesAndUnknownFieldsAsync(int difference)
+    [InlineData(2)]
+    public async Task DiscoverAsync_LargeUnknownFields_AreAcceptedAcrossPagesAsync(int pageCount)
     {
         // Arrange
-        JsonObject first = ListResult(Entry());
-        first["nextCursor"] = "next";
-        JsonObject second = ListResult(Entry());
-        second["unknown"] = new string('\u00e9', 100);
-        long size = Encoding.UTF8.GetByteCount(first.ToJsonString()) + Encoding.UTF8.GetByteCount(second.ToJsonString());
+        string padding = new('x', 10 * 1024 * 1024 / pageCount);
         var client = new Mock<McpClient>();
-        client.SetupSequence(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = first })
-            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(2), Result = second });
-        var loader = new McpListedSkillsLoader(client.Object, options: new() { ListedMaxResultSizeBytes = size + difference });
+        var responses = client.SetupSequence(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()));
+        for (int page = 0; page < pageCount; page++)
+        {
+            JsonObject result = ListResult(Entry());
+            result["unknown"] = padding;
+            if (page < pageCount - 1)
+            {
+                result["nextCursor"] = $"page-{page + 1}";
+            }
 
-        // Act & Assert
-        if (difference < 0)
-        {
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
-            Assert.Contains($"combined list-result size ({size + difference} bytes)", exception.Message);
-        }
-        else
-        {
-            Assert.Equal(2, (await loader.DiscoverAsync(CancellationToken.None)).Count);
+            responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
         }
 
-        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
-    }
-
-    [Fact]
-    public async Task DiscoverAsync_DefaultResultSizeLimit_RejectsOversizedResultBeforeTypedDeserializationAsync()
-    {
-        // Arrange
-        JsonObject result = ListResult();
-        result["padding"] = new string('x', 10_485_760);
-        result["skills"] = "invalid";
-        var client = new Mock<McpClient>();
-        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = result });
         var loader = new McpListedSkillsLoader(client.Object);
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => loader.DiscoverAsync(CancellationToken.None));
+        var skills = await loader.DiscoverAsync(CancellationToken.None);
 
         // Assert
-        Assert.Contains("combined list-result size (10485760 bytes)", exception.Message);
+        Assert.Equal(pageCount, skills.Count);
+        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(pageCount));
     }
 
     [Fact]
@@ -402,8 +382,6 @@ public sealed class AgentMcpListedSkillsTests
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), -1)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), 0)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), -1)]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxResultSizeBytes), 0)]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxResultSizeBytes), -1)]
     public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
     {
         // Arrange
@@ -412,7 +390,6 @@ public sealed class AgentMcpListedSkillsTests
         {
             ListedMaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount) ? limit : null,
             ListedMaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount) ? limit : null,
-            ListedMaxResultSizeBytes = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxResultSizeBytes) ? limit : null,
         };
 
         // Act

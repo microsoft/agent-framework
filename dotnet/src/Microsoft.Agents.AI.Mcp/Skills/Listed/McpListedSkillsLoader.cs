@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -31,14 +30,12 @@ internal sealed partial class McpListedSkillsLoader
 
     private const int DefaultMaxPageCount = 10;
     private const int DefaultMaxSkillCount = 100;
-    private const long DefaultMaxResultSizeBytes = 10 * 1024 * 1024;
 
     private readonly McpClient _client;
     private readonly ILogger _logger;
     private readonly long _maxResourceSizeBytes;
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
-    private readonly long _maxResultSizeBytes;
 
     /// <summary>
     /// Initializes a loader for skills discovered through <c>skills/list</c>.
@@ -55,11 +52,9 @@ internal sealed partial class McpListedSkillsLoader
         this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpListedSkill.DefaultMaxResourceSizeBytes;
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
-        this._maxResultSizeBytes = options?.ListedMaxResultSizeBytes ?? DefaultMaxResultSizeBytes;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResultSizeBytes, nameof(options.ListedMaxResultSizeBytes));
     }
 
     /// <summary>
@@ -100,7 +95,6 @@ internal sealed partial class McpListedSkillsLoader
         HashSet<string> cursors = new(StringComparer.Ordinal);
         string? cursor = null;
         int pageCount = 0;
-        long totalResultSizeBytes = 0;
 
         do
         {
@@ -134,19 +128,6 @@ internal sealed partial class McpListedSkillsLoader
             if (resultNode is JsonObject resultObject && resultObject["skills"] is JsonArray entries && entries.Count > this._maxSkillCount - skillEntries.Count)
             {
                 throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed skill count ({this._maxSkillCount}).");
-            }
-
-            using (Utf8JsonWriter writer = new(Stream.Null))
-            {
-                resultNode.WriteTo(writer);
-                writer.Flush();
-
-                if (writer.BytesCommitted > this._maxResultSizeBytes - totalResultSizeBytes)
-                {
-                    throw new InvalidOperationException($"Skill discovery exceeds the maximum allowed combined list-result size ({this._maxResultSizeBytes} bytes).");
-                }
-
-                totalResultSizeBytes += writer.BytesCommitted;
             }
 
             McpSkillsListResult result = resultNode.Deserialize(McpListedSkillsJsonContext.Default.McpSkillsListResult)

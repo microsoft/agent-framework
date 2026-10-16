@@ -35,7 +35,7 @@ namespace Microsoft.Agents.AI;
 /// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
 /// Each listed resource read must return exactly one text or binary content block; <c>SKILL.md</c> must contain text.
 /// Discovery through <c>skills/list</c> leaves existing archive directories untouched.
-/// Page counts, total skill counts, combined list-result JSON size, and individual resource sizes
+/// Page counts, total skill counts, and individual resource sizes
 /// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>. Discovery follows continuation cursors
 /// until exhausted and fails on repeated cursors, invalid pages, or exceeded limits instead of returning a partial catalog.
 /// These checks do not limit incoming messages before the supplied client receives and parses them.
@@ -96,6 +96,14 @@ namespace Microsoft.Agents.AI;
 /// to bound the impact of a malicious server. A matching digest proves consistency with the index,
 /// not trustworthiness: a server controlling both the index and archive can replace both or omit
 /// the digest.
+/// </para>
+/// <para>
+/// This source does not impose a byte limit on individual or combined <c>skills/list</c> responses.
+/// Page-count, skill-count, and resource-size limits do not bound incoming message size or total
+/// memory consumption. A malicious, compromised, or misconfigured server can return oversized
+/// responses that cause excessive memory consumption. Application developers are responsible for
+/// configuring appropriate input-size and resource limits through their chosen MCP client, transport,
+/// or hosting environment.
 /// </para>
 /// </remarks>
 internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource

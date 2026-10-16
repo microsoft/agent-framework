@@ -23,7 +23,7 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// <c>io.modelcontextprotocol/skills</c> extension. Otherwise, discovers skills through
     /// <c>skill://index.json</c>.
     /// Listed skills fetch instructions and supporting resources when requested.
-    /// Page counts, total skill counts, combined list-result JSON size, and individual resource sizes
+    /// Page counts, total skill counts, and individual resource sizes
     /// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
     /// These checks do not limit incoming messages before the supplied client receives and parses them.
     /// </para>
@@ -44,6 +44,14 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// adversarial or compromised skills designed to influence the agent via indirect prompt injection
     /// or to exfiltrate data through instructions or scripts the agent is induced to run. Only connect
     /// to MCP servers you trust and have evaluated, and treat their responses as untrusted input.
+    /// </para>
+    /// <para>
+    /// This source does not impose a byte limit on individual or combined <c>skills/list</c> responses.
+    /// Page-count, skill-count, and resource-size limits do not bound incoming message size or total
+    /// memory consumption. A malicious, compromised, or misconfigured server can return oversized
+    /// responses that cause excessive memory consumption. Application developers are responsible for
+    /// configuring appropriate input-size and resource limits through their chosen MCP client, transport,
+    /// or hosting environment.
     /// </para>
     /// </remarks>
     public static AgentSkillsProviderBuilder UseMcpSkills(this AgentSkillsProviderBuilder builder, McpClient client, AgentMcpSkillsSourceOptions? options = null)
