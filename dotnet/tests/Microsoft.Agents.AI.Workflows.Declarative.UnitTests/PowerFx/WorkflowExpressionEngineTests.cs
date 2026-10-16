@@ -44,6 +44,44 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.State.Bind();
     }
 
+    [Theory]
+    [InlineData("Value(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error(Env.Setting)", VariableScopeNames.Environment)]
+    [InlineData("Error({Kind: ErrorKind.Custom, Message: Local.Setting})", VariableScopeNames.Local)]
+    public void ExpressionErrorOmitsSensitiveInput(string expression, string scope)
+    {
+        // Arrange
+        const string Value = "sample-setting";
+        this.State.Set("Setting", FormulaValue.New(Value), scope, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act
+        DeclarativeActionException exception = Assert.Throws<DeclarativeActionException>(
+            () => this.State.Evaluator.GetValue(ValueExpression.Expression(expression)));
+
+        // Assert
+        Assert.DoesNotContain(Value, exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(exception.InnerException);
+    }
+
+    [Theory]
+    [InlineData("Value(Local.Setting)")]
+    [InlineData("Error(Local.Setting)")]
+    public void ExpressionErrorPreservesNonSensitiveInput(string expression)
+    {
+        // Arrange
+        const string Value = "sample-setting";
+        this.State.Set("Setting", FormulaValue.New(Value), VariableScopeNames.Local);
+        this.State.Bind();
+
+        // Act
+        DeclarativeActionException exception = Assert.Throws<DeclarativeActionException>(
+            () => this.State.Evaluator.GetValue(ValueExpression.Expression(expression)));
+
+        // Assert
+        Assert.Contains(Value, exception.Message, StringComparison.Ordinal);
+    }
+
     #region BoolExpression Tests
 
     [Fact]
