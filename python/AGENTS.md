@@ -18,11 +18,17 @@ Instructions for AI coding agents working in the Python codebase.
 - `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
 - `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
+**Public consumer skill** (`../skills/agent-framework-builder-python/`) — installable guidance for developers building
+Python Agent Framework applications. It is a distribution artifact, not a repository skill: do not invoke it for
+normal framework development. Review it as documentation when changes affect the public developer experience.
+
 ## Maintaining Documentation
 
 When making changes to a package, check if the following need updates:
 - The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
 - The agent skills in `.github/skills/` if conventions, commands, or workflows change
+- The public Python consumer skill in `../skills/agent-framework-builder-python/` if public APIs, package names or
+  maturity, canonical samples, configuration, evaluation, integrations, or hosting guidance change
 
 At the end of every run, re-read `AGENTS.md` and the relevant skill files and
 update any guidance that the conversation revealed to be out of date,
@@ -30,6 +36,9 @@ incomplete, or misleading (renamed files, changed commands, new conventions
 the user confirmed, etc.). **Before adding a new principle or rule, ask the
 user whether they want it captured as a durable principle** — do not invent
 team norms from a single conversation without explicit confirmation.
+
+Only inspect the public consumer skill when the change falls into its maintenance scope. Do not load it as an active
+skill or apply its standalone-project defaults to this monorepo.
 
 ## Terminology
 
