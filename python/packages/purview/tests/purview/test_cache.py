@@ -4,6 +4,8 @@
 
 import asyncio
 
+import pytest
+
 from agent_framework_purview._cache import (
     InMemoryCacheProvider,
     create_protection_scopes_cache_key,
@@ -64,6 +66,23 @@ class TestInMemoryCacheProvider:
         result = await cache.get("key1")
 
         assert result == "value2"
+
+    async def test_cache_growing_update_evicts_other_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replacing the earliest-expiring entry must only subtract its size once."""
+        monkeypatch.setattr("agent_framework_purview._cache.time.time", lambda: 1000.0)
+        cache = InMemoryCacheProvider(max_size_bytes=20)
+
+        # JSON string quotes add two bytes to each value's estimated size.
+        await cache.set("older", "a" * 6, ttl_seconds=10)
+        await cache.set("newer", "b" * 6, ttl_seconds=20)
+        await cache.set("older", "c" * 14, ttl_seconds=30)
+
+        assert await cache.get("older") == "c" * 14
+        assert await cache.get("newer") is None
+        assert cache._current_size_bytes == 16
+
+        await cache.remove("older")
+        assert cache._current_size_bytes == 0
 
     async def test_cache_remove(self) -> None:
         """Test removing a cache entry."""
