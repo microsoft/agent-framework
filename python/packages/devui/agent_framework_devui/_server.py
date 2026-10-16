@@ -1083,7 +1083,14 @@ class DevServer:
                 executor = await self._ensure_executor()
                 items = request_data.get("items", [])
                 conv_items = await executor.conversation_store.add_items(conversation_id, items=items)
-                return {"object": "list", "data": [item.model_dump() for item in conv_items]}
+                serialized_items: list[dict[str, Any]] = []
+                for item in conv_items:
+                    if hasattr(item, "model_dump"):
+                        serialized_items.append(item.model_dump())
+                    elif isinstance(item, dict):
+                        item_dict = cast(dict[str, Any], item)
+                        serialized_items.append({str(k): v for k, v in item_dict.items()})
+                return {"object": "list", "data": serialized_items}
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except HTTPException:

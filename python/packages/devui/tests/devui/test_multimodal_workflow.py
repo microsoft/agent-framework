@@ -173,6 +173,53 @@ class TestMultimodalWorkflowInput:
         assert result.contents[3].additional_properties["openai"]["content_type"] == "input_file"
         assert result.contents[3].media_type == "audio/mp4"
 
+    def test_convert_openai_input_audio_to_agent_audio_content(self):
+        """input_audio is preserved as audio content instead of a generic file."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "UklGRg==",
+                            "format": "wav",
+                        },
+                    }
+                ],
+            }
+        ]
+
+        result = executor._convert_input_to_chat_message(openai_input)
+
+        assert result.contents[0].type == "data"
+        assert result.contents[0].media_type == "audio/wav"
+        assert result.contents[0].uri == "data:audio/wav;base64,UklGRg=="
+
+    def test_convert_openai_input_audio_rejects_unsupported_format(self):
+        """Unsupported audio formats are explicit errors, not silent text/file fallbacks."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "AAAA",
+                            "format": "webm",
+                        },
+                    }
+                ],
+            }
+        ]
+
+        with pytest.raises(ValueError, match="Unsupported input_audio format"):
+            executor._convert_input_to_chat_message(openai_input)
+
     def test_convert_openai_input_rejects_unsupported_only_content(self):
         """Unsupported input must not become a fabricated empty user message."""
         executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))

@@ -217,6 +217,7 @@ export function isExecutorAction(item: WorkflowItem): item is ExecutorActionItem
 
 // Union of all possible output items
 export type ResponseOutputItem =
+  | ResponseOutputMessage
   | ResponseFunctionToolCall
   | ResponseOutputImageItem
   | ResponseOutputFileItem
@@ -396,7 +397,7 @@ export interface OpenAIResponse {
   object: "response";
   created_at: number;
   model: string;
-  output: ResponseOutputMessage[];
+  output: ResponseOutputItem[];
   usage: ResponseUsage;
   parallel_tool_calls: boolean;
   tool_choice: string;
@@ -530,6 +531,14 @@ export interface MessageInputFile {
   filename?: string;
 }
 
+export interface MessageInputAudio {
+  type: "input_audio";
+  input_audio: {
+    data: string;
+    format: "wav" | "mp3";
+  };
+}
+
 // DevUI Extension: Function approval request content (shown in chat)
 export interface MessageFunctionApprovalRequestContent {
   type: "function_approval_request";
@@ -574,6 +583,7 @@ export interface MessageOutputFile {
   file_url?: string;
   file_data?: string; // base64
   mime_type: string;
+  auto_play?: boolean;
 }
 
 export interface MessageOutputData {
@@ -590,6 +600,7 @@ export type MessageContent =
   | MessageRefusalContent
   | MessageInputImage
   | MessageInputFile
+  | MessageInputAudio
   | MessageOutputImage
   | MessageOutputFile
   | MessageOutputData

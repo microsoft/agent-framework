@@ -16,9 +16,23 @@ import {
   Square,
   FileText,
   Paperclip,
+  Mic,
 } from "lucide-react";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  createRecordedAudioFromBlob,
+  getSupportedInputAudioFormat,
+  looksLikeAudioFile,
+  useAudioRecorder,
+  type RecordedAudio,
+} from "@/hooks";
+import { useDevUIStore } from "@/stores";
+import { AudioMessagePreview, RecordingBar } from "@/components/ui/audio-message-preview";
 import type { ResponseInputContent, ResponseInputTextParam, ResponseInputImageParam, ResponseInputFileParam } from "@/types/agent-framework";
+import type { ResponseInputAudioParam } from "@/types/agent-framework";
+
+const UNSUPPORTED_AUDIO_UPLOAD_MESSAGE = "Only WAV and MP3 audio uploads can be sent as agent audio input.";
+const MULTIPLE_AUDIO_UPLOAD_MESSAGE = "Only one audio upload can be attached at a time.";
 
 export interface ChatMessageInputProps {
   onSubmit: (content: ResponseInputContent[]) => Promise<void>;
@@ -55,17 +69,31 @@ export function ChatMessageInput({
 }: ChatMessageInputProps) {
   const [inputValue, setInputValue] = useState("");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [pendingAudio, setPendingAudio] = useState<RecordedAudio | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [pasteNotification, setPasteNotification] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingAudioRef = useRef<RecordedAudio | null>(null);
+  const audioInput = useDevUIStore((state) => state.audioInput);
+  const pushToTalkTimeoutRef = useRef<number | null>(null);
+  const pushToTalkStartRef = useRef<Promise<void> | null>(null);
+  const pushToTalkActiveRef = useRef(false);
+  const suppressAudioClickRef = useRef(false);
+  const autoStopTimeoutRef = useRef<number | null>(null);
+  const silenceStartedAtRef = useRef<number | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
-  // Process external files from parent (via useDragDrop hook)
   useEffect(() => {
-    if (externalFiles && externalFiles.length > 0) {
-      handleFilesSelected(externalFiles);
-      onExternalFilesProcessed?.();
-    }
-  }, [externalFiles, onExternalFilesProcessed]);
+    pendingAudioRef.current = pendingAudio;
+  }, [pendingAudio]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAudioRef.current) {
+        URL.revokeObjectURL(pendingAudioRef.current.blobUrl);
+      }
+    };
+  }, []);
 
   // Constants for text-to-file conversion
   const TEXT_THRESHOLD = 10000; // 10KB threshold for converting to file
@@ -86,6 +114,28 @@ export function ChatMessageInput({
       reader.readAsDataURL(file);
     });
   };
+
+  const replaceAudioRecording = useCallback((recording: RecordedAudio) => {
+    setPendingAudio((previousRecording) => {
+      if (previousRecording) {
+        URL.revokeObjectURL(previousRecording.blobUrl);
+      }
+      return recording;
+    });
+  }, []);
+
+  const {
+    isSupported: isAudioSupported,
+    isRecording,
+    isStarting: isStartingAudio,
+    isProcessing: isProcessingAudio,
+    recordingSeconds,
+    inputLevel,
+    error: audioError,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+  } = useAudioRecorder(audioInput, replaceAudioRecording);
 
   // Detect file extension from content
   const detectFileExtension = (text: string): string => {
@@ -136,14 +186,54 @@ export function ChatMessageInput({
   // Handle file selection
   const handleFilesSelected = useCallback(
     async (files: File[]) => {
-      if (attachments.length + files.length > maxAttachments) {
+      const attachmentFiles: File[] = [];
+      const audioFiles: Array<{ file: File; format: "wav" | "mp3" }> = [];
+      let hasUnsupportedAudio = false;
+
+      for (const file of files) {
+        if (looksLikeAudioFile(file)) {
+          const format = getSupportedInputAudioFormat(file);
+          if (format) {
+            audioFiles.push({ file, format });
+          } else {
+            hasUnsupportedAudio = true;
+          }
+        } else {
+          attachmentFiles.push(file);
+        }
+      }
+
+      if (attachments.length + attachmentFiles.length > maxAttachments) {
         console.warn(`Cannot add more than ${maxAttachments} attachments`);
+        return;
+      }
+
+      if (audioFiles.length > 1) {
+        console.warn(MULTIPLE_AUDIO_UPLOAD_MESSAGE);
+        setPasteNotification(MULTIPLE_AUDIO_UPLOAD_MESSAGE);
+        setTimeout(() => setPasteNotification(null), 3000);
         return;
       }
 
       const newAttachments: AttachmentItem[] = [];
 
-      for (const file of files) {
+      for (const { file, format } of audioFiles) {
+        try {
+          replaceAudioRecording(await createRecordedAudioFromBlob(file, format));
+        } catch (error) {
+          console.error("Failed to process audio upload:", error);
+          setPasteNotification("Could not process audio upload");
+          setTimeout(() => setPasteNotification(null), 3000);
+        }
+      }
+
+      if (hasUnsupportedAudio) {
+        console.warn(UNSUPPORTED_AUDIO_UPLOAD_MESSAGE);
+        setPasteNotification(UNSUPPORTED_AUDIO_UPLOAD_MESSAGE);
+        setTimeout(() => setPasteNotification(null), 3000);
+      }
+
+      for (const file of attachmentFiles) {
         const attachment: AttachmentItem = {
           id: `${Date.now()}-${Math.random()}`,
           file,
@@ -164,8 +254,16 @@ export function ChatMessageInput({
 
       setAttachments((prev) => [...prev, ...newAttachments]);
     },
-    [attachments.length, maxAttachments]
+    [attachments.length, maxAttachments, replaceAudioRecording]
   );
+
+  // Process external files from parent (via useDragDrop hook)
+  useEffect(() => {
+    if (externalFiles && externalFiles.length > 0) {
+      handleFilesSelected(externalFiles);
+      onExternalFilesProcessed?.();
+    }
+  }, [externalFiles, handleFilesSelected, onExternalFilesProcessed]);
 
   // Handle attachment removal
   const handleRemoveAttachment = (id: string) => {
@@ -290,7 +388,7 @@ export function ChatMessageInput({
     e.preventDefault();
 
     if (
-      (!inputValue.trim() && attachments.length === 0) ||
+      (!inputValue.trim() && attachments.length === 0 && !pendingAudio) ||
       isSubmitting ||
       disabled
     )
@@ -305,6 +403,16 @@ export function ChatMessageInput({
         text: messageText,
         type: "input_text",
       } as ResponseInputTextParam);
+    }
+
+    if (pendingAudio) {
+      content.push({
+        type: "input_audio",
+        input_audio: {
+          data: pendingAudio.data,
+          format: pendingAudio.format,
+        },
+      } as ResponseInputAudioParam);
     }
 
     // Add attachments
@@ -352,13 +460,240 @@ export function ChatMessageInput({
     // Clear input and attachments after successful submission
     setInputValue("");
     setAttachments([]);
+    if (pendingAudio) {
+      URL.revokeObjectURL(pendingAudio.blobUrl);
+    }
+    setPendingAudio(null);
   };
 
   const canSendMessage =
     !disabled &&
     !isSubmitting &&
     !isStreaming &&
-    (inputValue.trim() || attachments.length > 0);
+    !isStartingAudio &&
+    !isRecording &&
+    !isProcessingAudio &&
+    (inputValue.trim() || attachments.length > 0 || pendingAudio);
+
+  const canRecordAudio =
+    audioInput.enabled &&
+    isAudioSupported &&
+    !disabled &&
+    !isSubmitting &&
+    !isStreaming &&
+    !isStartingAudio &&
+    !isRecording &&
+    !isProcessingAudio;
+
+  const finishAudioRecording = useCallback(async () => {
+    try {
+      const recording = await stopRecording();
+      if (recording) {
+        replaceAudioRecording(recording);
+      }
+    } catch {
+      // Error is surfaced by the recorder hook.
+    }
+  }, [replaceAudioRecording, stopRecording]);
+
+  const clearAutoStopTimer = useCallback(() => {
+    if (autoStopTimeoutRef.current !== null) {
+      window.clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetAutoStopDetection = useCallback(() => {
+    clearAutoStopTimer();
+    silenceStartedAtRef.current = null;
+  }, [clearAutoStopTimer]);
+
+  useEffect(() => {
+    if (isRecording) {
+      recordingStartedAtRef.current = Date.now();
+      resetAutoStopDetection();
+      return;
+    }
+
+    recordingStartedAtRef.current = null;
+    resetAutoStopDetection();
+  }, [isRecording, resetAutoStopDetection]);
+
+  useEffect(() => {
+    if (!audioInput.autoStopOnSilence || !isRecording || pushToTalkActiveRef.current) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    const recordingStartedAt = recordingStartedAtRef.current;
+    if (recordingStartedAt === null) {
+      return;
+    }
+
+    const minimumRecordingMs = Math.max(0, audioInput.minimumRecordingMs ?? 1000);
+    const silenceDurationMs = Math.max(250, audioInput.silenceDurationMs ?? 1500);
+    const silenceThreshold = Math.max(0, Math.min(1, audioInput.silenceThreshold ?? 0.03));
+    const now = Date.now();
+
+    if (now - recordingStartedAt < minimumRecordingMs) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    if (inputLevel > silenceThreshold) {
+      resetAutoStopDetection();
+      return;
+    }
+
+    silenceStartedAtRef.current ??= now;
+    const silenceElapsedMs = now - silenceStartedAtRef.current;
+    const remainingSilenceMs = silenceDurationMs - silenceElapsedMs;
+
+    if (remainingSilenceMs <= 0) {
+      resetAutoStopDetection();
+      void finishAudioRecording();
+      return;
+    }
+
+    if (autoStopTimeoutRef.current === null) {
+      autoStopTimeoutRef.current = window.setTimeout(() => {
+        autoStopTimeoutRef.current = null;
+        resetAutoStopDetection();
+        void finishAudioRecording();
+      }, remainingSilenceMs);
+    }
+  }, [
+    audioInput.autoStopOnSilence,
+    audioInput.minimumRecordingMs,
+    audioInput.silenceDurationMs,
+    audioInput.silenceThreshold,
+    finishAudioRecording,
+    inputLevel,
+    isRecording,
+    recordingSeconds,
+    resetAutoStopDetection,
+  ]);
+
+  const handleAudioButtonClick = async () => {
+    if (suppressAudioClickRef.current) {
+      suppressAudioClickRef.current = false;
+      return;
+    }
+
+    if (isStartingAudio) {
+      return;
+    }
+
+    void startRecording();
+  };
+
+  const clearPushToTalkTimer = useCallback(() => {
+    if (pushToTalkTimeoutRef.current !== null) {
+      window.clearTimeout(pushToTalkTimeoutRef.current);
+      pushToTalkTimeoutRef.current = null;
+    }
+  }, []);
+
+  const finishPushToTalk = useCallback(async () => {
+    clearPushToTalkTimer();
+
+    if (!pushToTalkActiveRef.current) {
+      return;
+    }
+
+    pushToTalkActiveRef.current = false;
+    suppressAudioClickRef.current = true;
+
+    try {
+      await pushToTalkStartRef.current;
+      await finishAudioRecording();
+    } finally {
+      pushToTalkStartRef.current = null;
+    }
+  }, [clearPushToTalkTimer, finishAudioRecording]);
+
+  const handleAudioPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !canRecordAudio || isRecording || isStartingAudio) {
+        return;
+      }
+
+      clearPushToTalkTimer();
+      pushToTalkActiveRef.current = false;
+      pushToTalkStartRef.current = null;
+      event.currentTarget.setPointerCapture(event.pointerId);
+
+      const finishFromWindow = () => {
+        window.removeEventListener("pointerup", finishFromWindow);
+        window.removeEventListener("pointercancel", finishFromWindow);
+        void finishPushToTalk();
+      };
+      window.addEventListener("pointerup", finishFromWindow, { once: true });
+      window.addEventListener("pointercancel", finishFromWindow, { once: true });
+
+      pushToTalkTimeoutRef.current = window.setTimeout(() => {
+        pushToTalkActiveRef.current = true;
+        suppressAudioClickRef.current = true;
+        pushToTalkStartRef.current = startRecording();
+      }, 300);
+    },
+    [canRecordAudio, clearPushToTalkTimer, finishPushToTalk, isRecording, isStartingAudio, startRecording]
+  );
+
+  const handleAudioPointerUp = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      if (pushToTalkActiveRef.current) {
+        void finishPushToTalk();
+        return;
+      }
+
+      clearPushToTalkTimer();
+    },
+    [clearPushToTalkTimer, finishPushToTalk]
+  );
+
+  const handleAudioPointerCancel = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+
+      if (pushToTalkActiveRef.current) {
+        void finishPushToTalk();
+      } else {
+        clearPushToTalkTimer();
+      }
+    },
+    [clearPushToTalkTimer, finishPushToTalk]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearPushToTalkTimer();
+      clearAutoStopTimer();
+    };
+  }, [clearAutoStopTimer, clearPushToTalkTimer]);
+
+  const handleRemoveAudioRecording = () => {
+    setPendingAudio((recording) => {
+      if (recording) {
+        URL.revokeObjectURL(recording.blobUrl);
+      }
+      return null;
+    });
+  };
+
+  const audioButtonTitle = !audioInput.enabled
+    ? "Microphone input is disabled in settings"
+    : !isAudioSupported
+    ? "Microphone input requires a supported browser and localhost or HTTPS"
+    : isStartingAudio
+    ? "Preparing microphone"
+    : "Click to record or hold to push-to-talk";
 
   return (
     <div
@@ -408,32 +743,96 @@ export function ChatMessageInput({
         </div>
       )}
 
+      {(pendingAudio || isStartingAudio || isProcessingAudio || audioError) && (
+        <div className="mb-3 space-y-2">
+          {pendingAudio && (
+            <AudioMessagePreview
+              audio={pendingAudio}
+              label={`Voice recording · ${(pendingAudio.sizeBytes / 1024).toFixed(0)} KB · ${pendingAudio.format.toUpperCase()}`}
+              disabled={disabled || isSubmitting || isStreaming}
+              previewBeforeSend={audioInput.previewBeforeSend}
+              onRemove={handleRemoveAudioRecording}
+            />
+          )}
+          {isStartingAudio && (
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-2 text-sm text-muted-foreground">
+              <LoadingSpinner size="sm" />
+              Preparing microphone...
+            </div>
+          )}
+          {isProcessingAudio && (
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-2 text-sm text-muted-foreground">
+              <LoadingSpinner size="sm" />
+              Processing audio...
+            </div>
+          )}
+          {audioError && (
+            <div className="rounded-lg border border-orange-500/30 bg-orange-500/10 p-2 text-xs text-orange-700 dark:text-orange-300">
+              {audioError}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Input form */}
       <form onSubmit={handleSubmit} className="flex gap-2 items-end">
-        <Textarea
-          ref={textareaRef}
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onPaste={handlePaste}
-          onKeyDown={(e) => {
-            // Submit on Enter (without shift)
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e);
-            }
-          }}
-          placeholder={placeholder || `Message ${entityName}... (Shift+Enter for new line)`}
-          disabled={disabled || isSubmitting || isStreaming}
-          className="flex-1 min-h-[40px] max-h-[200px] resize-none"
-          style={{ fieldSizing: "content" } as React.CSSProperties}
-        />
-        {showFileUpload && (
-          <FileUpload
-            onFilesSelected={handleFilesSelected}
-            disabled={disabled || isSubmitting || isStreaming}
+        {isRecording ? (
+          <RecordingBar
+            recordingSeconds={recordingSeconds}
+            inputLevel={inputLevel}
+            statusLabel={audioInput.autoStopOnSilence ? "Auto-stops after silence" : undefined}
+            onStop={finishAudioRecording}
+            onCancel={cancelRecording}
           />
+        ) : (
+          <>
+            <Textarea
+              ref={textareaRef}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onPaste={handlePaste}
+              onKeyDown={(e) => {
+                // Submit on Enter (without shift)
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
+              placeholder={placeholder || `Message ${entityName}... (Shift+Enter for new line)`}
+              disabled={disabled || isSubmitting || isStreaming}
+              className="flex-1 min-h-[40px] max-h-[200px] resize-none"
+              style={{ fieldSizing: "content" } as React.CSSProperties}
+            />
+            {showFileUpload && (
+              <FileUpload
+                onFilesSelected={handleFilesSelected}
+                disabled={disabled || isSubmitting || isStreaming}
+              />
+            )}
+            {audioInput.enabled && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handleAudioButtonClick}
+                onPointerDown={handleAudioPointerDown}
+                onPointerUp={handleAudioPointerUp}
+                onPointerCancel={handleAudioPointerCancel}
+                disabled={!canRecordAudio}
+                className="shrink-0 h-10 transition-all"
+                title={audioButtonTitle}
+                aria-label={audioButtonTitle}
+              >
+                {isStartingAudio || isProcessingAudio ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
+              </Button>
+            )}
+          </>
         )}
-        {isStreaming && onCancel ? (
+        {!isRecording && (isStreaming && onCancel ? (
           <Button
             type="button"
             size="icon"
@@ -464,7 +863,7 @@ export function ChatMessageInput({
               <SendHorizontal className="h-4 w-4" />
             )}
           </Button>
-        )}
+        ))}
       </form>
     </div>
   );

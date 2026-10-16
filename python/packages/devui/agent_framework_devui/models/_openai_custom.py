@@ -401,6 +401,8 @@ class MetaResponse(BaseModel):
 # Export all custom types
 __all__ = [
     "AgentFrameworkRequest",
+    "CustomResponseOutputItemAddedEvent",
+    "CustomResponseOutputItemDoneEvent",
     "MetaResponse",
     "OpenAIError",
     "ResponseFunctionResultComplete",
