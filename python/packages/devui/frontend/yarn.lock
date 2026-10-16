@@ -462,6 +462,11 @@
   resolved "https://registry.npmjs.org/@radix-ui/react-direction/-/react-direction-1.1.4.tgz"
   integrity sha512-5pzg4FGQNpExhnhT2zlrP1wZFaYCd1K0nYWoFAdcYoYK868IEigqMX3B3f8yIoRlAhAeDWciLI6ZdCKHF9P4Vg==
 
+"@radix-ui/react-direction@1.1.5":
+  version "1.1.5"
+  resolved "https://registry.yarnpkg.com/@radix-ui/react-direction/-/react-direction-1.1.5.tgz#ab683848146e405332fdc1b023a62f3ea6338a1a"
+  integrity sha512-/NlO/rOqQabmg+GGr86vCmbJVhqTv85NfM9g6Gknf/JVygXeZ6e6HM/RW1omerW9HsFtecwNqgEAKV6UqDsvpA==
+
 "@radix-ui/react-dismissable-layer@1.1.11":
   version "1.1.11"
   resolved "https://registry.npmjs.org/@radix-ui/react-dismissable-layer/-/react-dismissable-layer-1.1.11.tgz"
@@ -676,18 +681,19 @@
     "@radix-ui/react-use-callback-ref" "1.1.1"
     "@radix-ui/react-use-controllable-state" "1.2.2"
 
-"@radix-ui/react-scroll-area@^1.2.18":
-  version "1.2.18"
-  resolved "https://registry.npmjs.org/@radix-ui/react-scroll-area/-/react-scroll-area-1.2.18.tgz"
-  integrity sha512-Zn5Cd171wxsO3Dfg8HaW6RifTb9CYTKQJHs/G4+LN1GfmJpaQMZQyQxMprVPHpaz7QY4l9BxK2JwQuzHsXC8nA==
+"@radix-ui/react-scroll-area@^1.3.0":
+  version "1.3.0"
+  resolved "https://registry.yarnpkg.com/@radix-ui/react-scroll-area/-/react-scroll-area-1.3.0.tgz#4af680ac5c3ae8660234b81e31e88be07d950f17"
+  integrity sha512-1WSuAXaahfeLmFX/dfYo/ftg1filMfaWjVye2d40VlgtWMMq/NOVocfukZEXkG+dwrAoNI+qpo9bjhNSJ/XC8g==
   dependencies:
     "@radix-ui/number" "1.1.3"
     "@radix-ui/primitive" "1.1.7"
     "@radix-ui/react-compose-refs" "1.1.5"
     "@radix-ui/react-context" "1.2.2"
-    "@radix-ui/react-direction" "1.1.4"
-    "@radix-ui/react-presence" "1.1.10"
-    "@radix-ui/react-primitive" "2.1.10"
+    "@radix-ui/react-direction" "1.1.5"
+    "@radix-ui/react-presence" "1.1.11"
+    "@radix-ui/react-primitive" "2.1.11"
+    "@radix-ui/react-slot" "1.4.0"
     "@radix-ui/react-use-callback-ref" "1.1.4"
     "@radix-ui/react-use-layout-effect" "1.1.4"
 
@@ -733,14 +739,14 @@
   dependencies:
     "@radix-ui/react-compose-refs" "1.1.2"
 
-"@radix-ui/react-slot@1.3.3", "@radix-ui/react-slot@^1.2.3":
+"@radix-ui/react-slot@1.3.3":
   version "1.3.3"
   resolved "https://registry.npmjs.org/@radix-ui/react-slot/-/react-slot-1.3.3.tgz"
   integrity sha512-qx7oqnYbxnK9kYI9m317qmFmEgo6ywqWvbTogdj7cL9p3/yx4M48p7Rnw5z3H890cL/ow/EeWJsuTykeZVXP5Q==
   dependencies:
     "@radix-ui/react-compose-refs" "1.1.5"
 
-"@radix-ui/react-slot@1.4.0":
+"@radix-ui/react-slot@1.4.0", "@radix-ui/react-slot@^1.2.3":
   version "1.4.0"
   resolved "https://registry.yarnpkg.com/@radix-ui/react-slot/-/react-slot-1.4.0.tgz#386c44d27af1baab2d4cb9989ca5bc7565c3b50a"
   integrity sha512-IuMVHZ+Ah5fkctu3X3qeFrV/ZrBcuWuDTFUUPfS/L5hvoTjzhp/HdWGE14CsQombPdEidsa33HVlYZXi49PZ1Q==
