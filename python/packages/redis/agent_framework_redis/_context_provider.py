@@ -295,7 +295,7 @@ class RedisContextProvider(ContextProvider):
             return sig
 
         existing_index: Any = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
-            self.index_name, redis_url=self.redis_url
+            self.index_name, redis_client=self.redis_index.client
         )
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
