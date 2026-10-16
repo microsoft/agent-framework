@@ -8,7 +8,8 @@ namespace Microsoft.Agents.AI;
 /// Configuration options for <see cref="AgentMcpSkillsSource"/>.
 /// </summary>
 /// <remarks>
-/// The listed resource size limit bounds resource content processed by this source.
+/// Listed discovery limits bound pages, skill counts, and combined list-result JSON size.
+/// The listed resource size limit separately bounds resource content processed by this source.
 /// These checks do not limit incoming messages before the supplied client receives and parses them.
 /// <strong>Security consideration:</strong> The archive limits (<see cref="ArchiveMaxFileCount"/>,
 /// <see cref="ArchiveMaxSizeBytes"/>, <see cref="ArchiveMaxUncompressedSizeBytes"/>) bound how much a
@@ -18,6 +19,37 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed class AgentMcpSkillsSourceOptions
 {
+    /// <summary>
+    /// Gets or sets the maximum number of <c>skills/list</c> pages requested per discovery.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, defaults to <c>10</c>. Must be positive.
+    /// Empty pages count toward this limit. Discovery fails rather than returning a partial catalog
+    /// when the last allowed page includes a continuation cursor.
+    /// </remarks>
+    public int? ListedMaxPageCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum number of skills accepted across all <c>skills/list</c> pages per discovery.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, defaults to <c>100</c>. Must be positive.
+    /// Every entry counts, including duplicate skill URIs. Discovery fails if the limit is exceeded.
+    /// </remarks>
+    public int? ListedMaxSkillCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum combined size, in bytes, of <c>skills/list</c> results per discovery.
+    /// </summary>
+    /// <remarks>
+    /// When <see langword="null"/>, defaults to <c>10 MiB</c> (<c>10,485,760</c> bytes). Must be positive.
+    /// Counts the compact UTF-8 JSON representation of each result, including unknown fields,
+    /// not the original wire bytes or runtime object sizes. Discovery fails if the limit is exceeded.
+    /// The check occurs after the supplied MCP client receives and parses each result, but before
+    /// typed metadata deserialization and skill construction. There is no separate resource-count limit per skill.
+    /// </remarks>
+    public long? ListedMaxResultSizeBytes { get; set; }
+
     /// <summary>
     /// Gets or sets the maximum size, in bytes, of a resource discovered through <c>skills/list</c>,
     /// including <c>SKILL.md</c>.

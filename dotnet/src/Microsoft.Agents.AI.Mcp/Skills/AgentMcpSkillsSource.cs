@@ -27,15 +27,17 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// Listed skill discovery is based on the Skills extension specification incorporating the
 /// working group's decision dated <c>2026-09-08</c>.
-/// Support currently covers a single <c>skills/list</c> result with resource lists and reading skill files,
-/// not the full extension.
+/// Support currently includes skill discovery through <c>skills/list</c> and reading listed skill resources,
+/// but not the full extension.
 /// </para>
 /// <para>
 /// Listed skills provide a name, description, and list of resources. Instructions and supporting resources
 /// are fetched from the MCP server when requested. Only supporting resources listed by the server are available.
 /// Each listed resource read must return exactly one text or binary content block; <c>SKILL.md</c> must contain text.
 /// Discovery through <c>skills/list</c> leaves existing archive directories untouched.
-/// Listed resource sizes are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
+/// Page counts, total skill counts, combined list-result JSON size, and individual resource sizes
+/// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>. Discovery follows continuation cursors
+/// until exhausted and fails on repeated cursors, invalid pages, or exceeded limits instead of returning a partial catalog.
 /// These checks do not limit incoming messages before the supplied client receives and parses them.
 /// </para>
 /// <para>

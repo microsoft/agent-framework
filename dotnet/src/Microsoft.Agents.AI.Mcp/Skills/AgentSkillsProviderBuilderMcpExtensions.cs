@@ -23,14 +23,15 @@ public static class AgentSkillsProviderBuilderMcpExtensions
     /// <c>io.modelcontextprotocol/skills</c> extension. Otherwise, discovers skills through
     /// <c>skill://index.json</c>.
     /// Listed skills fetch instructions and supporting resources when requested.
-    /// Their resource sizes are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
+    /// Page counts, total skill counts, combined list-result JSON size, and individual resource sizes
+    /// are bounded by <see cref="AgentMcpSkillsSourceOptions"/>.
     /// These checks do not limit incoming messages before the supplied client receives and parses them.
     /// </para>
     /// <para>
     /// Listed skill discovery is based on the Skills extension specification incorporating the
     /// working group's decision dated <c>2026-09-08</c>.
-    /// Support currently covers a single <c>skills/list</c> result with resource lists and reading skill files,
-    /// not the full extension.
+    /// Support currently includes skill discovery through <c>skills/list</c> and reading listed skill resources,
+    /// but not the full extension.
     /// </para>
     /// <para>
     /// Index-based discovery and archive-distributed skills are compatibility features and will be deprecated
