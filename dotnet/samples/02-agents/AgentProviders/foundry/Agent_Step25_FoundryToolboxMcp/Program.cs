@@ -5,7 +5,6 @@
 // Point an `McpClient` at a Foundry Toolbox's MCP endpoint. The agent
 // discovers the toolbox's tools at runtime and invokes them locally.
 
-using System.ClientModel;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
@@ -21,7 +20,7 @@ using OpenAI.Responses;
 
 // Name of the toolbox to create and connect to.
 const string ToolboxName = "research_toolbox";
-const string Query = "What tools do you have access to?";
+const string Query = "Find the REST API documentation for Azure Container Apps session pools.";
 
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -29,7 +28,7 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "
 
 TokenCredential credential = new DefaultAzureCredential();
 
-// Comment out if the toolbox already exists in your Foundry project.
+// Connect to the new version so the tool-search configuration is unambiguous.
 var toolboxEndpoint = await CreateSampleToolboxAsync(ToolboxName, endpoint, credential);
 
 // Inject a fresh Azure AI bearer token on every MCP request.
@@ -72,7 +71,7 @@ Console.WriteLine($"\nUser: {Query}\n");
 Console.WriteLine($"Assistant: {await agent.RunAsync(Query)}");
 
 // ---------------------------------------------------------------------------
-// Helper: create (or replace) a sample toolbox so the sample runs end-to-end
+// Helper: create a sample toolbox version so the sample runs end-to-end
 // ---------------------------------------------------------------------------
 static async Task<string> CreateSampleToolboxAsync(string name, string endpoint, TokenCredential credential)
 {
@@ -83,18 +82,8 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
     var adminClient = new AgentAdministrationClient(new Uri(endpoint), credential);
     var toolboxClient = adminClient.GetAgentToolboxes();
 
-    // Delete existing toolbox if present (ignore 404).
-    try
-    {
-        await toolboxClient.DeleteAsync(name);
-        Console.WriteLine($"Deleted existing toolbox '{name}'");
-    }
-    catch (ClientResultException ex) when (ex.Status == 404)
-    {
-        // Toolbox does not exist — nothing to delete.
-    }
-
-    // Create a fresh version with a single MCP tool.
+    // Enable discovery through tool_search and invocation through call_tool.
+    // The underlying MCP tools are not all placed in the model's initial context.
     MCPToolboxTool mcpTool = new("api-specs")
     {
         ServerUri = new Uri("https://gitmcp.io/Azure/azure-rest-api-specs"),
@@ -103,11 +92,11 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
 
     ToolboxVersion created = (await toolboxClient.CreateVersionAsync(
         name: name,
-        tools: [mcpTool],
-        description: "Sample toolbox with an MCP tool — created by Agent_Step25 sample.")).Value;
+        tools: [mcpTool, new ToolSearchToolboxTool()],
+        description: "Sample toolbox with tool search — created by Agent_Step25 sample.")).Value;
 
     Console.WriteLine($"Created toolbox '{created.Name}' v{created.Version} ({created.Tools.Count} tool(s))");
-    return $"{endpoint}/toolboxes/{created.Name}/mcp?api-version=v{created.Version}";
+    return $"{endpoint.TrimEnd('/')}/toolboxes/{created.Name}/versions/{created.Version}/mcp?api-version=v1";
 }
 
 // ---------------------------------------------------------------------------
