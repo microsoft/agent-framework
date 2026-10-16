@@ -6,7 +6,6 @@ import asyncio
 import json
 from collections import UserDict
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -34,11 +33,8 @@ from agent_framework import (
     MiddlewareFailure,
     MiddlewareTermination,
     ResponseStream,
-    create_agent_hooks_host_registry,
     create_agent_hooks_middleware,
     create_agent_hooks_middleware_from_declaration,
-    create_agent_hooks_middleware_from_declaration_json,
-    create_agent_hooks_middleware_from_declaration_path,
     create_agent_hooks_middleware_from_emitter,
     tool,
 )
@@ -61,7 +57,7 @@ except ImportError:  # pragma: no cover - exercised on envs without the extra
 
 try:
     # The host-declaration loader ships in agent-hooks-sdk 0.1.0b2+; older SDKs lack these names.
-    from agent_hooks import BindingContext, DeclarationError, DeclarationErrorClass, HostDeclaration
+    from agent_hooks import BindingContext, DeclarationError, DeclarationErrorClass, HostDeclaration, HostRegistry
 
     DECLARATION_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised on envs with an older SDK
@@ -3262,7 +3258,7 @@ async def test_declaration_value_runs_one_enforced_session_per_run(chat_client_b
 
 
 @requires_declaration_sdk
-async def test_declaration_path_json_and_value_build_the_same_enforcement(
+async def test_declaration_all_input_forms_build_the_same_enforcement(
     chat_client_base: MockBaseChatClient, tmp_path: Path
 ) -> None:
     document = declaration_document(framework_binding("allow"), framework_binding("egress", at=["output"]))
@@ -3270,24 +3266,30 @@ async def test_declaration_path_json_and_value_build_the_same_enforcement(
     path.write_text(json.dumps(document), encoding="utf-8")
 
     summaries: dict[str, list[Any]] = {}
-    factories: list[tuple[str, Callable[..., MiddlewareBundle]]] = [
-        ("value", lambda **kw: create_agent_hooks_middleware_from_declaration(document, **kw)),
-        ("json", lambda **kw: create_agent_hooks_middleware_from_declaration_json(json.dumps(document), **kw)),
-        ("path", lambda **kw: create_agent_hooks_middleware_from_declaration_path(path, **kw)),
+    declarations: list[tuple[str, Any]] = [
+        ("value", document),
+        # JSON text is not a factory input; the SDK's text path turns it into a HostDeclaration.
+        ("json", HostDeclaration.from_json(json.dumps(document))),
+        ("str_path", str(path)),
+        ("pathlike", path),
     ]
-    for label, factory in factories:
+    for label, declaration in declarations:
         records: list[InterceptionRecord] = []
         agent = Agent(
             client=chat_client_base,
             middleware=[
-                factory(interceptors={"allow": AllowGuard(), "egress": AllowGuard()}, record_sink=records.append)
+                create_agent_hooks_middleware_from_declaration(
+                    declaration,
+                    interceptors={"allow": AllowGuard(), "egress": AllowGuard()},
+                    record_sink=records.append,
+                )
             ],
         )
         response = await agent.run("hello")
         assert response.text == "test response - hello"
         summaries[label] = record_summary(records)
 
-    assert summaries["value"] == summaries["json"] == summaries["path"]
+    assert summaries["value"] == summaries["json"] == summaries["str_path"] == summaries["pathlike"]
     assert summaries["value"][0][1] == DECLARATION_VERSION
 
 
@@ -3342,6 +3344,14 @@ async def test_declaration_runs_are_separate_sessions(chat_client_base: MockBase
             {"declaration": DECLARATION_VERSION, "bindings": []},
             "surface_unsupported",
             id="posture-defaults-to-continue",
+        ),
+        pytest.param(
+            # This middleware buffers a streaming run until the output point is judged, and the
+            # registry always carries that surface, so a document that wants unbuffered streaming
+            # is refused however the factory is called.
+            {**declaration_document(), "surface": {"buffered_output": False, "exposure_bound": "one-chunk"}},
+            "surface_unsupported",
+            id="streaming-unbuffered",
         ),
         pytest.param(
             declaration_document({"id": "guard", "kind": "acme.guard"}),
@@ -3419,21 +3429,35 @@ def test_declaration_interceptor_kind_refuses_bad_config(config: Any) -> None:
 
 
 @requires_declaration_sdk
-async def test_declaration_with_zero_bindings_fails_closed(chat_client_base: MockBaseChatClient) -> None:
+def test_declaration_with_zero_bindings_is_rejected_at_construction() -> None:
+    # The spec allows an empty-deny host that is written down; for an agent it would deny every
+    # run at ``input``, so the factory refuses it like ``create_agent_hooks_middleware`` does.
+    with pytest.raises(ValueError, match="at least one binding"):
+        create_agent_hooks_middleware_from_declaration(declaration_document())
+
+
+@requires_declaration_sdk
+async def test_declaration_lambda_callback_registers_a_kind(chat_client_base: MockBaseChatClient) -> None:
+    # ``configure_registry`` ignores the callback's return value, so a lambda over the chaining
+    # registry methods is enough.
     records: list[InterceptionRecord] = []
     agent = Agent(
         client=chat_client_base,
-        middleware=[create_agent_hooks_middleware_from_declaration(declaration_document(), record_sink=records.append)],
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                declaration_document({"id": "allow", "kind": "acme.allow"}),
+                configure_registry=lambda registry: registry.kind("acme.allow", lambda _c, _b: AllowGuard()),
+                record_sink=records.append,
+            )
+        ],
     )
 
-    with pytest.raises(InterceptionBlocked):
-        await agent.run("hello")
+    await agent.run("hello")
 
-    assert chat_client_base.call_count == 0
-    assert points(records) == ["agent_startup", "agent_shutdown"]
-    assert records[0].verdict.decision.value == "deny"
-    assert records[0].verdict.reason == "host_error:no_interceptor"
-    assert records[0].interceptors_registered == 0
+    assert chat_client_base.call_count == 1  # the bound interceptor allowed the run through
+    assert "pre_model_call" in points(records)
+    assert all(record.verdict.decision.value == "allow" for record in records)
+    assert all(record.interceptors_registered == 1 for record in records)
 
 
 @requires_declaration_sdk
@@ -3499,9 +3523,11 @@ async def test_declaration_approval_resolver_is_resolved_by_reference(chat_clien
                 verdict=ALLOW,
             )
 
+    def configure(registry: HostRegistry) -> None:
+        registry.approval_resolver("approve-all", ApproveAll())
+
     records: list[InterceptionRecord] = []
     guard = PointGuard("pre_tool_call", Verdict.escalate(reason="needs_approval"))
-    registry = create_agent_hooks_host_registry().approval_resolver("approve-all", ApproveAll())
     chat_client_base.run_responses = [tool_call_response(), final_response()]
     agent = Agent(
         client=chat_client_base,
@@ -3510,7 +3536,7 @@ async def test_declaration_approval_resolver_is_resolved_by_reference(chat_clien
             create_agent_hooks_middleware_from_declaration(
                 declaration_document(framework_binding("guard"), approval={"resolver": "approve-all"}),
                 interceptors={"guard": guard},
-                registry=registry,
+                configure_registry=configure,
                 record_sink=records.append,
             )
         ],
@@ -3526,6 +3552,55 @@ async def test_declaration_approval_resolver_is_resolved_by_reference(chat_clien
 
 
 @requires_declaration_sdk
+async def test_declaration_approval_redactor_is_resolved_by_reference(chat_client_base: MockBaseChatClient) -> None:
+    from agent_hooks import ApprovalOutcome, ApprovalRequest, ApprovalResolution
+
+    presented: list[dict[str, Any]] = []
+
+    class ApproveAll:
+        def resolve(self, request: ApprovalRequest) -> ApprovalResolution:
+            presented.append(dict(request.context))
+            return ApprovalResolution(
+                outcome=ApprovalOutcome.APPROVE,
+                context_identity=request.context_identity,
+                verdict=ALLOW,
+            )
+
+    def redact(context: dict[str, Any]) -> dict[str, Any]:
+        # The resolver sees the tool call without its arguments (spec section 9).
+        return {**context, "tool_call": {**context["tool_call"], "args": {}}}
+
+    def configure(registry: HostRegistry) -> None:
+        registry.approval_resolver("approve-all", ApproveAll()).approval_redactor("no-args", redact)
+
+    records: list[InterceptionRecord] = []
+    guard = PointGuard("pre_tool_call", Verdict.escalate(reason="needs_approval"))
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                declaration_document(
+                    framework_binding("guard"), approval={"resolver": "approve-all", "redactor": "no-args"}
+                ),
+                interceptors={"guard": guard},
+                configure_registry=configure,
+                record_sink=records.append,
+            )
+        ],
+    )
+
+    response = await agent.run("get the weather")
+
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]  # approved, and the tool ran with its real arguments
+    assert len(presented) == 1
+    assert presented[0]["tool_call"]["args"] == {}
+    assert [record.resolved_by for record in records].count("approval") == 1
+
+
+@requires_declaration_sdk
 async def test_declaration_host_registered_kind_receives_the_binding_context(
     chat_client_base: MockBaseChatClient,
 ) -> None:
@@ -3536,7 +3611,9 @@ async def test_declaration_host_registered_kind_receives_the_binding_context(
         seen.append(binding)
         return PointGuard(config["point"], Verdict.deny(reason=config["reason"]))
 
-    registry = create_agent_hooks_host_registry().kind("acme.guard", acme_guard)
+    def configure(registry: HostRegistry) -> None:
+        registry.kind("acme.guard", acme_guard)
+
     document = declaration_document({
         "id": "egress",
         "kind": "acme.guard",
@@ -3546,7 +3623,9 @@ async def test_declaration_host_registered_kind_receives_the_binding_context(
     agent = Agent(
         client=chat_client_base,
         middleware=[
-            create_agent_hooks_middleware_from_declaration(document, registry=registry, record_sink=records.append)
+            create_agent_hooks_middleware_from_declaration(
+                document, configure_registry=configure, record_sink=records.append
+            )
         ],
     )
 
@@ -3565,77 +3644,33 @@ async def test_declaration_host_registered_kind_receives_the_binding_context(
 
 
 @requires_declaration_sdk
-def test_declaration_registry_already_holding_the_framework_kind_is_rejected() -> None:
-    registry = create_agent_hooks_host_registry().kind("agent_framework.interceptor", lambda _c, _b: AllowGuard())
-
-    with pytest.raises(ValueError, match="registered twice"):
-        create_agent_hooks_middleware_from_declaration(
-            declaration_document(framework_binding("allow")), interceptors={"allow": AllowGuard()}, registry=registry
-        )
-
-
-@requires_declaration_sdk
-def test_declaration_registry_over_another_posture_is_refused() -> None:
-    from agent_hooks import HostRegistry
-
-    # The SDK validates a document against the registry's own surface. This registry says
-    # ``continue``, so the SDK alone accepts a document that omits the posture; the middleware
-    # terminates the run on a tool-seam host error and cannot honour that document.
-    registry = HostRegistry(replace(create_agent_hooks_host_registry().surface, tool_seam_host_error="continue"))
-    document = {"declaration": DECLARATION_VERSION, "bindings": []}
-    assert registry.resolve(HostDeclaration.from_value(document)).declaration == DECLARATION_VERSION
-
-    with pytest.raises(ValueError, match="tool_seam_host_error='continue'") as info:
-        create_agent_hooks_middleware_from_declaration(document, registry=registry)
-
-    # A programming error of the host, not a refusal of the document.
-    assert not isinstance(info.value, DeclarationError)
-    assert "create_agent_hooks_host_registry" in str(info.value)
-
-
-@requires_declaration_sdk
-def test_declaration_registry_streaming_unbuffered_is_refused() -> None:
-    from agent_hooks import HostRegistry
-
-    # This middleware buffers a streaming run until the output point is judged. A registry that
-    # advertises unbuffered streaming lets the SDK accept ``buffered_output: false``, which the
-    # middleware would then not honour.
-    surface = create_agent_hooks_host_registry().surface.with_capabilities(["incremental_output"])
-    registry = HostRegistry(surface.with_exposure_bound("one-chunk"))
-    document = {**declaration_document(), "surface": {"buffered_output": False, "exposure_bound": "one-chunk"}}
-    assert registry.resolve(HostDeclaration.from_value(document)).declaration == DECLARATION_VERSION
-
-    with pytest.raises(ValueError, match="streams_unbuffered=True") as info:
-        create_agent_hooks_middleware_from_declaration(document, registry=registry)
-
-    assert not isinstance(info.value, DeclarationError)
-
-
-@requires_declaration_sdk
-async def test_declaration_compatible_custom_registry_keeps_its_registered_names(
+async def test_declaration_configure_registry_kind_and_identity_provider_are_honoured(
     chat_client_base: MockBaseChatClient,
 ) -> None:
-    from agent_hooks import HostRegistry
+    from agent_framework._agent_hooks import _host_surface
 
-    # A registry built by hand over the framework's surface passes the surface check, and the
-    # kind and identity provider registered on it stay available to the document.
+    # The kind and the identity provider registered through the callback are available to the
+    # document, at construction and on the per-run reload; the registry the callback gets is
+    # built for this call, over the surface this middleware implements.
     records: list[InterceptionRecord] = []
     identities: list[str] = []
+    registries: list[HostRegistry] = []
 
     def acme_identity(_context: Any) -> str:
         identities.append("fixed-identity")
         return identities[-1]
 
-    registry = (
-        HostRegistry(create_agent_hooks_host_registry().surface)
-        .kind("acme.allow", lambda _c, _b: AllowGuard())
-        .identity_provider("acme-id", acme_identity)
-    )
+    def configure(registry: HostRegistry) -> None:
+        registries.append(registry)
+        registry.kind("acme.allow", lambda _c, _b: AllowGuard()).identity_provider("acme-id", acme_identity)
+
     document = declaration_document({"id": "allow", "kind": "acme.allow"}, identity_provider="acme-id")
     agent = Agent(
         client=chat_client_base,
         middleware=[
-            create_agent_hooks_middleware_from_declaration(document, registry=registry, record_sink=records.append)
+            create_agent_hooks_middleware_from_declaration(
+                document, configure_registry=configure, record_sink=records.append
+            )
         ],
     )
 
@@ -3654,6 +3689,220 @@ async def test_declaration_compatible_custom_registry_keeps_its_registered_names
     assert {record.identity_provider for record in records} == {"acme-id"}
     assert {record.input_identity for record in records} == {"fixed-identity"}
     assert len(identities) >= len(records)
+    assert len(registries) == 1
+    assert registries[0].surface.to_wire() == _host_surface().to_wire()
+    assert registries[0].names()["kinds"] == ["acme.allow"]
+
+
+@requires_declaration_sdk
+async def test_declaration_callback_registering_the_framework_kind_with_interceptors_is_rejected(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # The factory registers ``agent_framework.interceptor`` before the callback runs, so a
+    # callback that registers it too hits the SDK's own "registered twice" check. Nothing is
+    # cached: the same ``interceptors`` without the callback, and the same callback without
+    # ``interceptors``, both build, and the former runs.
+    records: list[InterceptionRecord] = []
+    interceptors = {"allow": AllowGuard()}
+    document = declaration_document(framework_binding("allow"))
+
+    def configure(registry: HostRegistry) -> None:
+        registry.kind("agent_framework.interceptor", lambda _c, _b: AllowGuard())
+
+    with pytest.raises(ValueError, match="registered twice") as info:
+        create_agent_hooks_middleware_from_declaration(
+            document, interceptors=interceptors, configure_registry=configure
+        )
+    # A programming error of the host, not a refusal of the document.
+    assert not isinstance(info.value, DeclarationError)
+
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                document, interceptors=interceptors, record_sink=records.append
+            )
+        ],
+    )
+    response = await agent.run("hello")
+
+    assert response.text == "test response - hello"
+    assert points(records) == [
+        "agent_startup",
+        "input",
+        "pre_model_call",
+        "post_model_call",
+        "output",
+        "agent_shutdown",
+    ]
+    assert isinstance(
+        create_agent_hooks_middleware_from_declaration(document, configure_registry=configure), MiddlewareBundle
+    )
+
+
+@requires_declaration_sdk
+@pytest.mark.parametrize("with_interceptors", [False, True], ids=["custom-kind-only", "with-interceptors"])
+async def test_declaration_configure_registry_is_reusable_after_a_refused_document(
+    chat_client_base: MockBaseChatClient, with_interceptors: bool
+) -> None:
+    # Every call builds its own registry, so a refused document leaves nothing behind: the same
+    # callback (and the same ``interceptors`` mapping) build a working bundle on the next call.
+    registries: list[HostRegistry] = []
+    kind_guards: list[AllowGuard] = []
+    guard = AllowGuard()
+    interceptors = {"allow": guard} if with_interceptors else None
+
+    def acme_allow(_config: Any, _binding: BindingContext) -> AllowGuard:
+        kind_guards.append(AllowGuard())
+        return kind_guards[-1]
+
+    def configure(registry: HostRegistry) -> None:
+        registries.append(registry)
+        registry.kind("acme.allow", acme_allow)
+
+    refused = declaration_document({"id": "guard", "kind": "acme.unknown"})
+    with pytest.raises(DeclarationError) as info:
+        create_agent_hooks_middleware_from_declaration(refused, interceptors=interceptors, configure_registry=configure)
+    assert info.value.error_class is DeclarationErrorClass.KIND_UNKNOWN
+
+    bindings: list[dict[str, Any]] = [{"id": "acme", "kind": "acme.allow"}]
+    if with_interceptors:
+        bindings.append(framework_binding("allow"))
+    records: list[InterceptionRecord] = []
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                declaration_document(*bindings),
+                interceptors=interceptors,
+                configure_registry=configure,
+                record_sink=records.append,
+            )
+        ],
+    )
+
+    response = await agent.run("hello")
+
+    assert response.text == "test response - hello"
+    assert points(records) == [
+        "agent_startup",
+        "input",
+        "pre_model_call",
+        "post_model_call",
+        "output",
+        "agent_shutdown",
+    ]
+    expected_names = ["acme", "allow"] if with_interceptors else ["acme"]
+    assert all([verdict.name for verdict in record.verdicts] == expected_names for record in records)
+    # The run went through the bound interceptors: the kind's (resolved again for the run's
+    # session) and, when supplied, the shared instance behind ``agent_framework.interceptor``.
+    assert [ctx["input"]["content"] for ctx in kind_guards[-1].contexts_for("input")] == ["hello"]
+    if with_interceptors:
+        assert [ctx["input"]["content"] for ctx in guard.contexts_for("input")] == ["hello"]
+    # The refused call's registry was dropped with that call; the bundle has its own.
+    assert len(registries) == 2
+    assert registries[0] is not registries[1]
+
+
+@requires_declaration_sdk
+async def test_declaration_configure_registry_is_reusable_after_the_callback_raised(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # A raising callback propagates as is (not wrapped, not a document refusal), and nothing is
+    # cached: the next call starts from a fresh registry and builds.
+    calls = 0
+    registries: list[HostRegistry] = []
+    guard = AllowGuard()
+    interceptors = {"allow": guard}
+    document = declaration_document({"id": "acme", "kind": "acme.allow"}, framework_binding("allow"))
+
+    def configure(registry: HostRegistry) -> None:
+        nonlocal calls
+        calls += 1
+        registries.append(registry)
+        if calls == 1:
+            raise RuntimeError("host setup failed")
+        registry.kind("acme.allow", lambda _c, _b: AllowGuard())
+
+    with pytest.raises(RuntimeError, match="host setup failed"):
+        create_agent_hooks_middleware_from_declaration(
+            document, interceptors=interceptors, configure_registry=configure
+        )
+
+    records: list[InterceptionRecord] = []
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                document, interceptors=interceptors, configure_registry=configure, record_sink=records.append
+            )
+        ],
+    )
+
+    response = await agent.run("hello")
+
+    assert response.text == "test response - hello"
+    assert all([verdict.name for verdict in record.verdicts] == ["acme", "allow"] for record in records)
+    assert [ctx["input"]["content"] for ctx in guard.contexts_for("input")] == ["hello"]
+    assert calls == 2
+    assert registries[0] is not registries[1]
+
+
+@requires_declaration_sdk
+async def test_declaration_two_factories_share_a_callback_and_interceptors(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # One callback and one ``interceptors`` mapping serve two factory calls: each call gets its
+    # own registry, both bundles build and run, each run's records carry their own session, and
+    # the first bundle is unaffected by the second.
+    registries: list[HostRegistry] = []
+    guard = AllowGuard()
+    interceptors = {"allow": guard}
+
+    def configure(registry: HostRegistry) -> None:
+        registries.append(registry)
+        registry.kind("acme.allow", lambda _c, _b: AllowGuard())
+
+    document = declaration_document({"id": "acme", "kind": "acme.allow"}, framework_binding("allow"))
+    records_first: list[InterceptionRecord] = []
+    records_second: list[InterceptionRecord] = []
+    first = Agent(
+        client=chat_client_base,
+        name="first",
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                document, interceptors=interceptors, configure_registry=configure, record_sink=records_first.append
+            )
+        ],
+    )
+    second = Agent(
+        client=MockBaseChatClient(),
+        name="second",
+        middleware=[
+            create_agent_hooks_middleware_from_declaration(
+                document, interceptors=interceptors, configure_registry=configure, record_sink=records_second.append
+            )
+        ],
+    )
+    assert len(registries) == 2
+    assert registries[0] is not registries[1]
+
+    assert (await first.run("one")).text == "test response - one"
+    assert (await second.run("two")).text == "test response - two"
+    assert (await first.run("three")).text == "test response - three"
+
+    single_run = ["agent_startup", "input", "pre_model_call", "post_model_call", "output", "agent_shutdown"]
+    assert points(records_first) == single_run * 2
+    assert points(records_second) == single_run
+    sessions_first = {record.session_id for record in records_first}
+    sessions_second = {record.session_id for record in records_second}
+    assert len(sessions_first) == 2
+    assert len(sessions_second) == 1
+    assert sessions_first.isdisjoint(sessions_second)
+    assert all([verdict.name for verdict in record.verdicts] == ["acme", "allow"] for record in records_first)
+    assert all([verdict.name for verdict in record.verdicts] == ["acme", "allow"] for record in records_second)
+    # The shared interceptor instance saw every run of both agents, in order.
+    assert [ctx["input"]["content"] for ctx in guard.contexts_for("input")] == ["one", "two", "three"]
 
 
 @requires_declaration_sdk
@@ -3690,13 +3939,13 @@ async def test_declaration_value_accepts_any_mapping(
     "value",
     [
         pytest.param(["not", "a", "document"], id="list"),
-        pytest.param("not a document", id="string"),
+        pytest.param(42, id="number"),
         pytest.param(None, id="null"),
     ],
 )
 def test_declaration_non_mapping_value_gets_the_sdk_refusal(value: Any) -> None:
-    # Only a top-level mapping is copied; anything else reaches the SDK as given and gets its
-    # own refusal, at the root pointer.
+    # Only a top-level mapping is copied; anything else that is not a path reaches the SDK as
+    # given and gets its own refusal, at the root pointer.
     with pytest.raises(DeclarationError) as info:
         create_agent_hooks_middleware_from_declaration(value)
 
@@ -3705,7 +3954,7 @@ def test_declaration_non_mapping_value_gets_the_sdk_refusal(value: Any) -> None:
 
 
 @requires_declaration_sdk
-def test_declaration_factories_accept_a_built_host_declaration() -> None:
+def test_declaration_factory_accepts_a_built_host_declaration() -> None:
     from agent_hooks import DeclarationBuilder
 
     built: HostDeclaration = (
@@ -3718,11 +3967,21 @@ def test_declaration_factories_accept_a_built_host_declaration() -> None:
 
 
 @requires_declaration_sdk
-def test_declaration_path_refuses_an_unreadable_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        pytest.param(lambda tmp_path: str(tmp_path / "missing.json"), id="str"),
+        pytest.param(lambda tmp_path: tmp_path / "missing.json", id="pathlike"),
+        # A string is a path, never JSON text: the text is looked up as a file and is not there.
+        pytest.param(lambda tmp_path: json.dumps(declaration_document(framework_binding("allow"))), id="json-text"),
+    ],
+)
+def test_declaration_unreadable_path_is_refused(declaration: Callable[[Path], Any], tmp_path: Path) -> None:
     with pytest.raises(DeclarationError) as info:
-        create_agent_hooks_middleware_from_declaration_path(tmp_path / "missing.json")
+        create_agent_hooks_middleware_from_declaration(declaration(tmp_path), interceptors={"allow": AllowGuard()})
 
     assert info.value.error_class is DeclarationErrorClass.UNREADABLE
+    assert info.value.findings[0].pointer == ""
 
 
 @requires_declaration_sdk
@@ -3763,10 +4022,13 @@ async def test_declaration_streaming_run_is_buffered(chat_client_base: MockBaseC
 
 @requires_declaration_sdk
 async def test_declaration_built_emitter_works_with_a_host_owned_session(chat_client_base: MockBaseChatClient) -> None:
+    from agent_framework._agent_hooks import _host_surface
+
     # No new factory needed for this: a sealed, declaration-built emitter is a valid host-owned
-    # session for the existing ``create_agent_hooks_middleware_from_emitter`` path.
+    # session for the existing ``create_agent_hooks_middleware_from_emitter`` path. The host
+    # builds its registry over the surface this middleware implements.
     records: list[InterceptionRecord] = []
-    registry = create_agent_hooks_host_registry().kind("acme.allow", lambda _c, _b: AllowGuard())
+    registry = HostRegistry(_host_surface()).kind("acme.allow", lambda _c, _b: AllowGuard())
     emitter = InterceptionEmitter.from_declaration_value(
         declaration_document({"id": "allow", "kind": "acme.allow"}), registry
     )
