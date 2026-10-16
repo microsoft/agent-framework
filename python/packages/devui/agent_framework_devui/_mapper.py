@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+# pyright: reportUnnecessaryTypeIgnoreComment=false
 
 """Agent Framework message mapper implementation."""
 
@@ -1675,7 +1676,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(
+                item=ResponseOutputImage(  # type: ignore[arg-type]
                     id=item_id,
                     type="output_image",
                     image_url=image_url,
@@ -1732,7 +1733,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(
+                item=ResponseOutputFile(  # type: ignore[arg-type]
                     id=item_id,
                     type="output_file",
                     filename=filename,
@@ -1762,7 +1763,7 @@ class MessageMapper:
 
         return CustomResponseOutputItemAddedEvent(
             type="response.output_item.added",
-            item=ResponseOutputData(
+            item=ResponseOutputData(  # type: ignore[arg-type]
                 id=item_id,
                 type="output_data",
                 data=data_str,
@@ -1802,7 +1803,7 @@ class MessageMapper:
         if mime_type.startswith("image/"):
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputImage(
+                item=ResponseOutputImage(  # type: ignore[arg-type]
                     id=item_id,
                     type="output_image",
                     image_url=uri,
@@ -1831,7 +1832,7 @@ class MessageMapper:
 
             return CustomResponseOutputItemAddedEvent(
                 type="response.output_item.added",
-                item=ResponseOutputFile(
+                item=ResponseOutputFile(  # type: ignore[arg-type]
                     id=item_id,
                     type="output_file",
                     filename=filename,
