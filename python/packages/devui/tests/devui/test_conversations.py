@@ -349,7 +349,8 @@ async def test_add_and_list_items_preserves_input_audio_parts():
             return cast(list[object], item["content"])
         model_dump = getattr(item, "model_dump", None)
         assert callable(model_dump)
-        return cast(list[object], model_dump()["content"])
+        dump = cast(dict[str, object], model_dump())
+        return cast(list[object], dump["content"])
 
     store = InMemoryConversationStore()
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
