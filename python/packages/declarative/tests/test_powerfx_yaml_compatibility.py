@@ -406,6 +406,27 @@ class TestPowerFxCustomFunctions:
         result = state.eval("=MessageText(Local.messages)")
         assert result == ""
 
+    async def test_message_text_accepts_content_key_shape(self, mock_state):
+        """Messages from the fallback evaluator carry a flat content key."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        state.set("Local.messages", [{"role": "user", "content": "Hello"}])
+        result = state.eval("=MessageText(Local.messages)")
+        assert result == "Hello"
+
+    async def test_message_text_accepts_structured_content_list(self, mock_state):
+        """Messages in the .NET record shape extract their content items."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        state.set(
+            "Local.messages",
+            [{"role": "user", "content": [{"type": "text", "value": "Hello"}]}],
+        )
+        result = state.eval("=MessageText(Local.messages)")
+        assert result == "Hello"
+
 
 class TestPowerFxNestedVariables:
     """Test nested variable access patterns from YAML."""
