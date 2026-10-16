@@ -10,7 +10,7 @@ This folder contains an example demonstrating how to use the Redis context provi
 |------|-------------|
 | [`azure_redis_conversation.py`](azure_redis_conversation.py) | Demonstrates conversation persistence with RedisHistoryProvider and Azure Redis with Azure AD (Entra ID) authentication using credential provider. |
 | [`redis_basics.py`](redis_basics.py) | Shows standalone provider usage and agent integration. Demonstrates writing messages to Redis, retrieving context via full‑text or hybrid vector search, and persisting preferences across threads. Also includes a simple tool example whose outputs are remembered. |
-| [`redis_conversation.py`](redis_conversation.py) | Shows cross-session context retrieval with RedisContextProvider using a Redis connection URL and OpenAI embeddings. For complete conversation history persistence, use RedisHistoryProvider. |
+| [`redis_conversation.py`](redis_conversation.py) | Shows context retrieval across conversation turns with RedisContextProvider using a Redis connection URL and OpenAI embeddings. For complete conversation history persistence, use RedisHistoryProvider. |
 | [`redis_sessions.py`](redis_sessions.py) | Demonstrates memory scoping strategies. Includes: (1) global memory scope with `application_id`, `agent_id`, and `user_id` shared across operations; (2) hybrid vector search using a custom OpenAI vectorizer for richer context retrieval; and (3) multiple agents with isolated memory via different `agent_id` values. |
 
 
@@ -21,7 +21,7 @@ This folder contains an example demonstrating how to use the Redis context provi
 1. A running Redis with RediSearch (Redis Stack or a managed service)
 2. Python environment with Agent Framework Redis extra installed
 3. Microsoft Foundry project endpoint and Azure OpenAI Responses deployment
-4. OpenAI API key for the OpenAI-vectorizer examples (`redis_basics.py`, `redis_conversation.py`, and the hybrid-search scenario in `redis_sessions.py`)
+4. OpenAI API key for the OpenAI-vectorizer examples (`redis_basics.py`, `redis_conversation.py`, and the hybrid-search and multiple-agents scenarios in `redis_sessions.py`)
 
 ### Install the package
 
