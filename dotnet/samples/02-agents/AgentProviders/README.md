@@ -37,6 +37,7 @@ See the README.md for each sample for the prerequisites for that sample.
 | [Azure Foundry Model](./azure/Agent_With_AzureFoundryModel/) | Use any model deployed to Microsoft Foundry |
 | [Azure OpenAI ChatCompletion](./azure/Agent_With_AzureOpenAIChatCompletion/) | Create an AIAgent using Azure OpenAI ChatCompletion |
 | [Azure OpenAI Responses](./azure/Agent_With_AzureOpenAIResponses/) | Create an AIAgent using Azure OpenAI Responses |
+| [Azure OpenAI Responses computer use](./azure/Agent_With_AzureOpenAIResponses_ComputerUse/) | Use the GA computer tool with an Azure OpenAI Responses agent |
 
 ### [Custom](./custom/)
 

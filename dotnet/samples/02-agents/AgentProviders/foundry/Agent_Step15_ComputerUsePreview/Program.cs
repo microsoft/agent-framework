@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use the Computer Use tool with AIProjectClient.AsAIAgent(...).
+// This sample shows how to use the preview Computer Use tool (computer_use_preview) with AIProjectClient.AsAIAgent(...).
 
 using Azure.AI.Projects;
 using Azure.Identity;
-using Demo.ComputerUse;
+using Demo.ComputerUsePreview;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
