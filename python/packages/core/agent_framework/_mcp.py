@@ -4029,7 +4029,7 @@ class MCPStreamableHTTPTool(MCPTool):
         """
         if mcp_client is not None and header_provider is not None:
             raise ValueError(
-                "`header_provider` cannot be used with `mcp_client`; "
+                "`header_provider` cannot be used in combination with a user-supplied `mcp_client`; "
                 "configure per-request headers on the supplied Client's transport."
             )
 

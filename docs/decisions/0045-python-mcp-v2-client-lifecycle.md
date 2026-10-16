@@ -1,7 +1,7 @@
 ---
 status: approved
 date: 2026-10-15
-deciders: jpalvarezl
+deciders: jpalvarezl, eavanvalkenburg
 ---
 
 # Use the MCP SDK Client as the primary Python MCP client
