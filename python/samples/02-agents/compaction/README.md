@@ -11,6 +11,8 @@ This folder demonstrates context compaction patterns introduced by ADR-0019.
 - `custom.py` — defines a custom strategy implementing the `CompactionStrategy` protocol.
 - `tiktoken_tokenizer.py` — shows a `TokenizerProtocol` implementation backed by `tiktoken`.
 - `compaction_provider.py` — uses `CompactionProvider` with an agent and `InMemoryHistoryProvider`.
+- `agent_triggered_compaction.py` — lets an agent trigger in-run compaction to unload one skill's context.
+- `agent_triggered_compaction_basic.py` — demonstrates the generic wrapper with an existing tool-call strategy.
 
 Run samples with:
 
@@ -22,6 +24,8 @@ uv run samples/02-agents/compaction/agent_client_overrides.py
 uv run samples/02-agents/compaction/custom.py
 uv run samples/02-agents/compaction/tiktoken_tokenizer.py
 uv run samples/02-agents/compaction/compaction_provider.py  # requires OPENAI_API_KEY
+uv run samples/02-agents/compaction/agent_triggered_compaction.py  # requires Foundry configuration
+uv run samples/02-agents/compaction/agent_triggered_compaction_basic.py  # requires Foundry configuration
 ```
 
 ## Security Considerations

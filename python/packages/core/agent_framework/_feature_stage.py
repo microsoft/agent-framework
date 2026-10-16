@@ -50,6 +50,7 @@ class ExperimentalFeature(str, Enum):
     on enum membership or attribute presence over time.
     """
 
+    AGENT_TRIGGERED_COMPACTION = "AGENT_TRIGGERED_COMPACTION"
     AGENT_HOOKS = "AGENT_HOOKS"
     COMPUTER_USE = "COMPUTER_USE"
     DECLARATIVE_AGENTS = "DECLARATIVE_AGENTS"
