@@ -22,6 +22,16 @@ Samples accompanying the [*Build your own agent harness or claw with Microsoft A
 | [Claw_Step03_ScalingCapabilities](./BuildYourOwnClaw/Claw_Step03_ScalingCapabilities/README.md) | Post 3 — scaling the claw with skills (plus optional Foundry skills), a confined shell, CodeAct, and background agents |
 | [Claw_Step04_ProductionReady](./BuildYourOwnClaw/Claw_Step04_ProductionReady/README.md) | Post 4 — production-ready shared claw library with observability, opt-in Purview governance, Foundry hosted deployment, and evals |
 
+## Foundry hosted Harness samples
+
+Samples that host a `HarnessAgent` as a Foundry hosted agent with the default `AllowStoredOutputEnabled = false`, so the model service never stores the conversation.
+
+| Sample | Description |
+| --- | --- |
+| [Hosted-Harness-Research](../../04-hosting/FoundryHostedAgents/responses/Hosted-Harness-Research/README.md) | Hosts the research harness with web search, a browsing tool, planning, a todo loop, and session-scoped file memory |
+| [Hosted-Harness-DataProcessing](../../04-hosting/FoundryHostedAgents/responses/Hosted-Harness-DataProcessing/README.md) | Hosts the data processing harness that reads a sales CSV and writes reports, with approval-gated file writes that resume on a later turn |
+| [Hosted-Harness-ScalingCapabilities](../../04-hosting/FoundryHostedAgents/responses/Hosted-Harness-ScalingCapabilities/README.md) | Hosts the Claw_Step03 finance harness with skills, a confined approval-gated shell, a background research agent, and simulated trade approvals |
+
 ## Security Considerations
 
 Several harness providers extend the agent's trust boundary to external systems the developer
