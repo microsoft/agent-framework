@@ -3540,8 +3540,9 @@ def _json_safe_to_str(value: Any | None) -> str:
 def _image_generation_result(outputs: Any) -> str | None:
     """Return the base64 image of an image generation tool result, as the Responses API expects.
 
-    Only a base64 string or the payload of a base64 data URI qualifies. Other URIs (https, file, blob) are not
-    base64, so they give None.
+    Only a non-empty, valid base64 string or the valid base64 payload of a base64 data URI qualifies. Other URIs
+    (https, file, blob), data URIs without the base64 marker and malformed payloads are not base64, so they give
+    None.
     """
     if isinstance(outputs, str):
         return outputs if _is_base64(outputs) else None
@@ -3549,13 +3550,18 @@ def _image_generation_result(outputs: Any) -> str | None:
     if isinstance(outputs, Sequence) and not isinstance(outputs, (bytes, bytearray)):
         items = cast(Sequence[Any], outputs)
     for item in items:
-        if isinstance(item, Content) and item.uri and item.uri.startswith("data:") and ";base64," in item.uri:
-            return item.uri.split(";base64,", 1)[1]
+        if isinstance(item, Content) and item.uri and item.uri.startswith("data:"):
+            # RFC 2397: only the metadata before the first comma can carry the marker, as its last parameter.
+            metadata, _, payload = item.uri.partition(",")
+            if metadata.endswith(";base64") and _is_base64(payload):
+                return payload
     return None
 
 
 def _is_base64(value: str) -> bool:
-    """Check whether a string is valid base64."""
+    """Check whether a string is non-empty, valid base64."""
+    if not value:
+        return False
     try:
         base64.b64decode(value, validate=True)
     except ValueError:
