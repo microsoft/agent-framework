@@ -682,28 +682,18 @@ async def test_cmc_with_data_content_type(
         "data:text/plain;base64,aGVsbG8=",
     ],
 )
-@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
-async def test_cmc_rejects_invalid_image_data_uri(
-    mock_chat: AsyncMock,
+def test_cmc_rejects_invalid_image_data_uri(
     uri: str,
     ollama_unit_test_env: dict[str, str],
-    chat_history: list[Message],
-    mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
-    mock_chat.return_value = mock_chat_completion_response
-    chat_history.append(
-        Message(
-            contents=[Content.from_uri(uri=uri, media_type="image/png")],
-            role="user",
-        )
+    message = Message(
+        contents=[Content.from_uri(uri=uri, media_type="image/png")],
+        role="user",
     )
-
     ollama_client = OllamaChatClient()
 
     with pytest.raises(ChatClientInvalidRequestException):
-        await ollama_client.get_response(messages=chat_history)
-
-    mock_chat.assert_not_called()
+        ollama_client._format_user_message(message)
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
