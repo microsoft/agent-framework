@@ -8864,15 +8864,19 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
     a, b = SecureAgentConfig(quarantine_chat_client=alpha), SecureAgentConfig(quarantine_chat_client=beta)
     empty = SecureAgentConfig(quarantine_chat_client=None)
 
-    async def execute(cfg: SecureAgentConfig, marker: str) -> None:
+    async def execute(cfg: SecureAgentConfig, marker: str, *, direct: bool = False) -> None:
         session = AgentSession(session_id="synthetic-" + marker)
         ctx = SessionContext(session_id=session.session_id, input_messages=[])
-        await cfg.before_run(
-            agent=None,
-            session=session,
-            context=ctx,
-            state=session.state.setdefault(cfg.source_id, {}),
-        )
+        if direct:
+            middleware = cfg.get_middleware()
+        else:
+            await cfg.before_run(
+                agent=None,
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(cfg.source_id, {}),
+            )
+            middleware = ctx.middleware[cfg.source_id]
         tool = next(t for t in cfg.get_tools() if t.name == "quarantined_llm")
         args = {
             "prompt": "Summarize",
@@ -8888,7 +8892,7 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
         async def invoke(inner: FunctionInvocationContext) -> Any:
             return await tool.invoke(arguments=inner.arguments, context=inner, skip_parsing=True)
 
-        await FunctionMiddlewarePipeline(*ctx.middleware[cfg.source_id]).execute(call, invoke)
+        await FunctionMiddlewarePipeline(*middleware).execute(call, invoke)
 
     try:
         await asyncio.gather(execute(a, "ALPHA_MARKER"), execute(b, "BETA_MARKER"))
@@ -8902,7 +8906,42 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
         assert any("ALPHA_SECOND_MARKER" in x for x in alpha.calls)
         assert not any("ALPHA_SECOND_MARKER" in x for x in beta.calls)
 
+        # Swapping trackers after config creation is explicitly supported.
+        # Both session-cloned and direct stacks must honor the owning client.
+        a.label_tracker = LabelTrackingFunctionMiddleware()
+        b.label_tracker = LabelTrackingFunctionMiddleware()
+        empty.label_tracker = LabelTrackingFunctionMiddleware()
+        await asyncio.gather(
+            execute(a, "ALPHA_REPLACEMENT_MARKER"),
+            execute(b, "BETA_REPLACEMENT_MARKER"),
+        )
+        assert any("ALPHA_REPLACEMENT_MARKER" in x for x in alpha.calls)
+        assert not any("ALPHA_REPLACEMENT_MARKER" in x for x in beta.calls)
+        assert any("BETA_REPLACEMENT_MARKER" in x for x in beta.calls)
+        assert not any("BETA_REPLACEMENT_MARKER" in x for x in alpha.calls)
+        await execute(empty, "NO_CLIENT_REPLACEMENT_MARKER")
+        assert not any("NO_CLIENT_REPLACEMENT_MARKER" in x for x in beta.calls)
+        await execute(a, "ALPHA_DIRECT_MARKER", direct=True)
+        assert any("ALPHA_DIRECT_MARKER" in x for x in alpha.calls)
+        assert not any("ALPHA_DIRECT_MARKER" in x for x in beta.calls)
+
+        # The provider must also bind trackers supplied by an overriding
+        # get_middleware() implementation that does not call super().
+        class CustomizedConfig(SecureAgentConfig):
+            def get_middleware(self) -> list[FunctionMiddleware]:
+                result: list[FunctionMiddleware] = [self.label_tracker]
+                if self.policy_enforcer is not None:
+                    result.append(self.policy_enforcer)
+                return result
+
+        custom = CustomizedConfig(quarantine_chat_client=alpha)
+        custom.label_tracker = LabelTrackingFunctionMiddleware()
+        await execute(custom, "ALPHA_CUSTOM_STACK_MARKER")
+        assert any("ALPHA_CUSTOM_STACK_MARKER" in x for x in alpha.calls)
+        assert not any("ALPHA_CUSTOM_STACK_MARKER" in x for x in beta.calls)
+
         # Standalone calls retain the legacy process-global fallback.
+        set_quarantine_client(beta)
         await quarantined_llm.invoke(
             arguments={
                 "prompt": "Direct",
