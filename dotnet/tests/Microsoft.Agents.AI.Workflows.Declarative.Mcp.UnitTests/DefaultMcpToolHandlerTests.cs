@@ -418,7 +418,7 @@ public sealed class DefaultMcpToolHandlerTests
     // (InvokeToolAsync against a fake server) doesn't surface cache-hit behavior
     // without standing up a real MCP server — McpClient.CreateAsync fails before
     // _clients[key] = newClient runs, so nothing ever gets cached.
-    // Tuple equality on the returned 4-tuple verifies that the dimensions
+    // Tuple equality on the returned 5-tuple verifies that the dimensions
     // collectively discriminate cache entries.
 
     [Fact]
@@ -428,19 +428,32 @@ public sealed class DefaultMcpToolHandlerTests
         Dictionary<string, string> headers = new() { ["Authorization"] = "Bearer token" };
 
         // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label", "conn", headers);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label", "conn", headers);
 
         // Assert
         Assert.Equal(key2, key1);
     }
 
     [Fact]
+    public void BuildCacheKey_DifferentWorkflowSession_ReturnsDifferentKeys()
+    {
+        // Act
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow-a", "http://localhost/mcp", "label", "conn", null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow-b", "http://localhost/mcp", "label", "conn", null);
+
+        // Assert
+        Assert.NotEqual(key2, key1);
+        Assert.Equal("workflow-a", key1.WorkflowSession);
+        Assert.Equal("workflow-b", key2.WorkflowSession);
+    }
+
+    [Fact]
     public void BuildCacheKey_DifferentConnectionName_ReturnsDifferentKeys()
     {
         // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-a", null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label", "connection-a", null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label", "connection-b", null);
 
         // Assert
         Assert.NotEqual(key2, key1);
@@ -452,8 +465,8 @@ public sealed class DefaultMcpToolHandlerTests
     public void BuildCacheKey_DifferentServerLabel_ReturnsDifferentKeys()
     {
         // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-a", null, null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label-a", null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", "label-b", null, null);
 
         // Assert
         Assert.NotEqual(key2, key1);
@@ -466,8 +479,8 @@ public sealed class DefaultMcpToolHandlerTests
     {
         // Arrange — RFC 3986: URL path is case-sensitive
         // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/Tools", null, null, null);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/Tools", null, null, null);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/tools", null, null, null);
 
         // Assert
         Assert.NotEqual(key2, key1);
@@ -481,8 +494,8 @@ public sealed class DefaultMcpToolHandlerTests
         Dictionary<string, string> headers2 = new() { ["Authorization"] = "Bearer abc" };
 
         // Act
-        var key1 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers1);
-        var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
+        var key1 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", null, null, headers1);
+        var key2 = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", null, null, headers2);
 
         // Assert — header value case must propagate into the cache key
         Assert.NotEqual(key2, key1);
@@ -493,7 +506,7 @@ public sealed class DefaultMcpToolHandlerTests
     public void BuildCacheKey_NullLabelAndConnection_NormalizesToEmptyString()
     {
         // Act
-        var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
+        var key = DefaultMcpToolHandler.BuildCacheKey("workflow", "http://localhost/mcp", null, null, null);
 
         // Assert — verifies null-safety contract callers rely on
         Assert.Equal(string.Empty, key.Label);

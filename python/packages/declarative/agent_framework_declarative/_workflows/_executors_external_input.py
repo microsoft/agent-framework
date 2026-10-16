@@ -21,6 +21,11 @@ from ._declarative_base import (
     ActionComplete,
     DeclarativeActionExecutor,
 )
+from ._mcp_handler import (
+    get_or_create_workflow_session_id,
+    get_request_workflow_session_id,
+    restore_workflow_session_id,
+)
 
 
 def _get_prompt_text(action_def: dict[str, Any], primary_key: str, fallback_key: str) -> Any:
@@ -67,12 +72,14 @@ class ExternalInputRequest:
             ``RequestExternalInput`` action (e.g. ``"approval"``) and it is
             propagated unchanged.
         metadata: Additional context (choices, output_property, timeout, etc.).
+        workflow_session_id: Framework-owned scope of the workflow that issued the request.
     """
 
     request_id: str
     message: str
     request_type: str = "external"
     metadata: dict[str, Any] = field(default_factory=dict)  # type: ignore
+    workflow_session_id: str | None = None
 
 
 @dataclass
@@ -144,6 +151,7 @@ class QuestionExecutor(DeclarativeActionExecutor):
                     "allow_free_text": allow_free_text,
                     "default_value": default_value,
                 },
+                workflow_session_id=get_or_create_workflow_session_id(ctx.state),
             ),
             ExternalInputResponse,
         )
@@ -156,6 +164,7 @@ class QuestionExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Handle the user's response to the question."""
+        restore_workflow_session_id(ctx.state, get_request_workflow_session_id(original_request.workflow_session_id))
         state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.answer")
@@ -212,6 +221,7 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
                 message=str(evaluated_message),
                 request_type=request_type,
                 metadata=request_metadata,
+                workflow_session_id=get_or_create_workflow_session_id(ctx.state),
             ),
             ExternalInputResponse,
         )
@@ -224,6 +234,7 @@ class RequestExternalInputExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Handle the external input response."""
+        restore_workflow_session_id(ctx.state, get_request_workflow_session_id(original_request.workflow_session_id))
         state = self._get_state(ctx.state)
 
         output_property = original_request.metadata.get("output_property", "Local.externalInput")

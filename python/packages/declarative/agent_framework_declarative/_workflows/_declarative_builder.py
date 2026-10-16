@@ -14,12 +14,17 @@ action definitions and creates a proper workflow graph with:
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from functools import partial
 from typing import Any, cast
 
 from agent_framework import (
     Workflow,
     WorkflowBuilder,
+    WorkflowEvent,
 )
+from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY
+from agent_framework._workflows._state import State
 
 from ._declarative_base import (
     ConditionResult,
@@ -28,7 +33,7 @@ from ._declarative_base import (
     LoopIterationResult,
 )
 from ._errors import DeclarativeWorkflowError
-from ._executors_agents import AGENT_ACTION_EXECUTORS, InvokeAzureAgentExecutor
+from ._executors_agents import AGENT_ACTION_EXECUTORS, AgentExternalInputRequest, InvokeAzureAgentExecutor
 from ._executors_basic import BASIC_ACTION_EXECUTORS
 from ._executors_control_flow import (
     CONTROL_FLOW_EXECUTORS,
@@ -39,12 +44,19 @@ from ._executors_control_flow import (
     IfConditionEvaluatorExecutor,
     JoinExecutor,
 )
-from ._executors_external_input import EXTERNAL_INPUT_EXECUTORS
+from ._executors_external_input import (
+    EXTERNAL_INPUT_EXECUTORS,
+    ExternalInputRequest,
+)
 from ._executors_http import HTTP_ACTION_EXECUTORS, HttpRequestActionExecutor
-from ._executors_mcp import MCP_ACTION_EXECUTORS, InvokeMcpToolActionExecutor
-from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor
+from ._executors_mcp import (
+    MCP_ACTION_EXECUTORS,
+    InvokeMcpToolActionExecutor,
+    MCPToolApprovalRequest,
+)
+from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor, ToolApprovalRequest
 from ._http_handler import HttpRequestHandler
-from ._mcp_handler import MCPToolHandler
+from ._mcp_handler import MCPToolHandler, activate_workflow_session_id, get_request_workflow_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +120,35 @@ ACTION_ALTERNATE_FIELDS: dict[str, list[str]] = {
 }
 
 
+def _validate_response_batch(
+    requests: Sequence[WorkflowEvent[Any]], *, migrate_legacy_request_scopes: bool = False
+) -> None:
+    scoped_requests: list[
+        tuple[ExternalInputRequest | MCPToolApprovalRequest | ToolApprovalRequest | AgentExternalInputRequest, str]
+    ] = []
+    for request in requests:
+        data = request.data
+        if not isinstance(
+            data, (ExternalInputRequest, MCPToolApprovalRequest, ToolApprovalRequest, AgentExternalInputRequest)
+        ):
+            continue
+        scope = data.workflow_session_id
+        if scope is None and migrate_legacy_request_scopes:
+            if not isinstance(request.request_id, str) or not request.request_id:
+                raise DeclarativeWorkflowError("Cannot migrate a legacy request without a valid request ID.")
+            scope = f"legacy-request:{request.request_id}"
+        scoped_requests.append((data, get_request_workflow_session_id(scope)))
+    scopes = {scope for _, scope in scoped_requests}
+    if len(scopes) > 1:
+        raise DeclarativeWorkflowError("Responses from different workflow sessions must be submitted in separate runs.")
+    for data, scope in scoped_requests:
+        data.workflow_session_id = scope
+
+
+def _initialize_mcp_run_state(state: State) -> None:
+    activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=state.get(WORKFLOW_AGENT_RUN_KEY) is True)
+
+
 class DeclarativeWorkflowBuilder:
     """Builds a Workflow graph from declarative YAML actions.
 
@@ -141,6 +182,7 @@ class DeclarativeWorkflowBuilder:
         http_request_handler: HttpRequestHandler | None = None,
         mcp_tool_handler: MCPToolHandler | None = None,
         env_config: DeclarativeEnvConfig | None = None,
+        migrate_legacy_request_scopes: bool = False,
     ):
         """Initialize the builder.
 
@@ -163,6 +205,8 @@ class DeclarativeWorkflowBuilder:
                 how the ``Env`` PowerFx symbol is populated for every
                 executor built by this builder. Defaults to an empty
                 configuration (``Env`` not exposed).
+            migrate_legacy_request_scopes: Opt in to assigning legacy pending requests
+                stable, isolated scopes instead of rejecting missing origins.
         """
         self._yaml_def = yaml_definition
         self._workflow_id = workflow_id or yaml_definition.get("name", "declarative_workflow")
@@ -178,6 +222,7 @@ class DeclarativeWorkflowBuilder:
         self._http_request_handler = http_request_handler
         self._mcp_tool_handler = mcp_tool_handler
         self._env_config: DeclarativeEnvConfig = env_config if env_config is not None else DeclarativeEnvConfig()
+        self._migrate_legacy_request_scopes = migrate_legacy_request_scopes
         # Resolve max_iterations: explicit arg > YAML maxTurns > core default
         resolved = max_iterations if max_iterations is not None else yaml_definition.get("maxTurns")
         if resolved is not None and (not isinstance(resolved, int) or resolved <= 0):
@@ -240,7 +285,12 @@ class DeclarativeWorkflowBuilder:
             if isinstance(executor, DeclarativeActionExecutor):
                 executor.set_declarative_env_config(self._env_config)
 
-        return builder.build()
+        workflow = builder.build()
+        workflow._response_batch_validator = partial(  # pyright: ignore[reportPrivateUsage]
+            _validate_response_batch, migrate_legacy_request_scopes=self._migrate_legacy_request_scopes
+        )
+        workflow._initial_state_initializer = _initialize_mcp_run_state  # pyright: ignore[reportPrivateUsage]
+        return workflow
 
     def _collect_explicit_ids(self, actions: list[dict[str, Any]] | None) -> None:
         """Reserve authored executor IDs, excluding virtual structures and skipped actions."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
@@ -96,6 +96,15 @@ class WorkflowMessage:
         )
 
 
+def _get_queued_response_info_events(messages: Mapping[str, Sequence[WorkflowMessage]]) -> list[WorkflowEvent[Any]]:
+    return [
+        message.original_request_info_event
+        for batch in messages.values()
+        for message in batch
+        if message.type == MessageType.RESPONSE and message.original_request_info_event is not None
+    ]
+
+
 @runtime_checkable
 class RunnerContext(Protocol):
     """Protocol for the execution context used by the runner.
@@ -126,6 +135,10 @@ class RunnerContext(Protocol):
         Returns:
             True if there are messages, False otherwise.
         """
+        ...
+
+    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
+        """Get original requests for queued responses without consuming messages."""
         ...
 
     async def add_event(self, event: WorkflowEvent) -> None:
@@ -610,6 +623,10 @@ class InProcRunnerContext:
             A dictionary mapping request IDs to their corresponding WorkflowEvent (type='request_info').
         """
         return dict(self._pending_request_info_events)
+
+    async def get_queued_response_info_events(self) -> list[WorkflowEvent[Any]]:
+        """Get original requests for queued responses without consuming messages."""
+        return _get_queued_response_info_events(self._messages)
 
     async def cancel_request_info_events(self, request_ids: set[str]) -> dict[str, WorkflowEvent[Any]]:
         """Remove and return pending request_info events selected for cancellation."""

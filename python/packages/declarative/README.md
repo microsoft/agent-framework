@@ -91,3 +91,46 @@ This intentionally incurs connection and initialization overhead and does not
 retain server session state between provider-backed invocations. Applications
 that require shared session ownership must implement an explicitly scoped
 custom `MCPToolHandler`; there is no provider-backed session-cache opt-in.
+
+## Resuming pending workflow requests
+
+Questions, external-input requests, function approvals, MCP approvals, and agent
+external-input requests retain the workflow scope in which they were issued.
+Responses restore that scope even after another fresh run or a checkpoint restore.
+Submit responses from different scopes in separate runs; mixed-scope batches are
+rejected before any request is consumed.
+
+Older checkpoints may contain requests without an originating scope. By default,
+resuming these requests raises an error without consuming them. To recover, the
+host can explicitly opt in when recreating the workflow:
+
+```python
+from agent_framework.declarative import WorkflowFactory
+
+factory = WorkflowFactory(
+    checkpoint_storage=storage,
+    mcp_tool_handler=mcp_handler,
+    migrate_legacy_request_scopes=True,
+)
+workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
+await workflow.run(checkpoint_id=checkpoint_id)
+await workflow.run(responses={pending_request_id: response})
+```
+
+Migration gives each legacy request a stable, separately isolated scope derived
+from its framework request ID. It never reuses the latest run's scope and cannot
+recover the old MCP session or its server-side history. Preserve request IDs,
+resume legacy requests individually, and retain the resulting checkpoint. Newly
+emitted requests carry the migrated scope, so subsequent restores no longer
+require the opt-in for those requests. Any remaining unmigrated requests still do.
+The same policy applies when a checkpoint already contains queued responses:
+restore validates and migrates their original requests before restoring workflow
+state or replaying the continuation. Nested workflows preflight the entire embedded
+checkpoint tree using each child's own policy before replacing any live state,
+executor state, or queues. Preflight rejection leaves the running workflows and supplied
+checkpoint unchanged, including staged migration metadata.
+Responses submitted alongside queued responses must belong to the same scope;
+mixed batches leave pending requests unconsumed.
+Invalid stored scopes are rejected even with migration enabled. Header verification
+and any required MCP reapproval remain unchanged. Hosts that require the old
+server-side session must restart the workflow instead of migrating it.

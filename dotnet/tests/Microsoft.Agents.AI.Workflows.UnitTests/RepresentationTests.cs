@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
@@ -89,6 +90,48 @@ public class RepresentationTests
     {
         await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent(), new()));
         await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
+    }
+
+    [Fact]
+    public void SubworkflowSessionId_IsStableAndHierarchicallyScoped()
+    {
+        // Arrange
+        const string ParentSessionId = "parent-session";
+
+        // Act
+        string firstChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "first");
+        string sameChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "first");
+        string siblingChild = SubworkflowBinding.CreateSubworkflowSessionId(ParentSessionId, "second");
+        string nestedChild = SubworkflowBinding.CreateSubworkflowSessionId(firstChild, "nested");
+
+        // Assert
+        Assert.Equal(firstChild, sameChild);
+        Assert.NotEqual(ParentSessionId, firstChild);
+        Assert.NotEqual(firstChild, siblingChild);
+        Assert.NotEqual(firstChild, nestedChild);
+        Assert.NotEqual(siblingChild, nestedChild);
+    }
+
+    [Fact]
+    public async Task SubworkflowRunner_PreservesLegacyCheckpointSessionIdAsync()
+    {
+        // Arrange
+        const string LegacySessionId = "legacy-session";
+        string workflowSessionId = SubworkflowBinding.CreateSubworkflowSessionId(LegacySessionId, "child");
+        TestExecutor executor = new();
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+
+        // Act
+        InProcessRunner runner = InProcessRunner.CreateSubworkflowRunner(
+            workflow,
+            checkpointManager: new InMemoryCheckpointManager(),
+            sessionId: LegacySessionId,
+            workflowSessionId: workflowSessionId);
+
+        // Assert
+        Assert.Equal(LegacySessionId, runner.SessionId);
+        Assert.Equal(workflowSessionId, runner.WorkflowSessionId);
+        await runner.RequestEndRunAsync();
     }
 
     private static string Source(int id) => $"Source/{id}";
