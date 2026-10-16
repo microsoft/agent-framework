@@ -571,6 +571,37 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"Invalid checkpoint ID: {checkpoint_id}")
         return file_path
 
+    @staticmethod
+    def _assert_no_case_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
+        """Reject an ID that the filesystem cannot store as an independent file.
+
+        On case-insensitive filesystems (the default on Windows and macOS),
+        ``Round-A.json`` and ``round-a.json`` name the same file, so a save under
+        the variant spelling would silently replace the other checkpoint and its
+        reads would then return the wrong workflow's state (#9444). On
+        case-sensitive filesystems the variant path simply does not exist, so
+        the directory scan below is skipped entirely there.
+        """
+        if not file_path.exists():
+            return
+        expected_name = file_path.name
+        try:
+            for sibling in file_path.parent.iterdir():
+                if sibling.name.casefold() != expected_name.casefold():
+                    continue
+                if sibling.name != expected_name:
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
+                        f"{sibling.name.removesuffix('.json')!r}: on this filesystem both names "
+                        "resolve to one file, and saving would replace that checkpoint's data. "
+                        "Choose a checkpoint ID that differs by more than letter case."
+                    )
+                return
+        except OSError:
+            # A transient listing/read failure must not turn a routine save into a
+            # hard failure; the write below still fails loudly if the path is bad.
+            return
+
     @classmethod
     def _delete_lock(cls, file_path: Path) -> threading.Lock:
         """Return the process-local deletion lock for a checkpoint file."""
@@ -592,6 +623,7 @@ class FileCheckpointStorage:
         from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
+        self._assert_no_case_variant_collision(file_path, checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
         # Fail at save time if encoding or restore validation fails (#8181).
         try:

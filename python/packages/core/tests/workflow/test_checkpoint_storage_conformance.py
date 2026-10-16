@@ -152,3 +152,50 @@ async def test_load_missing_id_raises(conformance_storage: CheckpointStorage) ->
 async def test_save_returns_id(conformance_storage: CheckpointStorage) -> None:
     checkpoint = _conformance_checkpoint()
     assert await conformance_storage.save(checkpoint) == checkpoint.checkpoint_id
+
+
+def _filesystem_is_case_insensitive(path: Path) -> bool:
+    probe = path / "CkAsE.probe"
+    probe.write_text("x")
+    try:
+        return (path / "ckase.probe").exists()
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.skipif(
+    not _filesystem_is_case_insensitive(Path(__file__).parent),
+    reason="case-variant collision only occurs on case-insensitive filesystems",
+)
+async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
+    """A case-only variant ID must not silently replace the other checkpoint (#9444)."""
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "first"},
+    )
+    second = WorkflowCheckpoint(
+        workflow_name="second-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id="round-a",
+        state={"marker": "second"},
+    )
+
+    first_id = await storage.save(first)
+    with pytest.raises(WorkflowCheckpointException, match="collides"):
+        await storage.save(second)
+
+    # The first checkpoint survives untouched: its data and listing are intact.
+    restored = await storage.load(first_id)
+    assert restored.checkpoint_id == "Round-A"
+    assert restored.workflow_name == "first-workflow"
+    assert restored.state["marker"] == "first"
+    listed = await storage.list_checkpoint_ids(workflow_name="first-workflow")
+    assert listed == ["Round-A"]
+
+    # Re-saving the exact same ID remains a normal update, not a collision.
+    first.state["marker"] = "first-updated"
+    assert await storage.save(first) == "Round-A"
+    assert (await storage.load("Round-A")).state["marker"] == "first-updated"
