@@ -342,7 +342,10 @@ internal sealed class WorkflowExpressionEngine
 
         if (result is ErrorValue errorValue)
         {
-            throw new DeclarativeActionException(errorValue.Format());
+            throw new DeclarativeActionException(
+                this.GetSensitivity(expression) == SensitivityLevel.Sensitive
+                    ? "Expression evaluation failed for a sensitive value."
+                    : errorValue.Format());
         }
 
         return new(result, sensitivity);
