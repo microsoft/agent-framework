@@ -920,3 +920,461 @@ async def test_release_session_skips_drain_when_no_pending_tasks(
 
     assert drain_called is False
     assert session.session_id not in provider._runtime
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: finished tasks must survive until cleared or released
+# (Part of #8760 - single-process snapshot/state desync fix)
+# ---------------------------------------------------------------------------
+
+
+async def test_snapshot_restore_returns_real_result_not_lost() -> None:
+    """A session snapshot taken while a task is RUNNING must still return the
+    real result after the task finishes and the snapshot is restored.
+
+    Repro for the single-process gap: _finalize_task previously removed the
+    finished asyncio.Task from in_flight_tasks.  If the host persists session
+    state only after the run completes and a failure (or snapshot restoration)
+    occurs before that, the next refresh would find no local task and mark it
+    LOST, silently discarding the result.
+    """
+    provider = _make_provider(_FakeAgent("Worker", response_text="hello from worker"))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    # Start a task and immediately snapshot the session state (task is RUNNING).
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="do work",
+        description="regression task",
+    )
+    snapshot = session.to_dict()  # captured while task is still RUNNING
+
+    # Let the task complete deterministically (no sleep).
+    runtime = provider._get_runtime(session)
+    task = runtime.in_flight_tasks[1]
+    await task  # wait for the asyncio.Task to finish
+
+    # Finalize by refreshing (simulates what before_run / get_task_results does).
+    tools2 = await _get_tools(provider, session)
+    result_before_restore = await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+    assert result_before_restore == "hello from worker"
+
+    # Now restore the pre-finalization snapshot into the same provider.
+    # This simulates the host restoring an older session state (e.g. after a
+    # failed persist or a multi-turn rollback).
+    session2 = AgentSession.from_dict(snapshot)
+    tools3 = await _get_tools(provider, session2)
+
+    # The task is still in in_flight_tasks (finished but not yet cleared).
+    # get_task_results must return the real result, not "Task state was lost".
+    result_after_restore = await _invoke_tool(tools3["background_agents_get_task_results"], task_id=1)
+    assert result_after_restore == "hello from worker", f"Expected real result but got: {result_after_restore!r}"
+
+    await provider.release_session(session)
+    await provider.release_session(session2)
+
+
+async def test_snapshot_restore_preserves_error_text_for_failed_task() -> None:
+    """Same as above but for a task that raises; error_text must survive restore."""
+    provider = _make_provider(_FakeAgent("Failer", should_fail=True))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Failer",
+        input="trigger failure",
+        description="failure regression",
+    )
+    snapshot = session.to_dict()
+
+    runtime = provider._get_runtime(session)
+    task = runtime.in_flight_tasks[1]
+    with suppress(Exception):
+        await task
+
+    # Finalize via a refresh so task_info gets FAILED status.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    # Restore snapshot and confirm the failure is still readable.
+    session2 = AgentSession.from_dict(snapshot)
+    tools3 = await _get_tools(provider, session2)
+    result = await _invoke_tool(tools3["background_agents_get_task_results"], task_id=1)
+    assert "Agent execution failed" in result, f"Unexpected result: {result!r}"
+
+    await provider.release_session(session)
+    await provider.release_session(session2)
+
+
+async def test_snapshot_restore_preserves_error_text_for_cancelled_task() -> None:
+    """Cancelled task error_text must survive snapshot restoration."""
+    provider = _make_provider(_FakeAgent("Slow", delay=60.0))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="start slow task",
+        description="cancellation regression",
+    )
+    snapshot = session.to_dict()
+
+    runtime = provider._get_runtime(session)
+    task = runtime.in_flight_tasks[1]
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    # Finalize via a refresh.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    # Restore snapshot and confirm cancellation error survives.
+    session2 = AgentSession.from_dict(snapshot)
+    tools3 = await _get_tools(provider, session2)
+    result = await _invoke_tool(tools3["background_agents_get_task_results"], task_id=1)
+    assert "canceled" in result.lower(), f"Unexpected result: {result!r}"
+
+    await provider.release_session(session)
+    await provider.release_session(session2)
+
+
+async def test_clear_completed_task_removes_entry_from_in_flight_tasks() -> None:
+    """clear_completed_task must remove the finished task from in_flight_tasks."""
+    provider = _make_provider(_FakeAgent("Worker", response_text="done"))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="work",
+        description="clear test",
+    )
+
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # Finalize and then clear.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+    clear_result = await _invoke_tool(tools2["background_agents_clear_completed_task"], task_id=1)
+
+    assert clear_result == "Task 1 cleared."
+    assert 1 not in runtime.in_flight_tasks, "Task should be removed by clear_completed_task"
+
+    await provider.release_session(session)
+
+
+async def test_release_session_clears_in_flight_tasks() -> None:
+    """release_session must clear all in_flight_tasks including finished ones."""
+    provider = _make_provider(_FakeAgent("Worker", response_text="done"))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="work",
+        description="release test",
+    )
+
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # Finalize (task is now finished but still in in_flight_tasks).
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    assert 1 in runtime.in_flight_tasks, "Finished task should still be present before release"
+
+    await provider.release_session(session)
+
+    assert session.session_id not in provider._runtime
+    assert not runtime.in_flight_tasks
+
+
+async def test_wait_blocks_for_running_task_and_ignores_finished() -> None:
+    """wait_for_first_completion ignores finished retained tasks and waits for running ones."""
+    provider = _make_provider(
+        _FakeAgent("Fast", response_text="fast done"),
+        _FakeAgent("Slow", response_text="slow done", delay=0.02),
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    # 1. Start and finish task 1.
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Fast",
+        input="work",
+        description="task 1",
+    )
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # Finalize task 1 so its status is COMPLETED and its task is retained.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    # 2. Start task 2 which takes longer.
+    await _invoke_tool(
+        tools2["background_agents_start_task"],
+        agent_name="Slow",
+        input="slow work",
+        description="task 2",
+    )
+
+    # 3. wait([1, 2]) must block for running task 2 and NOT return finished task 1.
+    wait_result = await _invoke_tool(
+        tools2["background_agents_wait_for_first_completion"],
+        task_ids=[1, 2],
+    )
+    assert "Task 2 finished with status: completed." in wait_result
+    assert "Task 1" not in wait_result
+
+    # 4. wait([1]) on finished task returns "not running; current status" text.
+    finished_wait_result = await _invoke_tool(
+        tools2["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+    )
+    assert "Task 1 is not running; current status: completed." in finished_wait_result
+
+    await provider.release_session(session)
+
+
+async def test_clear_completed_task_does_not_clear_in_flight_continuation() -> None:
+    """Restoring an older completed snapshot and clearing task 1 must not clear a running continuation."""
+
+    class _ContinuationAgent(_FakeAgent):
+        def __init__(self, name: str = "Worker") -> None:
+            super().__init__(name, response_text="done")
+            self.release = asyncio.Event()
+            self._runs = 0
+
+        async def run(
+            self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
+        ) -> AgentResponse[Any]:
+            self._runs += 1
+            if self._runs > 1:
+                await self.release.wait()
+            return await super().run(messages, stream=stream, session=session, **kwargs)
+
+    agent = _ContinuationAgent("Worker")
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    # 1. Start task 1 and let it complete.
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="first run",
+        description="task 1",
+    )
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # Finalize task 1 so its status is COMPLETED.
+    tools2 = await _get_tools(provider, session)
+    await _invoke_tool(tools2["background_agents_get_task_results"], task_id=1)
+
+    # 2. Snapshot the completed state.
+    snapshot = session.to_dict()
+
+    # 3. continue_task with slow agent.
+    continue_msg = await _invoke_tool(tools2["background_agents_continue_task"], task_id=1, text="second run")
+    assert "continued" in continue_msg.lower()
+
+    continuation_task = runtime.in_flight_tasks[1]
+    assert not continuation_task.done()
+
+    # 4. Restore snapshot into a new AgentSession.
+    session2 = AgentSession.from_dict(snapshot)
+    tools3 = await _get_tools(provider, session2)
+
+    # 5. Call clear_completed_task(1) on restored session.
+    clear_msg = await _invoke_tool(tools3["background_agents_clear_completed_task"], task_id=1)
+    assert clear_msg == "Task 1 cleared."
+
+    # 6. Continuation is still in in_flight_tasks.
+    assert 1 in runtime.in_flight_tasks
+    assert runtime.in_flight_tasks[1] is continuation_task
+    assert not continuation_task.done()
+
+    # 7. release_session(cancel_running=True) cancels it.
+    await provider.release_session(session, cancel_running=True)
+    assert continuation_task.cancelled()
+    assert not runtime.in_flight_tasks
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: execution identity (generation) for reused task IDs
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedAgent(_FakeAgent):
+    """Agent whose N-th run returns ``responses[N]`` and optionally waits on a gate or fails."""
+
+    def __init__(self, name: str, responses: list[str], *, fail_runs: set[int] | None = None) -> None:
+        super().__init__(name)
+        self.responses = responses
+        self.fail_runs = fail_runs or set()
+        self.gates: dict[int, asyncio.Event] = {}
+        self.runs = 0
+
+    async def run(
+        self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
+    ) -> AgentResponse[Any]:
+        index = self.runs
+        self.runs += 1
+        gate = self.gates.get(index)
+        if gate is not None:
+            await gate.wait()
+        if index in self.fail_runs:
+            raise RuntimeError(f"run {index} failed")
+        return AgentResponse(messages=[Message(role="assistant", contents=[self.responses[index]])])
+
+
+def test_task_info_generation_round_trip_and_legacy_default() -> None:
+    """generation is persisted, and state written before it existed loads as generation 1."""
+    info = BackgroundTaskInfo(id=1, agent_name="A", description="d", generation=3)
+    assert BackgroundTaskInfo.from_dict(info.to_dict()).generation == 3
+
+    legacy = {"id": 1, "agent_name": "A", "description": "d", "status": "running"}
+    assert BackgroundTaskInfo.from_dict(legacy).generation == 1
+
+
+@pytest.mark.parametrize("continuation_fails", [False, True])
+async def test_restored_running_snapshot_does_not_receive_continuation_outcome(continuation_fails: bool) -> None:
+    """A stale RUNNING snapshot must not be finalized with a later continuation's result or error."""
+    agent = _ScriptedAgent("Worker", ["first result", "second result"], fail_runs={1} if continuation_fails else None)
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t")
+    stale_snapshot = session.to_dict()  # generation 1, RUNNING
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+
+    # The live session retrieves generation 1 and continues the task (generation 2).
+    assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == "first result"
+    await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="again")
+    continuation = runtime.in_flight_tasks[1]
+    with suppress(Exception):
+        await continuation
+
+    # The host restores the snapshot taken while generation 1 was running.
+    restored = AgentSession.from_dict(stale_snapshot)
+    restored_tools = await _get_tools(provider, restored)
+    stale_result = await _invoke_tool(restored_tools["background_agents_get_task_results"], task_id=1)
+    assert stale_result == "Task state was lost (reference unavailable)."
+
+    # The live session still sees its own continuation outcome, and it is still tracked.
+    live_result = await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
+    assert live_result == ("Task failed: run 1 failed" if continuation_fails else "second result")
+    assert runtime.in_flight_tasks[1] is continuation
+
+    await provider.release_session(session)
+
+
+async def test_restored_running_snapshot_does_not_wait_on_continuation() -> None:
+    """Waiting from a stale snapshot must not block on (or finalize) a newer running continuation."""
+    agent = _ScriptedAgent("Worker", ["first result", "second result"])
+    agent.gates[1] = asyncio.Event()
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t")
+    stale_snapshot = session.to_dict()
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+    await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
+    await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="again")
+    continuation = runtime.in_flight_tasks[1]
+
+    restored = AgentSession.from_dict(stale_snapshot)
+    restored_tools = await _get_tools(provider, restored)
+    wait_result = await _invoke_tool(restored_tools["background_agents_wait_for_first_completion"], task_ids=[1])
+    assert wait_result == "Task 1 is not running; current status: lost."
+    assert runtime.in_flight_tasks[1] is continuation
+    assert not continuation.done()
+
+    agent.gates[1].set()
+    wait_result = await _invoke_tool(tools["background_agents_wait_for_first_completion"], task_ids=[1])
+    assert wait_result == "Task 1 finished with status: completed."
+    assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == "second result"
+
+    await provider.release_session(session)
+
+
+async def test_continue_from_stale_snapshot_rejected_while_newer_execution_running() -> None:
+    """Continuing an old completed snapshot must not overwrite a newer running continuation."""
+    agent = _ScriptedAgent("Worker", ["first result", "second result", "third result"])
+    agent.gates[1] = asyncio.Event()
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t")
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+    await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
+    completed_snapshot = session.to_dict()  # generation 1, COMPLETED
+    await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="again")
+    continuation = runtime.in_flight_tasks[1]
+
+    restored = AgentSession.from_dict(completed_snapshot)
+    restored_tools = await _get_tools(provider, restored)
+    result = await _invoke_tool(restored_tools["background_agents_continue_task"], task_id=1, text="stale")
+    assert result.startswith("Error: Task 1 has a newer execution that is still running.")
+    assert runtime.in_flight_tasks[1] is continuation
+    assert runtime.task_generations[1] == 2
+
+    await provider.release_session(session, cancel_running=True)
+    assert continuation.cancelled()
+
+
+async def test_continue_from_stale_snapshot_starts_newer_generation() -> None:
+    """Continuing from an older snapshot after a newer execution finished must use a fresh generation."""
+    agent = _ScriptedAgent("Worker", ["first result", "second result", "third result"])
+    provider = _make_provider(agent)
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(tools["background_agents_start_task"], agent_name="Worker", input="go", description="t")
+    runtime = provider._get_runtime(session)
+    await runtime.in_flight_tasks[1]
+    await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
+    completed_snapshot = session.to_dict()  # generation 1, COMPLETED
+    await _invoke_tool(tools["background_agents_continue_task"], task_id=1, text="again")
+    await runtime.in_flight_tasks[1]
+    assert await _invoke_tool(tools["background_agents_get_task_results"], task_id=1) == "second result"
+
+    restored = AgentSession.from_dict(completed_snapshot)
+    restored_tools = await _get_tools(provider, restored)
+    await _invoke_tool(restored_tools["background_agents_continue_task"], task_id=1, text="from snapshot")
+    third = runtime.in_flight_tasks[1]
+    assert runtime.task_generations[1] == 3
+    assert restored.state["background_agents"]["tasks"][0]["generation"] == 3
+    await third
+    assert await _invoke_tool(restored_tools["background_agents_get_task_results"], task_id=1) == "third result"
+
+    # The live session (generation 2) clears its record without dropping generation 3.
+    assert await _invoke_tool(tools["background_agents_clear_completed_task"], task_id=1) == "Task 1 cleared."
+    assert runtime.in_flight_tasks[1] is third
+    assert 1 in runtime.background_sessions
+
+    # Clearing the record that owns the latest generation releases the runtime references.
+    assert await _invoke_tool(restored_tools["background_agents_clear_completed_task"], task_id=1) == "Task 1 cleared."
+    assert 1 not in runtime.in_flight_tasks
+    assert 1 not in runtime.task_generations
+    assert 1 not in runtime.background_sessions
+
+    await provider.release_session(session)

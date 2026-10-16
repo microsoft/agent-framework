@@ -55,7 +55,12 @@ class BackgroundTaskStatus(str, Enum):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class BackgroundTaskInfo(SerializationMixin):
-    """Metadata for a single background task."""
+    """Metadata for a single background task.
+
+    ``generation`` identifies which execution of the task this record describes. It starts at 1
+    and increases every time the task is continued, so a restored older snapshot of the session
+    is never reconciled against a later execution that reused the same task ID.
+    """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
 
@@ -65,7 +70,8 @@ class BackgroundTaskInfo(SerializationMixin):
     status: BackgroundTaskStatus
     result_text: str | None
     error_text: str | None
-    __slots__ = ("agent_name", "description", "error_text", "id", "result_text", "status")
+    generation: int
+    __slots__ = ("agent_name", "description", "error_text", "generation", "id", "result_text", "status")
 
     def __init__(
         self,
@@ -75,6 +81,7 @@ class BackgroundTaskInfo(SerializationMixin):
         status: BackgroundTaskStatus = BackgroundTaskStatus.RUNNING,
         result_text: str | None = None,
         error_text: str | None = None,
+        generation: int = 1,
     ) -> None:
         """Initialize a background task info entry."""
         self.id = id
@@ -83,6 +90,7 @@ class BackgroundTaskInfo(SerializationMixin):
         self.status = status
         self.result_text = result_text
         self.error_text = error_text
+        self.generation = generation
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Serialize for session state persistence."""
@@ -92,6 +100,7 @@ class BackgroundTaskInfo(SerializationMixin):
             "agent_name": self.agent_name,
             "description": self.description,
             "status": self.status.value,
+            "generation": self.generation,
         }
         if not exclude_none or self.result_text is not None:
             data["result_text"] = self.result_text
@@ -109,24 +118,51 @@ class BackgroundTaskInfo(SerializationMixin):
             status=BackgroundTaskStatus(data["status"]),
             result_text=data.get("result_text"),
             error_text=data.get("error_text"),
+            generation=data.get("generation", 1),
         )
 
 
 @dataclass
 class _RuntimeState:
-    """Non-serializable per-session runtime state for background tasks."""
+    """Non-serializable per-session runtime state for background tasks.
+
+    ``in_flight_tasks`` holds the latest execution started for each task ID and
+    ``task_generations`` records which generation that execution belongs to. Lookups made on
+    behalf of a persisted :class:`BackgroundTaskInfo` go through :meth:`get_execution` so that a
+    record only ever sees the execution it was created for.
+    """
 
     in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
+    task_generations: dict[int, int] = field(default_factory=lambda: {})
     background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
     closed: bool = False
 
-    def track_task(self, task_id: int, task: asyncio.Task[AgentResponse[Any]]) -> None:
+    def track_task(self, task_id: int, task: asyncio.Task[AgentResponse[Any]], *, generation: int = 1) -> None:
         """Track a background task if this runtime is still open."""
         if self.closed:
             task.cancel()
             raise RuntimeError("Session runtime is closed; cannot start background task.")
 
         self.in_flight_tasks[task_id] = task
+        self.task_generations[task_id] = generation
+
+    def current_generation(self, task_id: int) -> int | None:
+        """Return the generation of the tracked execution for a task ID, if any."""
+        if task_id not in self.in_flight_tasks:
+            return None
+        return self.task_generations.get(task_id, 1)
+
+    def get_execution(self, task_id: int, generation: int) -> asyncio.Task[AgentResponse[Any]] | None:
+        """Return the tracked execution for a task ID only if it belongs to the given generation."""
+        if self.current_generation(task_id) != generation:
+            return None
+        return self.in_flight_tasks.get(task_id)
+
+    def forget_task(self, task_id: int) -> None:
+        """Drop all runtime references for a task ID."""
+        self.in_flight_tasks.pop(task_id, None)
+        self.task_generations.pop(task_id, None)
+        self.background_sessions.pop(task_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +251,27 @@ def _save_tasks(state: dict[str, Any], tasks: list[BackgroundTaskInfo]) -> None:
 def _finalize_task(
     task_info: BackgroundTaskInfo,
     completed_task: asyncio.Task[AgentResponse[Any]],
-    runtime: _RuntimeState,
 ) -> None:
-    """Extract results from a completed asyncio task and update task info."""
+    """Extract results from a completed asyncio task and update task info.
+
+    The finished :class:`asyncio.Task` is intentionally **not** removed from
+    ``runtime.in_flight_tasks`` here.  Session state is persisted by the host
+    only after the agent run completes; if the run fails, is stopped early, or
+    the host restores an older session snapshot, the persisted record will still
+    say ``RUNNING`` while this in-memory task no longer exists.  On the next
+    call to :func:`_refresh_task_state` a missing entry would be misidentified
+    as ``LOST``, discarding a result that is already available.
+
+    Because the retained entry is keyed by task ID, callers must only pass the
+    execution matching ``task_info.generation`` (see
+    :meth:`_RuntimeState.get_execution`); a later continuation of the same task
+    ID must never be applied to an older record.
+
+    Tasks are removed from ``in_flight_tasks`` by two callers:
+
+    - :func:`background_agents_clear_completed_task` — explicit caller-driven cleanup.
+    - :meth:`BackgroundAgentsProvider.release_session` — bulk cleanup on session teardown.
+    """
     if completed_task.cancelled():
         task_info.status = BackgroundTaskStatus.FAILED
         task_info.error_text = "Task was canceled."
@@ -229,7 +283,6 @@ def _finalize_task(
         else:
             task_info.status = BackgroundTaskStatus.COMPLETED
             task_info.result_text = completed_task.result().text
-    runtime.in_flight_tasks.pop(task_info.id, None)
 
 
 def _refresh_task_state(
@@ -243,14 +296,16 @@ def _refresh_task_state(
         if task_info.status != BackgroundTaskStatus.RUNNING:
             continue
 
-        in_flight = runtime.in_flight_tasks.get(task_info.id)
+        # A missing execution, or one from a different generation (the task was continued from
+        # another snapshot of this session), means this record's execution is no longer tracked.
+        in_flight = runtime.get_execution(task_info.id, task_info.generation)
         if in_flight is None:
             task_info.status = BackgroundTaskStatus.LOST
             changed = True
             continue
 
         if in_flight.done():
-            _finalize_task(task_info, in_flight, runtime)
+            _finalize_task(task_info, in_flight)
             changed = True
 
     if changed:
@@ -397,6 +452,7 @@ class BackgroundAgentsProvider(ContextProvider):
                     await asyncio.gather(*completed, return_exceptions=True)
         finally:
             runtime.in_flight_tasks.clear()
+            runtime.task_generations.clear()
             runtime.background_sessions.clear()
 
             if self._runtime.get(session_id) is runtime:
@@ -526,12 +582,16 @@ class BackgroundAgentsProvider(ContextProvider):
             if not task_ids:
                 return "Error: No task IDs provided."
 
-            # Collect in-flight tasks matching the requested IDs.
+            # Collect the executions that the requested running records refer to.
             waitable: list[tuple[int, asyncio.Task[AgentResponse[Any]]]] = []
+            tasks = _get_tasks(provider_state)
+            running = {t.id: t.generation for t in tasks if t.status == BackgroundTaskStatus.RUNNING}
             for tid in task_ids:
-                in_flight = runtime.in_flight_tasks.get(tid)
-                if in_flight is not None:
-                    waitable.append((tid, in_flight))
+                generation = running.get(tid)
+                if generation is not None:
+                    in_flight = runtime.get_execution(tid, generation)
+                    if in_flight is not None:
+                        waitable.append((tid, in_flight))
 
             if not waitable:
                 # Refresh state to catch any that completed.
@@ -568,9 +628,9 @@ class BackgroundAgentsProvider(ContextProvider):
             tasks = _get_tasks(provider_state)
             task_info = next((t for t in tasks if t.id == completed_id), None)
             if task_info is not None and completed_id is not None:
-                completed_task = runtime.in_flight_tasks.get(completed_id)
+                completed_task = runtime.get_execution(completed_id, task_info.generation)
                 if completed_task is not None:
-                    _finalize_task(task_info, completed_task, runtime)
+                    _finalize_task(task_info, completed_task)
                     _save_tasks(provider_state, tasks)
                     _save_provider_state(session, provider_state, source_id=source_id)
 
@@ -637,13 +697,26 @@ class BackgroundAgentsProvider(ContextProvider):
             if sub_session is None:
                 return f"Error: Session for task {task_id} is no longer available."
 
+            # This record is not running, so a pending tracked execution must be a newer one started
+            # from another snapshot of this session. Running both against one child session is unsafe.
+            current = runtime.in_flight_tasks.get(task_id)
+            if current is not None and not current.done():
+                return (
+                    f"Error: Task {task_id} has a newer execution that is still running. "
+                    "Wait for it to complete before continuing."
+                )
+
             bg_agent = self._agents[key]
+            # Always move past any generation this runtime has seen so the new execution can't be
+            # mistaken for one referenced by another snapshot.
+            generation = max(task_info.generation, runtime.current_generation(task_id) or 0) + 1
 
             async_task = asyncio.create_task(_run_agent(bg_agent.run(text, session=sub_session)))
             try:
-                runtime.track_task(task_id, async_task)
+                runtime.track_task(task_id, async_task, generation=generation)
             except RuntimeError as exc:
                 return f"Error: {exc}"
+            task_info.generation = generation
             task_info.status = BackgroundTaskStatus.RUNNING
             task_info.result_text = None
             task_info.error_text = None
@@ -673,9 +746,12 @@ class BackgroundAgentsProvider(ContextProvider):
             tasks = [t for t in tasks if t.id != task_id]
             _save_tasks(provider_state, tasks)
 
-            # Clean up runtime references.
-            runtime.in_flight_tasks.pop(task_id, None)
-            runtime.background_sessions.pop(task_id, None)
+            # Release runtime references unless a newer execution of this task ID exists (started from
+            # another snapshot of this session); that execution must stay tracked so it can still be
+            # retrieved, cancelled, or drained by release_session.
+            current_generation = runtime.current_generation(task_id)
+            if current_generation is None or current_generation <= task_info.generation:
+                runtime.forget_task(task_id)
 
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Task {task_id} cleared."
