@@ -32,6 +32,27 @@ from agent_framework._middleware import (
 )
 from agent_framework._tools import FunctionTool, ToolTypes
 
+_TERMINATION_TEXT = "Sorry, blocked."
+
+
+def _termination_result(kind: str, stream: bool) -> Any:
+    """The response a middleware hands to ``MiddlewareTermination(result=...)``."""
+    if kind == "agent":
+        if not stream:
+            return AgentResponse(messages=[Message(role="assistant", contents=[_TERMINATION_TEXT])])
+
+        async def _agent_updates() -> AsyncIterable[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(_TERMINATION_TEXT)], role="assistant")
+
+        return ResponseStream(_agent_updates(), finalizer=AgentResponse.from_updates)
+    if not stream:
+        return ChatResponse(messages=[Message(role="assistant", contents=[_TERMINATION_TEXT])])
+
+    async def _chat_updates() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(_TERMINATION_TEXT)], role="assistant")
+
+    return ResponseStream(_chat_updates(), finalizer=ChatResponse.from_updates)
+
 
 class TestAgentContext:
     """Test cases for AgentContext."""
@@ -1929,3 +1950,65 @@ class TestCategorizeMiddleware:
         assert _as_middleware_list((agent_mw,)) == [agent_mw]
         # Strings are sequences but never element-ized into characters.
         assert _as_middleware_list("bare-string") == ["bare-string"]  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+class TestMiddlewareTerminationResult:
+    """``MiddlewareTermination(result=...)`` is the run's result in the agent and chat pipelines too."""
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    async def test_termination_result_is_returned(
+        self, kind: str, stream: bool, mock_agent: SupportsAgentRun, mock_chat_client: Any
+    ) -> None:
+        expected = _termination_result(kind, stream)
+        handler_calls: list[str] = []
+
+        async def terminate(context: Any, call_next: Callable[[], Awaitable[None]]) -> None:
+            raise MiddlewareTermination("blocked", result=expected)
+
+        async def final_handler(context: Any) -> Any:
+            handler_calls.append("final")
+            return None
+
+        messages = [Message(role="user", contents=["test"])]
+        result: object
+        if kind == "agent":
+            result = await AgentMiddlewarePipeline(terminate).execute(
+                AgentContext(agent=mock_agent, messages=messages, stream=stream), final_handler
+            )
+        else:
+            result = await ChatMiddlewarePipeline(terminate).execute(
+                ChatContext(client=mock_chat_client, messages=messages, options={}, stream=stream), final_handler
+            )
+
+        assert result is expected
+        assert handler_calls == []
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    async def test_context_result_wins_over_termination_result(
+        self, kind: str, stream: bool, mock_agent: SupportsAgentRun, mock_chat_client: Any
+    ) -> None:
+        """A result the middleware already set on the context wins, as in the function pipeline."""
+        from_context = _termination_result(kind, stream)
+        from_exception = _termination_result(kind, stream)
+
+        async def set_then_terminate(context: Any, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.result = from_context
+            raise MiddlewareTermination("blocked", result=from_exception)
+
+        async def final_handler(context: Any) -> Any:
+            return None
+
+        messages = [Message(role="user", contents=["test"])]
+        result: object
+        if kind == "agent":
+            result = await AgentMiddlewarePipeline(set_then_terminate).execute(
+                AgentContext(agent=mock_agent, messages=messages, stream=stream), final_handler
+            )
+        else:
+            result = await ChatMiddlewarePipeline(set_then_terminate).execute(
+                ChatContext(client=mock_chat_client, messages=messages, options={}, stream=stream), final_handler
+            )
+
+        assert result is from_context

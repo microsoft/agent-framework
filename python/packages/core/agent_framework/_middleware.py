@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import inspect
 import logging
 import sys
@@ -1452,8 +1451,13 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as exc:
+            if context.result is None:
+                context.result = cast(
+                    "AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None", exc.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
@@ -1663,8 +1667,13 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as exc:
+            if context.result is None:
+                context.result = cast(
+                    "ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None", exc.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
