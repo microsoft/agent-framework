@@ -4780,22 +4780,25 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 logger.warning("Stream cleanup hook failed while handling an existing exception.", exc_info=True)
             finally:
                 try:
-                    await self.close()
+                    await self.close(exc)
                 except Exception:
                     logger.warning("Stream cleanup failed while handling an existing exception.", exc_info=True)
             raise
 
-    async def close(self) -> None:
+    async def close(self, exc: BaseException | None = None) -> None:
         """Close the active iterator and run cleanup hooks.
 
         This method is idempotent and also closes nested ``ResponseStream`` wrappers.
+
+        Args:
+            exc: The error that ended the stream, recorded on this and nested streams while cleanup hooks run.
         """
         iterator_failed = False
         try:
             iterator: AsyncIterator[UpdateT] | None = self._iterator
             if iterator is not None:
                 if isinstance(iterator, ResponseStream):
-                    await cast(ResponseStream[UpdateT, Any], iterator).close()
+                    await cast(ResponseStream[UpdateT, Any], iterator).close(exc)
                 else:
                     close = getattr(iterator, "aclose", None)
                     if close is not None:
@@ -4806,7 +4809,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         finally:
             self._consumed = True
             try:
-                await self._run_cleanup_hooks()
+                if exc is None:
+                    await self._run_cleanup_hooks()
+                else:
+                    await self._handle_stream_error(exc)
             except Exception:
                 if not iterator_failed:
                     raise
