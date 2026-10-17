@@ -80,8 +80,8 @@ class RunnerImpl:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
-        # Identifies the superstep that owns pending state writes, so a stale run's finalizer
-        # does not discard writes staged by a newer run on the same shared State.
+        # Identifies the superstep or checkpoint preparation that owns pending state writes, so a
+        # stale run's finalizer does not discard writes staged by a newer run on the same shared State.
         self._superstep_token: object | None = None
 
         # Checkpointing related attributes
@@ -248,6 +248,7 @@ class RunnerImpl:
         This is used by checkpoint capture paths that need a complete, restorable
         state payload without necessarily writing to a checkpoint storage backend.
         """
+        self._superstep_token = object()
         await self._save_executor_states()
         self._save_edge_runner_states()
         self._state.commit()

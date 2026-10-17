@@ -39,6 +39,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._const import EXECUTOR_STATE_KEY
 
 
 @dataclass
@@ -1536,6 +1537,80 @@ async def test_workflow_partial_stream_does_not_discard_successor_state_writes()
     assert result_b.get_outputs() == ["b-done"]
     assert result_b.get_final_state() == WorkflowRunState.IDLE
     assert workflow._runner.state.get("b_key") == "from-run-B"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_workflow_partial_stream_does_not_discard_successor_entry_checkpoint_snapshots() -> None:
+    """A stale runner finalizer must not discard snapshots staged by a successor's entry checkpoint.
+
+    Stream A is dropped mid-superstep. Stream B's entry checkpoint stages the writer's snapshot,
+    then suspends in the next executor's ``on_checkpoint_save`` while A's deferred ``finally``
+    runs. B's entry checkpoint must still hold B's writer snapshot.
+    """
+    a_staged = asyncio.Event()
+    hook_suspended = asyncio.Event()
+    release_hook = asyncio.Event()
+    gate_armed = False
+
+    class _Writer(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.saves = 0
+
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            if message == "A":
+                a_staged.set()
+                await asyncio.Event().wait()
+            else:
+                await ctx.yield_output("b-done")
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            self.saves += 1
+            return {"saves": self.saves}
+
+    class _SuspendingSave(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
+            pass
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            if gate_armed:
+                hook_suspended.set()
+                await release_hook.wait()
+            return {}
+
+    storage = InMemoryCheckpointStorage()
+    writer = _Writer(id="writer")
+    workflow = (
+        WorkflowBuilder(start_executor=writer, checkpoint_storage=storage)
+        .add_edge(writer, _SuspendingSave(id="gate"))
+        .build()
+    )
+
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (await aiter_a.__anext__()).type != "executor_invoked":
+        pass
+    await a_staged.wait()
+    a_checkpoint_ids = set(await storage.list_checkpoint_ids(workflow_name=workflow.name))
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    gate_armed = True
+    task_b = asyncio.create_task(workflow.run("B", stream=True).get_final_response())
+    await asyncio.wait_for(hook_suspended.wait(), 5)
+
+    # Let stream A's scheduled aclose run its finally while B's writer snapshot is pending.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    release_hook.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+    assert result_b.get_outputs() == ["b-done"]
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    [b_entry] = [c for c in checkpoints if c.checkpoint_id not in a_checkpoint_ids and c.iteration_count == 0]
+    assert b_entry.state[EXECUTOR_STATE_KEY]["writer"] == {"saves": 2}
 
 
 async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:
