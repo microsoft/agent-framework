@@ -4594,7 +4594,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._stream_error = exc
         try:
             # close() also runs the hooks if releasing the iterator fails.
-            await self.close()
+            await self.close(exc)
         finally:
             self._stream_error = None
 

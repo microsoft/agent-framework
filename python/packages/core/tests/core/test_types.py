@@ -5622,9 +5622,10 @@ class TestResponseStreamCleanupHooks:
 
         assert events == ["iterator"]
 
+    @pytest.mark.parametrize("buffered", [False, True])
     @pytest.mark.parametrize("failure", [RuntimeError("hook failed"), asyncio.CancelledError()])
     async def test_outer_stream_error_skips_after_run_with_agent_middleware(
-        self, span_exporter: Any, failure: BaseException
+        self, span_exporter: Any, failure: BaseException, buffered: bool
     ) -> None:
         """An error in a middleware-wrapped agent stream reaches the inner stream, so after_run does not fire."""
 
@@ -5657,6 +5658,8 @@ class TestResponseStreamCleanupHooks:
         session = agent.create_session()
 
         stream = agent.run("hi", stream=True, session=session).with_transform_hook(failing_hook)
+        if buffered:
+            stream = stream.buffer_updates()
         with pytest.raises(type(failure)):
             async for _ in stream:
                 pass
