@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, TypedDict
 
 from agent_framework._settings import SecretString, load_settings
@@ -23,6 +24,23 @@ from ._feature_usage import FeatureIndex
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
+
+
+def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
+
+    Mirrors the tie-breaker used by the core checkpoint storages. Checkpoints taken at the
+    same superstep boundary can share a timestamp. Among the checkpoints with the newest
+    timestamp, one that another of them names as its ``previous_checkpoint_id`` is
+    superseded, so the result does not depend on the order the backend returns rows in.
+    If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
+    is returned, so the choice among them is stable too.
+    """
+    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
+    leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
+    return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
 
 
 class AzureCosmosCheckpointSettings(TypedDict, total=False):
@@ -353,9 +371,33 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name ORDER BY c.timestamp DESC OFFSET 0 LIMIT 1"
+        # Checkpoints taken at the same superstep boundary can share a timestamp, so fetch
+        # every checkpoint at the newest timestamp and resolve the tie through lineage
+        # instead of letting the backend pick one row.
+        max_query = "SELECT VALUE MAX(c.timestamp) FROM c WHERE c.workflow_name = @workflow_name"
+        max_parameters: list[dict[str, object]] = [
+            {"name": "@workflow_name", "value": workflow_name},
+        ]
+
+        max_items = self._container_proxy.query_items(  # type: ignore[union-attr]
+            query=max_query,
+            parameters=max_parameters,
+            partition_key=workflow_name,
+        )
+
+        newest_timestamp: str | None = None
+        async for value in max_items:
+            if isinstance(value, str):
+                newest_timestamp = value
+            break
+
+        if newest_timestamp is None:
+            return None
+
+        query = "SELECT * FROM c WHERE c.workflow_name = @workflow_name AND c.timestamp = @timestamp"
         parameters: list[dict[str, object]] = [
             {"name": "@workflow_name", "value": workflow_name},
+            {"name": "@timestamp", "value": newest_timestamp},
         ]
 
         items = self._container_proxy.query_items(  # type: ignore[union-attr]
@@ -364,16 +406,17 @@ class CosmosCheckpointStorage:
             partition_key=workflow_name,
         )
 
-        async for item in items:
-            checkpoint = self._document_to_checkpoint(item)
-            logger.debug(
-                "Latest checkpoint for workflow %s is %s",
-                workflow_name,
-                checkpoint.checkpoint_id,
-            )
-            return checkpoint
+        candidates = [self._document_to_checkpoint(item) async for item in items]
+        if not candidates:
+            return None
 
-        return None
+        checkpoint = _select_latest_checkpoint(candidates)
+        logger.debug(
+            "Latest checkpoint for workflow %s is %s",
+            workflow_name,
+            checkpoint.checkpoint_id,
+        )
+        return checkpoint
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
