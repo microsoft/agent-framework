@@ -237,6 +237,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   and reconnect or effective header-identity changes replace a framework-owned Client's per-Client cache. Agent
   Framework does not expose shared-store or cache-mode configuration.
 - **MCP Tasks extension** - MCP Python SDK 2.2 does not implement the 2026 `io.modelcontextprotocol/tasks` runtime. Tools that advertise `execution.taskSupport == "required"` are skipped with a warning; optional and task-free tools continue through ordinary `tools/call`. Restoration of the experimental Tasks API and removed sample is tracked in microsoft/agent-framework#8245.
+- **Plain `tools/call` replay gating** - On `ClosedResourceError` / session-terminated `MCPError` the request may already have executed server-side, so `_call_tool_with_retries` only reconnects and replays when the server advertised the tool with `idempotentHint` or `readOnlyHint` (`_is_call_replayable`, backed by the `_tool_annotations_by_name` snapshot from `tools/list`); any other tool raises `ToolExecutionException` stating the outcome is unknown, with the connection error as the inner exception, and leaves reconnection to the caller's own retry policy. Read-only discovery (`tools/list`) and `get_prompt` keep their reconnect-and-retry behavior.
 
 ### File Access Harness (`_harness/_file_access.py`)
 
