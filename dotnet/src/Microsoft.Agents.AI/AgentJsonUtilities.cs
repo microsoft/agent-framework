@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Compaction;
 
 namespace Microsoft.Agents.AI;
 
@@ -69,6 +70,9 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(ChatClientAgentSession))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
     [JsonSerializable(typeof(ChatHistoryMemoryProvider.State))]
+
+    // CompactionProvider types
+    [JsonSerializable(typeof(CompactionProvider.State), TypeInfoPropertyName = "CompactionProviderState")]
 
     // TodoProvider types
     [JsonSerializable(typeof(TodoState))]
