@@ -3335,9 +3335,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import ChatResponse
+                from agent_framework import ChatResponse, Message
 
-                response = ChatResponse.from_updates(updates)
+                response = ChatResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == ChatResponse.from_updates(response.to_updates()).text
         """
         updates = [
@@ -3826,9 +3826,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         Example:
             .. code-block:: python
 
-                from agent_framework import AgentResponse
+                from agent_framework import AgentResponse, Message
 
-                response = AgentResponse.from_updates(updates)
+                response = AgentResponse(messages=[Message("assistant", ["Hello"])])
                 assert response.text == AgentResponse.from_updates(response.to_updates()).text
         """
         updates = [
