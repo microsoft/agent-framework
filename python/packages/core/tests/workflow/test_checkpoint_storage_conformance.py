@@ -200,3 +200,61 @@ async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> N
     first.state["marker"] = "first-updated"
     assert await storage.save(first) == "Round-A"
     assert (await storage.load("Round-A")).state["marker"] == "first-updated"
+
+
+def _filesystem_folds_unicode_normalization(path: Path) -> bool:
+    """True when the volume treats NFC and NFD spellings of a name as one file."""
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café-norm.probe")
+    nfd = unicodedata.normalize("NFD", "café-norm.probe")
+    probe = path / nfc
+    probe.write_text("x")
+    try:
+        return (path / nfd).exists()
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.parametrize("mixed_case", [False, True], ids=["nfc-nfd", "case-nfc-nfd"])
+async def test_file_save_rejects_normalization_variant_checkpoint_id(tmp_path: Path, mixed_case: bool) -> None:
+    """An NFC/NFD spelling variant must not silently replace a checkpoint (#9466).
+
+    APFS and HFS+ fold Unicode normalization forms, so two IDs that differ only
+    in normalization name one file there; str.casefold() alone does not catch
+    it. On volumes without that fold the two files coexist and there is nothing
+    to reject.
+    """
+    import unicodedata
+
+    if not _filesystem_folds_unicode_normalization(tmp_path):
+        pytest.skip("normalization-variant collision only occurs on normalization-insensitive filesystems")
+    first_spelling = unicodedata.normalize("NFC", "Café-1" if mixed_case else "café-1")
+    second_spelling = unicodedata.normalize("NFD", "café-1")
+    assert first_spelling != second_spelling  # the test would be vacuous otherwise
+
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    first = WorkflowCheckpoint(
+        workflow_name="first-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id=first_spelling,
+        state={"marker": "first"},
+    )
+    second = WorkflowCheckpoint(
+        workflow_name="second-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id=second_spelling,
+        state={"marker": "second"},
+    )
+
+    first_id = await storage.save(first)
+    with pytest.raises(WorkflowCheckpointException, match="collides"):
+        await storage.save(second)
+
+    restored = await storage.load(first_id)
+    assert restored.checkpoint_id == first_spelling
+    assert restored.state["marker"] == "first"
+
+    # Re-saving the exact same spelling remains a normal update.
+    first.state["marker"] = "first-updated"
+    assert await storage.save(first) == first_spelling

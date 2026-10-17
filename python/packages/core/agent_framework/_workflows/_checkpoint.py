@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
@@ -572,15 +573,17 @@ class FileCheckpointStorage:
         return file_path
 
     @staticmethod
-    def _assert_no_case_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
+    def _assert_no_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
         """Reject an ID that the filesystem cannot store as an independent file.
 
         On case-insensitive filesystems (the default on Windows and macOS),
         ``Round-A.json`` and ``round-a.json`` name the same file, so a save under
         the variant spelling would silently replace the other checkpoint and its
-        reads would then return the wrong workflow's state (#9444). On
-        case-sensitive filesystems the variant path simply does not exist, so
-        the directory scan below is skipped entirely there.
+        reads would then return the wrong workflow's state (#9444). APFS and HFS+
+        additionally fold Unicode normalization forms, so ``café-1.json`` spelled
+        NFC and NFD is also one file there (#9466 review). On filesystems without
+        those folds the variant path simply does not exist, so the directory scan
+        below is skipped entirely there.
         """
         if not file_path.exists():
             return
@@ -593,26 +596,35 @@ class FileCheckpointStorage:
             siblings = [entry.name for entry in file_path.parent.iterdir()]
         except OSError as exc:
             # Permissions can allow lookup/creation/replacement while denying
-            # enumeration, so skipping the scan here would let a case-variant
+            # enumeration, so skipping the scan here would let a variant
             # save proceed unchecked. Fail closed instead.
             raise WorkflowCheckpointException(
                 f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
                 "the storage directory could not be listed."
             ) from exc
+        # The filesystem key is the NFC-normalized, case-folded spelling: both
+        # folds are lossy on the volumes that perform them, so two IDs sharing
+        # a key cannot coexist there. str.casefold() alone does not normalize.
+
+        def _fs_key(name: str) -> str:
+            return unicodedata.normalize("NFC", name).casefold()
+
+        expected_key = _fs_key(expected_name)
         variant = next(
-            (name for name in siblings if name != expected_name and name.casefold() == expected_name.casefold()),
+            (name for name in siblings if name != expected_name and _fs_key(name) == expected_key),
             None,
         )
         if variant is None or expected_name in siblings:
-            # No case-only variant exists, or the exact spelling is already
-            # stored (a same-ID update on a case-sensitive volume where both
+            # No filesystem-folded variant exists, or the exact spelling is
+            # already stored (a same-ID update on a volume where distinct
             # spellings legitimately coexist).
             return
         raise WorkflowCheckpointException(
             f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
             f"{variant.removesuffix('.json')!r}: on this filesystem both names "
             "resolve to one file, and saving would replace that checkpoint's data. "
-            "Choose a checkpoint ID that differs by more than letter case."
+            "Choose a checkpoint ID that differs by more than letter case or "
+            "Unicode normalization form."
         )
 
     @classmethod
@@ -636,7 +648,7 @@ class FileCheckpointStorage:
         from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
-        self._assert_no_case_variant_collision(file_path, checkpoint.checkpoint_id)
+        self._assert_no_variant_collision(file_path, checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
         # Fail at save time if encoding or restore validation fails (#8181).
         try:
