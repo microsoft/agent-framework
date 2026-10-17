@@ -80,6 +80,9 @@ class RunnerImpl:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
+        # Identifies the superstep that owns pending state writes, so a stale run's finalizer
+        # does not discard writes staged by a newer run on the same shared State.
+        self._superstep_token: object | None = None
 
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
@@ -125,6 +128,8 @@ class RunnerImpl:
             yield WorkflowEvent.superstep_started(iteration=self._iteration + 1)
 
             committed = False
+            superstep_token = object()
+            self._superstep_token = superstep_token
             try:
                 # Wake on either a live event or iteration completion, including silent supersteps.
                 iteration_task = asyncio.create_task(self._run_iteration())
@@ -167,7 +172,7 @@ class RunnerImpl:
                 self._state.commit()
                 committed = True
             finally:
-                if not committed:
+                if not committed and self._superstep_token is superstep_token:
                     self._state.discard()
 
             # Create checkpoint after each superstep iteration

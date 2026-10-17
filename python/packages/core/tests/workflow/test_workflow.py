@@ -1483,6 +1483,61 @@ async def test_workflow_partial_stream_does_not_clobber_successor_active_run() -
     await asyncio.sleep(0)
 
 
+async def test_workflow_partial_stream_does_not_discard_successor_state_writes() -> None:
+    """A stale runner finalizer must not discard a successor run's pending state writes.
+
+    Same GC-finalizer race as
+    ``test_workflow_partial_stream_does_not_clobber_successor_active_run`` but inside a
+    superstep: stream A is dropped while its executor has staged a write, stream B stages
+    its own write, then A's deferred ``finally`` runs. It must only discard A's superstep,
+    so B's write is committed when B completes.
+    """
+    a_staged = asyncio.Event()
+    b_staged = asyncio.Event()
+    release_b = asyncio.Event()
+
+    class _Writer(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            if message == "A":
+                ctx.set_state("a_key", "from-run-A")
+                a_staged.set()
+                await asyncio.Event().wait()
+            else:
+                ctx.set_state("b_key", "from-run-B")
+                b_staged.set()
+                await release_b.wait()
+                await ctx.yield_output("b-done")
+
+    workflow = WorkflowBuilder(start_executor=_Writer(id="writer")).build()
+
+    # Drive stream A until its executor has staged a write and is blocked, then drop it.
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (await aiter_a.__anext__()).type != "executor_invoked":
+        pass
+    await a_staged.wait()
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    async def consume_b() -> WorkflowRunResult:
+        return await workflow.run("B", stream=True).get_final_response()
+
+    task_b = asyncio.create_task(consume_b())
+    await asyncio.wait_for(b_staged.wait(), 5)
+
+    # Let stream A's scheduled aclose run its finally while B's write is pending.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+    release_b.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+
+    assert result_b.get_outputs() == ["b-done"]
+    assert result_b.get_final_state() == WorkflowRunState.IDLE
+    assert workflow._runner.state.get("b_key") == "from-run-B"  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:
     """A new run must not inherit a prior run's leftover runtime checkpoint storage.
 
