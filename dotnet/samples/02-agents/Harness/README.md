@@ -11,6 +11,44 @@ Samples demonstrating the [Harness AIContextProviders](../../../src/Microsoft.Ag
 | [Harness_Step03_DataProcessing](./Harness_Step03_DataProcessing/README.md) | Using FileAccessProvider to give an agent access to CSV data files for reading, analysis, and output generation |
 | [Harness_Step05_Loop](./Harness_Step05_Loop/README.md) | Wrapping a HarnessAgent with the LoopAgent decorator to re-invoke it until a configured LoopEvaluator (completion marker, predicate, AI judge, or approval-aware loop) decides to stop |
 
+## Choose the model API before configuring reasoning
+
+`AsHarnessAgent` uses the `IChatClient` you supply. That interface does not select
+an HTTP API: the underlying client determines whether requests use Chat Completions
+or Responses. Setting `ChatOptions.Reasoning` does not switch between them.
+
+For example, the Aspire Azure OpenAI `AddChatClient(deploymentName)` registration
+in [issue #8429](https://github.com/microsoft/agent-framework/issues/8429) sends
+Chat Completions requests. If the service rejects reasoning together with function
+tools on that API, changing harness instructions will not resolve the rejection.
+Use a Responses client supported by your endpoint and SDK, or a reasoning/tool
+combination supported by the API you selected.
+
+These samples use a **Foundry project endpoint** and explicitly select Responses.
+The client construction in [Harness_Step01_Research](./Harness_Step01_Research/Program.cs)
+follows this sequence:
+
+```csharp
+// projectClient is an Azure.AI.Projects.AIProjectClient configured for your Foundry project.
+IChatClient chatClient = projectClient.GetProjectOpenAIClient()
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName);
+```
+
+`IChatClient` and `AsIChatClient` use the `Microsoft.Extensions.AI` namespace.
+See the linked sample for its package references, authentication, and complete setup.
+`FOUNDRY_PROJECT_ENDPOINT` is a project endpoint, not an Azure OpenAI resource
+endpoint; do not substitute one for the other.
+
+Applications using an `AzureOpenAIClient` registered by Aspire must also verify
+that their installed Azure SDK and Aspire versions support Responses for their
+resource endpoint. The compatibility problems linked from #8429 are tracked in
+[#7484](https://github.com/microsoft/agent-framework/issues/7484),
+[Aspire #20175](https://github.com/microsoft/aspire/issues/20175), and
+[Azure SDK #60689](https://github.com/Azure/azure-sdk-for-net/issues/60689).
+The Foundry project sample above does not establish that those resource-client
+paths work with every package version.
+
 ## Build your own claw blog series
 
 Samples accompanying the [*Build your own agent harness or claw with Microsoft Agent Framework*](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework) blog series, which builds a personal finance assistant step by step.
