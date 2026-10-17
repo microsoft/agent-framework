@@ -584,23 +584,36 @@ class FileCheckpointStorage:
         """
         if not file_path.exists():
             return
-        expected_name = file_path.name
+        # Derive the expected spelling from the requested ID, not the resolved
+        # path: on Windows Path.resolve() canonicalizes an existing file to its
+        # on-disk casing, so file_path.name would already be the colliding
+        # name and the check below would accept the overwrite (#9444).
+        expected_name = f"{checkpoint_id}.json"
         try:
-            for sibling in file_path.parent.iterdir():
-                if sibling.name.casefold() != expected_name.casefold():
-                    continue
-                if sibling.name != expected_name:
-                    raise WorkflowCheckpointException(
-                        f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
-                        f"{sibling.name.removesuffix('.json')!r}: on this filesystem both names "
-                        "resolve to one file, and saving would replace that checkpoint's data. "
-                        "Choose a checkpoint ID that differs by more than letter case."
-                    )
-                return
-        except OSError:
-            # A transient listing/read failure must not turn a routine save into a
-            # hard failure; the write below still fails loudly if the path is bad.
+            siblings = [entry.name for entry in file_path.parent.iterdir()]
+        except OSError as exc:
+            # Permissions can allow lookup/creation/replacement while denying
+            # enumeration, so skipping the scan here would let a case-variant
+            # save proceed unchecked. Fail closed instead.
+            raise WorkflowCheckpointException(
+                f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
+                "the storage directory could not be listed."
+            ) from exc
+        variant = next(
+            (name for name in siblings if name != expected_name and name.casefold() == expected_name.casefold()),
+            None,
+        )
+        if variant is None or expected_name in siblings:
+            # No case-only variant exists, or the exact spelling is already
+            # stored (a same-ID update on a case-sensitive volume where both
+            # spellings legitimately coexist).
             return
+        raise WorkflowCheckpointException(
+            f"Checkpoint ID {checkpoint_id!r} collides with the existing checkpoint "
+            f"{variant.removesuffix('.json')!r}: on this filesystem both names "
+            "resolve to one file, and saving would replace that checkpoint's data. "
+            "Choose a checkpoint ID that differs by more than letter case."
+        )
 
     @classmethod
     def _delete_lock(cls, file_path: Path) -> threading.Lock:

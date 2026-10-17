@@ -163,12 +163,13 @@ def _filesystem_is_case_insensitive(path: Path) -> bool:
         probe.unlink()
 
 
-@pytest.mark.skipif(
-    not _filesystem_is_case_insensitive(Path(__file__).parent),
-    reason="case-variant collision only occurs on case-insensitive filesystems",
-)
 async def test_file_save_rejects_case_variant_checkpoint_id(tmp_path: Path) -> None:
     """A case-only variant ID must not silently replace the other checkpoint (#9444)."""
+    # Probe inside the test on tmp_path: a module-level probe races under
+    # pytest-xdist workers sharing the source directory, and tmp_path is the
+    # volume that actually holds the checkpoints.
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case-variant collision only occurs on case-insensitive filesystems")
     storage = FileCheckpointStorage(tmp_path / "checkpoints")
     first = WorkflowCheckpoint(
         workflow_name="first-workflow",
