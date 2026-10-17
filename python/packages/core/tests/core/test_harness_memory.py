@@ -238,6 +238,7 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
         "sessions_since_consolidation": [],
+        "pending_turn_ids": {},
     }
     store.write_state(
         session,
@@ -789,6 +790,382 @@ async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic
     assert sorted(topic.memories) == sorted(memories)
 
 
+class _GatedMemoryClient:
+    """Chat client that can hold extraction for one marked turn, and consolidation, until released."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self, *, extraction_marker: str) -> None:
+        self.additional_properties = {}
+        self.extraction_marker = extraction_marker
+        self.extraction_started = asyncio.Event()
+        self.release_extraction = asyncio.Event()
+        self.consolidation_started = asyncio.Event()
+        self.release_consolidation = asyncio.Event()
+        self.release_consolidation.set()
+        self.consolidated_topics: list[str] = []
+
+    async def get_response(self, messages: Sequence[Message], **kwargs: object) -> ChatResponse[Any]:
+        del kwargs
+        system_text = messages[0].text.lower() if messages and messages[0].role == "system" else ""
+        if "extract durable memory candidates" in system_text:
+            memories: list[dict[str, str]] = []
+            if self.extraction_marker in messages[1].text:
+                self.extraction_started.set()
+                await self.release_extraction.wait()
+                memories = [{"topic": "New", "memory": f"{self.extraction_marker} fact"}]
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps({"memories": memories})])])
+        if "consolidate one topic memory file" in system_text:
+            self.consolidated_topics.append(messages[1].text)
+            self.consolidation_started.set()
+            await self.release_consolidation.wait()
+            payload = {"summary": "Old summary.", "memories": ["Old fact"]}
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps(payload)])])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
+
+
+def _gated_consolidation_setup(tmp_path: Path, client: _GatedMemoryClient) -> tuple[MemoryFileStore, Agent]:
+    """Seed an Old topic and one pending session so the next finished session triggers consolidation."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    seed_session = _owned_session("session-a")
+    store.write_topic(
+        seed_session,
+        MemoryTopicRecord(
+            topic="Old",
+            summary="Old summary.",
+            memories=["Old fact"],
+            updated_at="2026-10-01T00:00:00+00:00",
+            session_ids=["session-a"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    store.write_state(
+        seed_session,
+        {"last_consolidated_at": None, "sessions_since_consolidation": ["session-a"]},
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    agent = Agent(client=client, context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    return store, agent
+
+
+def _owned_session(session_id: str) -> AgentSession:
+    session = AgentSession(session_id=session_id)
+    session.state["owner_id"] = "alice"
+    return session
+
+
+def _pending_sessions(store: MemoryFileStore) -> list[str]:
+    pending: list[str] = store.read_state(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID)[
+        "sessions_since_consolidation"
+    ]
+    return pending
+
+
+async def _run_turn(agent: Agent, text: str, session_id: str) -> None:
+    await agent.run(text, session=_owned_session(session_id))
+
+
+async def test_automatic_consolidation_keeps_session_extracting_during_pass(tmp_path: Path) -> None:
+    """A session still extracting when a consolidation pass finishes stays pending for the next pass."""
+    client = _GatedMemoryClient(extraction_marker="B turn")
+    store, agent = _gated_consolidation_setup(tmp_path, client)
+    client.release_consolidation.clear()
+
+    consolidating_run = asyncio.create_task(_run_turn(agent, "Second turn.", "session-2"))
+    await client.consolidation_started.wait()
+    extracting_run = asyncio.create_task(_run_turn(agent, "B turn.", "session-b"))
+    await client.extraction_started.wait()
+
+    client.release_consolidation.set()
+    await consolidating_run
+    client.release_extraction.set()
+    await extracting_run
+
+    assert _pending_sessions(store) == ["session-b"]
+
+    await agent.run("Third turn.", session=_owned_session("session-c"))
+    assert _pending_sessions(store) == []
+    assert len(client.consolidated_topics) == 3
+    assert any("B turn fact" in topic for topic in client.consolidated_topics[1:])
+
+
+async def test_automatic_consolidation_keeps_session_extracting_before_snapshot(tmp_path: Path) -> None:
+    """A session that starts extracting before a pass snapshots the topics stays pending for the next pass."""
+    client = _GatedMemoryClient(extraction_marker="B turn")
+    store, agent = _gated_consolidation_setup(tmp_path, client)
+
+    extracting_run = asyncio.create_task(_run_turn(agent, "B turn.", "session-b"))
+    await client.extraction_started.wait()
+
+    await agent.run("Second turn.", session=_owned_session("session-2"))
+    assert len(client.consolidated_topics) == 1
+    assert _pending_sessions(store) == []
+
+    client.release_extraction.set()
+    await extracting_run
+
+    assert _pending_sessions(store) == ["session-b"]
+    new_topic = store.get_topic(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID, topic="New")
+    assert new_topic.memories == ["B turn fact"]
+
+    await agent.run("Third turn.", session=_owned_session("session-c"))
+    assert _pending_sessions(store) == []
+    assert any("B turn fact" in topic for topic in client.consolidated_topics[1:])
+
+
+class _OrderedConsolidationClient:
+    """Chat client that holds each consolidation call until the test releases it."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self, *, extraction_marker: str) -> None:
+        self.additional_properties = {}
+        self.extraction_marker = extraction_marker
+        self.consolidated_topics: list[str] = []
+        self.consolidation_gates: list[asyncio.Event] = []
+        self.consolidation_call_started = asyncio.Event()
+
+    async def wait_for_consolidation_calls(self, count: int) -> None:
+        while len(self.consolidation_gates) < count:
+            self.consolidation_call_started.clear()
+            await self.consolidation_call_started.wait()
+
+    async def get_response(self, messages: Sequence[Message], **kwargs: object) -> ChatResponse[Any]:
+        del kwargs
+        system_text = messages[0].text.lower() if messages and messages[0].role == "system" else ""
+        if "extract durable memory candidates" in system_text:
+            memories: list[dict[str, str]] = []
+            if self.extraction_marker in messages[1].text:
+                memories = [{"topic": "New", "memory": f"{self.extraction_marker} fact"}]
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps({"memories": memories})])])
+        if "consolidate one topic memory file" in system_text:
+            self.consolidated_topics.append(messages[1].text)
+            gate = asyncio.Event()
+            self.consolidation_gates.append(gate)
+            self.consolidation_call_started.set()
+            await gate.wait()
+            topic = "New" if self.extraction_marker in messages[1].text else "Old"
+            payload = {"summary": f"{topic} summary.", "memories": [f"{topic} fact"]}
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps(payload)])])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
+
+
+async def test_automatic_consolidation_keeps_overlapping_turn_of_covered_session_pending(tmp_path: Path) -> None:
+    """A later turn of a session that a running pass already covers stays pending after that pass.
+
+    ``Agent.run`` does not serialize runs per session, so a second ``session-1`` turn can write a new
+    topic and register itself while a pass that snapshotted ``session-1`` as pending is still running.
+    """
+    client = _OrderedConsolidationClient(extraction_marker="Later turn")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    seed_session = _owned_session("session-a")
+    store.write_topic(
+        seed_session,
+        MemoryTopicRecord(
+            topic="Old",
+            summary="Old summary.",
+            memories=["Old fact"],
+            updated_at="2026-10-01T00:00:00+00:00",
+            session_ids=["session-a"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    store.write_state(
+        seed_session,
+        {"last_consolidated_at": None, "sessions_since_consolidation": ["session-a"]},
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    agent = Agent(client=client, context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    # The first turn registers session-1 and starts a pass whose snapshot covers it and the Old topic.
+    first_run = asyncio.create_task(_run_turn(agent, "First turn.", "session-1"))
+    await client.wait_for_consolidation_calls(1)
+
+    # The overlapping second turn writes the New topic, registers session-1 again and starts its own
+    # pass, which holds on the New topic.
+    second_run = asyncio.create_task(_run_turn(agent, "Later turn.", "session-1"))
+    await client.wait_for_consolidation_calls(2)
+    assert "Later turn fact" in client.consolidated_topics[1]
+    assert _pending_sessions(store) == ["session-a", "session-1"]
+
+    # The first pass finishes: its snapshot did not include the second turn, so session-1 stays pending.
+    client.consolidation_gates[0].set()
+    await first_run
+    assert _pending_sessions(store) == ["session-1"]
+
+    # The second pass covered the second turn and retires it.
+    client.consolidation_gates[1].set()
+    await client.wait_for_consolidation_calls(3)
+    client.consolidation_gates[2].set()
+    await second_run
+    assert _pending_sessions(store) == []
+
+
+class _RegisteringConsolidationClient:
+    """Consolidation client that registers another finished turn while the pass is running."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self, store: MemoryFileStore, session: AgentSession, session_id: str) -> None:
+        self.additional_properties = {}
+        self.store = store
+        self.session = session
+        self.session_id = session_id
+
+    async def get_response(self, *args: object, **kwargs: object) -> ChatResponse[Any]:
+        del args, kwargs
+        state = self.store.read_state(self.session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+        if self.session_id not in state["sessions_since_consolidation"]:
+            state["sessions_since_consolidation"].append(self.session_id)
+        state["pending_turn_ids"][self.session_id] = "later-turn"
+        self.store.write_state(self.session, state, source_id=DEFAULT_MEMORY_SOURCE_ID)
+        payload = {"summary": "Old summary.", "memories": ["Old fact"]}
+        return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps(payload)])])
+
+
+@pytest.mark.parametrize(
+    "later_session_id",
+    [
+        pytest.param("session-b", id="new_session"),
+        pytest.param("session-a", id="pending_session_without_turn_id"),
+        pytest.param("session-2", id="pending_session_with_turn_id"),
+    ],
+)
+async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path: Path, later_session_id: str) -> None:
+    """Completing a pass clears the turns it covered and keeps turns registered after its snapshot.
+
+    ``session-a`` is pending without a turn id, like state written before turn ids were recorded.
+    """
+    session = _owned_session("session-2")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    client = _RegisteringConsolidationClient(store, session, later_session_id)
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    store.write_state(
+        session,
+        {
+            "last_consolidated_at": None,
+            "sessions_since_consolidation": ["session-a", "session-2"],
+            "pending_turn_ids": {"session-2": "earlier-turn"},
+        },
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="Old",
+            summary="Old summary.",
+            memories=["Old fact"],
+            updated_at="2026-10-01T00:00:00+00:00",
+            session_ids=["session-a"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    consolidated_count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        session=session,
+        force=False,
+        now=datetime(2026, 10, 8, tzinfo=timezone.utc),
+    )
+
+    assert consolidated_count == 1
+    assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
+        "last_consolidated_at": "2026-10-08T00:00:00+00:00",
+        "sessions_since_consolidation": [later_session_id],
+        "pending_turn_ids": {later_session_id: "later-turn"},
+    }
+
+
+class _TwoTopicExtractionClient:
+    """Chat client whose extraction returns two memories in different topics."""
+
+    additional_properties: dict[str, Any]
+
+    def __init__(self) -> None:
+        self.additional_properties = {}
+
+    async def get_response(self, messages: Sequence[Message], **kwargs: object) -> ChatResponse[Any]:
+        del kwargs
+        system_text = messages[0].text.lower() if messages and messages[0].role == "system" else ""
+        if "extract durable memory candidates" in system_text:
+            memories = [{"topic": "First", "memory": "First fact"}, {"topic": "Second", "memory": "Second fact"}]
+            return ChatResponse(messages=[Message(role="assistant", contents=[json.dumps({"memories": memories})])])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
+
+
+def _two_topic_setup(tmp_path: Path) -> tuple[MemoryFileStore, MemoryContextProvider, Agent]:
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)
+    agent = Agent(client=_TwoTopicExtractionClient(), context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    return store, provider, agent
+
+
+@pytest.mark.parametrize("failing_step", ["second_topic_write", "rebuild_index"])
+async def test_memory_session_stays_pending_when_extraction_fails_after_a_topic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing_step: str
+) -> None:
+    """A run that persisted a topic and then failed still registers its session for consolidation."""
+    store, _, agent = _two_topic_setup(tmp_path)
+    if failing_step == "second_topic_write":
+        original_write_topic = store.write_topic
+        written_topics: list[str] = []
+
+        def write_topic(session: AgentSession, record: MemoryTopicRecord, **kwargs: Any) -> None:
+            if written_topics:
+                raise OSError("disk full")
+            written_topics.append(record.topic)
+            original_write_topic(session, record, **kwargs)
+
+        monkeypatch.setattr(store, "write_topic", write_topic)
+    else:
+        original_rebuild_index = store.rebuild_index
+
+        def rebuild_index(session: AgentSession, **kwargs: Any) -> list[MemoryIndexEntry]:
+            # ``before_run`` also rebuilds the index; fail only the rebuild after extraction wrote topics.
+            if store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID):
+                raise OSError("disk full")
+            return original_rebuild_index(session, **kwargs)
+
+        monkeypatch.setattr(store, "rebuild_index", rebuild_index)
+
+    with pytest.raises(OSError, match="disk full"):
+        await _run_turn(agent, "Remember this.", "session-1")
+
+    first_topic = store.get_topic(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID, topic="First")
+    assert first_topic.memories == ["First fact"]
+    assert _pending_sessions(store) == ["session-1"]
+
+
+async def test_memory_session_stays_pending_when_extraction_is_cancelled_after_a_topic_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run cancelled after persisting a topic still registers its session for consolidation."""
+    store, provider, agent = _two_topic_setup(tmp_path)
+    original_merge_memory = provider._merge_memory  # pyright: ignore[reportPrivateUsage]
+    second_merge_started = asyncio.Event()
+
+    async def merge_memory(**kwargs: Any) -> MemoryTopicRecord:
+        if kwargs["topic"] == "Second":
+            second_merge_started.set()
+            await asyncio.Event().wait()
+        return await original_merge_memory(**kwargs)
+
+    monkeypatch.setattr(provider, "_merge_memory", merge_memory)
+
+    run = asyncio.create_task(_run_turn(agent, "Remember this.", "session-1"))
+    await second_merge_started.wait()
+    assert _pending_sessions(store) == []
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    first_topic = store.get_topic(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID, topic="First")
+    assert first_topic.memories == ["First fact"]
+    assert _pending_sessions(store) == ["session-1"]
+
+
 def test_memory_harness_classes_are_marked_experimental() -> None:
     """Memory harness public classes should expose HARNESS experimental metadata."""
     assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -872,6 +1249,7 @@ async def test_memory_file_store_does_not_mkdir_on_pure_read_paths(tmp_path) -> 
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
         "sessions_since_consolidation": [],
+        "pending_turn_ids": {},
     }
     assert store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="anything") == []
 
@@ -931,6 +1309,7 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     pre_state = {
         "last_consolidated_at": "2026-04-20T09:00:00+00:00",
         "sessions_since_consolidation": ["queued-session"],
+        "pending_turn_ids": {"queued-session": "turn-1"},
     }
     store.write_state(session, pre_state, source_id=DEFAULT_MEMORY_SOURCE_ID)
     store.write_topic(
