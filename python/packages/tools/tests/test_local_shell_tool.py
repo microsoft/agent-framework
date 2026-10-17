@@ -846,3 +846,44 @@ async def test_persistent_confines_workdir_by_default_powershell(tmp_path: os.Pa
         await tool.run(f"Set-Location -LiteralPath '{subdir}'")
         pwd = await tool.run("(Get-Location).Path")
         assert os.path.realpath(pwd.stdout.strip()) == os.path.realpath(str(tmp_path))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX pipe stdin test")
+async def test_stateless_does_not_inherit_host_stdin() -> None:
+    """Regression: stateless commands must not inherit the host's stdin.
+
+    Without stdin=DEVNULL, a model-chosen command like `cat` would read from
+    the agent host's stdin. In a CLI agent, that's where the user types approval
+    prompts, so `cat` would steal input and cause either theft or a hang.
+
+    This test runs a real `cat` against a real pipe as the host's stdin and asserts:
+    1. The command gets EOF immediately (not the pipe's data)
+    2. The pipe's data is still unread by the host
+    """
+    import os
+
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+
+    # Create a pipe and write data to it: this simulates a host that has
+    # input queued on stdin (e.g., a CLI agent with pre-filled approval).
+    r, w = os.pipe()
+    try:
+        os.write(w, b"host stdin data that must not be read by the tool\n")
+        os.close(w)
+
+        # Run `cat` through the tool. Without the fix, `cat` would read from
+        # the inherited stdin (the pipe) and block until EOF.
+        result = await tool.run("cat", timeout=1.0)
+
+        # The command should exit with code 0 and produce no output (got EOF).
+        assert result.exit_code == 0, f"cat exited with {result.exit_code}"
+        assert result.stdout == "", f"cat unexpectedly read stdin: {result.stdout!r}"
+        assert result.timed_out is False, "cat hung waiting for stdin"
+
+        # Verify the pipe's data is still unread by the host.
+        remaining = os.read(r, 1024)
+        assert remaining == b"host stdin data that must not be read by the tool\n", (
+            f"Host stdin was consumed: {remaining!r}"
+        )
+    finally:
+        os.close(r)
