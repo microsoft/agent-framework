@@ -860,16 +860,21 @@ async def test_stateless_does_not_inherit_host_stdin() -> None:
     1. The command gets EOF immediately (not the pipe's data)
     2. The pipe's data is still unread by the host
     """
-    import os
-
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
 
     # Create a pipe and write data to it: this simulates a host that has
     # input queued on stdin (e.g., a CLI agent with pre-filled approval).
     r, w = os.pipe()
+    # Save the original stdin so we can restore it in finally
+    original_stdin = os.dup(0)
     try:
         os.write(w, b"host stdin data that must not be read by the tool\n")
-        os.close(w)
+        # Keep write end open while executing so cat doesn't get EOF immediately
+        # if it inherits the pipe. Only close it after subprocess completes.
+
+        # Redirect file descriptor 0 (stdin) to the pipe's read end.
+        # This makes the pipe the host process's stdin.
+        os.dup2(r, 0)
 
         # Run `cat` through the tool. Without the fix, `cat` would read from
         # the inherited stdin (the pipe) and block until EOF.
@@ -881,9 +886,15 @@ async def test_stateless_does_not_inherit_host_stdin() -> None:
         assert result.timed_out is False, "cat hung waiting for stdin"
 
         # Verify the pipe's data is still unread by the host.
+        # Since stdin is still redirected to the pipe, we need to restore it first.
+        os.dup2(original_stdin, 0)
         remaining = os.read(r, 1024)
         assert remaining == b"host stdin data that must not be read by the tool\n", (
             f"Host stdin was consumed: {remaining!r}"
         )
     finally:
+        # Restore original stdin even if execution or assertions fail
+        os.dup2(original_stdin, 0)
+        os.close(original_stdin)
         os.close(r)
+        os.close(w)
