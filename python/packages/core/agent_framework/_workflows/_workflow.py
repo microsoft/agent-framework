@@ -876,6 +876,12 @@ class Workflow(DictConvertible):
         # its async-generator finalizer ran. Clear it so this run starts clean and does
         # not silently inherit the prior run's runtime checkpoint storage.
         self._runner.context.clear_runtime_checkpoint_storage()
+        # A dropped run can also leave uncommitted writes pending on the shared
+        # state (its finalizer, epoch-guarded in the runner, skips the discard
+        # once this run takes over). Sweep them here, before this run stages and
+        # commits its own run kwargs, so the leftover writes are neither kept
+        # nor folded into this run's first commit (#9473).
+        self._runner.state.discard()
         runtime_tools = normalize_tools(tools) if tools is not None else None
         self._runner.context.set_runtime_tools(runtime_tools)
 

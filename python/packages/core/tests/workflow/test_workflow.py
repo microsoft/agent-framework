@@ -2205,3 +2205,87 @@ async def test_resolve_pause_checkpoint_id_uses_builder_storage() -> None:
     pause_id = workflow.get_last_checkpoint_id()
     resolved = await workflow.resolve_pause_checkpoint_id({"approval-1"})
     assert resolved == pause_id
+
+
+@dataclass
+class _StagingMessage:
+    run: str
+
+
+async def test_workflow_dropped_stream_finalizer_preserves_successor_state_writes() -> None:
+    """A dropped run's late finalizer must not discard the next run's state writes.
+
+    Repro for #9473:
+
+    1. Run A stages ``a_key`` and blocks mid-superstep; its stream is dropped,
+       so ``aclose`` is scheduled on the loop but has not run yet.
+    2. Run B starts on the same workflow before that finalizer executes and
+       stages ``b_key``.
+    3. The loop runs A's stale finalizer. Without the epoch guard its
+       ``State.discard()`` clears B's pending ``b_key`` as well, and B still
+       finishes IDLE with the write silently gone.
+    """
+    a_staged = asyncio.Event()
+    b_staged = asyncio.Event()
+    release_b = asyncio.Event()
+
+    class StagingExecutor(Executor):
+        @handler
+        async def handle(self, message: _StagingMessage, ctx: WorkflowContext[_StagingMessage, str]) -> None:
+            if message.run == "A":
+                ctx.set_state("a_key", "from-run-A")
+                a_staged.set()
+                await asyncio.Event().wait()  # never released; run A is abandoned here
+            else:
+                ctx.set_state("b_key", "from-run-B")
+                b_staged.set()
+                await release_b.wait()
+                await ctx.yield_output("b-done")
+
+    workflow = WorkflowBuilder(start_executor=StagingExecutor(id="staging_exec")).build()
+
+    # Step 1: drive stream A until its executor has been invoked, then staged
+    # a_key and blocked inside the superstep.
+    stream_a = workflow.run(_StagingMessage(run="A"), stream=True)
+    aiter_a = stream_a.__aiter__()
+    while True:
+        event = await aiter_a.__anext__()
+        if event.type == "executor_invoked":
+            break
+    await a_staged.wait()
+
+    # Step 2: drop stream A; GC schedules the async-gen close without running it.
+    del stream_a
+    del aiter_a
+    del event
+    gc.collect()
+
+    # Step 3: start run B before A's finalizer executes. B sweeps A's leftover
+    # write at entry, then stages its own.
+    async def consume_b() -> tuple[list[str], WorkflowRunState | None]:
+        outputs: list[str] = []
+        final_state: WorkflowRunState | None = None
+        async for ev in workflow.run(_StagingMessage(run="B"), stream=True):
+            if ev.type == "output":
+                outputs.append(ev.data)
+            elif ev.type == "status":
+                final_state = ev.state
+        return outputs, final_state
+
+    task_b = asyncio.create_task(consume_b())
+    await asyncio.wait_for(b_staged.wait(), 5)
+
+    # Step 4: let the loop drive A's stale finalizer through GeneratorExit.
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+
+    # Step 5: release B; it converges and commits its superstep.
+    release_b.set()
+    outputs, final_state = await asyncio.wait_for(task_b, 5)
+
+    assert outputs == ["b-done"]
+    assert final_state == WorkflowRunState.IDLE
+    state = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert state.get("b_key") == "from-run-B"
+    # A's unfinished write was swept at B's entry, not committed into the state.
+    assert "a_key" not in state

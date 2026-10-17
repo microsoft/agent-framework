@@ -81,6 +81,13 @@ class RunnerImpl:
         self._max_iterations = max_iterations
         self._state = state
 
+        # Incremented once per drive of ``run_until_convergence``. A dropped
+        # stream's late finalizer (GeneratorExit arrives after a successor run
+        # already drives this shared state) must not discard the successor's
+        # pending writes, so the superstep cleanup below is epoch-guarded
+        # (#9473).
+        self._run_epoch = 0
+
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
 
@@ -114,6 +121,9 @@ class RunnerImpl:
         to entering this loop, since only the workflow knows how the run was started
         (fresh input vs. checkpoint resume vs. responses).
         """
+        self._run_epoch += 1
+        my_epoch = self._run_epoch
+
         # Emit any events already produced prior to entering loop
         if await self._ctx.has_events():
             logger.info("Yielding pre-loop events")
@@ -167,7 +177,10 @@ class RunnerImpl:
                 self._state.commit()
                 committed = True
             finally:
-                if not committed:
+                if not committed and self._run_epoch == my_epoch:
+                    # Stale finalizers (a successor run has already bumped the
+                    # epoch) leave the pending writes alone: they now belong to
+                    # the successor, which swept ours at its own entry (#9473).
                     self._state.discard()
 
             # Create checkpoint after each superstep iteration
