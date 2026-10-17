@@ -1992,21 +1992,23 @@ def _function_execution_error_result(
 ) -> Content:
     from .observability import OBSERVABILITY_SETTINGS
 
+    include_detailed_errors = config.get("include_detailed_errors", False)
+    recommendation = "" if include_detailed_errors else " Set include_detailed_errors=True for the full detail."
     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
         logger.warning(
-            "Function '%s' raised an exception; returning an error result to the model. "
-            "Set include_detailed_errors=True for the full detail. Exception: %r",
+            "Function '%s' raised an exception; returning an error result to the model.%s Exception: %r",
             tool_name,
+            recommendation,
             exception,
         )
     else:
         logger.warning(
-            "Function '%s' raised an exception; returning an error result to the model. "
-            "Set include_detailed_errors=True for the full detail.",
+            "Function '%s' raised an exception; returning an error result to the model.%s",
             tool_name,
+            recommendation,
         )
     message = "Error: Function failed."
-    if config.get("include_detailed_errors", False):
+    if include_detailed_errors:
         message = f"{message} Exception: {exception}"
     return _finalize_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
