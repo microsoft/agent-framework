@@ -3983,6 +3983,36 @@ def test_parse_text_editor_result_error(mock_anthropic_client: MagicMock) -> Non
     assert result[0].type == "function_result"
 
 
+def test_parse_text_editor_result_error_preserves_error_code(mock_anthropic_client: MagicMock) -> None:
+    """A text-editor error with no error_message must still surface the error_code.
+
+    error_code is a required, always-truthy Literal and error_message is Optional
+    (usually None), so the old `error_code and error_message` always discarded the
+    code and produced an empty message.
+    """
+    from types import SimpleNamespace
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_content = SimpleNamespace(
+        type="text_editor_code_execution_tool_result_error",
+        error_code="file_not_found",
+        error_message=None,
+    )
+    mock_block = MagicMock()
+    mock_block.type = "text_editor_code_execution_tool_result"
+    mock_block.tool_use_id = "call_editor_err"
+    mock_block.content = mock_content
+
+    result = client._parse_contents_from_anthropic([mock_block])
+
+    assert len(result) == 1
+    assert result[0].type == "function_result"
+    error_out = result[0].items[0]
+    assert error_out.type == "error"
+    assert error_out.message == "file_not_found"
+
+
 def test_parse_text_editor_result_view(mock_anthropic_client: MagicMock) -> None:
     """Test parsing text editor view result."""
     client = create_test_anthropic_client(mock_anthropic_client)
