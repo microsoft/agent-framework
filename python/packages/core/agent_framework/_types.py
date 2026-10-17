@@ -1049,10 +1049,10 @@ class Content:
         Examples:
             .. code-block:: python
 
-                from agent_framework import Content
+                from agent_framework import Content, detect_media_type_from_base64
 
                 # Create from a data URI
-                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo...", media_type="image/png")
+                content = Content.from_uri(uri="data:image/png;base64,iVBORw0KGgo=", media_type="image/png")
                 assert content.type == "data"
 
                 # Create from an external URI
@@ -1060,12 +1060,9 @@ class Content:
                 assert content.type == "uri"
 
                 # When receiving a raw already encode data string, you can do this:
-                raw_base64_string = "iVBORw0KGgo..."
-                content = Content.from_uri(
-                    uri=f"data:{(detect_media_type_from_base64(data_str=raw_base64_string) or 'image/png')};base64,{
-                        raw_base64_string
-                    }"
-                )
+                raw_base64_string = "iVBORw0KGgo="
+                media_type = detect_media_type_from_base64(data_str=raw_base64_string) or "image/png"
+                content = Content.from_uri(uri=f"data:{media_type};base64,{raw_base64_string}")
         """
         return cls(
             **_validate_uri(uri, media_type),
