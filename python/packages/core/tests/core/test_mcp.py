@@ -2874,7 +2874,7 @@ async def test_local_mcp_server_function_execution_error():
 
 
 async def test_mcp_tool_reconnects_after_session_terminated_error():
-    """Replayable (idempotent) tools reconnect once and retry after session termination."""
+    """Trusted idempotent tools reconnect once and retry after session termination."""
 
     class TestServer(MCPTool):
         def __init__(self, **kwargs: Any) -> None:
@@ -2898,7 +2898,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
 
-    server = TestServer(name="test_server")
+    server = TestServer(name="test_server", trust_server_idempotency_hints=True)
     await server.connect()
     server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
 
@@ -2942,6 +2942,40 @@ async def test_mcp_tool_call_not_replayed_without_idempotency_hint():
         await server.call_tool("test_tool", param="test_value")
 
     assert isinstance(exc_info.value.__cause__, MCPError)
+    assert server.connect_count == 1
+    assert server.call_tool_mock.await_count == 1
+
+
+async def test_mcp_tool_call_not_replayed_on_hint_alone_without_client_trust():
+    """A server idempotency hint by itself must not authorize replay.
+
+    ToolAnnotations are server-supplied and untrusted unless the client separately
+    trusts the server, so with the default trust posture a hinted tool still gets
+    the unknown-outcome error instead of a replay.
+    """
+
+    class TestServer(MCPTool):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.connect_count = 0
+            self.call_tool_mock = AsyncMock(side_effect=MCPError(-32000, "Session terminated"))
+
+        async def connect(self, *, reset: bool = False) -> None:
+            self.connect_count += 1
+            self.session = Mock(spec=ClientSession)
+            self.session.call_tool = self.call_tool_mock
+            self.is_connected = True
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    await server.connect()
+    server._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
+
+    with pytest.raises(ToolExecutionException, match="outcome is unknown"):
+        await server.call_tool("test_tool", param="test_value")
+
     assert server.connect_count == 1
     assert server.call_tool_mock.await_count == 1
 
@@ -7071,8 +7105,9 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
 
     This test verifies the fix for issue #2884: the tool tries operations optimistically
     and only reconnects when ClosedResourceError is encountered, avoiding extra latency.
-    The replay only happens because the tool is advertised as idempotent here; tools
-    without that hint raise instead of retrying (issue #9204).
+    The replay only happens because the client opted into trusting the tool's idempotency
+    hint here; tools without that hint, or without the client opt-in, raise instead of
+    retrying (issue #9204).
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7087,6 +7122,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         command="test_command",
         args=["arg1"],
         load_tools=True,
+        trust_server_idempotency_hints=True,
     )
     tool._tool_annotations_by_name["test_tool"] = types.ToolAnnotations(idempotentHint=True)
 
@@ -7329,7 +7365,7 @@ async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
 async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> None:
     from anyio.streams.memory import ClosedResourceError
 
-    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool = MCPTool(name="test_tool", load_tools=True, trust_server_idempotency_hints=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     tool.session = Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()]))
     tool._tool_annotations_by_name["remote_tool"] = types.ToolAnnotations(idempotentHint=True)
 

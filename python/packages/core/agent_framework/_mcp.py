@@ -1108,6 +1108,7 @@ class MCPTool:
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -1155,6 +1156,7 @@ class MCPTool:
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
+        self.trust_server_idempotency_hints = trust_server_idempotency_hints
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
@@ -3347,8 +3349,9 @@ class MCPTool:
                         set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
                     raise _mcp_tool_execution_exception(
                         f"Failed to call tool '{tool_name}' - connection lost and the remote execution "
-                        "outcome is unknown. The call was not retried because the tool does not advertise "
-                        "idempotent or read-only behavior; reconnect and retry explicitly if safe.",
+                        "outcome is unknown. The call was not retried because replay requires both a "
+                        "server idempotent/read-only hint and the client-owned "
+                        "trust_server_idempotency_hints opt-in; reconnect and retry explicitly if safe.",
                         inner_exception=call_ex,
                     ) from call_ex
 
@@ -3390,12 +3393,18 @@ class MCPTool:
         raise retries_exhausted
 
     def _is_call_replayable(self, tool_name: str) -> bool:
-        """Return True if the server advertises *tool_name* as safe to retry after connection loss.
+        """Return True if *tool_name* may be replayed after connection loss.
 
-        Only tools whose declared annotations carry ``idempotentHint`` or ``readOnlyHint`` may be
-        replayed: anything else may have executed before the connection dropped, and re-issuing
-        the call would duplicate its side effects.
+        Replay requires both a client-owned trust decision
+        (``trust_server_idempotency_hints=True``) and a server annotation carrying
+        ``idempotentHint`` or ``readOnlyHint``. Annotations are supplied by the
+        server and are untrusted by default, consistent with how the rest of the
+        package treats ``ToolAnnotations`` as restriction-only hints: without the
+        client's explicit opt-in, a misannotated or untrusted server could get a
+        non-idempotent ``tools/call`` executed twice on a lost response.
         """
+        if not self.trust_server_idempotency_hints:
+            return False
         annotations = self._tool_annotations_by_name.get(tool_name)
         return bool(annotations and (annotations.idempotent_hint or annotations.read_only_hint))
 
@@ -3629,6 +3638,7 @@ class MCPStdioTool(MCPTool):
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -3724,6 +3734,11 @@ class MCPStdioTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3749,6 +3764,7 @@ class MCPStdioTool(MCPTool):
             task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.command = command
         self.args = args or []
@@ -3837,6 +3853,7 @@ class MCPStreamableHTTPTool(MCPTool):
         task_options: Any = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -4003,6 +4020,11 @@ class MCPStreamableHTTPTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -4028,6 +4050,7 @@ class MCPStreamableHTTPTool(MCPTool):
             task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -4451,6 +4474,7 @@ class MCPWebsocketTool(MCPTool):
         task_options: Any = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the deprecated MCP WebSocket compatibility wrapper.
@@ -4543,6 +4567,11 @@ class MCPWebsocketTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Deprecated compatibility arguments. They are not used.
         """
         super().__init__(
@@ -4568,6 +4597,7 @@ class MCPWebsocketTool(MCPTool):
             task_options=task_options,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.url = url
         self._client_kwargs = kwargs
