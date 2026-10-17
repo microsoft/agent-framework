@@ -278,6 +278,7 @@
     <Project Path="samples/03-workflows/Checkpoint/CheckpointAndRehydrate/CheckpointAndRehydrate.csproj" />
     <Project Path="samples/03-workflows/Checkpoint/CheckpointAndResume/CheckpointAndResume.csproj" />
     <Project Path="samples/03-workflows/Checkpoint/CheckpointWithHumanInTheLoop/CheckpointWithHumanInTheLoop.csproj" />
+    <Project Path="samples/03-workflows/Checkpoint/CheckpointWithRedis/CheckpointWithRedis.csproj" />
   </Folder>
   <Folder Name="/Samples/03-workflows/HumanInTheLoop/">
     <Project Path="samples/03-workflows/HumanInTheLoop/HumanInTheLoopBasic/HumanInTheLoopBasic.csproj" />
@@ -630,6 +631,7 @@
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Redis/Microsoft.Agents.AI.Redis.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Tools.Shell/Microsoft.Agents.AI.Tools.Shell.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Valkey/Microsoft.Agents.AI.Valkey.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
@@ -688,6 +690,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Mem0.UnitTests/Microsoft.Agents.AI.Mem0.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Redis.UnitTests/Microsoft.Agents.AI.Redis.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Tools.Shell.UnitTests/Microsoft.Agents.AI.Tools.Shell.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Valkey.UnitTests/Microsoft.Agents.AI.Valkey.UnitTests.csproj" />

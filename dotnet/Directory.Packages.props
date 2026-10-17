@@ -141,6 +141,8 @@
     <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.5.5" />
     <PackageVersion Include="Microsoft.Agents.ObjectModel.PowerFx" Version="2026.5.5" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.8.1" />
+    <!-- Redis -->
+    <PackageVersion Include="StackExchange.Redis" Version="3.4.0" />
     <!-- Valkey -->
     <PackageVersion Include="Valkey.Glide" Version="1.1.0" />
     <!-- Console UX -->
