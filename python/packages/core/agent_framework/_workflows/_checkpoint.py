@@ -911,13 +911,30 @@ class FileCheckpointStorage:
                             paths.append(Path(entry.path))
             return paths, directories
 
-        def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-            result: dict[str, Any] = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError(f"Duplicate checkpoint JSON key: {key}")
-                result[key] = value
-            return result
+        def _make_duplicate_capturing_hook() -> tuple[
+            Callable[[list[tuple[str, Any]]], dict[str, Any]],
+            list[str],
+        ]:
+            """Return a JSON ``object_pairs_hook`` that records duplicate keys instead of raising.
+
+            The hook is paired with a list that collects duplicate key names as they are
+            encountered during parsing. The caller decides when to raise based on workflow
+            ownership, so a foreign-workflow file with duplicate keys does not block
+            recovery of healthy checkpoints for the requested workflow (per the documented
+            policy that invalid metadata for a known different workflow is ignored).
+            """
+            duplicate_keys: list[str] = []
+
+            def hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+                result: dict[str, Any] = {}
+                for key, value in pairs:
+                    if key in result:
+                        duplicate_keys.append(key)
+                    else:
+                        result[key] = value
+                return result
+
+            return hook, duplicate_keys
 
         def _read_latest() -> WorkflowCheckpoint | None:
             root = self.storage_path.resolve()
@@ -931,15 +948,20 @@ class FileCheckpointStorage:
                     if not stat.S_ISREG(info.st_mode):
                         raise ValueError("checkpoint path is not a regular file")
                     version = _version(info)
+                    hook, duplicate_keys = _make_duplicate_capturing_hook()
                     with open(file_path, encoding="utf-8") as f:
-                        stored: dict[str, Any] = json.load(f, object_pairs_hook=_unique_object)
+                        stored: dict[str, Any] = json.load(f, object_pairs_hook=hook)
                     versions[file_path] = version
+                    if "workflow_name" in duplicate_keys:
+                        raise ValueError("Duplicate checkpoint JSON key: workflow_name")
                     if not isinstance(stored, dict) or not isinstance(stored.get("workflow_name"), str):
                         raise ValueError("checkpoint workflow_name must be a string")
                     if "__pickled__" in stored or "__type__" in stored:
                         raise ValueError("Top-level pickle markers are not checkpoint metadata")
                     if stored["workflow_name"] != workflow_name:
                         continue
+                    if duplicate_keys:
+                        raise ValueError(f"Duplicate checkpoint JSON key: {duplicate_keys[0]}")
                     timestamp = datetime.fromisoformat(stored["timestamp"])
                     checkpoint_id = stored["checkpoint_id"]
                     if not isinstance(checkpoint_id, str):

@@ -3623,6 +3623,11 @@ async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
     def change_after_read(stream: Any, **kwargs: Any) -> Any:
         nonlocal changed
         data = original_load(stream, **kwargs)
+        # Release the read handle before deleting or replacing the file on Windows:
+        # an open file handle blocks unlink() and os.replace() with PermissionError,
+        # which get_latest() would wrap as WorkflowCheckpointException without
+        # actually exercising the mutation-detection path under test.
+        stream.close()
         if not changed:
             changed = True
             if change == "create":
@@ -3696,3 +3701,61 @@ async def test_file_checkpoint_storage_get_latest_reads_selected_file_once(
     monkeypatch.setattr(json, "load", count_reads)
     assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
     assert reads == 1
+
+
+async def test_file_checkpoint_storage_get_latest_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    """A matching-workflow file with a duplicate workflow_name key must raise.
+
+    A duplicated workflow_name key means ownership is ambiguous: the file might
+    belong to the requested workflow even if the last-wins value says otherwise.
+    Reject before trusting the parsed workflow_name.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    (tmp_path / "ambiguous.json").write_text(
+        '{"workflow_name": "recovery-workflow", "workflow_name": "other-workflow"}'
+    )
+    with pytest.raises(WorkflowCheckpointException, match="Duplicate checkpoint JSON key"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+async def test_file_checkpoint_storage_get_latest_rejects_duplicate_metadata_keys_in_matching_workflow(
+    tmp_path: Path,
+) -> None:
+    """A matching-workflow file with duplicate non-ownership keys must raise.
+
+    Once ownership is established and matches the requested workflow, key
+    uniqueness is enforced across the whole file.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    (tmp_path / "duplicate-timestamp.json").write_text(
+        '{"workflow_name": "recovery-workflow", '
+        '"timestamp": "2026-01-01T10:00:00+00:00", '
+        '"timestamp": "2026-01-01T10:00:00+00:00"}'
+    )
+    with pytest.raises(WorkflowCheckpointException, match="Duplicate checkpoint JSON key"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+async def test_file_checkpoint_storage_get_latest_ignores_duplicate_keys_in_foreign_workflow(
+    tmp_path: Path,
+) -> None:
+    """Duplicate keys in a file belonging to a different workflow must not block recovery.
+
+    Per the documented policy, invalid metadata for a known different workflow is
+    ignored. A foreign file with duplicate keys must be skipped after ownership is
+    determined, not rejected during parsing.
+    """
+    storage = FileCheckpointStorage(tmp_path)
+    newest_id = await storage.save(
+        _stamped_checkpoint({"stage": "first"}, "2026-01-01T11:00:00+00:00")
+    )
+    (tmp_path / "foreign.json").write_text(
+        '{"workflow_name": "other-workflow", '
+        '"timestamp": "2026-01-01T10:00:00+00:00", '
+        '"timestamp": "2026-01-01T10:00:00+00:00"}'
+    )
+    latest = await storage.get_latest(workflow_name="recovery-workflow")
+    assert latest is not None
+    assert latest.checkpoint_id == newest_id
