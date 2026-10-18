@@ -635,6 +635,39 @@ def test_streaming_response_does_not_hardcode_acao_header():
         )
 
 
+def test_unsupported_conversation_item_content_returns_client_error():
+    """Posting an item whose content parts are all unsupported is a client error on an
+    existing conversation; 404 stays reserved for a missing conversation."""
+    server = _server_with_mock_agent(auth_enabled=False)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        created = client.post("/v1/conversations", json={})
+        assert created.status_code == 200
+        conversation_id = created.json()["id"]
+
+        unsupported = client.post(
+            f"/v1/conversations/{conversation_id}/items",
+            json={
+                "items": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_video", "input_video": "data:video/mp4;base64,AAAA"}],
+                    }
+                ]
+            },
+        )
+        assert unsupported.status_code == 400
+        assert "supported content" in unsupported.json()["detail"]
+
+        missing = client.post(
+            "/v1/conversations/does-not-exist/items",
+            json={"items": [{"type": "message", "role": "user", "content": "hello"}]},
+        )
+        assert missing.status_code == 404
+
+
 def test_cors_default_does_not_allow_arbitrary_origin_even_on_localhost():
     """Default CORS must not echo Access-Control-Allow-Origin to arbitrary origins.
 

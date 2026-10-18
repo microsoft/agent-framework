@@ -35,6 +35,14 @@ _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 
 
+class ConversationItemValidationError(ValueError):
+    """An item carried no content that maps to agent framework content.
+
+    Raised instead of a plain ValueError so routes can answer with a client
+    error for a malformed item while a missing conversation stays 404.
+    """
+
+
 def _refusal_additional_properties() -> dict[str, Any]:
     return {
         "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
@@ -332,7 +340,7 @@ class InMemoryConversationStore(ConversationStore):
                             contents.append(agent_content)
 
             if not contents:
-                raise ValueError("Conversation message did not contain any supported content")
+                raise ConversationItemValidationError("Conversation message did not contain any supported content")
 
             chat_msg = Message(role=role, contents=contents)
             chat_messages.append(chat_msg)
