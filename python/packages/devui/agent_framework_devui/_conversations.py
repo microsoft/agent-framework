@@ -35,6 +35,14 @@ _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 
 
+class ConversationItemValidationError(ValueError):
+    """An item carried no content that maps to agent framework content.
+
+    Raised instead of a plain ValueError so routes can answer with a client
+    error for a malformed item while a missing conversation stays 404.
+    """
+
+
 def _refusal_additional_properties() -> dict[str, Any]:
     return {
         "core": {_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
@@ -319,6 +327,12 @@ class InMemoryConversationStore(ConversationStore):
         chat_messages: list[Message] = []
         for item in items:
             role = item.get("role", "user")
+            # Reject an unknown role before anything is stored: the AF Message
+            # accepts any string, so the bad item would otherwise be persisted
+            # and only fail later at OpenAI conversion, leaving reads of the
+            # conversation broken from then on.
+            if role not in ("system", "user", "assistant", "tool"):
+                raise ConversationItemValidationError(f"Conversation message has unsupported role {role!r}")
             content = item.get("content", [])
             contents: list[Content] = []
 
@@ -332,7 +346,7 @@ class InMemoryConversationStore(ConversationStore):
                             contents.append(agent_content)
 
             if not contents:
-                raise ValueError("Conversation message did not contain any supported content")
+                raise ConversationItemValidationError("Conversation message did not contain any supported content")
 
             chat_msg = Message(role=role, contents=contents)
             chat_messages.append(chat_msg)
