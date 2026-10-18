@@ -3,6 +3,7 @@
 # ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import json
@@ -878,10 +879,12 @@ class Workflow(DictConvertible):
         self._runner.context.clear_runtime_checkpoint_storage()
         # A dropped run can also leave uncommitted writes pending on the shared
         # state (its finalizer, epoch-guarded in the runner, skips the discard
-        # once this run takes over). Sweep them here, before this run stages and
-        # commits its own run kwargs, so the leftover writes are neither kept
-        # nor folded into this run's first commit (#9473).
-        self._runner.state.discard()
+        # once this run takes over). Claim ownership and sweep them here,
+        # synchronously and before this run stages anything: the entry
+        # checkpoint's executor snapshots land in the same pending map, so the
+        # epoch must already have advanced by the time they are written
+        # (#9473 review).
+        self._runner.begin_run()
         runtime_tools = normalize_tools(tools) if tools is not None else None
         self._runner.context.set_runtime_tools(runtime_tools)
 
@@ -933,6 +936,18 @@ class Workflow(DictConvertible):
         # this generator's body is first iterated, so by the time we read it
         # here it already points at our own ``ResponseStream``.
         my_active_run = self._active_run
+
+        # A dropped predecessor's finalizer may already be scheduled but not yet
+        # finished: if its handler writes state from a cancellation cleanup path
+        # (a `finally` or cancel handler), those writes land in the shared pending
+        # map after run()'s synchronous sweep. Yield once so the loop can drive the
+        # scheduled finalizer, then sweep again before this run stages its own
+        # writes. A finalizer that has not even been scheduled yet cannot have
+        # written anything; one scheduled but slower than this yield leaves a
+        # narrow residual window, which per-run state isolation would close
+        # (#9473 review).
+        await asyncio.sleep(0)
+        self._runner.state.discard()
 
         # Enable runtime checkpointing if storage provided.
         if checkpoint_storage is not None:

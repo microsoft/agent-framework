@@ -112,6 +112,20 @@ class RunnerImpl:
         """
         self._iteration = 0
 
+    def begin_run(self) -> int:
+        """Stamp a new run's ownership of this shared state, synchronously.
+
+        Advances the run epoch and sweeps a dropped predecessor's leftover
+        pending writes. Must run before the new run stages anything (the entry
+        checkpoint's executor snapshots land in the same pending map), so
+        Workflow.run() calls it from its synchronous section, ahead of any
+        await point (#9473). The stale finalizer's epoch check then fails even
+        during the successor's checkpoint staging.
+        """
+        self._run_epoch += 1
+        self._state.discard()
+        return self._run_epoch
+
     async def run_until_convergence(self) -> AsyncGenerator[WorkflowEvent, None]:
         """Run the workflow until no more messages are sent.
 
@@ -121,7 +135,10 @@ class RunnerImpl:
         to entering this loop, since only the workflow knows how the run was started
         (fresh input vs. checkpoint resume vs. responses).
         """
-        self._run_epoch += 1
+        # The epoch is advanced synchronously by Workflow.run() (see
+        # begin_run), before this generator's first pull: the entry checkpoint
+        # staging that precedes this loop already writes state, so claiming
+        # ownership here would leave that window uncovered (#9473 review).
         my_epoch = self._run_epoch
 
         # Emit any events already produced prior to entering loop

@@ -2289,3 +2289,79 @@ async def test_workflow_dropped_stream_finalizer_preserves_successor_state_write
     assert state.get("b_key") == "from-run-B"
     # A's unfinished write was swept at B's entry, not committed into the state.
     assert "a_key" not in state
+
+
+async def test_workflow_dropped_run_cancellation_cleanup_writes_do_not_leak() -> None:
+    """A dropped run whose handler writes from a cancellation cleanup path must
+    not leak those writes into the successor's committed state (#9477 review).
+
+    The successor's synchronous sweep in run() happens after the predecessor's
+    finalizer has completed here, which is the dominant interleaving: the late
+    cleanup write lands in the shared pending map and is swept before the
+    successor stages anything.
+    """
+    a_staged = asyncio.Event()
+    a_cleaned = asyncio.Event()
+
+    class CleanupWriter(Executor):
+        @handler
+        async def handle(self, message: _StagingMessage, ctx: WorkflowContext[_StagingMessage, str]) -> None:
+            try:
+                if message.run == "A":
+                    ctx.set_state("a_key", "from-run-A")
+                    a_staged.set()
+                    await asyncio.Event().wait()
+            finally:
+                if message.run == "A":
+                    # Cancellation cleanup writing state, the shape the review
+                    # flagged: this lands in pending after the handler is torn down.
+                    ctx.set_state("a_cleanup", "from-run-A-cleanup")
+                    a_cleaned.set()
+
+    workflow = WorkflowBuilder(start_executor=CleanupWriter(id="cleanup_writer")).build()
+
+    stream_a = workflow.run(_StagingMessage(run="A"), stream=True)
+    aiter_a = stream_a.__aiter__()
+    while True:
+        event = await aiter_a.__anext__()
+        if event.type == "executor_invoked":
+            break
+    await a_staged.wait()
+    del stream_a
+    del aiter_a
+    del event
+    gc.collect()
+
+    # Drive the loop until A's finalizer has cancelled the handler and its
+    # finally block has written the cleanup key.
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if a_cleaned.is_set():
+            break
+    assert a_cleaned.is_set(), "predecessor's cancellation cleanup never ran"
+
+    result_b = await workflow.run(_StagingMessage(run="B"))
+    assert result_b.get_final_state() == WorkflowRunState.IDLE
+    state = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "a_key" not in state
+    assert "a_cleanup" not in state
+
+
+async def test_workflow_run_advances_runner_epoch_synchronously() -> None:
+    """run() must advance the runner epoch before returning, synchronously.
+
+    Regression pin for the #9477 review finding: the entry checkpoint stages
+    executor snapshots before run_until_convergence's generator body first
+    executes, so an epoch claimed there would leave the staging window
+    unguarded; a dropped predecessor's finalizer running mid-staging could then
+    match the epoch and discard the successor's staged snapshots. Claiming it
+    in run()'s synchronous section closes the window.
+    """
+    workflow = WorkflowBuilder(start_executor=IncrementExecutor(id="epoch_exec", limit=2, increment=1)).build()
+    epoch_before = workflow._runner._run_epoch  # pyright: ignore[reportPrivateUsage]
+    stream = workflow.run(NumberMessage(data=0), stream=True)
+    # No await between run() and the assertion: the epoch must already have
+    # advanced before this run stages or commits anything.
+    assert workflow._runner._run_epoch == epoch_before + 1  # pyright: ignore[reportPrivateUsage]
+    async for _ in stream:
+        pass
