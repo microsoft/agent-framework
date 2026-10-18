@@ -984,7 +984,7 @@ class Content:
                 content = Content.from_data(data=image_bytes, media_type="image/png")
 
                 # If you have a base64 string and need to detect media type
-                base64_string = "iVBORw0KGgo..."
+                base64_string = "iVBORw0KGgo="
                 media_type = detect_media_type_from_base64(data_str=base64_string)
                 if media_type is None:
                     raise ValueError("Unknown media type")
@@ -1023,7 +1023,7 @@ class Content:
         """Create content from a URI, can be both data URI or external URI.
 
         Use this when you already have a properly formed data URI
-        (e.g., "data:image/png;base64,iVBORw0KGgo...").
+        (e.g., "data:image/png;base64,iVBORw0KGgo=").
         Or when you receive a link to a online resource (e.g., "https://example.com/image.png").
 
         Args:
