@@ -1,18 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import ctypes
 import json
 import os
 import shlex
 import shutil
 import signal
 import sys
-from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import nullcontext
+from collections.abc import Awaitable, Iterator, Mapping, Sequence
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
 import pytest
@@ -44,6 +45,7 @@ class _FakeExecProcess:
         self.returncode = returncode
         self.stdout = object()
         self.stderr = object()
+        self._transport = MagicMock()
         self._communicate_results = list(communicate_results or [(b"", b"")])
 
     async def communicate(self) -> tuple[bytes, bytes]:
@@ -171,6 +173,54 @@ async def test_stateless_timeout_kills_background_jobs_holding_pipes(tmp_path: P
     assert result.timed_out is True
     assert elapsed < 2.0
     assert not alive
+
+
+@pytest.mark.skipif(sys.platform != "linux" or shutil.which("setsid") is None, reason="needs /proc and setsid")
+async def test_stateless_timeout_closes_pipes_held_by_detached_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agent_framework_tools.shell._executor as executor_module
+
+    monkeypatch.setattr(executor_module, "_DRAIN_GRACE", 0.2)
+    pidfile = tmp_path / "detached.pid"
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    fds_before = len(os.listdir("/proc/self/fd"))
+    result = await tool.run(f"(setsid sh -c 'echo $$ > {pidfile}; exec sleep 5' &); sleep 30")
+    await asyncio.sleep(0)  # pipe transports close their descriptors in connection_lost, one loop pass later
+    fds_after = len(os.listdir("/proc/self/fd"))
+
+    os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    assert result.timed_out is True
+    assert fds_after == fds_before
+
+
+@pytest.fixture
+def unreaped_orphans() -> Iterator[None]:
+    """Make this process the subreaper for orphans and leave them as zombies, like a slow container init."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    pr_set_child_subreaper = 36
+    assert libc.prctl(pr_set_child_subreaper, 1, 0, 0, 0) == 0
+    try:
+        yield
+    finally:
+        libc.prctl(pr_set_child_subreaper, 0, 0, 0, 0)
+        for child in psutil.Process().children():
+            with suppress(psutil.NoSuchProcess, ChildProcessError):
+                if child.status() == psutil.STATUS_ZOMBIE:
+                    os.waitpid(child.pid, 0)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux child subreaper")
+async def test_stateless_timeout_does_not_wait_for_unreaped_zombies(unreaped_orphans: None) -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    started = asyncio.get_running_loop().time()
+    result = await tool.run("sleep 30 & sleep 30")
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert result.timed_out is True
+    assert elapsed < 2.0
 
 
 async def test_policy_denies_before_execution() -> None:
@@ -323,6 +373,7 @@ async def test_run_stateless_timeout_returns_empty_output_if_drain_fails() -> No
         )
 
     kill_tree.assert_awaited_once_with(proc)
+    proc._transport.close.assert_called_once_with()
     assert result.timed_out is True
     assert result.stdout == ""
     assert result.stderr == ""
