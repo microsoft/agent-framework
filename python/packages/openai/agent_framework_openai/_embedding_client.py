@@ -296,6 +296,13 @@ class RawOpenAIEmbeddingClient(
             if encoding == "base64" and isinstance(item.embedding, str):
                 # Decode base64-encoded floats (little-endian IEEE 754)
                 raw = base64.b64decode(item.embedding)
+                if len(raw) % 4:
+                    # A misaligned buffer would otherwise fail inside struct.unpack with a
+                    # bare buffer-size error and no hint about which response item broke.
+                    raise ValueError(
+                        f"Base64 encoded embedding for input index {item.index} decoded to {len(raw)} bytes, "
+                        "which cannot be split into 4-byte little-endian floats. The response payload is malformed."
+                    )
                 vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
             else:
                 vector = item.embedding
