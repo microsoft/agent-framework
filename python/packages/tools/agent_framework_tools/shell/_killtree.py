@@ -52,8 +52,13 @@ async def kill_process_tree(
     *,
     grace: float = 2.0,
 ) -> None:
-    """Terminate ``proc`` and all of its descendants. Best-effort, never raises."""
-    if proc.returncode is not None:
+    """Terminate ``proc`` and all of its descendants. Best-effort, never raises.
+
+    On POSIX ``proc`` must have been started with ``start_new_session=True``.
+    Its process group is signalled even after ``proc`` has exited, which
+    reaches background and double-forked jobs that are no longer descendants.
+    """
+    if proc.returncode is not None and sys.platform == "win32":
         return
     if _has_psutil:
         await _kill_via_psutil(proc, grace=grace)
@@ -68,26 +73,28 @@ async def _kill_via_psutil(
 ) -> None:
     if psutil is None:
         raise RuntimeError("_kill_via_psutil called without psutil available")
-    try:
-        parent = psutil.Process(proc.pid)
-    except psutil.NoSuchProcess:
+    victims: list[psutil.Process] = []
+    if proc.returncode is None:
+        with contextlib.suppress(psutil.NoSuchProcess):
+            parent = psutil.Process(proc.pid)
+            victims.append(parent)
+            victims.extend(parent.children(recursive=True))
+    if not victims and sys.platform == "win32":
         return
-    try:
-        descendants = parent.children(recursive=True)
-    except psutil.NoSuchProcess:
-        descendants = []
-    victims = [parent, *descendants]
 
     # Phase 1: SIGTERM (or terminate() on Windows, which also asks nicely).
+    if sys.platform != "win32":
+        _signal_group(proc, signal.SIGTERM)
     for v in victims:
         with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             v.terminate()
 
     # Wait briefly for graceful exit.
-    with contextlib.suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(proc.wait(), timeout=grace)
+    await _wait_for_exit(proc, grace=grace)
 
     # Phase 2: SIGKILL anything still alive.
+    if sys.platform != "win32":
+        _signal_group(proc, signal.SIGKILL)
     for v in victims:
         with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             if v.is_running():
@@ -122,11 +129,33 @@ async def _kill_via_stdlib(
         with contextlib.suppress(ProcessLookupError, OSError):
             proc.kill()
         return
+    _signal_group(proc, signal.SIGTERM)
+    await _wait_for_exit(proc, grace=grace)
+    _signal_group(proc, signal.SIGKILL)
+
+
+def _signal_group(proc: asyncio.subprocess.Process, sig: int) -> None:
+    """POSIX only. ``proc.pid`` is the group id under ``start_new_session``, also after ``proc`` is reaped."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, sig)
+
+
+def _group_alive(proc: asyncio.subprocess.Process) -> bool:
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(proc.wait(), timeout=grace)
-            return
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(proc.pid, 0)
     except (ProcessLookupError, PermissionError):
-        pass
+        return False
+    return True
+
+
+async def _wait_for_exit(proc: asyncio.subprocess.Process, *, grace: float) -> None:
+    """Wait up to ``grace`` for ``proc`` and, on POSIX, the rest of its process group to exit."""
+
+    async def exited() -> None:
+        await proc.wait()
+        # A process group has no handle to await, so poll it.
+        while sys.platform != "win32" and _group_alive(proc):  # ruff:ignore[async-busy-wait]
+            await asyncio.sleep(0.05)
+
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(exited(), timeout=grace)
