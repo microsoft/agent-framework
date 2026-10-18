@@ -145,7 +145,14 @@ def _group_alive(proc: asyncio.subprocess.Process) -> bool:
         os.killpg(proc.pid, 0)
     except (ProcessLookupError, PermissionError):
         return False
-    return True
+    if psutil is None:
+        return True
+    # killpg also succeeds for a group of zombies that their new parent has not reaped yet.
+    for p in psutil.process_iter(["status"]):
+        with contextlib.suppress(ProcessLookupError):
+            if p.info["status"] != psutil.STATUS_ZOMBIE and os.getpgid(p.pid) == proc.pid:
+                return True
+    return False
 
 
 async def _wait_for_exit(proc: asyncio.subprocess.Process, *, grace: float) -> None:
