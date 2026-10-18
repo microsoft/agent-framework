@@ -942,7 +942,10 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         # Termination related state
         self._terminated: bool = False
-        self._max_rounds = manager.max_round_count
+        # The base group chat contract coerces a max round count below 1 up to 1; this
+        # value is assigned after super().__init__, so apply the same rule here instead
+        # of ending the workflow before any round can run.
+        self._max_rounds = max(1, manager.max_round_count) if manager.max_round_count is not None else None
 
     @override
     async def _handle_messages(
