@@ -54,6 +54,7 @@ import pickle  # nosec  # ruff:ignore[suspicious-pickle-import]
 from enum import EnumMeta
 from typing import Any, cast
 
+from .._settings import SecretString
 from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger("agent_framework")
@@ -370,6 +371,18 @@ def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
 
 def _encode_pickle(value: Any) -> dict[str, str]:
     """Encode a value as a pickle envelope."""
+    # SecretString is deliberately unpicklable: protocols >= 2 fail at restore
+    # on its immutability guard, and a working pickle would write the
+    # credential to durable storage in cleartext. Refuse at encode time with a
+    # precise error instead of the opaque restore failure (#9514); the session
+    # state path already rejects it the same way (#8874).
+    if isinstance(value, SecretString):
+        raise WorkflowCheckpointException(
+            "SecretString cannot be checkpointed: it is unpicklable by design, and "
+            "persisting it would write the credential to durable storage in cleartext. "
+            "Keep credentials out of checkpointed state and re-resolve them from "
+            "settings or configuration on restore."
+        )
     return {
         _PICKLE_MARKER: _pickle_to_base64(value),
         _TYPE_MARKER: _value_type_to_key(value),

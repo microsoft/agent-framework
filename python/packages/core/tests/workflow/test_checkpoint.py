@@ -1170,6 +1170,20 @@ async def test_workflow_resume_restores_partially_filled_fan_in_buffer():
 
 # region FileCheckpointStorage
 
+async def test_file_checkpoint_storage_save_refuses_secret_string(tmp_path):
+    """The precise encode error surfaces unwrapped at save time (#9514)."""
+    from agent_framework._settings import SecretString
+
+    storage = FileCheckpointStorage(str(tmp_path))
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="w",
+        graph_signature_hash="h",
+        state={"credential": SecretString("sk-secret")},
+    )
+    with pytest.raises(WorkflowCheckpointException, match="SecretString cannot be checkpointed"):
+        await storage.save(checkpoint)
+
+
 
 async def test_file_checkpoint_storage_save_and_load():
     with tempfile.TemporaryDirectory() as temp_dir:

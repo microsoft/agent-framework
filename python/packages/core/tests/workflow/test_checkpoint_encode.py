@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 
+import pytest
+
+from agent_framework._settings import SecretString
+from agent_framework.exceptions import WorkflowCheckpointException
 from agent_framework._workflows._checkpoint_encoding import (
     _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
     _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
@@ -437,3 +441,19 @@ def test_decode_preserves_user_dict_matching_old_escape_shape() -> None:
     """Test that user data shaped like an old escape envelope remains unchanged."""
     data = {"__agent_framework_checkpoint_dict__": True, "value": {"safe": "data"}}
     assert decode_checkpoint_value(data) == data
+
+
+def test_encode_secret_string_rejected_precisely() -> None:
+    """A credential in checkpointed state fails at encode, not at restore (#9514)."""
+    with pytest.raises(WorkflowCheckpointException, match="SecretString cannot be checkpointed"):
+        encode_checkpoint_value(SecretString("sk-secret"))
+
+
+def test_encode_secret_string_nested_in_dict_rejected() -> None:
+    with pytest.raises(WorkflowCheckpointException, match="SecretString cannot be checkpointed"):
+        encode_checkpoint_value({"api_key": SecretString("sk-secret")})
+
+
+def test_encode_secret_string_nested_in_list_rejected() -> None:
+    with pytest.raises(WorkflowCheckpointException, match="SecretString cannot be checkpointed"):
+        encode_checkpoint_value({"keys": [SecretString("sk-secret")]})
