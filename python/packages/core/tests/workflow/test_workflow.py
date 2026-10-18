@@ -1537,6 +1537,7 @@ async def test_workflow_partial_stream_does_not_discard_successor_state_writes()
     assert result_b.get_outputs() == ["b-done"]
     assert result_b.get_final_state() == WorkflowRunState.IDLE
     assert workflow._runner.state.get("b_key") == "from-run-B"  # pyright: ignore[reportPrivateUsage]
+    assert workflow._runner.state.get("a_key") is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_workflow_partial_stream_does_not_discard_successor_entry_checkpoint_snapshots() -> None:
