@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
 
@@ -901,9 +901,25 @@ class RawAnthropicClient(
         else:
             msgs = list(messages)
 
+        # A hosted (server tool) call without a result is still running on Anthropic's side, for example
+        # when Claude called a local tool in parallel. It has to be sent back as ``server_tool_use``, or
+        # Anthropic expects a local ``tool_result`` for it.
+        result_call_ids = {
+            content.call_id for msg in msgs for content in msg.contents if content.type == "function_result"
+        }
+        pending_hosted_call_ids = {
+            content.call_id
+            for msg in msgs
+            for content in msg.contents
+            if content.type == "function_call"
+            and content.hosted
+            and content.call_id
+            and content.call_id not in result_call_ids
+        }
+
         result: list[dict[str, Any]] = []
         for msg in msgs:
-            result.extend(self._prepare_message_groups_for_anthropic(msg))
+            result.extend(self._prepare_message_groups_for_anthropic(msg, pending_hosted_call_ids))
 
         # Anthropic requires the conversation to end with a user message.
         # Append a synthetic user turn so chained agent outputs work as
@@ -913,9 +929,11 @@ class RawAnthropicClient(
 
         return result
 
-    def _prepare_message_groups_for_anthropic(self, message: Message) -> list[dict[str, Any]]:
+    def _prepare_message_groups_for_anthropic(
+        self, message: Message, pending_hosted_call_ids: Set[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Prepare a Message and split Anthropic content blocks into valid role groups."""
-        prepared_message = self._prepare_message_for_anthropic(message)
+        prepared_message = self._prepare_message_for_anthropic(message, pending_hosted_call_ids)
         content = prepared_message.get("content")
         if not isinstance(content, list):
             return [prepared_message]
@@ -964,11 +982,15 @@ class RawAnthropicClient(
 
         return False
 
-    def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
+    def _prepare_message_for_anthropic(
+        self, message: Message, pending_hosted_call_ids: Set[str] | None = None
+    ) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
 
         Args:
             message: The Message to convert.
+            pending_hosted_call_ids: Call IDs of hosted (server tool) calls that have no result yet.
+                These are sent as ``server_tool_use`` blocks.
 
         Returns:
             A dictionary representing the message in Anthropic format.
@@ -1001,8 +1023,9 @@ class RawAnthropicClient(
                     else:
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
+                    pending_hosted_call = content.hosted and content.call_id in (pending_hosted_call_ids or ())
                     a_content.append({
-                        "type": "tool_use",
+                        "type": "server_tool_use" if pending_hosted_call else "tool_use",
                         "id": content.call_id,
                         "name": content.name,
                         "input": content.parse_arguments(),

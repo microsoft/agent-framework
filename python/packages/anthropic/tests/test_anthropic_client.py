@@ -39,6 +39,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaServerToolUseBlock,
     BetaTextBlock,
     BetaToolUseBlock,
     BetaUsage,
@@ -823,6 +824,71 @@ def test_prepare_messages_for_anthropic_without_system(
     assert result[1]["role"] == "assistant"
     assert result[2]["role"] == "user"
     assert result[2]["content"] == "Continue"
+
+
+def _parallel_local_and_server_tool_call_contents(client: AnthropicClient) -> list[Content]:
+    """Parse a response in which Claude calls a local tool and a server tool in parallel."""
+    return client._parse_contents_from_anthropic(
+        [
+            BetaToolUseBlock(type="tool_use", id="toolu_local", name="local_value", input={}),
+            BetaServerToolUseBlock(
+                type="server_tool_use", id="srvtoolu_search", name="web_search", input={"query": "release"}
+            ),
+        ],
+        _AnthropicRequestState(),
+    )
+
+
+@pytest.mark.parametrize("reload_history", [False, True], ids=["in_memory", "reloaded"])
+def test_prepare_messages_preserves_parallel_server_tool_use(
+    mock_anthropic_client: MagicMock,
+    reload_history: bool,
+) -> None:
+    """A pending server tool call is sent back as server_tool_use next to the local tool result."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [
+        Message(role="user", contents=["Call local_value and search the web."]),
+        Message(role="assistant", contents=_parallel_local_and_server_tool_call_contents(client)),
+        Message(role="tool", contents=[Content.from_function_result(call_id="toolu_local", result="local-ok")]),
+    ]
+    if reload_history:
+        messages = [Message.from_dict(message.to_dict()) for message in messages]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [message["role"] for message in result] == ["user", "assistant", "user"]
+    assert result[1]["content"] == [
+        {"type": "tool_use", "id": "toolu_local", "name": "local_value", "input": {}},
+        {"type": "server_tool_use", "id": "srvtoolu_search", "name": "web_search", "input": {"query": "release"}},
+    ]
+    assert [(block["type"], block["tool_use_id"]) for block in result[2]["content"]] == [("tool_result", "toolu_local")]
+
+
+def test_prepare_messages_keeps_completed_server_tool_call_paired_with_its_result(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A server tool call that already has its result keeps the existing tool_use/tool_result pairing."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    contents = _parallel_local_and_server_tool_call_contents(client)
+    search_result = Content.from_function_result(call_id="srvtoolu_search", result="search results")
+    messages = [
+        Message(role="user", contents=["Call local_value and search the web."]),
+        Message(role="assistant", contents=contents),
+        Message(role="tool", contents=[Content.from_function_result(call_id="toolu_local", result="local-ok")]),
+        Message(role="assistant", contents=[search_result, Content.from_text("Both done.")]),
+    ]
+
+    result = client._prepare_messages_for_anthropic(messages)
+
+    assert [block["type"] for block in result[1]["content"]] == ["tool_use", "tool_use"]
+    tool_result_ids = [
+        block["tool_use_id"]
+        for message in result
+        if message["role"] == "user" and isinstance(message["content"], list)
+        for block in message["content"]
+        if block["type"] == "tool_result"
+    ]
+    assert tool_result_ids == ["toolu_local", "srvtoolu_search"]
 
 
 def test_prepare_messages_for_anthropic_does_not_append_after_tool_use(
