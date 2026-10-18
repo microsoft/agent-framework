@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import psutil
 import pytest
 from agent_framework import Agent, AgentSession, BaseChatClient, ChatResponse, Content, FunctionInvocationLayer, Message
 from agent_framework.security import (
@@ -140,6 +141,36 @@ async def test_stateless_timeout_kills_long_command() -> None:
     cmd = "Start-Sleep -Seconds 5" if sys.platform == "win32" else "sleep 5"
     result = await tool.run(cmd)
     assert result.timed_out is True
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX process-group regression")
+@pytest.mark.parametrize(
+    "template",
+    ["sleep 5 & echo $! > {pidfile}", "(sleep 5 & echo $! > {pidfile}); sleep 30"],
+    ids=["background", "double_forked"],
+)
+async def test_stateless_timeout_kills_background_jobs_holding_pipes(tmp_path: Path, template: str) -> None:
+    pidfile = tmp_path / "bg.pid"
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    started = asyncio.get_running_loop().time()
+    result = await asyncio.wait_for(tool.run(template.format(pidfile=pidfile)), timeout=10.0)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    pid = int(pidfile.read_text().strip())
+    alive = _pid_alive(pid)
+    if alive:
+        os.kill(pid, signal.SIGKILL)
+    assert result.timed_out is True
+    assert elapsed < 2.0
+    assert not alive
 
 
 async def test_policy_denies_before_execution() -> None:
