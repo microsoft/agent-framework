@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import os
+import stat
 import threading
 import time
 import uuid
@@ -779,15 +780,22 @@ class FileCheckpointStorage:
                 f"Checkpoint file for {checkpoint_id} is not valid JSON and cannot be loaded."
             ) from ex
 
-        from ._checkpoint_encoding import decode_checkpoint_value
-
-        try:
-            decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
-        except WorkflowCheckpointException:
-            raise
-        checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
+        checkpoint = self._decode_checkpoint(encoded_checkpoint)
         logger.info(f"Loaded checkpoint {checkpoint_id} from {file_path}")
         return checkpoint
+
+    def _decode_checkpoint(self, encoded_checkpoint: dict[str, Any]) -> WorkflowCheckpoint:
+        """Decode an already-read checkpoint using this reader's deserialization policy.
+
+        Shared by :meth:`load` and :meth:`get_latest` so both apply the same
+        ``allowed_checkpoint_types`` policy. Callers must have already validated the
+        on-disk state if snapshot consistency matters; this method only handles
+        deserialization.
+        """
+        from ._checkpoint_encoding import decode_checkpoint_value
+
+        decoded = decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
+        return WorkflowCheckpoint.from_dict(decoded)
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name.
@@ -845,18 +853,134 @@ class FileCheckpointStorage:
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name.
 
+        Select from stored metadata and decode only the selected checkpoint, using the same
+        data that was read during selection. Unreadable files and files without a valid
+        workflow name raise because they might hide a newer checkpoint for the requested
+        workflow. Invalid metadata for a known different workflow is ignored.
+        File versions and directory membership are checked before accepting the scan.
+        Detected concurrent changes raise rather than returning a potentially stale
+        checkpoint; the caller can retry. Writes after validation belong to a subsequent
+        snapshot. This relies on the filesystem reporting file changes and writers using
+        atomic replacement, as ``save`` does.
+        Checkpoints with equal timestamps retain directory iteration order.
+        Nested directories are included, with in-tree directory aliases visited only once.
+        Reading and decoding run in a worker thread so decoding does not block the event
+        loop.
+
         Args:
             workflow_name: The name of the workflow to get the latest checkpoint for.
 
         Returns:
-            The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
+            The latest WorkflowCheckpoint from the validated scan, or None if no matching
+            checkpoints exist.
+
+        Raises:
+            WorkflowCheckpointException: If the directory or a checkpoint cannot be read,
+                a file's workflow cannot be identified, matching metadata is invalid, the
+                scan changes, or the selected checkpoint cannot be decoded.
         """
-        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
-        if not checkpoints:
-            return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
-        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
-        return latest_checkpoint
+
+        def _version(info: os.stat_result) -> tuple[int, int, int]:
+            # On Windows, Path.stat() and os.fstat() use different Win32 APIs and can
+            # return different values for st_dev (volume serial number) and st_ino
+            # (file ID). Only st_size + st_mtime_ns + st_ctime_ns are reliable across
+            # both APIs, which is sufficient to detect both content changes (mtime,
+            # size) and file replacement (ctime on Windows is creation time, which
+            # updates on os.replace). Symlink escapes are caught separately by
+            # _validate_file_path and the is_relative_to(root) check in _checkpoint_paths.
+            return info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+        def _checkpoint_paths(root: Path) -> tuple[list[Path], dict[Path, tuple[int, int, int]]]:
+            paths: list[Path] = []
+            directories: dict[Path, tuple[int, int, int]] = {}
+            pending = [root]
+            while pending:
+                directory = pending.pop().resolve()
+                if not directory.is_relative_to(root):
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint directory {directory} is outside storage root {root}"
+                    )
+                if directory in directories:
+                    continue
+                directories[directory] = _version(directory.stat())
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.is_dir():
+                            pending.append(Path(entry.path))
+                        elif os.path.normcase(entry.name).endswith(".json"):
+                            paths.append(Path(entry.path))
+            return paths, directories
+
+        def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"Duplicate checkpoint JSON key: {key}")
+                result[key] = value
+            return result
+
+        def _read_latest() -> WorkflowCheckpoint | None:
+            root = self.storage_path.resolve()
+            paths, directories = _checkpoint_paths(root)
+            versions: dict[Path, tuple[int, int, int]] = {}
+            latest: tuple[datetime, dict[str, Any]] | None = None
+            for file_path in paths:
+                try:
+                    self._validate_file_path(str(file_path.relative_to(root))[:-5])
+                    info = file_path.stat()
+                    if not stat.S_ISREG(info.st_mode):
+                        raise ValueError("checkpoint path is not a regular file")
+                    version = _version(info)
+                    with open(file_path, encoding="utf-8") as f:
+                        stored: dict[str, Any] = json.load(f, object_pairs_hook=_unique_object)
+                    versions[file_path] = version
+                    if not isinstance(stored, dict) or not isinstance(stored.get("workflow_name"), str):
+                        raise ValueError("checkpoint workflow_name must be a string")
+                    if "__pickled__" in stored or "__type__" in stored:
+                        raise ValueError("Top-level pickle markers are not checkpoint metadata")
+                    if stored["workflow_name"] != workflow_name:
+                        continue
+                    timestamp = datetime.fromisoformat(stored["timestamp"])
+                    checkpoint_id = stored["checkpoint_id"]
+                    if not isinstance(checkpoint_id, str):
+                        raise ValueError("checkpoint_id must be a string")
+                    if self._validate_file_path(checkpoint_id) != file_path.resolve():
+                        raise ValueError("checkpoint_id does not match its checkpoint file")
+                    if latest is None or timestamp > latest[0]:
+                        latest = (timestamp, stored)
+                except Exception as e:
+                    raise WorkflowCheckpointException(
+                        f"Failed to read checkpoint metadata for workflow {workflow_name} from {file_path}: {e}"
+                    ) from e
+            for file_path, version in versions.items():
+                if _version(file_path.stat()) != version:
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint {file_path} changed during the scan; retry get_latest"
+                    )
+            current_paths, current_directories = _checkpoint_paths(root)
+            if (
+                set(current_paths) != set(paths)
+                or current_directories != directories
+                or any(_version(path.stat()) != version for path, version in directories.items())
+                or self.storage_path.resolve() != root
+            ):
+                raise WorkflowCheckpointException(
+                    f"Checkpoint directory {self.storage_path} changed during the scan; retry get_latest"
+                )
+            return self._decode_checkpoint(latest[1]) if latest else None
+
+        try:
+            checkpoint = await asyncio.to_thread(_read_latest)
+            if checkpoint is None:
+                return None
+        except WorkflowCheckpointException:
+            raise
+        except Exception as e:
+            raise WorkflowCheckpointException(
+                f"Failed to get latest checkpoint for workflow {workflow_name} from {self.storage_path}: {e}"
+            ) from e
+        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {checkpoint.checkpoint_id}")
+        return checkpoint
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
