@@ -6476,6 +6476,23 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert "require_approval" in mcp
 
 
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = OpenAIChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
+
+
 @pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
 async def test_get_mcp_tool_preserves_allowed_tools_in_request(allowed_tools: list[str] | None) -> None:
     tool_config = OpenAIChatClient.get_mcp_tool(

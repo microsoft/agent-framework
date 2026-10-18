@@ -1619,10 +1619,16 @@ class RawOpenAIChatClient(
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval: dict[str, Any] = {}
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = {"tool_names": always_require}
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = {"tool_names": never_require}
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
